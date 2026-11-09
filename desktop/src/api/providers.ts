@@ -12,17 +12,23 @@ import type {
   ProviderModelsInput,
   ProviderModelsResult,
   ModelMapping,
+  MagpieState,
+  OpenMagpieResult,
 } from '../types/provider'
 
 type ProvidersResponse = { providers: SavedProvider[]; activeId: string | null }
-type ProvidersListResponse = ProvidersResponse & { providerOrder?: string[] }
+type ProvidersListResponse = ProvidersResponse & {
+  providerOrder?: string[]
+  /** Saved alias mapping of the built-in DeepSeek account provider. */
+  deepSeekAccountModels?: ModelMapping
+}
 type ProvidersReorderResponse = { providers: SavedProvider[]; providerOrder?: string[] }
 type ProviderResponse = { provider: SavedProvider }
 type TestResultResponse = { result: ProviderTestResult }
 type OfficialProviderModelsResponse = { models: ModelMapping }
 type AuthStatusResponse = {
   hasAuth: boolean
-  source: 'echoflow-provider' | 'claude-oauth' | 'openai-oauth' | 'grok-oauth' | 'echoflow-settings' | 'env' | 'none'
+  source: 'cc-haha-provider' | 'claude-oauth' | 'openai-oauth' | 'grok-oauth' | 'deepseek-oauth' | 'original-settings' | 'env' | 'none'
   activeProvider?: string
 }
 
@@ -31,8 +37,14 @@ export const providersApi = {
     return api.get<ProvidersListResponse>('/api/providers')
   },
 
-  authStatus() {
-    return api.get<AuthStatusResponse>('/api/providers/auth-status')
+  /**
+   * Without `providerId` the server judges the global default provider; with
+   * one (a saved provider id or a built-in id such as `claude-official`) it
+   * judges only that provider's credentials.
+   */
+  authStatus(providerId?: string) {
+    const query = providerId ? `?providerId=${encodeURIComponent(providerId)}` : ''
+    return api.get<AuthStatusResponse>(`/api/providers/auth-status${query}`)
   },
 
   getSettings() {
@@ -85,6 +97,15 @@ export const providersApi = {
 
   scanCcSwitch() {
     return api.get<CcSwitchScanResult>('/api/providers/cc-switch/scan')
+  },
+
+  /** The local Magpie gateway and its catalog; `refresh` skips the server's short cache. */
+  magpie(refresh = false) {
+    return api.get<MagpieState>(`/api/providers/magpie${refresh ? '?refresh=1' : ''}`)
+  },
+
+  openMagpie() {
+    return api.post<OpenMagpieResult>('/api/providers/magpie/open')
   },
 
   importCcSwitch(sourceIds: string[]) {

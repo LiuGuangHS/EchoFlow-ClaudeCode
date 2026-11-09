@@ -1,10 +1,16 @@
+import type { AgentProfile } from '@/types/session'
+import { AgentProfileControl, type AgentProfileControlHandle } from '@/components/chat/AgentProfileControl'
+import { isLeanSlashCommand, isUnsupportedLeanSlashInput } from '@/lib/agentProfile'
 import { isComposerReferenceVisible, isComposerSlashCommandVisible } from '@/lib/composerCapabilityVisibility'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useDismissable } from '@/hooks/useDismissable'
+import { ArrowUp, Cpu, Feather, Plus, ShieldCheck } from 'lucide-react'
 import { BrandSeal } from '@/components/composite/BrandSeal'
+import { NewSessionStarter } from '@/components/layout/NewSessionStarter'
+import { projectTitle } from '@/components/layout/sidebarTaskGroups'
+import { resolveProjectDisplayName } from '../stores/projectDisplayNameStore'
 import { Button } from '@/components/ui/Button'
-import { IconButton } from '@/components/ui/IconButton'
-import { ApiError } from '../api/client'
+import { ApiError, rawRecordDiagnosticEvent } from '../api/client'
 import { agentsApi } from '../api/agents'
 import { providersApi } from '../api/providers'
 import { getBundledPresetReasoningProviderKind } from '../config/providerPresets'
@@ -17,16 +23,18 @@ import { useProviderStore } from '../stores/providerStore'
 import { useSessionRuntimeStore, DRAFT_RUNTIME_SELECTION_KEY } from '../stores/sessionRuntimeStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useUIStore } from '../stores/uiStore'
+import { useWorkspaceStore } from '../stores/workspaceStore'
 import { SETTINGS_TAB_ID, useTabStore } from '../stores/tabStore'
-import { RepositoryLaunchControls } from '@/components/chat/RepositoryLaunchControls'
-import { PermissionModeSelector } from '../components/controls/PermissionModeSelector'
+import { RepositoryLaunchControls, type RepositoryLaunchControlsHandle } from '@/components/chat/RepositoryLaunchControls'
+import { PermissionModeSelector, type PermissionModeSelectorHandle } from '../components/controls/PermissionModeSelector'
+import { PERMISSION_MODE_LABEL_KEYS } from '../components/controls/permissionModeState'
 import { ModelSelector, type ModelSelectorHandle } from '../components/controls/ModelSelector'
 import { AttachmentGallery } from '../components/chat/AttachmentGallery'
 import { ComposerDropOverlay } from '../components/chat/ComposerDropOverlay'
-import { ContextUsageIndicator } from '../components/chat/ContextUsageIndicator'
 import { ComposerReferenceMenu, type ComposerReferenceMenuHandle } from '@/components/chat/ComposerReferenceMenu'
 import { ComposerReferenceDetail } from '@/components/chat/ComposerReferenceDetail'
 import { composerReferencesApi, mentionProviderId } from '@/api/composerReferences'
+import { useCapabilityCatalogStore } from '@/stores/capabilityCatalogStore'
 import type { ComposerReferenceCandidate } from '@/types/composerReference'
 import { LocalSlashCommandPanel, type LocalSlashCommandName } from '../components/chat/LocalSlashCommandPanel'
 import {
@@ -34,7 +42,14 @@ import {
   SlashCommandMenu,
 } from '../components/chat/SlashCommandMenu'
 import { useMobileViewport } from '../hooks/useMobileViewport'
+import { GROK_OFFICIAL_PROVIDER_ID } from '../constants/grokOfficialProvider'
+import {
+  DEEPSEEK_ACCOUNT_PROVIDER_ID,
+  buildDeepSeekAccountProvider,
+} from '../constants/deepseekAccountProvider'
+import { CLAUDE_OFFICIAL_PROVIDER_ID, OPENAI_OFFICIAL_PROVIDER_ID } from '../constants/openaiOfficialProvider'
 import { isDesktopRuntime } from '../lib/desktopRuntime'
+import { getSessionBrowsablePath } from '../lib/sessionWorkspace'
 import {
   normalizeRuntimeSelection,
   resolveActiveProviderRuntimeSelection,
@@ -53,6 +68,7 @@ import {
   findMentionRanges,
   insertMentionIntoText,
   type ComposerMention,
+  type NewComposerMention,
 } from '../lib/composerMentions'
 import {
   appendAgentSlashCommands,
@@ -68,16 +84,43 @@ import {
   resolveSlashUiAction,
 } from '../components/chat/composerUtils'
 import { ComposerCapabilityMenu } from '@/components/chat/ComposerCapabilityMenu'
+import { MobileComposerSheet, type MobileComposerSetting } from '@/components/chat/MobileComposerSheet'
 import { useCapabilityMenu } from '@/components/chat/useCapabilityMenu'
-import type { AttachmentRef } from '../types/chat'
+import { AgentProfileChip } from '@/components/chat/AgentProfileChip'
+import { AgentTeamChip } from '@/components/chat/AgentTeamChip'
+import { ComputerUseEnableDialog } from '@/components/computer-use/ComputerUseEnableDialog'
+import { AgentTeamsCostDialog } from '@/components/agentTeams/AgentTeamsCostDialog'
+import { withAgentTeamRequest } from '@/lib/agentTeamRequest'
+import { recordRecentSkills } from '@/lib/recentSkills'
+import type { AttachmentRef, UIAttachment } from '../types/chat'
+import type { SavedProvider } from '../types/provider'
 import type { PermissionMode } from '../types/settings'
 import type { SlashCommandOption } from '../components/chat/composerUtils'
 import { useComposerDictation } from '@/features/voiceInput/useComposerDictation'
 import { VoiceInputButton } from '@/features/voiceInput/VoiceInputButton'
+import { VoiceRecordingBar } from '@/features/voiceInput/VoiceRecordingBar'
 
 type Attachment = ComposerAttachment
 
 type Translate = ReturnType<typeof useTranslation>
+
+function toUIAttachment(attachment: Attachment): UIAttachment {
+  return {
+    type: attachment.type,
+    name: attachment.name,
+    path: attachment.path,
+    data: attachment.data,
+    mimeType: attachment.mimeType,
+    isDirectory: attachment.isDirectory,
+    lineStart: attachment.lineStart,
+    lineEnd: attachment.lineEnd,
+    diffSide: attachment.diffSide,
+    hunkId: attachment.hunkId,
+    note: attachment.note,
+    referenceKind: attachment.referenceKind,
+    quote: attachment.quote,
+  }
+}
 
 function getApiErrorCode(error: unknown): string | null {
   if (!(error instanceof ApiError)) return null
@@ -115,22 +158,88 @@ function resolveCreateSessionErrorMessage(error: unknown, t: Translate): string 
   }
 }
 
+/** The provider name the model picker shows; `null` is Claude Official. */
+function resolveProviderName(providerId: string | null, providers: SavedProvider[], t: Translate): string {
+  switch (providerId) {
+    case null:
+    case CLAUDE_OFFICIAL_PROVIDER_ID:
+      return t('settings.providers.officialName')
+    case OPENAI_OFFICIAL_PROVIDER_ID:
+      return t('settings.providers.openaiOfficialName')
+    case GROK_OFFICIAL_PROVIDER_ID:
+      return t('settings.providers.grokOfficialName')
+    case DEEPSEEK_ACCOUNT_PROVIDER_ID:
+      return t('settings.providers.deepseekAccountName')
+    default:
+      return providers.find((provider) => provider.id === providerId)?.name ?? providerId
+  }
+}
+
 const EMPTY_COMPOSER_REFERENCES: ComposerReferenceCandidate[] = []
 
-export function EmptySession() {
+function reportDraftWorkspaceStaleRequest() {
+  void rawRecordDiagnosticEvent({
+    type: 'draft_workspace_request_stale',
+    severity: 'warn',
+    summary: 'A draft workspace request became stale before it could be consumed.',
+  })
+}
+
+type EmptySessionProps = {
+  /** The folder the task starts in; the phone's new-task sheet suggests one. */
+  initialWorkDir?: string
+  visible?: boolean
+  /**
+   * Set when this composer is the desktop's retained new-session draft. It
+   * then reports whether it holds unsent content, keeps the draft's project
+   * current, and follows `initialWorkDir` when an empty draft is moved.
+   */
+  draftRevision?: number
+}
+
+export function EmptySession({ initialWorkDir = '', visible = true, draftRevision }: EmptySessionProps = {}) {
   const t = useTranslation()
+  const leanModeEnabled = useSettingsStore((state) => state.leanModeEnabled)
+  const [selectedAgentProfile, setAgentProfile] = useState<AgentProfile>('standard')
+  const agentProfile = leanModeEnabled ? selectedAgentProfile : 'standard'
+  useEffect(() => {
+    if (!leanModeEnabled) setAgentProfile('standard')
+  }, [leanModeEnabled])
+  const isLean = agentProfile === 'lean'
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
   const [input, setInput] = useState('')
   const [mentions, setMentions] = useState<ComposerMention[]>([])
   const [referenceDetail, setReferenceDetail] = useState<ComposerMention | null>(null)
   const [referenceOptionId, setReferenceOptionId] = useState<string | undefined>()
   const [referenceState, setReferenceState] = useState<{ context: string, items: ComposerReferenceCandidate[], loading: boolean, error: boolean } | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [workDir, setWorkDir] = useState('')
+  const [workDir, setWorkDir] = useState(initialWorkDir)
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null)
   const [useWorktree, setUseWorktree] = useState(false)
-  const [repositoryLaunchReady, setRepositoryLaunchReady] = useState(true)
+  // Same rule as picking a folder: hold Send until its repository is read.
+  const [repositoryLaunchReady, setRepositoryLaunchReady] = useState(!initialWorkDir)
+  const applyWorkDir = (nextWorkDir: string) => {
+    setWorkDir(nextWorkDir)
+    setSelectedBranch(null)
+    setUseWorktree(false)
+    setRepositoryLaunchReady(!nextWorkDir)
+  }
+  // "New session" moves an empty retained draft to another project by changing
+  // its seed. Follow it in place: a remount would drop the mode and permission
+  // picked here. Our own folder picks write the same value back, a no-op.
+  const [followedWorkDir, setFollowedWorkDir] = useState(initialWorkDir)
+  if (draftRevision !== undefined && followedWorkDir !== initialWorkDir) {
+    setFollowedWorkDir(initialWorkDir)
+    if (initialWorkDir !== workDir) applyWorkDir(initialWorkDir)
+  }
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
+  // Bumped when the + menu installs a skill, so the mention list reloads.
+  const [referencesVersion, setReferencesVersion] = useState(0)
   const [slashMenuOpen, setSlashMenuOpen] = useState(false)
   const [fileSearchOpen, setFileSearchOpen] = useState(false)
   const [localSlashPanel, setLocalSlashPanel] = useState<LocalSlashCommandName | null>(null)
@@ -142,10 +251,23 @@ export function EmptySession() {
   const [slashCommandsCwd, setSlashCommandsCwd] = useState<string | null>(null)
   const [agentSlashCommands, setAgentSlashCommands] = useState<SlashCommandOption[]>([])
   const composerRef = useRef<MentionComposerHandle>(null)
+  const materializingRef = useRef<{
+    revision: number | undefined
+    promise: Promise<{ sessionId: string, ownedDraft: boolean } | null>
+  } | null>(null)
+  const workspaceRequestInFlightRef = useRef(new Set<number>())
+  const runSubmittingRef = useRef(false)
+  const draftComposerRef = useRef({ input, attachments, mentions })
+  draftComposerRef.current = { input, attachments, mentions }
+  const workspaceRequestAttemptRef = useRef(new Map<number, number>())
+  const [materializationAttempt, setMaterializationAttempt] = useState(0)
   const composerContainerRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const modelSelectorRef = useRef<ModelSelectorHandle>(null)
+  const permissionSelectorRef = useRef<PermissionModeSelectorHandle>(null)
+  const agentProfileRef = useRef<AgentProfileControlHandle>(null)
+  const repositoryLaunchRef = useRef<RepositoryLaunchControlsHandle>(null)
   const plusMenuRef = useRef<HTMLDivElement>(null)
   const slashMenuRef = useRef<HTMLDivElement>(null)
   const fileSearchRef = useRef<ComposerReferenceMenuHandle>(null)
@@ -158,6 +280,7 @@ export function EmptySession() {
   const connectToSession = useChatStore((state) => state.connectToSession)
   const setActiveView = useUIStore((state) => state.setActiveView)
   const addToast = useUIStore((state) => state.addToast)
+  const draftWorkspaceRequest = useUIStore((state) => state.draftWorkspaceRequest)
   const currentModel = useSettingsStore((state) => state.currentModel)
   const activeProviderName = useSettingsStore((state) => state.activeProviderName)
   const effortLevel = useSettingsStore((state) => state.effortLevel)
@@ -165,23 +288,28 @@ export function EmptySession() {
   const defaultPermissionMode = useSettingsStore((state) => state.permissionMode)
   const providers = useProviderStore((state) => state.providers)
   const activeProviderId = useProviderStore((state) => state.activeId)
-  const [draftPermissionMode, setDraftPermissionMode] = useState<PermissionMode>(defaultPermissionMode)
+  // The draft follows the default from Settings until a mode is picked in this
+  // draft. It stays mounted while Settings is open, so a copy taken at mount
+  // would launch the next session in a mode the user had already turned off.
+  const [pickedPermissionMode, setDraftPermissionMode] = useState<PermissionMode | null>(null)
+  const draftPermissionMode = pickedPermissionMode ?? defaultPermissionMode
   const lastPluginReloadSummary = usePluginStore((state) => state.lastReloadSummary)
   const draftRuntimeSelection = useSessionRuntimeStore((state) => state.selections[DRAFT_RUNTIME_SELECTION_KEY])
   const referenceProviderId = mentionProviderId(draftRuntimeSelection)
-  const referenceContext = `${workDir}\0${referenceProviderId ?? ''}`
+  const referenceContext = `${workDir}\0${referenceProviderId ?? ''}\0${agentProfile}`
   const referenceCurrent = referenceState?.context === referenceContext ? referenceState : null
-  const composerReferences = useMemo(() => (referenceCurrent?.items ?? EMPTY_COMPOSER_REFERENCES).filter(isComposerReferenceVisible), [referenceCurrent?.items])
+  const composerReferences = useMemo(() => (referenceCurrent?.items ?? EMPTY_COMPOSER_REFERENCES).filter(reference => isComposerReferenceVisible(reference) && (!isLean || reference.kind === 'skill')), [referenceCurrent?.items, isLean])
   useEffect(() => {
     let active = true
     setReferenceState({ context: referenceContext, items: [], loading: true, error: false })
-    void composerReferencesApi.list(workDir || undefined, referenceProviderId).then(data => {
+    void composerReferencesApi.list(workDir || undefined, referenceProviderId, isLean ? 'lean' : undefined).then(data => {
+      useCapabilityCatalogStore.getState().remember([...data.plugins, ...data.skills])
       if (active) setReferenceState({ context: referenceContext, items: [...data.plugins, ...data.skills], loading: false, error: false })
     }).catch(() => {
       if (active) setReferenceState({ context: referenceContext, items: [], loading: false, error: true })
     })
     return () => { active = false }
-  }, [referenceContext, workDir, referenceProviderId, lastPluginReloadSummary, slashMenuOpen, fileSearchOpen, plusMenuOpen])
+  }, [referenceContext, workDir, referenceProviderId, isLean, lastPluginReloadSummary, slashMenuOpen, fileSearchOpen, plusMenuOpen, referencesVersion])
   useEffect(() => {
     setReferenceDetail(null)
     setReferenceOptionId(undefined)
@@ -189,24 +317,44 @@ export function EmptySession() {
     setSlashMenuOpen(false)
   }, [workDir])
 
-  const draftRuntimeSelectionKey = draftRuntimeSelection
-    ? `${draftRuntimeSelection.providerId ?? 'official'}:${draftRuntimeSelection.modelId}:${draftRuntimeSelection.effortLevel ?? 'auto'}`
-    : undefined
   const draftModelLabel = draftRuntimeSelection?.modelId ?? currentModel?.name ?? currentModel?.id
   const isMobileComposer = useMobileViewport() && !isDesktopRuntime()
+  // Picking the Agent mode is a row of the "+" menu (the phone's "+" sheet opens
+  // its own sheet from a row); the toolbar only marks a lean draft.
+  const changeAgentProfile = (profile: AgentProfile) => {
+    if (profile === agentProfile) return
+    setAgentProfile(profile)
+    if (profile === 'lean' && draftPermissionMode === 'plan') {
+      setDraftPermissionMode('default')
+      addToast({ type: 'info', message: t('agentProfile.planReset') })
+    }
+  }
   const dictation = useComposerDictation({
     composerRef,
     draft: input,
-    blocked: isSubmitting,
-    contextKey: 'empty-session',
+    blocked: isSubmitting || !visible,
+    contextKey: visible ? 'empty-session' : null,
+    // Called from an effect, after this render has declared `handleSubmit`.
+    onSubmit: () => { void handleSubmit() },
   })
+  // While dictating, the toolbar's controls stay mounted but hidden, and the
+  // recording bar takes their row.
+  const dictationLive = dictation.phase !== 'idle'
 
   useEffect(() => {
-    composerRef.current?.focus()
-  }, [])
+    if (visible) composerRef.current?.focus()
+    else {
+      setPlusMenuOpen(false)
+      setSlashMenuOpen(false)
+      setFileSearchOpen(false)
+      setReferenceDetail(null)
+      setLocalSlashPanel(null)
+    }
+  }, [visible])
 
   useDismissable({
-    open: plusMenuOpen,
+    // On a phone the + opens a sheet that closes itself; see ChatInput.
+    open: plusMenuOpen && !isMobileComposer,
     refs: [plusMenuRef],
     onDismiss: () => setPlusMenuOpen(false),
   })
@@ -255,6 +403,8 @@ export function EmptySession() {
               ...(skill.source === 'user' || skill.source === 'project' || skill.source === 'plugin'
                 ? { source: skill.source }
                 : {}),
+              // Kept on the row so the lean/standard choice, made later, can filter without a refetch.
+              ...(skill.leanCompatible === false ? { leanCompatible: false } : {}),
             })),
         )
       })
@@ -289,6 +439,25 @@ export function EmptySession() {
     }
   }, [workDir, lastPluginReloadSummary])
 
+  // A lean draft's skills and mention list come from the server already filtered
+  // for lean, `.claude/commands/*.md` among them (as skills). A name on them is
+  // available even when a desktop built-in row shares it, which is what ChatInput
+  // trusts in a lean session: `/review` runs the project's own command there.
+  // The mention list is fetched again whenever a menu opens or closes and is empty
+  // while that runs; a send or a menu filter landing in it must not forget what
+  // the server just listed. A new project, provider or mode drops the names.
+  const referenceNamesRef = useRef<string[]>([])
+  const referenceNames = useMemo(() => {
+    const names = composerReferences.map(reference => (reference.kind === 'plugin' ? reference.id : reference.name))
+    if (names.length === 0 && referenceCurrent?.loading) return referenceNamesRef.current
+    referenceNamesRef.current = names
+    return names
+  }, [composerReferences, referenceCurrent?.loading])
+  const listedLeanNames = useMemo(() => new Set([
+    ...(slashCommandsCwd === workDir ? slashCommands : []).filter(command => command.leanCompatible !== false).map(command => command.name),
+    ...referenceNames,
+  ]), [slashCommands, slashCommandsCwd, workDir, referenceNames])
+
   const allSlashCommands = useMemo(() => {
     const commands = appendAgentSlashCommands(mergeSlashCommands(slashCommandsCwd === workDir ? slashCommands : [], getLocalizedFallbackCommands(t)), agentSlashCommands)
     const names = new Set(commands.map(command => command.name.toLowerCase()))
@@ -298,15 +467,29 @@ export function EmptySession() {
       names.add(name.toLowerCase())
       commands.push({ name, description: reference.description, kind: reference.kind })
     }
-    return commands.filter(isComposerSlashCommandVisible)
-  }, [agentSlashCommands, slashCommands, slashCommandsCwd, workDir, composerReferences, t])
+    return commands.filter(command => isComposerSlashCommandVisible(command) && (!isLean || isLeanSlashCommand(command, listedLeanNames)))
+  }, [agentSlashCommands, slashCommands, slashCommandsCwd, workDir, composerReferences, listedLeanNames, isLean, t])
 
   const handleWorkDirChange = (newWorkDir: string) => {
-    setWorkDir(newWorkDir)
-    setSelectedBranch(null)
-    setUseWorktree(false)
-    setRepositoryLaunchReady(!newWorkDir)
+    applyWorkDir(newWorkDir)
+    // Keep the seed current for another Cmd+N while no server tab is active.
+    // Only the draft's own composer may move it.
+    if (draftRevision !== undefined) {
+      useUIStore.setState(state => state.newSessionDraft?.revision === draftRevision
+        ? { newSessionDraft: { ...state.newSessionDraft, workDir: newWorkDir } }
+        : state)
+    }
   }
+
+  // Whitespace alone is not worth keeping a project for; mentions live in the
+  // text. A project, model or mode choice is not content either. A draft that is
+  // being sent is not empty: Run is enabled with only a project chosen, and moving
+  // that project mid-send would point the launch at another repository.
+  const hasUnsentContent = input.trim().length > 0 || attachments.length > 0 || isSubmitting
+  useEffect(() => {
+    if (draftRevision === undefined) return
+    useUIStore.getState().setNewSessionDraftContent(draftRevision, hasUnsentContent)
+  }, [draftRevision, hasUnsentContent])
 
   const filteredCommandGroups = useMemo(() => {
     return groupSlashCommands(filterSlashCommands(allSlashCommands, slashFilter))
@@ -336,9 +519,176 @@ export function EmptySession() {
     }
   }, [slashMenuOpen, slashSelectedIndex])
 
+  /**
+   * Assigns the retained draft a real session without sending anything.
+   *
+   * Both Enter and a workspace control need this: the draft holds no server
+   * session until then (the immutable agent profile has to be chosen first),
+   * while every workspace panel is keyed by a session id. The draft is cleared
+   * only when this call still owns it, so a late response cannot discard a
+   * newer draft.
+   */
+  const createDraftSession = useCallback(async (): Promise<{ sessionId: string, ownedDraft: boolean } | null> => {
+    const runtimeStore = useSessionRuntimeStore.getState()
+    const explicitDraftSelection = runtimeStore.selections[DRAFT_RUNTIME_SELECTION_KEY]
+    const submittedDraft = useUIStore.getState().newSessionDraft
+    const ownsDraft = () => mounted.current && useUIStore.getState().newSessionDraft?.revision === submittedDraft?.revision
+
+    try {
+      // A model picked in this draft runs on its own provider, whatever the
+      // global default is, so that provider's credentials are the ones to check.
+      // Without a pick the server keeps judging the global default.
+      const authStatus = explicitDraftSelection
+        ? await providersApi.authStatus(explicitDraftSelection.providerId ?? CLAUDE_OFFICIAL_PROVIDER_ID)
+        : await providersApi.authStatus()
+      if (!authStatus.hasAuth) {
+        const providerName = resolveProviderName(
+          explicitDraftSelection ? explicitDraftSelection.providerId : activeProviderId,
+          providers,
+          t,
+        )
+        const modelName = explicitDraftSelection?.modelId ?? currentModel?.name ?? currentModel?.id
+        addToast({
+          type: 'warning',
+          message: modelName
+            ? t('empty.noCredentials', { model: modelName, provider: providerName })
+            : t('empty.noCredentialsProvider', { provider: providerName }),
+        })
+        useUIStore.getState().setPendingSettingsTab('providers')
+        useTabStore.getState().openTab(SETTINGS_TAB_ID, t('sidebar.settings'), 'settings')
+        return null
+      }
+
+      const defaultActiveProviderSelection = explicitDraftSelection
+        ? null
+        : resolveActiveProviderRuntimeSelection(
+          activeProviderId,
+          activeProviderName,
+          providers,
+          currentModel?.id,
+        )
+      // The DeepSeek account provider is built in, so it is not in the saved
+      // list, but it resolves effort exactly like a saved DeepSeek provider.
+      const activeCustomProvider = defaultActiveProviderSelection
+        ? providers.find((provider) => provider.id === defaultActiveProviderSelection.providerId) ??
+          (defaultActiveProviderSelection.providerId === DEEPSEEK_ACCOUNT_PROVIDER_ID
+            ? buildDeepSeekAccountProvider()
+            : undefined)
+        : undefined
+      const defaultRuntimeSelection = defaultActiveProviderSelection && activeCustomProvider
+        ? normalizeRuntimeSelection(
+          { ...defaultActiveProviderSelection, effortLevel },
+          activeCustomProvider.apiFormat,
+          getBundledPresetReasoningProviderKind(activeCustomProvider.presetId),
+        )
+        : defaultActiveProviderSelection && (
+          defaultActiveProviderSelection.providerId === OPENAI_OFFICIAL_PROVIDER_ID ||
+          defaultActiveProviderSelection.providerId === GROK_OFFICIAL_PROVIDER_ID
+        )
+          // Built-in providers are not in the saved list. Without an explicit
+          // effort the server runs the model default while the selector shows
+          // the global value, so resolve it against the model's catalog here.
+          ? normalizeRuntimeSelection({ ...defaultActiveProviderSelection, effortLevel })
+          : defaultActiveProviderSelection
+      const claudeOAuthRuntimeSelection = !explicitDraftSelection &&
+        authStatus.source === 'claude-oauth' &&
+        activeProviderId === null &&
+        currentModel?.id
+        ? {
+            providerId: null,
+            modelId: currentModel.id,
+            effortLevel,
+          }
+        : undefined
+      const runtimeSelection = explicitDraftSelection
+        ?? defaultRuntimeSelection
+        ?? claudeOAuthRuntimeSelection
+      // The draft may have waited for hours. A branch chosen for the user is
+      // decided again now, against the checkout as it is: the server switches
+      // to any launch branch that is not the current one.
+      const launchBranch = selectedBranch && repositoryLaunchRef.current
+        ? await repositoryLaunchRef.current.resolveLaunchBranch()
+        : selectedBranch
+      const sessionId = await createSession(
+        workDir || undefined,
+        {
+          ...(launchBranch
+            ? { repository: { branch: launchBranch, worktree: useWorktree } }
+            : {}),
+          permissionMode: draftPermissionMode,
+          ...(isLean ? { agentProfile } : {}),
+        },
+      )
+      if (runtimeSelection) {
+        runtimeStore.setSelection(sessionId, runtimeSelection)
+      }
+      const ownedDraft = ownsDraft()
+      if (ownedDraft) {
+        if (explicitDraftSelection && useSessionRuntimeStore.getState().selections[DRAFT_RUNTIME_SELECTION_KEY] === explicitDraftSelection) {
+          runtimeStore.clearSelection(DRAFT_RUNTIME_SELECTION_KEY)
+        }
+        if (!useUIStore.getState().draftWorkspaceRequest) {
+          useUIStore.setState({ newSessionDraft: null })
+        }
+      }
+      return { sessionId, ownedDraft }
+    } catch (error) {
+      addToast({
+        type: 'error',
+        message: resolveCreateSessionErrorMessage(error, t),
+      })
+      return null
+    }
+  }, [
+    activeProviderId,
+    activeProviderName,
+    addToast,
+    agentProfile,
+    createSession,
+    currentModel?.id,
+    currentModel?.name,
+    draftPermissionMode,
+    effortLevel,
+    isLean,
+    providers,
+    selectedBranch,
+    t,
+    useWorktree,
+    workDir,
+  ])
+
+  const materializeDraftSession = useCallback(() => {
+    const revision = draftRevision ?? useUIStore.getState().newSessionDraft?.revision
+    const cached = materializingRef.current
+    if (cached && cached.revision === revision) return cached.promise
+
+    const promise = createDraftSession()
+    const materialization = { revision, promise }
+    materializingRef.current = materialization
+    void promise.then((result) => {
+      if (materializingRef.current !== materialization) return
+      const pendingRequest = useUIStore.getState().draftWorkspaceRequest
+      const draftStillOwnsRequest =
+        result !== null &&
+        pendingRequest?.revision === revision &&
+        useUIStore.getState().newSessionDraft?.revision === revision
+      if (!draftStillOwnsRequest) materializingRef.current = null
+    })
+    return promise
+  }, [createDraftSession, draftRevision])
+
   const handleSubmit = async () => {
     const text = input.trim()
-    if (!canSubmit) return
+    if (!canSubmit || !visible) return
+    if (isLean && isUnsupportedLeanSlashInput(text, [...allSlashCommands, ...slashCommands, ...getLocalizedFallbackCommands(t)], listedLeanNames)) {
+      addToast({ type: 'info', message: t('agentProfile.draftCommandUnavailable') })
+      return
+    }
+
+    if (isLean && draftPermissionMode === 'plan') {
+      addToast({ type: 'info', message: t('agentProfile.planUnavailable') })
+      return
+    }
 
     const slashUiAction = text.startsWith('/') ? resolveSlashUiAction(text.slice(1)) : null
     if (slashUiAction?.type === 'panel') {
@@ -372,65 +722,24 @@ export function EmptySession() {
       return
     }
 
+    const submittedTabId = useTabStore.getState().activeTabId
+    const serializedText = (composerRef.current?.getModelContent() ?? input).trim()
     setIsSubmitting(true)
+    runSubmittingRef.current = true
+    setMaterializationAttempt((attempt) => attempt + 1)
     try {
-      const authStatus = await providersApi.authStatus()
-      if (!authStatus.hasAuth) {
-        useUIStore.getState().setPendingSettingsTab('providers')
-        useTabStore.getState().openTab(SETTINGS_TAB_ID, t('sidebar.settings'), 'settings')
-        return
-      }
-
-      const runtimeStore = useSessionRuntimeStore.getState()
-      const explicitDraftSelection = runtimeStore.selections[DRAFT_RUNTIME_SELECTION_KEY]
-      const defaultActiveProviderSelection = explicitDraftSelection
-        ? null
-        : resolveActiveProviderRuntimeSelection(
-          activeProviderId,
-          activeProviderName,
-          providers,
-          currentModel?.id,
-        )
-      const activeCustomProvider = defaultActiveProviderSelection
-        ? providers.find((provider) => provider.id === defaultActiveProviderSelection.providerId)
-        : undefined
-      const defaultRuntimeSelection = defaultActiveProviderSelection && activeCustomProvider
-        ? normalizeRuntimeSelection(
-          { ...defaultActiveProviderSelection, effortLevel },
-          activeCustomProvider.apiFormat,
-          getBundledPresetReasoningProviderKind(activeCustomProvider.presetId),
-        )
-        : defaultActiveProviderSelection
-      const claudeOAuthRuntimeSelection = !explicitDraftSelection &&
-        authStatus.source === 'claude-oauth' &&
-        activeProviderId === null &&
-        currentModel?.id
-        ? {
-            providerId: null,
-            modelId: currentModel.id,
-            effortLevel,
-          }
-        : undefined
-      const runtimeSelection = explicitDraftSelection
-        ?? defaultRuntimeSelection
-        ?? claudeOAuthRuntimeSelection
-      const sessionId = await createSession(
-        workDir || undefined,
-        {
-          ...(selectedBranch
-            ? { repository: { branch: selectedBranch, worktree: useWorktree } }
-            : {}),
-          permissionMode: draftPermissionMode,
-        },
-      )
-      if (runtimeSelection) {
-        runtimeStore.setSelection(sessionId, runtimeSelection)
-        if (explicitDraftSelection) {
-          runtimeStore.clearSelection(DRAFT_RUNTIME_SELECTION_KEY)
+      const materialized = await materializeDraftSession()
+      if (!materialized) return
+      const { sessionId, ownedDraft } = materialized
+      if (ownedDraft) {
+        if (useTabStore.getState().activeTabId === submittedTabId) {
+          setActiveView('code')
+          useTabStore.getState().openTab(sessionId, 'New Session')
         }
+      } else {
+        const activeTab = useTabStore.getState().tabs.find(tab => tab.sessionId === useTabStore.getState().activeTabId)
+        useSessionStore.getState().setActiveSession(activeTab?.type === 'session' ? activeTab.sessionId : null)
       }
-      setActiveView('code')
-      useTabStore.getState().openTab(sessionId, 'New Session')
       connectToSession(sessionId)
       const attachmentPayload: AttachmentRef[] = attachments.map((attachment) => ({
         type: attachment.type,
@@ -441,10 +750,14 @@ export function EmptySession() {
       }))
       // Inline @-mentions go out as the `@"absolute path"` text the CLI parses,
       // serialized from the live document; the bubble keeps the pill text.
-      const serializedText = (composerRef.current?.getModelContent() ?? input).trim()
+      // Agent Team armed in the + menu: the model gets the team instruction,
+      // the bubble keeps what the user typed.
+      const sendAsTeam = capabilityMenu.agentTeamArmed
       if (serializedText || attachmentPayload.length > 0) {
-        sendMessage(sessionId, serializedText, attachmentPayload, { displayContent: text })
+        sendMessage(sessionId, sendAsTeam ? withAgentTeamRequest(serializedText) : serializedText, attachmentPayload, { displayContent: text })
       }
+      recordRecentSkills(mentions.flatMap(mention => mention.kind === 'skill' && mention.id ? [mention.id] : []))
+      if (sendAsTeam) capabilityMenu.disarmAgentTeam()
       setInput('')
       setMentions([])
       setAttachments([])
@@ -454,9 +767,98 @@ export function EmptySession() {
         message: resolveCreateSessionErrorMessage(error, t),
       })
     } finally {
+      runSubmittingRef.current = false
       setIsSubmitting(false)
     }
   }
+
+  // A workspace action belongs to its draft even if session creation is also
+  // being driven by Run. Keep it queued until one shared creation has completed.
+  useEffect(() => {
+    const request = draftWorkspaceRequest
+    if (!request || !visible || draftRevision === undefined || request.revision !== draftRevision) return
+    if (workspaceRequestInFlightRef.current.has(request.nonce)) return
+    if (workspaceRequestAttemptRef.current.get(request.nonce) === materializationAttempt) return
+    workspaceRequestAttemptRef.current.set(request.nonce, materializationAttempt)
+    workspaceRequestInFlightRef.current.add(request.nonce)
+
+    const draftWorkDir = workDir
+    const runAlreadySubmitting = runSubmittingRef.current
+    setIsSubmitting(true)
+    void (async () => {
+      let consumed = false
+      try {
+        const materialized = await materializeDraftSession()
+        const currentRequest = useUIStore.getState().draftWorkspaceRequest
+        if (
+          !materialized ||
+          !materialized.ownedDraft ||
+          currentRequest?.nonce !== request.nonce ||
+          currentRequest.revision !== request.revision
+        ) {
+          if (materialized && !materialized.ownedDraft) reportDraftWorkspaceStaleRequest()
+          return
+        }
+
+        const { sessionId } = materialized
+        const activeTabId = useTabStore.getState().activeTabId
+        if (activeTabId === request.originatingTabId && useUIStore.getState().activeView === request.originatingView) {
+          setActiveView('code')
+        }
+        useTabStore.getState().openTab(sessionId, t('sidebar.newSession'))
+        if (activeTabId !== request.originatingTabId && activeTabId !== sessionId) useTabStore.getState().setActiveTab(activeTabId)
+        connectToSession(sessionId)
+        // The editor stays usable during creation; carry its latest content.
+        const { input: draftText, attachments: draftAttachments, mentions: draftMentions } = draftComposerRef.current
+        if (!runAlreadySubmitting && (draftText || draftAttachments.length > 0 || draftMentions.length > 0)) {
+          useChatStore.getState().queueComposerPrefill(sessionId, {
+            text: draftText,
+            attachments: draftAttachments.map(toUIAttachment),
+            mentions: draftMentions,
+            mode: 'replace',
+          })
+        }
+
+        const createdSession = useSessionStore.getState().sessions.find((session) => session.id === sessionId)
+        const bottomCwd = getSessionBrowsablePath(createdSession) ?? draftWorkDir
+        const workspace = useWorkspaceStore.getState()
+        if (request.action === 'toggle-side') {
+          workspace.toggleWorkspace(sessionId)
+        } else if (request.action === 'toggle-bottom') {
+          workspace.toggleBottomPanel(sessionId, bottomCwd)
+        } else {
+          workspace.toggleWorkspace(sessionId)
+          workspace.toggleFullscreen(sessionId)
+        }
+        consumed = true
+      } finally {
+        if (mounted.current) setIsSubmitting(false)
+        if (consumed) {
+          useUIStore.getState().clearDraftWorkspaceRequest(request.nonce)
+          if (useUIStore.getState().newSessionDraft?.revision === request.revision) {
+            useUIStore.setState({ newSessionDraft: null })
+          }
+          if (materializingRef.current?.revision === request.revision) {
+            materializingRef.current = null
+          }
+        }
+        workspaceRequestInFlightRef.current.delete(request.nonce)
+      }
+    })()
+  }, [
+    attachments,
+    connectToSession,
+    draftRevision,
+    draftWorkspaceRequest,
+    setActiveView,
+    input,
+    materializationAttempt,
+    materializeDraftSession,
+    mentions,
+    t,
+    visible,
+    workDir,
+  ])
 
   const handleComposerChange = (value: string, nextMentions: ComposerMention[]) => {
     setInput(value)
@@ -600,6 +1002,7 @@ export function EmptySession() {
   }, [])
 
   const { isDragActive, dragHandlers } = useComposerFileDrop({
+    disabled: !visible,
     panelRef,
     onAttachments: appendAttachments,
     onError: (error) => {
@@ -679,13 +1082,81 @@ export function EmptySession() {
     })
   }
 
+  const insertSelectedFileMention = (mention: NewComposerMention) => {
+    const cursorPos = composerRef.current?.getSelectionOffsets().start ?? input.length
+    const inserted = insertMentionIntoText(input, mentions, cursorPos, cursorPos, mention)
+    setInput(inserted.text)
+    setMentions(inserted.mentions)
+    requestAnimationFrame(() => {
+      composerRef.current?.focus()
+      composerRef.current?.setSelectionOffsets(inserted.cursorPos)
+    })
+  }
+
+  // See ChatInput: the phone's + sheet holds the controls that left the
+  // toolbar, and a row hands over to that control's own sheet.
+  const openFromComposerSheet = (open: () => void) => {
+    setPlusMenuOpen(false)
+    requestAnimationFrame(open)
+  }
+  const mobileComposerSettings: MobileComposerSetting[] = isMobileComposer
+    ? [
+      {
+        key: 'permission',
+        icon: <ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />,
+        label: t('permMode.executionPermissions'),
+        value: t(PERMISSION_MODE_LABEL_KEYS[draftPermissionMode]),
+        onSelect: () => openFromComposerSheet(() => permissionSelectorRef.current?.open()),
+      },
+      {
+        key: 'model',
+        icon: <Cpu size={16} strokeWidth={1.75} aria-hidden="true" />,
+        label: t('chat.mobileSheet.model'),
+        value: draftModelLabel,
+        disabled: isSubmitting,
+        onSelect: () => openFromComposerSheet(() => modelSelectorRef.current?.open()),
+      },
+      // The mode has no chip on a phone's toolbar: it covered the "+".
+      ...(leanModeEnabled ? [{
+        key: 'agentProfile',
+        icon: <Feather size={16} strokeWidth={1.75} aria-hidden="true" />,
+        label: t('agentProfile.label'),
+        value: t(isLean ? 'agentProfile.lean' : 'agentProfile.standard'),
+        disabled: isSubmitting,
+        onSelect: () => openFromComposerSheet(() => agentProfileRef.current?.open()),
+      }] : []),
+    ]
+    : []
+
   // The "+" capability menu: the shared hook owns data and navigation actions,
   // these handlers are only the composer-local edits. Kept identical to
   // ChatInput's block on purpose — the two composers are one control.
+  // Desktop: first in the trailing group, as a quiet glyph until writes run
+  // unattended. A phone keeps it after the chips, where it only shows then.
+  const permissionSelector = (
+    <PermissionModeSelector
+      ref={permissionSelectorRef}
+      workDir={workDir}
+      compact={isMobileComposer}
+      trigger={isMobileComposer ? 'elevatedOnly' : 'quiet'}
+      // On the desktop the trigger sits at the right of the card: a menu that
+      // opened rightwards from it ran past the card and the window edge.
+      menuAlign={isMobileComposer ? 'left' : 'right'}
+      lean={isLean}
+      value={draftPermissionMode}
+      onChange={setDraftPermissionMode}
+    />
+  )
+
   const capabilityMenu = useCapabilityMenu({
     open: plusMenuOpen,
     cwd: workDir,
     references: composerReferences,
+    lean: isLean,
+    // While the conversation is being created the mode is fixed, as it will be after.
+    agentProfile: leanModeEnabled && !isMobileComposer
+      ? { value: agentProfile, onChange: isSubmitting ? undefined : changeAgentProfile }
+      : undefined,
     handlers: {
       onInsertMention: (reference) => {
         const cursorPos = composerRef.current?.getSelectionOffsets().start ?? input.length
@@ -707,62 +1178,86 @@ export function EmptySession() {
           composerRef.current?.setSelectionOffsets(replacement.cursorPos)
         })
       },
-      onInsertPromptSeed: (text) => {
-        const next = input.trim() ? `${input}\n${text}` : text
-        setInput(next)
-        requestAnimationFrame(() => {
-          composerRef.current?.focus()
-          composerRef.current?.setSelectionOffsets(next.length)
-        })
-      },
       onAttachment: openAttachmentPicker,
       onSlashTrigger: insertSlashCommand,
       onSaveWorkflow: () => setLocalSlashPanel('save-workflow'),
+      onReferencesChanged: () => setReferencesVersion(version => version + 1),
       onClose: () => setPlusMenuOpen(false),
     },
   })
 
+  const heroProject = workDir ? (resolveProjectDisplayName(workDir) ?? projectTitle(workDir)) : null
+  // A draft already typed is kept: the suggestion goes on a new line.
+  const insertSuggestion = (text: string) => {
+    const next = input.trim() ? `${input}\n${text}` : text
+    setInput(next)
+    requestAnimationFrame(() => {
+      composerRef.current?.focus()
+      composerRef.current?.setSelectionOffsets(next.length)
+    })
+  }
+
   return (
+    // The new-session page (「素」, su-12). On desktop the composer sits in the
+    // flow between the hero (bottom-aligned) and the starter row (top-aligned),
+    // which puts it just above the middle of the page. On a phone it stays
+    // docked to the bottom edge, above the keyboard, and the project sits at
+    // the top, where the keyboard cannot cover it and it is read before Send.
     <div className="relative flex flex-1 flex-col overflow-hidden bg-[var(--color-surface)]">
-      <div className={`flex flex-1 flex-col items-center justify-center ${
-        isMobileComposer ? 'px-6 pb-[230px] pt-10' : 'p-8 pb-32'
+      {isMobileComposer && (
+        <div data-testid="empty-session-mobile-launch" className="flex shrink-0 justify-center px-4 pt-1">
+            <RepositoryLaunchControls
+              ref={repositoryLaunchRef}
+              workDir={workDir}
+              onWorkDirChange={handleWorkDirChange}
+              branch={selectedBranch}
+              onBranchChange={setSelectedBranch}
+              useWorktree={useWorktree}
+              onUseWorktreeChange={setUseWorktree}
+              onLaunchReadyChange={setRepositoryLaunchReady}
+              disabled={isSubmitting}
+              visible={visible}
+            />
+        </div>
+      )}
+      <div className={`flex flex-col items-center text-center ${
+        isMobileComposer
+          ? 'min-h-0 flex-1 justify-center overflow-hidden px-6 pb-[230px] pt-6'
+          : 'min-h-0 flex-1 justify-end overflow-hidden px-8 pb-7 pt-8'
       }`}>
-        <div className={`flex flex-col items-center text-center ${
-          isMobileComposer ? 'max-w-[300px] gap-2.5' : 'max-w-[420px] gap-2.5'
-        }`}>
-          <BrandSeal size="lg" className={isMobileComposer ? undefined : 'h-12 w-12'} />
+        <div className={`flex flex-col items-center gap-2.5 ${isMobileComposer ? 'max-w-[300px]' : 'max-w-[600px]'}`}>
+          <BrandSeal size={isMobileComposer ? 'md' : 'lg'} />
           <h1
-            className="text-2xl font-bold tracking-tight text-[var(--color-text-primary)]"
-            style={{ fontFamily: 'var(--font-headline)' }}
-          >
-            {t('empty.title')}
-          </h1>
-          <p
-            className={`mx-auto -mt-1 text-[var(--color-text-secondary)] ${
-              isMobileComposer ? 'max-w-[280px] text-sm leading-6' : 'text-[15px] leading-[1.7]'
+            className={`mt-2 font-semibold leading-[1.3] tracking-tight text-[var(--color-text-primary)] ${
+              isMobileComposer ? 'text-[22px]' : 'text-[26px]'
             }`}
-            style={{ fontFamily: 'var(--font-body)' }}
           >
-            {t('empty.subtitle')}
+            {heroProject
+              ? t('empty.heroTitle', { project: heroProject })
+              : t('empty.heroTitleNoProject')}
+          </h1>
+          <p className="text-[14px] leading-6 text-[var(--color-text-tertiary)]">
+            {t('empty.heroSubtitle')}
           </p>
         </div>
       </div>
 
       <div
         data-testid="empty-session-composer-shell"
-        className={`absolute left-0 right-0 z-[var(--z-nav)] flex justify-center ${
+        className={`flex justify-center ${
         isMobileComposer
-          ? 'bottom-0 px-3 pb-[calc(env(safe-area-inset-bottom)+10px)]'
-          : 'bottom-4 px-8'
+          ? 'absolute bottom-0 left-0 right-0 z-[var(--z-nav)] px-3 pb-[calc(env(safe-area-inset-bottom)+10px)]'
+          : 'relative z-[var(--z-raised)] shrink-0 px-8'
       }`}
       >
         <div className={`flex w-full flex-col ${isMobileComposer ? 'max-w-none' : 'max-w-3xl'}`}>
           <div
             ref={panelRef}
             data-testid="empty-session-composer-panel"
-            className={`glass-panel glass-panel--composer relative flex flex-col gap-3 overflow-visible rounded-[var(--radius-2xl)] ${
-              isMobileComposer ? 'p-3' : 'p-0'
-            } ${isDragActive ? 'composer-drop-target-active' : ''}`}
+            // Kept identical to ChatInput's floating card: `--radius-xl`, the
+            // composer shadow step from `glass-panel--composer`, and an 8px
+            // inset that the editor and toolbar pad themselves within.
+            className={`glass-panel glass-panel--composer relative flex flex-col overflow-visible rounded-[var(--radius-xl)] p-2 ${isDragActive ? 'composer-drop-target-active' : ''}`}
             {...dragHandlers}
           >
             {isDragActive && (
@@ -773,7 +1268,7 @@ export function EmptySession() {
               />
             )}
 
-            <div className={isMobileComposer ? 'contents' : 'flex flex-col gap-3 p-4'}>
+            <div className="contents">
               {fileSearchOpen && (
                 <ComposerReferenceMenu
                   ref={fileSearchRef}
@@ -842,10 +1337,12 @@ export function EmptySession() {
               )}
 
               {attachments.length > 0 && (
-                <AttachmentGallery attachments={attachments} variant="composer" onRemove={removeAttachment} />
+                <div className="px-2 pt-2">
+                  <AttachmentGallery attachments={attachments} variant="composer" onRemove={removeAttachment} />
+                </div>
               )}
 
-              <div className="flex items-start gap-3">
+              <div className="flex items-start">
                 <MentionComposer
                   ref={composerRef}
                   rootRef={composerContainerRef}
@@ -857,12 +1354,12 @@ export function EmptySession() {
                   onPaste={handleComposerPaste}
                   onCompositionStart={dictation.compositionHandlers.onCompositionStart}
                   onCompositionEnd={dictation.compositionHandlers.onCompositionEnd}
-                  placeholder={t('empty.placeholder')}
+                  placeholder={capabilityMenu.agentTeamArmed ? t('chat.capabilities.teamPlaceholder') : t('empty.placeholder')}
                   // `min-w-0`: see ChatInput — an unbreakable long run (URL,
                   // hash) otherwise grows this flex item past the panel.
                   className="flex-1 min-w-0"
-                  editorClassName={`overflow-y-auto leading-relaxed text-[var(--color-text-primary)] ${
-                    isMobileComposer ? 'max-h-[132px] min-h-[72px] py-1.5 text-base' : 'max-h-[200px] py-2'
+                  editorClassName={`chat-reading-text min-h-[72px] overflow-y-auto px-2.5 pb-1 pt-2 text-[var(--color-text-primary)] ${
+                    isMobileComposer ? 'max-h-[132px]' : 'max-h-[200px]'
                   }`}
                   aria={{
                     role: isSlashMenuVisible || fileSearchOpen ? 'combobox' : 'textbox',
@@ -876,56 +1373,85 @@ export function EmptySession() {
                 />
               </div>
 
-              <div className={`border-t border-[var(--color-border-separator)] pt-3 ${
-                isMobileComposer ? 'flex flex-wrap items-center gap-2' : 'flex items-center justify-between'
-              }`}>
-                <div className="flex min-w-0 shrink items-center gap-2">
+              {/* No divider: the editor's bottom inset and this row's top inset
+                  separate the two, exactly as in ChatInput. */}
+              {/* The row has to hold the project, branch and model next to the
+                  fixed controls, and the three had one budget: everything else
+                  was `shrink-0`, so the project and branch paid for every
+                  control that was added ("claude-cod…" / "…in"). With the lean
+                  control on the row (desktop; a phone keeps it in the "+" sheet),
+                  the trailing group takes what the leading
+                  one leaves and gives up only the model's name, down to a floor;
+                  when even that does not fit, it wraps to its own line instead
+                  of squeezing the location. Without the control the row is the
+                  one it always was. */}
+              <div
+                data-testid="empty-session-toolbar"
+                className={`flex min-w-0 items-center justify-between pt-1.5 ${
+                  isMobileComposer ? 'flex-wrap gap-1' : 'gap-2'
+                }`}
+              >
+                {dictationLive && <VoiceRecordingBar dictation={dictation} mobile={isMobileComposer} />}
+                <div data-testid="empty-session-toolbar-leading" hidden={dictationLive} className="flex min-w-0 shrink items-center gap-1">
                   <div ref={plusMenuRef} className="relative shrink-0">
-                    <IconButton
-                      icon="add"
-                      label={t('chat.composerTools')}
-                      showTooltip={false}
-                      tone="secondary"
-                      size={isMobileComposer ? 'xl' : 'md'}
-                      className={isMobileComposer ? 'h-11 w-11' : undefined}
+                    {/* Hand-rolled like ChatInput's: a quiet 28px square on
+                        desktop, the 44px touch minimum on a phone. */}
+                    <button
+                      type="button"
+                      onClick={() => setPlusMenuOpen((prev) => !prev)}
+                      aria-label={t('chat.composerTools')}
                       aria-haspopup="menu"
                       aria-expanded={plusMenuOpen}
-                      onClick={() => setPlusMenuOpen((prev) => !prev)}
-                    />
+                      className={`inline-flex items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] ${
+                        plusMenuOpen ? 'bg-[var(--color-surface-hover)] text-[var(--color-text-primary)]' : ''
+                      } ${isMobileComposer ? 'h-11 w-11' : 'h-7 w-7'}`}
+                    >
+                      <Plus size={isMobileComposer ? 18 : 16} strokeWidth={1.75} aria-hidden="true" />
+                    </button>
 
-                    {plusMenuOpen && (
+                    {plusMenuOpen && !isMobileComposer && (
                       <ComposerCapabilityMenu
                         cwd={workDir}
                         referencesLoading={referenceCurrent?.loading ?? true}
                         referencesError={referenceCurrent?.error}
-                        onSelectFile={mention => {
-                          const cursorPos = composerRef.current?.getSelectionOffsets().start ?? input.length
-                          const inserted = insertMentionIntoText(input, mentions, cursorPos, cursorPos, mention)
-                          setInput(inserted.text)
-                          setMentions(inserted.mentions)
-                          requestAnimationFrame(() => {
-                            composerRef.current?.focus()
-                            composerRef.current?.setSelectionOffsets(inserted.cursorPos)
-                          })
-                        }}
+                        onSelectFile={insertSelectedFileMention}
                         id={capabilityMenuId}
                         sections={capabilityMenu.sections}
                         onAction={capabilityMenu.onAction}
                         onClose={() => setPlusMenuOpen(false)}
-                        mobile={isMobileComposer}
                       />
                     )}
+                    {isMobileComposer && (
+                      <MobileComposerSheet
+                        open={plusMenuOpen}
+                        onClose={() => setPlusMenuOpen(false)}
+                        menuId={capabilityMenuId}
+                        settings={mobileComposerSettings}
+                        sections={capabilityMenu.sections}
+                        cwd={workDir}
+                        referencesLoading={referenceCurrent?.loading ?? true}
+                        referencesError={referenceCurrent?.error}
+                        onSelectFile={insertSelectedFileMention}
+                        onAction={capabilityMenu.onAction}
+                      />
+                    )}
+                    <ComputerUseEnableDialog {...capabilityMenu.computerUseConsent} />
+                    <AgentTeamsCostDialog allowDismiss {...capabilityMenu.agentTeamsNotice} />
                   </div>
 
-                  <PermissionModeSelector
-                    workDir={workDir}
-                    compact={isMobileComposer}
-                    value={draftPermissionMode}
-                    onChange={setDraftPermissionMode}
-                  />
+                  {capabilityMenu.agentTeamArmed ? (
+                    <AgentTeamChip touch={isMobileComposer} onRemove={capabilityMenu.disarmAgentTeam} />
+                  ) : null}
+
+                  {isLean && !isMobileComposer ? (
+                    <AgentProfileChip onRemove={isSubmitting ? undefined : () => changeAgentProfile('standard')} />
+                  ) : null}
+
+                  {isMobileComposer ? permissionSelector : null}
 
                   {!isMobileComposer && (
                     <RepositoryLaunchControls
+                      ref={repositoryLaunchRef}
                       workDir={workDir}
                       onWorkDirChange={handleWorkDirChange}
                       branch={selectedBranch}
@@ -934,27 +1460,33 @@ export function EmptySession() {
                       onUseWorktreeChange={setUseWorktree}
                       onLaunchReadyChange={setRepositoryLaunchReady}
                       disabled={isSubmitting}
+                      visible={visible}
                       placement="toolbar"
                     />
                   )}
                 </div>
 
-                <div className={`${isMobileComposer ? 'flex min-w-0 flex-1 items-center justify-end gap-2' : 'flex shrink-0 items-center gap-3'}`}>
-                  <ContextUsageIndicator
-                    chatState="idle"
-                    messageCount={0}
-                    runtimeSelectionKey={draftRuntimeSelectionKey}
-                    fallbackModelLabel={draftModelLabel}
-                    draft
-                    compact={isMobileComposer}
-                  />
+                {/* A draft has used none of its context, so the usage ring is not
+                    on this row: it appears with the session's first reading. */}
+                <div
+                  data-testid="empty-session-toolbar-trailing"
+                  hidden={dictationLive}
+                  className={isMobileComposer ? 'flex min-w-0 flex-1 items-center justify-end gap-1' : 'flex shrink-0 items-center gap-1'}
+                >
+                  {leanModeEnabled && isMobileComposer && <AgentProfileControl
+                    ref={agentProfileRef}
+                    value={agentProfile}
+                    onChange={changeAgentProfile}
+                    disabled={isSubmitting}
+                  />}
+                  {!isMobileComposer ? permissionSelector : null}
                   <ModelSelector ref={modelSelectorRef} runtimeKey={DRAFT_RUNTIME_SELECTION_KEY} disabled={isSubmitting} compact={isMobileComposer} />
                   <VoiceInputButton dictation={dictation} blocked={isSubmitting} mobile={isMobileComposer} />
                   {/* Kept identical to ChatInput's send button — same
                       component, shape, size and icon. See the note there for
                       why the label went away. */}
                   <Button
-                    variant="primary"
+                    variant="accent"
                     size="base"
                     shape="circle"
                     onClick={handleSubmit}
@@ -962,28 +1494,25 @@ export function EmptySession() {
                     aria-label={t('common.run')}
                     title={t('common.run')}
                     className={`shrink-0 ${isMobileComposer ? 'h-11 w-11' : ''}`}
-                    icon={<span className="material-symbols-outlined text-[18px]">arrow_upward</span>}
+                    icon={<ArrowUp data-icon="send" size={isMobileComposer ? 18 : 16} strokeWidth={2} aria-hidden="true" />}
                   />
                 </div>
               </div>
             </div>
 
           </div>
-
-          {isMobileComposer && (
-            <RepositoryLaunchControls
-              workDir={workDir}
-              onWorkDirChange={handleWorkDirChange}
-              branch={selectedBranch}
-              onBranchChange={setSelectedBranch}
-              useWorktree={useWorktree}
-              onUseWorktreeChange={setUseWorktree}
-              onLaunchReadyChange={setRepositoryLaunchReady}
-              disabled={isSubmitting}
-            />
-          )}
         </div>
       </div>
+
+      {!isMobileComposer && (
+        <div className="flex min-h-0 flex-[1.3] flex-col items-center overflow-y-auto px-8 pb-8 pt-4">
+          <NewSessionStarter
+            projectPath={workDir || null}
+            projectLabel={heroProject}
+            onSuggestion={insertSuggestion}
+          />
+        </div>
+      )}
 
       <ComposerReferenceDetail mention={referenceDetail} onClose={() => setReferenceDetail(null)} />
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />

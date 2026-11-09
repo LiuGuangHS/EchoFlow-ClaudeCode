@@ -5,110 +5,115 @@ import { createElectronHost } from './electronHost'
 import { PUBLIC_ACCESS_CONSENT_VERSION, type WorkspaceBrowserMenuOptions } from './types'
 
 describe('electron desktop host', () => {
-  it('pulls pending config imports and subscribes for later deep links', async () => {
-    const invoke = vi.fn().mockResolvedValue({ config: { version: 1 } })
-    const handlers = new Map<string, (payload: unknown) => void>()
-    const subscribe = vi.fn(async (channel: string, handler: (payload: unknown) => void) => {
-      handlers.set(channel, handler)
-      return () => handlers.delete(channel)
-    })
+  it('restores config import take, acknowledgement and pending notifications over validated IPC', async () => {
+    const pending = { invalid: true }
+    const invoke = vi.fn().mockResolvedValue(pending)
+    const unlisten = vi.fn()
+    const subscribe = vi.fn().mockResolvedValue(unlisten)
     const host = createElectronHost({ invoke, subscribe })
-    const onPending = vi.fn()
-
-    await expect(host.configImport.take()).resolves.toEqual({ config: { version: 1 } })
-    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.configImportTake, undefined)
-    const unlisten = await host.configImport.onPending(onPending)
-    handlers.get(ELECTRON_EVENT_CHANNELS.deepLink)?.(undefined)
-    expect(onPending).toHaveBeenCalledOnce()
+    expect(await host.configImport.take()).toEqual(pending)
     await host.configImport.ack()
-    expect(invoke).toHaveBeenLastCalledWith(ELECTRON_IPC_CHANNELS.configImportAck, undefined)
-    unlisten()
+    const handler = vi.fn()
+    expect(await host.configImport.onPending(handler)).toBe(unlisten)
+    subscribe.mock.calls[0][1]()
+    expect(handler).toHaveBeenCalledOnce()
+    expect(invoke.mock.calls).toEqual([
+      [ELECTRON_IPC_CHANNELS.configImportTake, undefined],
+      [ELECTRON_IPC_CHANNELS.configImportAck, undefined],
+    ])
+    expect(subscribe).toHaveBeenCalledWith(ELECTRON_EVENT_CHANNELS.deepLink, expect.any(Function))
+    const { browserHost } = await import('./browserHost')
+    expect(await browserHost.configImport.take()).toBeNull()
+    await browserHost.configImport.ack()
+    expect(await browserHost.configImport.onPending(handler)).toBeTypeOf('function')
   })
-  it('opens site sign-in for the requested endpoint without sending credentials through renderer IPC', async () => {
-    const invoke = vi.fn().mockResolvedValue('authenticated')
-    const host = createElectronHost({ invoke, subscribe: vi.fn() })
-
-    await expect(host.echoFlow.openLogin()).resolves.toBe('authenticated')
-    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint: 'main' })
-
-    invoke.mockClear()
-    await expect(host.echoFlow.openLogin('dedicated')).resolves.toBe('authenticated')
-    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint: 'dedicated' })
+  it('only exposes validated configuration, status and cancellation for idle power actions', async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined)
+    const subscribe = vi.fn()
+    const host = createElectronHost({ invoke, subscribe })
+    const settings = { action: 'sleep' as const, scope: 'any' as const, countdownSeconds: 60 as const }
+    await host.power.getIdleActionState()
+    await host.power.configureIdleAction(settings)
+    await host.power.cancelIdleAction()
+    const handler = vi.fn()
+    await host.power.onIdleActionState(handler)
+    expect(invoke.mock.calls).toEqual([
+      [ELECTRON_IPC_CHANNELS.powerGetIdleActionState, undefined],
+      [ELECTRON_IPC_CHANNELS.powerConfigureIdleAction, settings],
+      [ELECTRON_IPC_CHANNELS.powerCancelIdleAction, undefined],
+    ])
+    expect(subscribe).toHaveBeenCalledWith(ELECTRON_EVENT_CHANNELS.powerIdleActionState, handler)
+    for (const invalid of [{ ...settings, action: 'reboot' }, { ...settings, countdownSeconds: -1 }, { ...settings, command: 'shutdown' }]) {
+      await expect(host.power.configureIdleAction(invalid as never)).rejects.toThrow('Invalid Electron IPC payload')
+    }
+    const { isElectronIpcChannelAllowedForPetWindow } = await import('../../../electron/ipc/capabilities')
+    for (const channel of [ELECTRON_IPC_CHANNELS.powerGetIdleActionState, ELECTRON_IPC_CHANNELS.powerConfigureIdleAction, ELECTRON_IPC_CHANNELS.powerCancelIdleAction]) {
+      expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
+    }
+    const { browserHost } = await import('./browserHost')
+    await expect(browserHost.power.configureIdleAction(settings)).rejects.toThrow('desktop app runtime')
   })
-  it('forwards a failed site sign-in result to the renderer', async () => {
-    const invoke = vi.fn().mockResolvedValue('failed')
-    const host = createElectronHost({ invoke, subscribe: vi.fn() })
 
-    await expect(host.echoFlow.openLogin()).resolves.toBe('failed')
-  })
-  it('signs out one endpoint at a time so the other line stays connected', async () => {
+  it('routes prevent-sleep preferences through boolean-only IPC and excludes browser/pet callers', async () => {
     const invoke = vi.fn().mockResolvedValue(undefined)
     const host = createElectronHost({ invoke, subscribe: vi.fn() })
-
-    await host.echoFlow.signOut()
-    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint: 'main' })
-
-    invoke.mockClear()
-    await host.echoFlow.signOut('dedicated')
-    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint: 'dedicated' })
+    await host.power.setPreventSleepWhileRunning(true)
+    await host.power.setPreventSleepWhileRunning(false)
+    expect(invoke.mock.calls).toEqual([
+      [ELECTRON_IPC_CHANNELS.powerSetPreventSleepWhileRunning, true],
+      [ELECTRON_IPC_CHANNELS.powerSetPreventSleepWhileRunning, false],
+    ])
+    await expect(host.power.setPreventSleepWhileRunning('true' as never)).rejects.toThrow('Invalid Electron IPC payload')
+    const { browserHost } = await import('./browserHost')
+    await expect(browserHost.power.setPreventSleepWhileRunning(true)).rejects.toThrow('desktop app runtime')
   })
-  it('asks the host when the startup restore has settled without reading any credential', async () => {
-    let settle: (restored: boolean) => void = () => {}
-    const invoke = vi.fn().mockReturnValue(new Promise<boolean>((resolve) => { settle = resolve }))
-    const host = createElectronHost({ invoke, subscribe: vi.fn() })
-
-    const restored = host.echoFlow.whenAccountRestored()
-    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored, undefined)
-
-    settle(true)
-    await expect(restored).resolves.toBe(true)
-  })
-  it('routes Claude Code runtime settings through narrow runtime IPC boundaries', async () => {
-    const status = { defaultRuntimeId: 'bundled' as const, hasInstalledRuntime: false }
-    const invoke = vi.fn()
-      .mockResolvedValueOnce(status)
-      .mockResolvedValueOnce({ defaultRuntimeId: 'installed', hasInstalledRuntime: true })
-      .mockResolvedValueOnce(status)
-    const host = createElectronHost({ invoke, subscribe: vi.fn() })
-
-    await expect(host.runtime.getClaudeCode()).resolves.toEqual(status)
-    await expect(host.runtime.chooseClaudeCode()).resolves.toEqual({
-      defaultRuntimeId: 'installed',
-      hasInstalledRuntime: true,
-    })
-    await expect(host.runtime.setClaudeCode('bundled')).resolves.toEqual(status)
-
-    expect(invoke).toHaveBeenNthCalledWith(1, ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode, undefined)
-    expect(invoke).toHaveBeenNthCalledWith(2, ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode, undefined)
-    expect(invoke).toHaveBeenNthCalledWith(3, ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode, 'bundled')
-  })
-
-  it('routes runtime discovery through fixed payload IPC methods', async () => {
-    const result = { installations: [{ productId: 'claude-code', source: 'current-system', status: 'not-found' }] }
-    const installation = { productId: 'codex', source: 'custom-path', status: 'available', version: '1.2.3' }
-    const invoke = vi.fn().mockResolvedValueOnce(result).mockResolvedValueOnce(result).mockResolvedValueOnce(installation)
-    const host = createElectronHost({ invoke, subscribe: vi.fn() })
-    await expect(host.runtimeDiscovery.list()).resolves.toEqual(result)
-    await expect(host.runtimeDiscovery.list({ includeWsl: true })).resolves.toEqual(result)
-    await expect(host.runtimeDiscovery.probePath('/opt/codex')).resolves.toEqual(installation)
-    expect(invoke).toHaveBeenNthCalledWith(1, ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, undefined)
-    expect(invoke).toHaveBeenNthCalledWith(2, ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, { includeWsl: true })
-    expect(invoke).toHaveBeenNthCalledWith(3, ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath, '/opt/codex')
+  it('routes migration preview, background start, status, cancellation and progress over narrow IPC', async () => {
+    const invoke = vi.fn().mockResolvedValue(null)
+    const unlisten = vi.fn()
+    const subscribe = vi.fn().mockResolvedValue(unlisten)
+    const host = createElectronHost({ invoke, subscribe })
+    await host.appMode.migration.prepare('D:\\cc-haha-data')
+    await host.appMode.migration.start('migration-1')
+    await host.appMode.migration.status()
+    await host.appMode.migration.cancel('migration-1')
+    expect(invoke.mock.calls).toEqual([
+      [ELECTRON_IPC_CHANNELS.migrationPrepare, { targetDir: 'D:\\cc-haha-data' }],
+      [ELECTRON_IPC_CHANNELS.migrationStart, { id: 'migration-1' }],
+      [ELECTRON_IPC_CHANNELS.migrationStatus, undefined],
+      [ELECTRON_IPC_CHANNELS.migrationCancel, { id: 'migration-1' }],
+    ])
+    const handler = vi.fn()
+    expect(await host.appMode.migration.onProgress(handler)).toBe(unlisten)
+    expect(subscribe).toHaveBeenCalledWith(ELECTRON_EVENT_CHANNELS.migrationProgress, handler)
+    await expect(host.appMode.migration.start('')).rejects.toThrow('Invalid Electron IPC payload')
+    await expect(host.appMode.migration.prepare('bad\u0000path')).rejects.toThrow('Invalid Electron IPC payload')
+    expect(invoke).toHaveBeenCalledTimes(4)
   })
 
   it('routes public access through validated local IPC without exposing management in browsers', async () => {
-    const invoke = vi.fn().mockResolvedValue({ hasCredential: true })
+    const invoke = vi.fn().mockResolvedValue({ state: 'disabled' })
     const host = createElectronHost({ invoke, subscribe: vi.fn() })
-    await host.publicAccess.saveCredential('fixture-ngrok-token')
     await host.publicAccess.start(PUBLIC_ACCESS_CONSENT_VERSION)
     await host.publicAccess.setAutoStart(false)
     await host.publicAccess.stop()
-    expect(invoke).toHaveBeenNthCalledWith(1, ELECTRON_IPC_CHANNELS.publicAccessSaveCredential, 'fixture-ngrok-token')
-    expect(invoke).toHaveBeenNthCalledWith(2, ELECTRON_IPC_CHANNELS.publicAccessStart, PUBLIC_ACCESS_CONSENT_VERSION)
-    expect(invoke).toHaveBeenNthCalledWith(3, ELECTRON_IPC_CHANNELS.publicAccessSetAutoStart, false)
-    expect(invoke).toHaveBeenNthCalledWith(4, ELECTRON_IPC_CHANNELS.publicAccessStop, undefined)
+    expect(invoke).toHaveBeenNthCalledWith(1, ELECTRON_IPC_CHANNELS.publicAccessStart, PUBLIC_ACCESS_CONSENT_VERSION)
+    expect(invoke).toHaveBeenNthCalledWith(2, ELECTRON_IPC_CHANNELS.publicAccessSetAutoStart, false)
+    expect(invoke).toHaveBeenNthCalledWith(3, ELECTRON_IPC_CHANNELS.publicAccessStop, undefined)
     const { browserHost } = await import('./browserHost')
     await expect(browserHost.publicAccess.getStatus()).rejects.toThrow('desktop app runtime')
+  })
+
+  it('carries Cloudflare tunnel configuration through validated IPC and rejects unsafe local targets', async () => {
+    const invoke = vi.fn().mockResolvedValue(null)
+    const host = createElectronHost({ invoke, subscribe: vi.fn() })
+    const configuration = { mode: 'named' as const, customUrl: 'https://phone.example.test', localPort: 17463 }
+    await host.publicAccess.configure(configuration)
+    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.publicAccessConfigure, configuration)
+    await expect(host.publicAccess.configure({ ...configuration, customUrl: 'http://relay.example.test' })).rejects.toThrow('Invalid Electron IPC payload')
+    await expect(host.publicAccess.configure({ ...configuration, localHost: '0.0.0.0' } as never)).rejects.toThrow('Invalid Electron IPC payload')
+    expect(invoke).toHaveBeenCalledTimes(1)
+    const { browserHost } = await import('./browserHost')
+    await expect(browserHost.publicAccess.configure(configuration)).rejects.toThrow('desktop app runtime')
   })
 
   it('carries a terminal startup identity through the production IPC validator and early events', async () => {
@@ -194,27 +199,15 @@ describe('electron desktop host', () => {
 
     await host.shell.open('https://example.com')
     await host.shell.openPath('/tmp/report.md')
-    await host.shell.showItemInFolder('/tmp/report.md')
     await host.dialogs.open({ directory: true, multiple: false, title: 'Choose folder' })
 
     expect(invoke).toHaveBeenNthCalledWith(1, ELECTRON_IPC_CHANNELS.shellOpen, 'https://example.com')
     expect(invoke).toHaveBeenNthCalledWith(2, ELECTRON_IPC_CHANNELS.shellOpenPath, '/tmp/report.md')
-    expect(invoke).toHaveBeenNthCalledWith(3, ELECTRON_IPC_CHANNELS.shellShowItemInFolder, '/tmp/report.md')
-    expect(invoke).toHaveBeenNthCalledWith(4, ELECTRON_IPC_CHANNELS.dialogOpen, {
+    expect(invoke).toHaveBeenNthCalledWith(3, ELECTRON_IPC_CHANNELS.dialogOpen, {
       directory: true,
       multiple: false,
       title: 'Choose folder',
     })
-  })
-
-  it('rejects a non-string reveal target before it reaches Electron IPC', async () => {
-    const invoke = vi.fn()
-    const host = createElectronHost({ invoke, subscribe: vi.fn() })
-
-    await expect(host.shell.showItemInFolder({ path: '/tmp/report.md' } as unknown as string)).rejects.toThrow(
-      'Invalid Electron IPC payload',
-    )
-    expect(invoke).not.toHaveBeenCalled()
   })
 
   it('routes clipboard reads and writes through narrow IPC channels', async () => {
@@ -278,18 +271,6 @@ describe('electron desktop host', () => {
     expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.windowStartDragging, undefined)
   })
 
-  it('opens dedicated trace windows through a narrow IPC channel', async () => {
-    const invoke = vi.fn().mockResolvedValue(undefined)
-    const host = createElectronHost({
-      invoke,
-      subscribe: vi.fn(),
-    })
-
-    await host.trace?.openWindow('session-123')
-
-    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.traceOpenWindow, 'session-123')
-  })
-
   it('routes preview zoom through the preview IPC channel', async () => {
     const invoke = vi.fn().mockResolvedValue(undefined)
     const host = createElectronHost({
@@ -311,15 +292,13 @@ describe('electron desktop host', () => {
     await host.browser.create('wb-1', {
       storageId: 'wsb-1',
       url: 'https://example.com',
-      bounds: { x: 0, y: 40, width: 800, height: 600 },
-      visible: false,
+      webContentsId: 7,
     })
     await host.browser.navigate('wb-1', 'https://example.com/next')
     await host.browser.goBack('wb-1')
     await host.browser.goForward('wb-1')
     await host.browser.reload('wb-1', { ignoreCache: true })
     await host.browser.stop('wb-1')
-    await host.browser.setBounds('wb-1', { x: 1, y: 2, width: 3, height: 4 })
     await host.browser.setVisible('wb-1', false)
     await host.browser.setZoom('wb-1', 1.25)
     await host.browser.find('wb-1', 'invoice', { matchCase: true })
@@ -334,16 +313,14 @@ describe('electron desktop host', () => {
       [ELECTRON_IPC_CHANNELS.workspaceBrowserCreate, {
         tabId: 'wb-1',
         storageId: 'wsb-1',
+        webContentsId: 7,
         url: 'https://example.com',
-        bounds: { x: 0, y: 40, width: 800, height: 600 },
-        visible: false,
       }],
       [ELECTRON_IPC_CHANNELS.workspaceBrowserNavigate, { tabId: 'wb-1', url: 'https://example.com/next' }],
       [ELECTRON_IPC_CHANNELS.workspaceBrowserGoBack, { tabId: 'wb-1' }],
       [ELECTRON_IPC_CHANNELS.workspaceBrowserGoForward, { tabId: 'wb-1' }],
       [ELECTRON_IPC_CHANNELS.workspaceBrowserReload, { tabId: 'wb-1', ignoreCache: true }],
       [ELECTRON_IPC_CHANNELS.workspaceBrowserStop, { tabId: 'wb-1' }],
-      [ELECTRON_IPC_CHANNELS.workspaceBrowserSetBounds, { tabId: 'wb-1', bounds: { x: 1, y: 2, width: 3, height: 4 } }],
       [ELECTRON_IPC_CHANNELS.workspaceBrowserSetVisible, { tabId: 'wb-1', visible: false }],
       [ELECTRON_IPC_CHANNELS.workspaceBrowserSetZoom, { tabId: 'wb-1', factor: 1.25 }],
       [ELECTRON_IPC_CHANNELS.workspaceBrowserFind, { tabId: 'wb-1', text: 'invoice', options: { matchCase: true } }],
@@ -362,13 +339,12 @@ describe('electron desktop host', () => {
     expect(host.capabilities.workspaceBrowser).toBe(true)
   })
 
-  it('returns a presentation snapshot through its own addressed IPC without requesting a chat capture', async () => {
-    const invoke = vi.fn().mockResolvedValue('data:image/png;base64,BACKDROP')
+  it('refuses to register a page without the guest it names', async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined)
     const host = createElectronHost({ invoke, subscribe: vi.fn() })
-    await expect(host.browser.snapshot('wb-1')).resolves.toBe('data:image/png;base64,BACKDROP')
-    expect(invoke.mock.calls).toEqual([[ELECTRON_IPC_CHANNELS.workspaceBrowserSnapshot, { tabId: 'wb-1' }]])
-    await expect(host.browser.snapshot('')).rejects.toThrow('Invalid Electron IPC payload')
-    expect(invoke).toHaveBeenCalledTimes(1)
+    await expect(host.browser.create('wb-1', { storageId: 'wsb-1', webContentsId: 0 }))
+      .rejects.toThrow('Invalid Electron IPC payload')
+    expect(invoke).not.toHaveBeenCalled()
   })
 
   it('rejects an unaddressed browser call before it reaches Electron IPC', async () => {

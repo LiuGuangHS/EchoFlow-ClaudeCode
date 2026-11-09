@@ -36,6 +36,7 @@ import {
 import type { ComposerMention } from '../../lib/composerMentions'
 import { mentionsEqual } from '../../lib/composerMentions'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { COMPOSER_KBD } from './composerMenuStyles'
 
 export type MentionComposerHandle = {
   focus: () => void
@@ -48,8 +49,11 @@ export type MentionComposerHandle = {
    * Replaces the projected-text range with plain text as one editor
    * transaction, so a single undo removes it (unlike a `value` rewrite, which
    * resets history). The caret lands after the inserted text.
+   *
+   * `flash` tints the new text for a moment, for writes the user did not type
+   * (dictation) and so has to find in the draft.
    */
-  insertTextAtOffsets: (start: number, end: number, text: string) => void
+  insertTextAtOffsets: (start: number, end: number, text: string, options?: { flash?: boolean }) => void
   /**
    * Content for the model: text with each mention pill serialized to
    * file paths or explicit skill/plugin requests. Read from the live document, so literal text that
@@ -77,6 +81,11 @@ export type MentionComposerProps = {
   aria?: Record<string, string | undefined>
   /** Exposes the wrapper div for outside-press dismissal checks. */
   rootRef?: React.Ref<HTMLDivElement>
+  /**
+   * Predicted next prompt drawn as ghost text while the draft is empty. The
+   * parent decides when it applies and handles accepting it (Tab).
+   */
+  ghostText?: string | null
 }
 
 /**
@@ -85,17 +94,122 @@ export type MentionComposerProps = {
  */
 const composerViewRegistry = new WeakMap<HTMLElement, EditorView>()
 const workflowKeywordPluginKey = new PluginKey('workflow-keyword-highlight')
+const insertionFlashPluginKey = new PluginKey<DecorationSet>('insertion-flash')
+const promptSuggestionPluginKey = new PluginKey('prompt-suggestion-ghost')
+/** Matches `composer-insertion-flash` in globals.css. */
+export const INSERTION_FLASH_MS = 1600
+
+/**
+ * Holds the one range `insertTextAtOffsets({ flash })` marked. Any other edit
+ * drops it: a tint that follows the text around after the user starts typing
+ * reads as a selection, not as "this is what just arrived".
+ */
+function insertionFlashPlugin() {
+  return new Plugin<DecorationSet>({
+    key: insertionFlashPluginKey,
+    state: {
+      init: () => DecorationSet.empty,
+      apply: (tr, current) => {
+        const range = tr.getMeta(insertionFlashPluginKey) as { from: number; to: number } | null | undefined
+        if (range === null) return DecorationSet.empty
+        if (range) {
+          return DecorationSet.create(tr.doc, [
+            Decoration.inline(range.from, range.to, { class: 'composer-insertion-flash' }),
+          ])
+        }
+        return tr.docChanged ? DecorationSet.empty : current
+      },
+    },
+    props: {
+      decorations: (state) => insertionFlashPluginKey.getState(state),
+    },
+  })
+}
 
 export function getComposerViewForTesting(element: HTMLElement | null): EditorView | undefined {
   return element ? composerViewRegistry.get(element) : undefined
 }
 
-function syncEmptyState(view: EditorView, placeholder?: string) {
+function isEmptyComposerDoc(doc: PMNode): boolean {
+  return doc.childCount === 1 && doc.firstChild!.content.size === 0
+}
+
+type PromptSuggestionGhost = {
+  text: string | null
+  /** IME composition in progress: keep widget DOM away from the composition. */
+  composing: boolean
+}
+
+function showsPromptSuggestion(doc: PMNode, ghost: PromptSuggestionGhost): boolean {
+  return !!ghost.text && !ghost.composing && isEmptyComposerDoc(doc)
+}
+
+function promptSuggestionWidget(text: string): HTMLElement {
+  const wrapper = document.createElement('span')
+  wrapper.className = 'composer-prompt-suggestion'
+  wrapper.setAttribute('contenteditable', 'false')
+  wrapper.setAttribute('aria-hidden', 'true')
+  wrapper.setAttribute('data-prompt-suggestion', 'true')
+  const label = document.createElement('span')
+  label.className = 'composer-prompt-suggestion-text'
+  label.textContent = text
+  const key = document.createElement('kbd')
+  key.className = `${COMPOSER_KBD} composer-prompt-suggestion-key`
+  key.textContent = 'Tab'
+  wrapper.append(label, key)
+  return wrapper
+}
+
+/**
+ * Ghost text for the predicted next prompt. A widget after the caret, so the
+ * caret stays at the start of the empty line and clicks fall through to the
+ * paragraph (`pointer-events: none` in globals.css).
+ */
+function promptSuggestionPlugin(ghostRef: { current: PromptSuggestionGhost }) {
+  return new Plugin({
+    key: promptSuggestionPluginKey,
+    props: {
+      decorations: (state) => {
+        const ghost = ghostRef.current
+        if (!ghost.text || !showsPromptSuggestion(state.doc, ghost)) return DecorationSet.empty
+        const text = ghost.text
+        return DecorationSet.create(state.doc, [
+          Decoration.widget(1, () => promptSuggestionWidget(text), {
+            side: 1,
+            key: `prompt-suggestion:${text}`,
+            ignoreSelection: true,
+          }),
+        ])
+      },
+      handleDOMEvents: {
+        // Drop the widget before the IME writes into the line, and bring it
+        // back only when the composition left the draft empty.
+        compositionstart: (view) => {
+          const wasShowing = showsPromptSuggestion(view.state.doc, ghostRef.current)
+          ghostRef.current = { ...ghostRef.current, composing: true }
+          if (wasShowing) view.dispatch(view.state.tr.setMeta(promptSuggestionPluginKey, true).setMeta('addToHistory', false))
+          return false
+        },
+        compositionend: (view) => {
+          ghostRef.current = { ...ghostRef.current, composing: false }
+          if (showsPromptSuggestion(view.state.doc, ghostRef.current)) {
+            view.dispatch(view.state.tr.setMeta(promptSuggestionPluginKey, true).setMeta('addToHistory', false))
+          }
+          return false
+        },
+      },
+    },
+  })
+}
+
+function syncEmptyState(view: EditorView, placeholder?: string, ghost?: PromptSuggestionGhost) {
   const doc = view.state.doc
-  const isEmpty = doc.childCount === 1 && doc.firstChild!.content.size === 0
+  const isEmpty = isEmptyComposerDoc(doc)
   if (isEmpty) {
     view.dom.setAttribute('data-empty', 'true')
-    view.dom.setAttribute('data-placeholder', placeholder ?? '')
+    // The ghost suggestion takes the placeholder's line; never draw both.
+    const ghostShowing = !!ghost && showsPromptSuggestion(doc, ghost)
+    view.dom.setAttribute('data-placeholder', ghostShowing ? '' : placeholder ?? '')
     view.dom.setAttribute('aria-placeholder', placeholder ?? '')
   } else {
     view.dom.removeAttribute('data-empty')
@@ -134,10 +248,12 @@ export const MentionComposer = forwardRef<MentionComposerHandle, MentionComposer
       aria,
       rootRef,
       disabled,
+      ghostText,
     } = props
 
     const containerRef = useRef<HTMLDivElement | null>(null)
     const viewRef = useRef<EditorView | null>(null)
+    const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const workflowKeywordTriggerEnabled = useSettingsStore(
       (state) => state.workflowKeywordTriggerEnabled,
     )
@@ -146,6 +262,7 @@ export const MentionComposer = forwardRef<MentionComposerHandle, MentionComposer
     const propsRef = useRef(props)
     propsRef.current = props
     const lastProjectedRef = useRef({ text: value, mentions })
+    const ghostRef = useRef<PromptSuggestionGhost>({ text: ghostText || null, composing: false })
 
     useEffect(() => {
       const container = containerRef.current
@@ -214,6 +331,8 @@ export const MentionComposer = forwardRef<MentionComposerHandle, MentionComposer
                 ),
               },
             }),
+            insertionFlashPlugin(),
+            promptSuggestionPlugin(ghostRef),
             history(),
             // Whole-pill deletion, ahead of baseKeymap's structural commands.
             keymap({
@@ -237,7 +356,7 @@ export const MentionComposer = forwardRef<MentionComposerHandle, MentionComposer
             lastProjectedRef.current = projected
             propsRef.current.onChange(projected.text, projected.mentions)
           }
-          syncEmptyState(currentView, propsRef.current.placeholder)
+          syncEmptyState(currentView, propsRef.current.placeholder, ghostRef.current)
         },
         attributes: {
           role: 'textbox',
@@ -250,9 +369,10 @@ export const MentionComposer = forwardRef<MentionComposerHandle, MentionComposer
 
       viewRef.current = view
       composerViewRegistry.set(view.dom, view)
-      syncEmptyState(view, propsRef.current.placeholder)
+      syncEmptyState(view, propsRef.current.placeholder, ghostRef.current)
 
       return () => {
+        if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
         composerViewRegistry.delete(view.dom)
         viewRef.current = null
         view.destroy()
@@ -280,8 +400,19 @@ export const MentionComposer = forwardRef<MentionComposerHandle, MentionComposer
         plugins: view.state.plugins,
         selection: TextSelection.near(doc.resolve(nextAnchor)),
       }))
-      syncEmptyState(view, propsRef.current.placeholder)
+      syncEmptyState(view, propsRef.current.placeholder, ghostRef.current)
     }, [value, mentions])
+
+    // A new, accepted or dismissed suggestion: an empty transaction redraws
+    // the widget and the placeholder that yields to it.
+    useEffect(() => {
+      const text = ghostText || null
+      if (ghostRef.current.text === text) return
+      ghostRef.current = { ...ghostRef.current, text }
+      const view = viewRef.current
+      if (!view) return
+      view.dispatch(view.state.tr.setMeta(promptSuggestionPluginKey, true).setMeta('addToHistory', false))
+    }, [ghostText])
 
     // The setting can change while the current draft stays untouched. An
     // empty transaction makes ProseMirror recompute decorations immediately,
@@ -316,7 +447,7 @@ export const MentionComposer = forwardRef<MentionComposerHandle, MentionComposer
     useEffect(() => {
       const view = viewRef.current
       if (!view) return
-      syncEmptyState(view, placeholder)
+      syncEmptyState(view, placeholder, ghostRef.current)
     }, [placeholder])
 
     useEffect(() => {
@@ -351,7 +482,7 @@ export const MentionComposer = forwardRef<MentionComposerHandle, MentionComposer
         view.dispatch(view.state.tr.setSelection(selection))
       },
       hasFocus: () => viewRef.current?.hasFocus() ?? false,
-      insertTextAtOffsets: (start, end, text) => {
+      insertTextAtOffsets: (start, end, text, options) => {
         const view = viewRef.current
         if (!view || !text) return
         const docLength = projectedDocLength(view.state.doc)
@@ -359,7 +490,18 @@ export const MentionComposer = forwardRef<MentionComposerHandle, MentionComposer
         const to = textOffsetToPmPos(view.state.doc, Math.min(Math.max(start, end), docLength))
         const tr = view.state.tr.insertText(text, from, to)
         tr.setSelection(TextSelection.near(tr.doc.resolve(from + text.length)))
+        if (options?.flash) tr.setMeta(insertionFlashPluginKey, { from, to: from + text.length })
         view.dispatch(tr.scrollIntoView())
+        if (!options?.flash) return
+        if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
+        flashTimerRef.current = setTimeout(() => {
+          flashTimerRef.current = null
+          const current = viewRef.current
+          if (!current || insertionFlashPluginKey.getState(current.state) === DecorationSet.empty) return
+          current.dispatch(current.state.tr
+            .setMeta(insertionFlashPluginKey, null)
+            .setMeta('addToHistory', false))
+        }, INSERTION_FLASH_MS)
       },
       getModelContent: () => {
         const view = viewRef.current

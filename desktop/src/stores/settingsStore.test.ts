@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/client'
 import type { Locale } from '../i18n/locale'
+import terminalSettingsV1 from '../test/fixtures/terminal-settings-v1.json'
 import { browserHost } from '../lib/desktopHost/browserHost'
 
 function createDeferred<T>() {
@@ -61,17 +62,9 @@ describe('settingsStore locale defaults', () => {
     expect(useSettingsStore.getState().locale).toBe('en')
   })
 
-  it('defaults the reasoning effort to medium before settings load', async () => {
-    mockSystemLanguages(['en-US'])
-
-    const { useSettingsStore } = await import('./settingsStore')
-
-    expect(useSettingsStore.getState().effortLevel).toBe('medium')
-  })
-
   it('keeps a stored locale override', async () => {
     mockSystemLanguages(['en-US'])
-    window.localStorage.setItem('echoflow-code-locale', 'zh-TW')
+    window.localStorage.setItem('cc-haha-locale', 'zh-TW')
 
     const { useSettingsStore } = await import('./settingsStore')
 
@@ -80,7 +73,7 @@ describe('settingsStore locale defaults', () => {
 
     useSettingsStore.getState().setLocale('jp')
 
-    expect(window.localStorage.getItem('echoflow-code-locale')).toBe('jp')
+    expect(window.localStorage.getItem('cc-haha-locale')).toBe('jp')
     expect(document.documentElement.lang).toBe('ja')
   })
 
@@ -103,7 +96,7 @@ describe('settingsStore locale defaults', () => {
     await vi.waitFor(() => {
       expect(setLocalePreference).toHaveBeenCalledWith('jp')
     })
-    expect(window.localStorage.getItem('echoflow-code-locale')).toBe('jp')
+    expect(window.localStorage.getItem('cc-haha-locale')).toBe('jp')
 
     vi.resetModules()
     mockSystemLanguages(['ko-KR'])
@@ -137,7 +130,7 @@ describe('settingsStore locale defaults', () => {
       )
     })
     expect(useSettingsStore.getState().locale).toBe('kr')
-    expect(window.localStorage.getItem('echoflow-code-locale')).toBe('kr')
+    expect(window.localStorage.getItem('cc-haha-locale')).toBe('kr')
   })
 
   it('applies a locale event from another desktop window', async () => {
@@ -168,6 +161,15 @@ describe('settingsStore locale defaults', () => {
   })
 })
 
+describe('settingsStore effort default', () => {
+  it('starts at low before the server value loads', async () => {
+    vi.resetModules()
+    const { useSettingsStore } = await import('./settingsStore')
+
+    expect(useSettingsStore.getState().effortLevel).toBe('low')
+  })
+})
+
 describe('settingsStore UI zoom', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -178,7 +180,7 @@ describe('settingsStore UI zoom', () => {
   })
 
   it('hydrates from the app zoom storage key', async () => {
-    window.localStorage.setItem('echoflow-code-app-zoom', '1.25')
+    window.localStorage.setItem('cc-haha-app-zoom', '1.25')
 
     const { useSettingsStore } = await import('./settingsStore')
 
@@ -191,7 +193,7 @@ describe('settingsStore UI zoom', () => {
     useSettingsStore.getState().setUiZoom(1.25)
 
     await vi.waitFor(() => {
-      expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBe('1.25')
+      expect(window.localStorage.getItem('cc-haha-app-zoom')).toBe('1.25')
     })
     expect(useSettingsStore.getState().uiZoom).toBe(1.25)
     expect(document.documentElement.getAttribute('data-app-zoom-percent')).toBe('125')
@@ -203,7 +205,7 @@ describe('settingsStore UI zoom', () => {
     useSettingsStore.getState().setUiZoom(9)
 
     await vi.waitFor(() => {
-      expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBe('2')
+      expect(window.localStorage.getItem('cc-haha-app-zoom')).toBe('2')
     })
     expect(useSettingsStore.getState().uiZoom).toBe(2)
   })
@@ -233,6 +235,239 @@ describe('settingsStore Auto mode consent', () => {
 
     expect(updateUser).toHaveBeenCalledWith({ skipAutoPermissionPrompt: true })
     expect(useSettingsStore.getState().autoModeOptInAccepted).toBe(true)
+  })
+})
+
+describe('settingsStore lean mode preference', () => {
+  function installSettingsFixture(user: Record<string, unknown> = {}, updateUser = vi.fn().mockResolvedValue({ ok: true })) {
+    vi.doMock('../api/settings', () => ({
+      settingsApi: {
+        getUser: vi.fn(async () => ({ ...user })),
+        updateUser,
+        getPermissionMode: vi.fn().mockResolvedValue({ mode: 'default' }),
+      },
+    }))
+    vi.doMock('../api/models', () => ({
+      modelsApi: {
+        list: vi.fn().mockResolvedValue({ models: [] }),
+        getCurrent: vi.fn().mockResolvedValue({ model: null }),
+        getEffort: vi.fn().mockResolvedValue({ level: 'medium' }),
+      },
+    }))
+    vi.doMock('../api/h5Access', () => ({
+      h5AccessApi: { get: vi.fn().mockResolvedValue({ settings: { enabled: false } }) },
+    }))
+    return updateUser
+  }
+
+  beforeEach(() => {
+    vi.resetModules()
+    vi.clearAllMocks()
+    window.localStorage.clear()
+  })
+
+  it('migrates an old fixture to off and restores an explicitly saved choice after restart', async () => {
+    const user: Record<string, unknown> = { unknownFuturePreference: { keep: true } }
+    const updateUser = vi.fn(async (patch: Record<string, unknown>) => {
+      Object.assign(user, patch)
+      return { ok: true }
+    })
+    installSettingsFixture(user, updateUser)
+    const { useSettingsStore } = await import('./settingsStore')
+    await useSettingsStore.getState().fetchAll()
+    expect(useSettingsStore.getState().leanModeEnabled).toBe(false)
+    expect(updateUser).not.toHaveBeenCalled()
+    await useSettingsStore.getState().setLeanModeEnabled(true)
+    vi.resetModules()
+    const restarted = await import('./settingsStore')
+    await restarted.useSettingsStore.getState().fetchAll()
+    expect(restarted.useSettingsStore.getState().leanModeEnabled).toBe(true)
+    expect(user).toEqual({ unknownFuturePreference: { keep: true }, leanModeEnabled: true })
+    await restarted.useSettingsStore.getState().setLeanModeEnabled(false)
+    expect(updateUser).toHaveBeenLastCalledWith({ leanModeEnabled: false })
+  })
+  it('does not change availability when a save fails', async () => {
+    installSettingsFixture({ leanModeEnabled: true }, vi.fn().mockRejectedValue(new Error('fixture failure')))
+    const { useSettingsStore } = await import('./settingsStore')
+    await useSettingsStore.getState().fetchAll()
+    await expect(useSettingsStore.getState().setLeanModeEnabled(false)).rejects.toThrow('fixture failure')
+    expect(useSettingsStore.getState().leanModeEnabled).toBe(true)
+  })
+  it('does not let an earlier settings fetch overwrite a completed save', async () => {
+    installSettingsFixture({ leanModeEnabled: false })
+    const { settingsApi } = await import('../api/settings')
+    let finishRead!: (value: Record<string, unknown>) => void
+    vi.mocked(settingsApi.getUser).mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve }))
+    const { useSettingsStore } = await import('./settingsStore')
+    const fetch = useSettingsStore.getState().fetchAll()
+    await useSettingsStore.getState().setLeanModeEnabled(true)
+    finishRead({ leanModeEnabled: false })
+    await fetch
+    expect(useSettingsStore.getState().leanModeEnabled).toBe(true)
+  })
+  it('serializes overlapping saves and publishes only persisted choices', async () => {
+    let finishFirst!: () => void
+    const updateUser = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>(resolve => { finishFirst = resolve }))
+      .mockResolvedValue({ ok: true })
+    installSettingsFixture({}, updateUser)
+    const { useSettingsStore } = await import('./settingsStore')
+    const first = useSettingsStore.getState().setLeanModeEnabled(true)
+    const second = useSettingsStore.getState().setLeanModeEnabled(false)
+    await Promise.resolve()
+    expect(updateUser).toHaveBeenCalledTimes(1)
+    expect(useSettingsStore.getState().leanModeEnabled).toBe(false)
+    finishFirst()
+    await Promise.all([first, second])
+    expect(updateUser.mock.calls).toEqual([[{ leanModeEnabled: true }], [{ leanModeEnabled: false }]])
+    expect(useSettingsStore.getState().leanModeEnabled).toBe(false)
+  })
+})
+
+describe('settingsStore automatic update preference', () => {
+  function installSettingsFixture(user: Record<string, unknown> = {}, updateUser = vi.fn().mockResolvedValue({ ok: true })) {
+    vi.doMock('../api/settings', () => ({
+      settingsApi: {
+        getUser: vi.fn(async () => ({ ...user })),
+        updateUser,
+        getPermissionMode: vi.fn().mockResolvedValue({ mode: 'default' }),
+      },
+    }))
+    vi.doMock('../api/models', () => ({
+      modelsApi: {
+        list: vi.fn().mockResolvedValue({ models: [] }),
+        getCurrent: vi.fn().mockResolvedValue({ model: null }),
+        getEffort: vi.fn().mockResolvedValue({ level: 'medium' }),
+      },
+    }))
+    vi.doMock('../api/h5Access', () => ({
+      h5AccessApi: { get: vi.fn().mockResolvedValue({ settings: { enabled: false } }) },
+    }))
+    return updateUser
+  }
+
+  beforeEach(() => {
+    vi.resetModules()
+    vi.clearAllMocks()
+    window.localStorage.clear()
+  })
+
+  it('upgrades an old settings fixture without the preference to enabled', async () => {
+    const original = { unknownFuturePreference: { keep: true }, updateProxy: { mode: 'system' } }
+    const updateUser = installSettingsFixture(original)
+    const { useSettingsStore } = await import('./settingsStore')
+
+    expect(useSettingsStore.getState().autoUpdateEnabled).toBe(true)
+    await useSettingsStore.getState().fetchAll()
+
+    expect(useSettingsStore.getState().autoUpdateEnabled).toBe(true)
+    expect(updateUser).not.toHaveBeenCalled()
+    expect(original).toEqual({ unknownFuturePreference: { keep: true }, updateProxy: { mode: 'system' } })
+  })
+
+  it('persists disabled automatic updates and restores them on the next store startup', async () => {
+    const user: Record<string, unknown> = { unknownFuturePreference: 'keep' }
+    const updateUser = vi.fn(async (patch: Record<string, unknown>) => {
+      Object.assign(user, patch)
+      return { ok: true }
+    })
+    installSettingsFixture(user, updateUser)
+    const { useSettingsStore } = await import('./settingsStore')
+    await useSettingsStore.getState().fetchAll()
+    await useSettingsStore.getState().setAutoUpdateEnabled(false)
+
+    expect(updateUser).toHaveBeenCalledWith({ autoUpdateEnabled: false })
+    expect(useSettingsStore.getState().autoUpdateEnabled).toBe(false)
+
+    vi.resetModules()
+    const restarted = await import('./settingsStore')
+    await restarted.useSettingsStore.getState().fetchAll()
+
+    expect(restarted.useSettingsStore.getState().autoUpdateEnabled).toBe(false)
+    expect(user).toEqual({ unknownFuturePreference: 'keep', autoUpdateEnabled: false })
+    await restarted.useSettingsStore.getState().setAutoUpdateEnabled(true)
+    expect(updateUser).toHaveBeenLastCalledWith({ autoUpdateEnabled: true })
+  })
+
+  it.each([true, false])('rolls back to the persisted value %s when saving fails', async previous => {
+    const failure = new Error('fixture write failed')
+    const updateUser = vi.fn().mockRejectedValue(failure)
+    installSettingsFixture({ autoUpdateEnabled: previous }, updateUser)
+    const { useSettingsStore } = await import('./settingsStore')
+    await useSettingsStore.getState().fetchAll()
+    const saving = useSettingsStore.getState().setAutoUpdateEnabled(!previous)
+
+    expect(useSettingsStore.getState().autoUpdateEnabled).toBe(!previous)
+    await expect(saving).rejects.toBe(failure)
+    expect(useSettingsStore.getState().autoUpdateEnabled).toBe(previous)
+  })
+
+  it('keeps overlapping saves ordered and does not restore a stale failed choice', async () => {
+    let rejectFirst!: (error: Error) => void
+    const updateUser = vi.fn()
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject }))
+      .mockResolvedValueOnce({ ok: true })
+    installSettingsFixture({}, updateUser)
+    const { useSettingsStore } = await import('./settingsStore')
+    const first = useSettingsStore.getState().setAutoUpdateEnabled(false)
+    const firstRejected = expect(first).rejects.toThrow('fixture first save failed')
+    await vi.waitFor(() => expect(updateUser).toHaveBeenCalledTimes(1))
+    const second = useSettingsStore.getState().setAutoUpdateEnabled(true)
+    rejectFirst(new Error('fixture first save failed'))
+    await firstRejected
+    await second
+
+    expect(updateUser.mock.calls).toEqual([[{ autoUpdateEnabled: false }], [{ autoUpdateEnabled: true }]])
+    expect(useSettingsStore.getState().autoUpdateEnabled).toBe(true)
+  })
+
+  it.each(['load-before-save', 'load-during-save', 'load-during-save-completes-after-save'] as const)('does not let %s restore automatic updates from a stale settings response', async timing => {
+    let finishSave!: () => void
+    let finishRead!: (settings: Record<string, unknown>) => void
+    const user: Record<string, unknown> = { autoUpdateEnabled: true }
+    const updateUser = vi.fn()
+      .mockImplementationOnce(async (patch: Record<string, unknown>) => {
+        await new Promise<void>(resolve => { finishSave = resolve })
+        Object.assign(user, patch)
+        return { ok: true }
+      })
+      .mockRejectedValueOnce(new Error('fixture later save failed'))
+    installSettingsFixture(user, updateUser)
+    const { useSettingsStore } = await import('./settingsStore')
+    const { settingsApi } = await import('../api/settings')
+    await useSettingsStore.getState().fetchAll()
+    vi.mocked(settingsApi.getUser).mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve }))
+    let loading: Promise<void>
+    let saving: Promise<void>
+    if (timing === 'load-before-save') {
+      loading = useSettingsStore.getState().fetchAll()
+      saving = useSettingsStore.getState().setAutoUpdateEnabled(false)
+      await vi.waitFor(() => expect(updateUser).toHaveBeenCalledTimes(1))
+      finishSave()
+      await saving
+      finishRead({ autoUpdateEnabled: true })
+      await loading
+    } else {
+      saving = useSettingsStore.getState().setAutoUpdateEnabled(false)
+      await vi.waitFor(() => expect(updateUser).toHaveBeenCalledTimes(1))
+      loading = useSettingsStore.getState().fetchAll()
+      if (timing === 'load-during-save-completes-after-save') {
+        finishSave()
+        await saving
+      }
+      finishRead({ autoUpdateEnabled: true })
+      await loading
+      expect(useSettingsStore.getState().autoUpdateEnabled).toBe(false)
+      if (timing === 'load-during-save') {
+        finishSave()
+        await saving
+      }
+    }
+
+    expect(useSettingsStore.getState().autoUpdateEnabled).toBe(false)
+    expect(user.autoUpdateEnabled).toBe(false)
+    await expect(useSettingsStore.getState().setAutoUpdateEnabled(true)).rejects.toThrow('fixture later save failed')
+    expect(useSettingsStore.getState().autoUpdateEnabled).toBe(false)
   })
 })
 
@@ -648,8 +883,8 @@ describe('settingsStore app mode', () => {
   it('hydrates app mode from the Electron desktop host', async () => {
     const getAppMode = vi.fn().mockResolvedValue({
       mode: 'portable',
-      portableDir: 'D:\\echoflow-code-data',
-      activeConfigDir: 'D:\\echoflow-code-data',
+      portableDir: 'D:\\cc-haha-data',
+      activeConfigDir: 'D:\\cc-haha-data',
       configDirSource: 'portable',
     })
     installElectronAppModeHost({ get: getAppMode })
@@ -661,8 +896,8 @@ describe('settingsStore app mode', () => {
     expect(getAppMode).toHaveBeenCalledTimes(1)
     expect(useSettingsStore.getState().appMode).toEqual({
       mode: 'portable',
-      portableDir: 'D:\\echoflow-code-data',
-      activeConfigDir: 'D:\\echoflow-code-data',
+      portableDir: 'D:\\cc-haha-data',
+      activeConfigDir: 'D:\\cc-haha-data',
       configDirSource: 'portable',
     })
   })
@@ -1089,6 +1324,66 @@ describe('settingsStore workflow keyword persistence', () => {
   })
 })
 
+describe('settingsStore next-prompt suggestions', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.clearAllMocks()
+    window.localStorage.clear()
+  })
+
+  // Each suggestion costs an extra model request, so only an explicit `true`
+  // turns it on: an old settings file, or a malformed value, stays off.
+  it.each([
+    [{}, false],
+    [{ nextPromptSuggestionsEnabled: 'true' }, false],
+    [{ nextPromptSuggestionsEnabled: false }, false],
+    [{ nextPromptSuggestionsEnabled: true }, true],
+  ])('loads %j as enabled=%s', async (userSettings, expected) => {
+    vi.doMock('../api/settings', () => ({
+      settingsApi: {
+        getUser: vi.fn().mockResolvedValue(userSettings),
+        updateUser: vi.fn(),
+        getPermissionMode: vi.fn().mockResolvedValue({ mode: 'default' }),
+        setPermissionMode: vi.fn(),
+        getCliLauncherStatus: vi.fn(),
+      },
+    }))
+    vi.doMock('../api/models', () => ({
+      modelsApi: {
+        list: vi.fn().mockResolvedValue({ models: [] }),
+        getCurrent: vi.fn().mockResolvedValue({ model: null }),
+        setCurrent: vi.fn(),
+        getEffort: vi.fn().mockResolvedValue({ level: 'medium' }),
+        setEffort: vi.fn(),
+      },
+    }))
+    vi.doMock('../api/h5Access', () => ({
+      h5AccessApi: {
+        get: vi.fn().mockResolvedValue({
+          settings: {
+            enabled: false,
+            token: null,
+            tokenPreview: null,
+            allowedOrigins: [],
+            publicBaseUrl: null,
+            fixedPort: null,
+            disconnectGraceSeconds: null,
+          },
+        }),
+        enable: vi.fn(),
+        disable: vi.fn(),
+        regenerate: vi.fn(),
+        update: vi.fn(),
+      },
+    }))
+
+    const { useSettingsStore } = await import('./settingsStore')
+    await useSettingsStore.getState().fetchAll()
+
+    expect(useSettingsStore.getState().nextPromptSuggestionsEnabled).toBe(expected)
+  })
+})
+
 describe('settingsStore Agent Teams persistence', () => {
   const updateUser = vi.fn()
   const getUser = vi.fn()
@@ -1258,7 +1553,7 @@ describe('settingsStore Auto-dream persistence', () => {
   })
 })
 
-describe('settingsStore desktop terminal shell persistence', () => {
+describe('settingsStore desktop terminal persistence', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
@@ -1268,12 +1563,7 @@ describe('settingsStore desktop terminal shell persistence', () => {
   it('hydrates desktop terminal settings from user settings and falls back to system defaults', async () => {
     vi.doMock('../api/settings', () => ({
       settingsApi: {
-        getUser: vi.fn().mockResolvedValue({
-          desktopTerminal: {
-            startupShell: 'pwsh',
-            customShellPath: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
-          },
-        }),
+        getUser: vi.fn().mockResolvedValue(terminalSettingsV1),
         updateUser: vi.fn(),
         getPermissionMode: vi.fn().mockResolvedValue({ mode: 'default' }),
         setPermissionMode: vi.fn(),
@@ -1311,6 +1601,8 @@ describe('settingsStore desktop terminal shell persistence', () => {
     expect(useSettingsStore.getState().desktopTerminal).toEqual({
       startupShell: 'system',
       customShellPath: '',
+      fontFamily: '',
+      fontSize: 13,
     })
 
     await useSettingsStore.getState().fetchAll()
@@ -1318,7 +1610,42 @@ describe('settingsStore desktop terminal shell persistence', () => {
     expect(useSettingsStore.getState().desktopTerminal).toEqual({
       startupShell: 'pwsh',
       customShellPath: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+      fontFamily: '',
+      fontSize: 13,
     })
+    const { settingsApi } = await import('../api/settings')
+    expect(settingsApi.updateUser).not.toHaveBeenCalled()
+    expect(terminalSettingsV1.desktopTerminal).not.toHaveProperty('fontFamily')
+
+    vi.mocked(settingsApi.getUser).mockResolvedValue({ desktopTerminal: { fontFamily: ' Menlo ', fontSize: 18 } })
+    await useSettingsStore.getState().fetchAll()
+    expect(useSettingsStore.getState().desktopTerminal).toEqual({
+      startupShell: 'system', customShellPath: '', fontFamily: 'Menlo', fontSize: 18,
+    })
+    vi.mocked(settingsApi.getUser).mockResolvedValue({})
+    await useSettingsStore.getState().fetchAll()
+    expect(useSettingsStore.getState().desktopTerminal).toEqual({
+      startupShell: 'system', customShellPath: '', fontFamily: '', fontSize: 13,
+    })
+    expect(settingsApi.updateUser).not.toHaveBeenCalled()
+  })
+
+  it('preserves shell and font preferences across partial saves and rolls back failed typography', async () => {
+    const updateUser = vi.fn().mockResolvedValue({ ok: true })
+    vi.doMock('../api/settings', () => ({ settingsApi: { updateUser } }))
+    const { useSettingsStore } = await import('./settingsStore')
+    const save = useSettingsStore.getState().setDesktopTerminal
+    await save({ startupShell: 'cmd' })
+    await save({ fontFamily: ' MesloLGS NF ', fontSize: 18 })
+    await save({ startupShell: 'pwsh' })
+    const expected = { startupShell: 'pwsh', customShellPath: '', fontFamily: 'MesloLGS NF', fontSize: 18 }
+    expect(updateUser).toHaveBeenLastCalledWith({ desktopTerminal: expected })
+    expect(useSettingsStore.getState().desktopTerminal).toEqual(expected)
+    updateUser.mockRejectedValueOnce(new Error('disk full'))
+    await expect(save({ fontFamily: 'Hack Nerd Font Mono', fontSize: 24 })).rejects.toThrow('disk full')
+    expect(useSettingsStore.getState().desktopTerminal).toEqual(expected)
+    await save({ fontFamily: '', fontSize: 13 })
+    expect(useSettingsStore.getState().desktopTerminal).toEqual({ ...expected, fontFamily: '', fontSize: 13 })
   })
 
   it('persists desktop terminal settings explicitly', async () => {
@@ -1364,17 +1691,23 @@ describe('settingsStore desktop terminal shell persistence', () => {
     await useSettingsStore.getState().setDesktopTerminal({
       startupShell: 'custom',
       customShellPath: 'C:\\tools\\pwsh.exe',
+      fontFamily: '',
+      fontSize: 13,
     })
 
     expect(updateUser).toHaveBeenCalledWith({
       desktopTerminal: {
         startupShell: 'custom',
         customShellPath: 'C:\\tools\\pwsh.exe',
+        fontFamily: '',
+        fontSize: 13,
       },
     })
     expect(useSettingsStore.getState().desktopTerminal).toEqual({
       startupShell: 'custom',
       customShellPath: 'C:\\tools\\pwsh.exe',
+      fontFamily: '',
+      fontSize: 13,
     })
   })
 
@@ -1398,16 +1731,22 @@ describe('settingsStore desktop terminal shell persistence', () => {
     const oldRequest = useSettingsStore.getState().setDesktopTerminal({
       startupShell: 'powershell',
       customShellPath: '',
+      fontFamily: '',
+      fontSize: 13,
     })
     const oldRequestResult = oldRequest.catch((error) => error)
     const newRequest = useSettingsStore.getState().setDesktopTerminal({
       startupShell: 'pwsh',
       customShellPath: '',
+      fontFamily: '',
+      fontSize: 13,
     })
 
     expect(useSettingsStore.getState().desktopTerminal).toEqual({
       startupShell: 'pwsh',
       customShellPath: '',
+      fontFamily: '',
+      fontSize: 13,
     })
     await vi.waitFor(() => {
       expect(updateUser).toHaveBeenCalledTimes(1)
@@ -1422,11 +1761,15 @@ describe('settingsStore desktop terminal shell persistence', () => {
       desktopTerminal: {
         startupShell: 'pwsh',
         customShellPath: '',
+        fontFamily: '',
+        fontSize: 13,
       },
     })
     expect(useSettingsStore.getState().desktopTerminal).toEqual({
       startupShell: 'pwsh',
       customShellPath: '',
+      fontFamily: '',
+      fontSize: 13,
     })
   })
 
@@ -1449,10 +1792,14 @@ describe('settingsStore desktop terminal shell persistence', () => {
     const firstRequest = useSettingsStore.getState().setDesktopTerminal({
       startupShell: 'powershell',
       customShellPath: '',
+      fontFamily: '',
+      fontSize: 13,
     })
     const secondRequest = useSettingsStore.getState().setDesktopTerminal({
       startupShell: 'pwsh',
       customShellPath: '',
+      fontFamily: '',
+      fontSize: 13,
     })
 
     await firstRequest
@@ -1461,90 +1808,9 @@ describe('settingsStore desktop terminal shell persistence', () => {
     expect(useSettingsStore.getState().desktopTerminal).toEqual({
       startupShell: 'powershell',
       customShellPath: '',
+      fontFamily: '',
+      fontSize: 13,
     })
-  })
-})
-
-describe('settingsStore local redaction persistence', () => {
-  beforeEach(() => {
-    vi.resetModules()
-    vi.clearAllMocks()
-    window.localStorage.clear()
-  })
-
-  it('serializes rapid edits so the newest value is persisted last', async () => {
-    const firstSave = createDeferred<Record<string, unknown>>()
-    const updateUser = vi.fn()
-      .mockImplementationOnce(() => firstSave.promise)
-      .mockResolvedValueOnce({ ok: true })
-
-    vi.doMock('../api/settings', () => ({
-      settingsApi: {
-        getUser: vi.fn(),
-        updateUser,
-        getPermissionMode: vi.fn(),
-        setPermissionMode: vi.fn(),
-        getCliLauncherStatus: vi.fn(),
-      },
-    }))
-
-    const { useSettingsStore } = await import('./settingsStore')
-    const firstRequest = useSettingsStore.getState().setLocalRedaction({
-      enabled: true,
-      personalInfo: false,
-      customWords: ['first'],
-    })
-    const secondRequest = useSettingsStore.getState().setLocalRedaction({
-      enabled: true,
-      personalInfo: false,
-      customWords: ['second'],
-    })
-
-    await vi.waitFor(() => {
-      expect(updateUser).toHaveBeenCalledTimes(1)
-    })
-    expect(updateUser).toHaveBeenNthCalledWith(1, {
-      localRedaction: { enabled: true, personalInfo: false, customWords: ['first'] },
-    })
-
-    firstSave.resolve({ ok: true })
-    await firstRequest
-    await secondRequest
-
-    expect(updateUser).toHaveBeenNthCalledWith(2, {
-      localRedaction: { enabled: true, personalInfo: false, customWords: ['second'] },
-    })
-    expect(useSettingsStore.getState().localRedaction.customWords).toEqual(['second'])
-  })
-
-  it('restores the last persisted value when the newest save fails', async () => {
-    const updateUser = vi.fn()
-      .mockResolvedValueOnce({ ok: true })
-      .mockRejectedValueOnce(new Error('save failed'))
-
-    vi.doMock('../api/settings', () => ({
-      settingsApi: {
-        getUser: vi.fn(),
-        updateUser,
-        getPermissionMode: vi.fn(),
-        setPermissionMode: vi.fn(),
-        getCliLauncherStatus: vi.fn(),
-      },
-    }))
-
-    const { useSettingsStore } = await import('./settingsStore')
-    await useSettingsStore.getState().setLocalRedaction({
-      enabled: true,
-      personalInfo: false,
-      customWords: ['first'],
-    })
-    await expect(useSettingsStore.getState().setLocalRedaction({
-      enabled: true,
-      personalInfo: false,
-      customWords: ['second'],
-    })).rejects.toThrow('save failed')
-
-    expect(useSettingsStore.getState().localRedaction.customWords).toEqual(['first'])
   })
 })
 
@@ -1607,7 +1873,7 @@ describe('settingsStore theme persistence', () => {
   })
 
   it('keeps the desktop theme independent from the Claude user theme', async () => {
-    window.localStorage.setItem('echoflow-code-theme', 'dark')
+    window.localStorage.setItem('cc-haha-theme', 'dark')
     const updateUser = vi.fn()
     vi.doMock('../api/settings', () => ({
       settingsApi: {
@@ -1657,7 +1923,7 @@ describe('settingsStore theme persistence', () => {
 
     await useSettingsStore.getState().setTheme('warm-classic')
 
-    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('warm-classic')
+    expect(window.localStorage.getItem('cc-haha-theme')).toBe('warm-classic')
     expect(updateUser).not.toHaveBeenCalled()
     teardownTheme()
   })

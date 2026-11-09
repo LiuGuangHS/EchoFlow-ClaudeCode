@@ -5,7 +5,11 @@ import '@testing-library/jest-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../pages/EmptySession', () => ({
-  EmptySession: () => <div data-testid="empty-session" />,
+  EmptySession: ({ initialWorkDir, draftRevision }: { initialWorkDir?: string; draftRevision?: number }) => (
+    <div data-testid="empty-session" data-workdir={initialWorkDir ?? ''} data-draft-revision={draftRevision ?? ''}>
+      <input aria-label="Draft text" />
+    </div>
+  ),
 }))
 
 vi.mock('../../pages/ActiveSession', () => ({
@@ -32,19 +36,6 @@ vi.mock('../../pages/TerminalSettings', () => ({
   ),
 }))
 
-vi.mock('../../pages/TraceSession', () => ({
-  TraceSession: ({ sessionId, onBack }: { sessionId: string; onBack?: () => void }) => (
-    <div data-testid="trace-session">
-      trace:{sessionId}
-      {onBack ? <button type="button" onClick={onBack}>back</button> : null}
-    </div>
-  ),
-}))
-
-vi.mock('../../pages/TraceList', () => ({
-  TraceList: () => <div data-testid="trace-list" />,
-}))
-
 vi.mock('../../pages/SubagentRunPage', () => ({
   SubagentRunPage: ({ sourceSessionId, taskId, toolUseId, title }: { sourceSessionId: string; taskId?: string; toolUseId: string; title: string }) => (
     <div data-testid="subagent-run-page">{sourceSessionId}:{toolUseId}:{taskId}:{title}</div>
@@ -62,7 +53,77 @@ describe('ContentRouter tab surfaces', () => {
   afterEach(() => {
     cleanup()
     useTabStore.setState({ tabs: [], activeTabId: null })
-    useUIStore.setState({ pendingSettingsTab: null })
+    useUIStore.setState({ pendingSettingsTab: null, newSessionDraft: null })
+  })
+
+  it('renders a new-chat draft with its project seed while retaining existing session tabs', () => {
+    useTabStore.setState({ tabs: [{ sessionId: 'existing', title: 'Existing', type: 'session', status: 'idle' }], activeTabId: null })
+    useUIStore.getState().startNewSessionDraft('/workspace/project')
+    render(<ContentRouter />)
+    const draft = useUIStore.getState().newSessionDraft!
+    expect(screen.getByTestId('empty-session')).toHaveAttribute('data-workdir', '/workspace/project')
+    expect(screen.getByTestId('empty-session')).toHaveAttribute('data-draft-revision', String(draft.revision))
+    expect(useTabStore.getState().tabs[0]?.sessionId).toBe('existing')
+  })
+
+  // A desktop browser narrowed below 768px swaps in the phone shell, whose home
+  // is the session list. The desktop draft used to cover it, with no Back.
+  it('keeps the phone home on screen when a desktop draft exists', () => {
+    useUIStore.getState().startNewSessionDraft('/workspace/project')
+    render(<ContentRouter homePage={<div data-testid="mobile-home" />} />)
+    expect(screen.getByTestId('mobile-home')).toBeInTheDocument()
+    expect(screen.queryByTestId('new-session-draft-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('empty-session')).not.toBeInTheDocument()
+  })
+
+  it('does not start a desktop draft under a shell that has its own home', () => {
+    render(<ContentRouter homePage={<div data-testid="mobile-home" />} />)
+    expect(useUIStore.getState().newSessionDraft).toBeNull()
+  })
+
+  it('moves an empty draft to a requested project without remounting it', () => {
+    useTabStore.setState({ tabs: [{ sessionId: 'existing', title: 'Existing', type: 'session', status: 'idle' }], activeTabId: 'existing' })
+    render(<ContentRouter />)
+    act(() => {
+      useUIStore.getState().startNewSessionDraft('')
+      useTabStore.getState().setActiveTab(null)
+    })
+    const composer = screen.getByTestId('empty-session')
+    act(() => {
+      useUIStore.getState().startNewSessionDraft('/workspace/target')
+    })
+    expect(screen.getByTestId('empty-session')).toBe(composer)
+    expect(composer).toHaveAttribute('data-workdir', '/workspace/target')
+  })
+
+  it('retains the initial desktop draft when visiting settings before creating any session', () => {
+    useTabStore.setState({ tabs: [], activeTabId: null })
+    render(<ContentRouter />)
+    const draft = screen.getByTestId('empty-session')
+    fireEvent.change(screen.getByLabelText('Draft text'), { target: { value: 'first draft' } })
+    act(() => useTabStore.setState({ tabs: [{ sessionId: SETTINGS_TAB_ID, title: 'Settings', type: 'settings', status: 'idle' }], activeTabId: SETTINGS_TAB_ID }))
+    expect(screen.getByTestId('empty-session')).toBe(draft)
+    act(() => useTabStore.getState().setActiveTab(null))
+    expect(screen.getByLabelText('Draft text')).toHaveValue('first draft')
+  })
+
+  it('keeps the draft mounted and inert through settings and existing tabs', () => {
+    useTabStore.setState({ tabs: [
+      { sessionId: 'existing', title: 'Existing', type: 'session', status: 'idle' },
+      { sessionId: SETTINGS_TAB_ID, title: 'Settings', type: 'settings', status: 'idle' },
+    ], activeTabId: null })
+    useUIStore.getState().startNewSessionDraft('/workspace/project')
+    render(<ContentRouter />)
+    const draft = screen.getByTestId('empty-session')
+    fireEvent.change(screen.getByLabelText('Draft text'), { target: { value: 'unsent edits' } })
+    act(() => useTabStore.getState().setActiveTab(SETTINGS_TAB_ID))
+    expect(screen.getByTestId('new-session-draft-panel')).toHaveAttribute('inert')
+    expect(screen.getByTestId('empty-session')).toBe(draft)
+    act(() => useTabStore.getState().setActiveTab('existing'))
+    expect(screen.getByTestId('empty-session')).toBe(draft)
+    act(() => useTabStore.getState().setActiveTab(null))
+    expect(screen.getByTestId('new-session-draft-panel')).not.toHaveAttribute('inert')
+    expect(screen.getByLabelText('Draft text')).toHaveValue('unsent edits')
   })
 
   it('renders the active terminal tab as main content', () => {
@@ -97,6 +158,39 @@ describe('ContentRouter tab surfaces', () => {
     expect(screen.getByTestId('terminal-host-__terminal__1')).toHaveAttribute('data-runtime-id', '__session_terminal__session-1')
   })
 
+  it('keeps one browser page layer for the life of the window, inside the session panel', () => {
+    // A workspace browser page dies when its element leaves the DOM and
+    // reloads when it moves, so the layer holding them must never be
+    // re-created — not on a page switch, a task switch, or with no task open.
+    useTabStore.setState({
+      tabs: [
+        { sessionId: 'session-1', title: 'One', type: 'session', status: 'idle' },
+        { sessionId: 'session-2', title: 'Two', type: 'session', status: 'idle' },
+        { sessionId: MARKET_TAB_ID, title: 'Market', type: 'market', status: 'idle' },
+      ],
+      activeTabId: 'session-1',
+    })
+    render(<ContentRouter />)
+    const layer = screen.getByTestId('workspace-browser-guest-layer')
+    // Same stacking context as the session content: it fades and goes inert
+    // with the panel when another page takes the window.
+    expect(screen.getByTestId('session-tab-panel')).toContainElement(layer)
+
+    act(() => useTabStore.getState().setActiveTab(MARKET_TAB_ID))
+    expect(screen.getByTestId('session-tab-panel')).toHaveAttribute('inert')
+    expect(screen.getByTestId('workspace-browser-guest-layer')).toBe(layer)
+
+    act(() => useTabStore.getState().setActiveTab('session-2'))
+    expect(screen.getByTestId('workspace-browser-guest-layer')).toBe(layer)
+
+    act(() => useTabStore.setState({
+      tabs: [{ sessionId: MARKET_TAB_ID, title: 'Market', type: 'market', status: 'idle' }],
+      activeTabId: MARKET_TAB_ID,
+    }))
+    expect(screen.queryByTestId('active-session')).toBeNull()
+    expect(screen.getByTestId('workspace-browser-guest-layer')).toBe(layer)
+  })
+
   it('keeps terminal tabs mounted while chat content is active', () => {
     useTabStore.setState({
       tabs: [
@@ -124,65 +218,6 @@ describe('ContentRouter tab surfaces', () => {
     expect(useTabStore.getState().tabs.filter((tab) => tab.type === 'terminal')).toHaveLength(2)
     expect(useTabStore.getState().activeTabId).not.toBe('__terminal__1')
     expect(useTabStore.getState().tabs.find((tab) => tab.sessionId === useTabStore.getState().activeTabId)?.terminalCwd).toBe('/tmp/project')
-  })
-
-  it('renders trace tabs without mounting the chat session surface', () => {
-    useTabStore.setState({
-      tabs: [{
-        sessionId: '__trace__session-1',
-        title: 'Trace',
-        type: 'trace',
-        status: 'idle',
-        traceSessionId: 'session-1',
-      }],
-      activeTabId: '__trace__session-1',
-    })
-
-    render(<ContentRouter />)
-
-    expect(screen.getByTestId('trace-session')).toHaveTextContent('trace:session-1')
-    expect(screen.queryByTestId('active-session')).not.toBeInTheDocument()
-  })
-
-  it('walks a trace tab back to the list and closes the tab behind it', () => {
-    useTabStore.setState({
-      tabs: [
-        { sessionId: 'session-1', title: 'Chat', type: 'session', status: 'idle' },
-        {
-          sessionId: '__trace__session-1',
-          title: 'Chat',
-          type: 'trace',
-          status: 'idle',
-          traceSessionId: 'session-1',
-        },
-      ],
-      activeTabId: '__trace__session-1',
-    })
-
-    render(<ContentRouter />)
-    fireEvent.click(screen.getByRole('button', { name: 'back' }))
-
-    const { tabs, activeTabId } = useTabStore.getState()
-    expect(activeTabId).toBe(SETTINGS_TAB_ID)
-    expect(tabs.some((tab) => tab.sessionId === '__trace__session-1')).toBe(false)
-    expect(useUIStore.getState().pendingSettingsTab).toBe('trace')
-  })
-
-  it('renders the trace list tab without mounting the chat session surface', () => {
-    useTabStore.setState({
-      tabs: [{
-        sessionId: '__traces__',
-        title: 'Trace',
-        type: 'traces',
-        status: 'idle',
-      }],
-      activeTabId: '__traces__',
-    })
-
-    render(<ContentRouter />)
-
-    expect(screen.getByTestId('trace-list')).toBeInTheDocument()
-    expect(screen.queryByTestId('active-session')).not.toBeInTheDocument()
   })
 
   it('renders SubAgent run tabs', () => {

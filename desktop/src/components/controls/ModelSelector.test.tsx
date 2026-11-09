@@ -17,14 +17,17 @@ vi.mock('../../lib/desktopRuntime', async (importOriginal) => {
 
 import { ModelSelector } from './ModelSelector'
 import { useChatStore } from '../../stores/chatStore'
-import { useEchoFlowOAuthStore } from '../../stores/echoFlowOAuthStore'
-import { useEchoFlowOpenAIOAuthStore } from '../../stores/echoFlowOpenAIOAuthStore'
-import { useEchoFlowGrokOAuthStore } from '../../stores/echoFlowGrokOAuthStore'
+import { useHahaOAuthStore } from '../../stores/hahaOAuthStore'
+import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
+import { useHahaGrokOAuthStore } from '../../stores/hahaGrokOAuthStore'
+import { useHahaDeepSeekOAuthStore } from '../../stores/hahaDeepSeekOAuthStore'
 import { useProviderStore } from '../../stores/providerStore'
 import { useSessionRuntimeStore } from '../../stores/sessionRuntimeStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useTabStore, SETTINGS_TAB_ID } from '../../stores/tabStore'
 import { useUIStore } from '../../stores/uiStore'
+import { useMagpieStore } from '../../stores/magpieStore'
+import { providersApi } from '../../api/providers'
 import { useSessionStore } from '@/stores/sessionStore'
 import { OPENAI_OFFICIAL_PROVIDER_ID } from '../../constants/openaiOfficialProvider'
 import type { ModelInfo } from '../../types/settings'
@@ -49,21 +52,59 @@ afterEach(() => {
   useSessionRuntimeStore.setState(useSessionRuntimeStore.getInitialState(), true)
   useSessionStore.setState(useSessionStore.getInitialState(), true)
   useChatStore.setState(useChatStore.getInitialState(), true)
-  useEchoFlowOAuthStore.setState(useEchoFlowOAuthStore.getInitialState(), true)
-  useEchoFlowOpenAIOAuthStore.setState(useEchoFlowOpenAIOAuthStore.getInitialState(), true)
-  useEchoFlowGrokOAuthStore.setState(useEchoFlowGrokOAuthStore.getInitialState(), true)
+  useHahaOAuthStore.setState(useHahaOAuthStore.getInitialState(), true)
+  useHahaOpenAIOAuthStore.setState(useHahaOpenAIOAuthStore.getInitialState(), true)
+  useHahaGrokOAuthStore.setState(useHahaGrokOAuthStore.getInitialState(), true)
+  useHahaDeepSeekOAuthStore.setState(useHahaDeepSeekOAuthStore.getInitialState(), true)
   useTabStore.setState(useTabStore.getInitialState(), true)
   useUIStore.setState(useUIStore.getInitialState(), true)
+  useMagpieStore.setState(useMagpieStore.getInitialState(), true)
+  vi.restoreAllMocks()
 })
 
 beforeEach(() => {
-  useProviderStore.setState({ isLoading: true })
-  useEchoFlowOAuthStore.setState({ fetchStatus: async () => {} })
-  useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: async () => {} })
-  useEchoFlowGrokOAuthStore.setState({ fetchStatus: async () => {} })
+  useHahaOAuthStore.setState({ fetchStatus: async () => {} })
+  useHahaOpenAIOAuthStore.setState({ fetchStatus: async () => {} })
+  useHahaGrokOAuthStore.setState({ fetchStatus: async () => {} })
+  useHahaDeepSeekOAuthStore.setState({ fetchStatus: async () => {} })
 })
 
 describe('ModelSelector', () => {
+  it('lists every model Magpie serves on the Magpie provider, not only its mapped slots', async () => {
+    useSettingsStore.setState({ locale: 'en' })
+    const magpieState = {
+      status: { installed: true, running: true, baseUrl: 'http://127.0.0.1:3425' },
+      models: [
+        { id: 'kimi/kimi-k3', runtimeId: 'kimi/kimi-k3', displayName: 'Kimi K3', provider: 'kimi', isGroup: false, contextWindow: 262_144, reasoningEfforts: ['high'] },
+        { id: 'deepseek/deepseek-v4-pro', runtimeId: 'deepseek/deepseek-v4-pro', displayName: 'DeepSeek V4 Pro', provider: 'deepseek', isGroup: false, contextWindow: 1_000_000, reasoningEfforts: [] },
+        { id: 'ollama/qwen3.6:27b', runtimeId: 'ollama/qwen3.6:27b', displayName: 'Qwen3.6 27B', provider: 'ollama', isGroup: false, reasoningEfforts: [] },
+      ],
+    }
+    // Opening the picker reads the catalog again.
+    const refresh = vi.spyOn(providersApi, 'magpie').mockResolvedValue(magpieState)
+    useMagpieStore.setState({ state: magpieState })
+    useProviderStore.setState({
+      activeId: 'magpie-1', hasLoadedProviders: true, isLoading: false,
+      providers: [{
+        id: 'magpie-1', presetId: 'magpie', name: 'Magpie',
+        apiFormat: 'anthropic', apiKey: '', baseUrl: 'http://127.0.0.1:3425',
+        models: { main: 'kimi/kimi-k3', haiku: 'kimi/kimi-k3', sonnet: 'kimi/kimi-k3', opus: 'kimi/kimi-k3' },
+      }],
+    })
+    const runtimeChange = vi.fn()
+    render(<ModelSelector runtimeKey="__draft__" onRuntimeSelectionChange={runtimeChange} />)
+    await clickByRole(/, Magpie$/)
+
+    expect(refresh).toHaveBeenCalled()
+    const dropdown = within(screen.getByTestId('model-selector-dropdown'))
+    expect(dropdown.getByRole('button', { name: /deepseek\/deepseek-v4-pro/ })).toHaveTextContent('DeepSeek V4 Pro · Context 1M')
+    expect(dropdown.getByRole('button', { name: /ollama\/qwen3.6:27b/ })).toHaveTextContent('Qwen3.6 27B · Context unknown')
+    fireEvent.click(dropdown.getByRole('button', { name: /deepseek\/deepseek-v4-pro/ }))
+    expect(runtimeChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      providerId: 'magpie-1', modelId: 'deepseek/deepseek-v4-pro',
+    }))
+  })
+
   it('shows the configured default for an opened session whose saved provider was removed', () => {
     useSettingsStore.setState({ locale: 'en', effortLevel: 'high' })
     useProviderStore.setState({
@@ -92,7 +133,7 @@ describe('ModelSelector', () => {
       providerId: null, modelId: 'claude-opus-4-8', effortLevel: 'high',
     })
     const fetchStatus = vi.fn(async () => {})
-    useEchoFlowOAuthStore.setState({ status: null, fetchStatus })
+    useHahaOAuthStore.setState({ status: null, fetchStatus })
 
     render(<ModelSelector runtimeKey="official-restored" />)
 
@@ -201,7 +242,7 @@ describe('ModelSelector', () => {
       { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6', description: 'Legacy Sonnet', context: '200k' },
       { id: 'claude-haiku-4-5', name: 'Haiku 4.5', description: 'Legacy Haiku', context: '200k' },
     ]
-    useEchoFlowOAuthStore.setState({
+    useHahaOAuthStore.setState({
       status: {
         loggedIn: true,
         expiresAt: null,
@@ -263,8 +304,8 @@ describe('ModelSelector', () => {
   it('does not query official OAuth status when mounted', () => {
     const fetchClaudeStatus = vi.fn(async () => {})
     const fetchOpenAIStatus = vi.fn(async () => {})
-    useEchoFlowOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
-    useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -287,8 +328,8 @@ describe('ModelSelector', () => {
   it('queries official OAuth status once when the runtime dropdown is opened', async () => {
     const fetchClaudeStatus = vi.fn(async () => {})
     const fetchOpenAIStatus = vi.fn(async () => {})
-    useEchoFlowOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
-    useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -331,8 +372,8 @@ describe('ModelSelector', () => {
   it('does not query official OAuth status for plain model dropdowns', async () => {
     const fetchClaudeStatus = vi.fn(async () => {})
     const fetchOpenAIStatus = vi.fn(async () => {})
-    useEchoFlowOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
-    useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -349,17 +390,21 @@ describe('ModelSelector', () => {
 
   it('routes an unconfigured runtime to provider settings instead of showing a fallback model', async () => {
     const fetchClaudeStatus = vi.fn(async () => {
-      useEchoFlowOAuthStore.setState({ status: { loggedIn: false } })
+      useHahaOAuthStore.setState({ status: { loggedIn: false } })
     })
     const fetchOpenAIStatus = vi.fn(async () => {
-      useEchoFlowOpenAIOAuthStore.setState({ status: { loggedIn: false } })
+      useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false } })
     })
     const fetchGrokStatus = vi.fn(async () => {
-      useEchoFlowGrokOAuthStore.setState({ status: { loggedIn: false } })
+      useHahaGrokOAuthStore.setState({ status: { loggedIn: false } })
     })
-    useEchoFlowOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
-    useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
-    useEchoFlowGrokOAuthStore.setState({ fetchStatus: fetchGrokStatus })
+    const fetchDeepSeekStatus = vi.fn(async () => {
+      useHahaDeepSeekOAuthStore.setState({ status: { loggedIn: false } })
+    })
+    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useHahaGrokOAuthStore.setState({ fetchStatus: fetchGrokStatus })
+    useHahaDeepSeekOAuthStore.setState({ fetchStatus: fetchDeepSeekStatus })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -392,6 +437,7 @@ describe('ModelSelector', () => {
     expect(fetchClaudeStatus).toHaveBeenCalledTimes(1)
     expect(fetchOpenAIStatus).toHaveBeenCalledTimes(1)
     expect(fetchGrokStatus).toHaveBeenCalledTimes(1)
+    expect(fetchDeepSeekStatus).toHaveBeenCalledTimes(1)
     expect(useTabStore.getState().activeTabId).toBe(SETTINGS_TAB_ID)
     expect(screen.queryByTestId('model-selector-dropdown')).not.toBeInTheDocument()
   })
@@ -400,9 +446,11 @@ describe('ModelSelector', () => {
     const fetchClaudeStatus = vi.fn(async () => {})
     const fetchOpenAIStatus = vi.fn(async () => {})
     const fetchGrokStatus = vi.fn(async () => {})
-    useEchoFlowOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: fetchClaudeStatus })
-    useEchoFlowOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: fetchOpenAIStatus })
-    useEchoFlowGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: fetchGrokStatus })
+    const fetchDeepSeekStatus = vi.fn(async () => {})
+    useHahaOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: fetchClaudeStatus })
+    useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: fetchOpenAIStatus })
+    useHahaGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: fetchGrokStatus })
+    useHahaDeepSeekOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: fetchDeepSeekStatus })
     useSettingsStore.setState({
       locale: 'en',
       currentModel: {
@@ -425,17 +473,18 @@ describe('ModelSelector', () => {
     expect(fetchClaudeStatus).not.toHaveBeenCalled()
     expect(fetchOpenAIStatus).not.toHaveBeenCalled()
     expect(fetchGrokStatus).not.toHaveBeenCalled()
+    expect(fetchDeepSeekStatus).not.toHaveBeenCalled()
     expect(useUIStore.getState().pendingSettingsTab).toBe('providers')
     expect(useTabStore.getState().activeTabId).toBe(SETTINGS_TAB_ID)
   })
 
   it('opens Claude Official models when the configuration check finds a login', async () => {
     const fetchClaudeStatus = vi.fn(async () => {
-      useEchoFlowOAuthStore.setState({
+      useHahaOAuthStore.setState({
         status: { loggedIn: true, expiresAt: null, scopes: [], subscriptionType: 'pro' },
       })
     })
-    useEchoFlowOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -484,9 +533,9 @@ describe('ModelSelector', () => {
         isLoading: false,
       })
     })
-    useEchoFlowOAuthStore.setState({ status: { loggedIn: false } })
-    useEchoFlowOpenAIOAuthStore.setState({ status: { loggedIn: false } })
-    useEchoFlowGrokOAuthStore.setState({ status: { loggedIn: false } })
+    useHahaOAuthStore.setState({ status: { loggedIn: false } })
+    useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false } })
+    useHahaGrokOAuthStore.setState({ status: { loggedIn: false } })
     useSettingsStore.setState({ locale: 'en', activeProviderName: null })
     useProviderStore.setState({
       providers: [],
@@ -573,27 +622,6 @@ describe('ModelSelector', () => {
     expect(setModel).toHaveBeenCalledWith('beta')
   })
 
-  it.each([
-    ['pending', 'Applying model configuration…'],
-    ['unconfirmed', 'Model configuration requested; active model could not be confirmed.'],
-    ['failed', 'Model configuration was rejected. Check the provider, model, and reasoning setting.'],
-  ] as const)('shows truthful runtime request status for %s', (status, message) => {
-    useSettingsStore.setState({
-      locale: 'en',
-      availableModels: MODELS,
-      currentModel: MODELS[0],
-      activeProviderName: 'Provider A',
-    })
-    useSessionRuntimeStore.setState({
-      runtimeRequestStatusBySessionId: { 'session-status': status },
-    })
-
-    render(<ModelSelector runtimeKey="session-status" />)
-
-    expect(screen.getByRole('status')).toHaveTextContent(message)
-    expect(screen.queryByText(/applied/i)).not.toBeInTheDocument()
-  })
-
   it('filters models by name or description and shows a clearable empty state', async () => {
     const onChange = vi.fn()
     useSettingsStore.setState({
@@ -609,6 +637,9 @@ describe('ModelSelector', () => {
     const search = within(dropdown).getByRole('searchbox', { name: 'Search models' })
 
     expect(search).toHaveFocus()
+    // The header lives outside the scroll region: a sticky header inside
+    // `overflow-y-auto` lets scrolled items paint through it on the desktop
+    // shell, so the contract is a hard clip below the header instead.
     expect(search.closest('.overflow-y-auto')).toBeNull()
     expect(dropdown).toHaveClass('overflow-hidden')
 
@@ -645,7 +676,7 @@ describe('ModelSelector', () => {
   })
 
   it('selects provider-scoped runtime models and mirrors session selections', async () => {
-    const setSessionModelConfig = vi.fn()
+    const setSessionRuntime = vi.fn()
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -673,7 +704,7 @@ describe('ModelSelector', () => {
       isLoading: true,
     })
     useChatStore.setState({
-      setSessionModelConfig,
+      setSessionRuntime,
     } as Partial<ReturnType<typeof useChatStore.getState>>)
 
     render(<ModelSelector runtimeKey="session-1" />)
@@ -699,7 +730,7 @@ describe('ModelSelector', () => {
       modelId: 'provider-fast',
       effortLevel: 'high',
     })
-    expect(setSessionModelConfig).toHaveBeenCalledWith('session-1', {
+    expect(setSessionRuntime).toHaveBeenCalledWith('session-1', {
       providerId: 'provider-a',
       modelId: 'provider-fast',
       effortLevel: 'high',
@@ -748,181 +779,14 @@ describe('ModelSelector', () => {
       .getAllByRole('button', { name: /deepseek-v4-pro/i })
       .find((button) => button.textContent?.includes('Sonnet Model'))
     expect(configuredOption).toBeDefined()
-    expect(configuredOption?.className).toContain('border-[var(--color-model-option-selected-border)]')
-  })
-
-  it.each(['failed', 'unconfirmed'] as const)(
-    'does not resend a matching %s runtime selection',
-    async (status) => {
-      const setSessionModelConfig = vi.fn()
-      const onRuntimeSelectionChange = vi.fn()
-      const selection = {
-        providerId: 'provider-a',
-        modelId: 'provider-main',
-        effortLevel: 'max' as const,
-      }
-      useSettingsStore.setState({
-        locale: 'en',
-        availableModels: MODELS,
-        currentModel: MODELS[0],
-        activeProviderName: 'Provider A',
-      })
-      useProviderStore.setState({
-        providers: [{
-          id: 'provider-a',
-          presetId: 'custom',
-          name: 'Provider A',
-          apiKey: '***',
-          baseUrl: 'https://api.example.com',
-          apiFormat: 'anthropic',
-          models: {
-            main: 'provider-main',
-            haiku: 'provider-fast',
-            sonnet: 'provider-main',
-            opus: '',
-          },
-        }],
-        activeId: 'provider-a',
-        hasLoadedProviders: true,
-        isLoading: true,
-      })
-      useSessionRuntimeStore.setState({
-        selections: { 'session-noop': selection },
-        runtimeRequestStatusBySessionId: { 'session-noop': status },
-      })
-      useChatStore.setState({
-        setSessionModelConfig,
-      } as Partial<ReturnType<typeof useChatStore.getState>>)
-
-      render(
-        <ModelSelector
-          runtimeKey="session-noop"
-          onRuntimeSelectionChange={onRuntimeSelectionChange}
-        />,
-      )
-
-      await clickByRole(/provider-main, provider a/i)
-      await clickByRole(/^provider-main main model/i)
-
-      expect(setSessionModelConfig).not.toHaveBeenCalled()
-      expect(onRuntimeSelectionChange).not.toHaveBeenCalled()
-      expect(useSessionRuntimeStore.getState().selections['session-noop']).toEqual(selection)
-      expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
-        'session-noop': status,
-      })
-    },
-  )
-
-  it('allows a pending model request to be replaced by the latest selection', async () => {
-    const setSessionModelConfig = vi.fn((sessionId: string) => {
-      useSessionRuntimeStore.getState().markRequestPending(sessionId)
-    })
-    useSettingsStore.setState({
-      locale: 'en',
-      availableModels: MODELS,
-      currentModel: MODELS[0],
-      activeProviderName: 'Provider A',
-    })
-    useProviderStore.setState({
-      providers: [{
-        id: 'provider-a',
-        presetId: 'custom',
-        name: 'Provider A',
-        apiKey: '***',
-        baseUrl: 'https://api.example.com',
-        apiFormat: 'anthropic',
-        models: {
-          main: 'provider-main',
-          haiku: 'provider-fast',
-          sonnet: 'provider-main',
-          opus: '',
-        },
-      }],
-      activeId: 'provider-a',
-      hasLoadedProviders: true,
-      isLoading: true,
-    })
-    useSessionRuntimeStore.getState().setSelection('session-pending', {
-      providerId: 'provider-a',
-      modelId: 'provider-main',
-      effortLevel: 'max',
-    })
-    useChatStore.setState({
-      setSessionModelConfig,
-    } as Partial<ReturnType<typeof useChatStore.getState>>)
-
-    render(<ModelSelector runtimeKey="session-pending" />)
-
-    await clickByRole(/provider-main, provider a/i)
-    await clickByRole(/^provider-fast haiku model/i)
-    await clickByRole(/provider-fast, provider a/i)
-
-    const providerMainOption = screen.getByRole('button', { name: /^provider-main main model/i })
-    expect(providerMainOption).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Effort: Max' })).toBeEnabled()
-    await act(async () => {
-      fireEvent.click(providerMainOption)
-      await Promise.resolve()
-    })
-
-    expect(setSessionModelConfig).toHaveBeenCalledTimes(2)
-    expect(useSessionRuntimeStore.getState().selections['session-pending']).toEqual({
-      providerId: 'provider-a',
-      modelId: 'provider-main',
-      effortLevel: 'max',
-    })
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
-      'session-pending': 'pending',
-    })
-  })
-
-  it('defaults blank provider-scoped runtime selections to the active provider main model', async () => {
-    useSettingsStore.setState({
-      locale: 'en',
-      availableModels: [
-        { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', description: 'Main Model · Haiku Model', context: '' },
-        { id: 'deepseek-v4-pro', name: 'deepseek-v4-pro', description: 'Sonnet Model · Opus Model', context: '' },
-      ],
-      currentModel: { id: 'deepseek-v4-pro', name: 'deepseek-v4-pro', description: 'Sonnet Model · Opus Model', context: '' },
-      activeProviderName: 'Custom-DeepSeek-OpenAI',
-    })
-    useProviderStore.setState({
-      providers: [{
-        id: 'deepseek-provider',
-        presetId: 'custom',
-        name: 'Custom-DeepSeek-OpenAI',
-        apiKey: '***',
-        baseUrl: 'https://api.deepseek.com',
-        apiFormat: 'openai_chat',
-        models: {
-          main: 'deepseek-v4-flash',
-          haiku: 'deepseek-v4-flash',
-          sonnet: 'deepseek-v4-pro',
-          opus: 'deepseek-v4-pro',
-        },
-      }],
-      activeId: 'deepseek-provider',
-      hasLoadedProviders: true,
-      isLoading: true,
-    })
-
-    render(<ModelSelector runtimeKey="blank-session" />)
-
-    const trigger = screen.getByRole('button', { name: /deepseek-v4-pro/i })
-    await act(async () => {
-      fireEvent.click(trigger)
-      await Promise.resolve()
-    })
-
-    const configuredOption = screen
-      .getAllByRole('button', { name: /deepseek-v4-pro/i })
-      .find((button) => button.textContent?.includes('Sonnet Model'))
-    expect(configuredOption).toBeDefined()
-    expect(configuredOption?.className).toContain('border-[var(--color-model-option-selected-border)]')
+    // 「素」 menu selection: the hover fill at rest plus the terracotta check.
+    expect(configuredOption).toHaveAttribute('aria-current', 'true')
+    expect(configuredOption?.className).toContain('bg-[var(--color-surface-hover)]')
+    expect(configuredOption?.querySelector('svg.lucide-check')).toHaveClass('text-[var(--color-brand)]')
   })
 
   it('closes the focus ring on both halves of the segmented control', () => {
-    useEchoFlowOAuthStore.setState({
+    useHahaOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, scopes: [], subscriptionType: 'pro' },
       fetchStatus: async () => {},
     })
@@ -946,8 +810,8 @@ describe('ModelSelector', () => {
     // The ring traces `border-radius`. Each half is rounded on one side only,
     // so without this the focused half drew a box that was round down one edge
     // and square down the other.
-    expect(modelHalf).toHaveClass('rounded-l-[var(--radius-md)]', 'focus-visible:rounded-[var(--radius-md)]')
-    expect(effortHalf).toHaveClass('rounded-r-[var(--radius-md)]', 'focus-visible:rounded-[var(--radius-md)]')
+    expect(modelHalf).toHaveClass('rounded-l-[var(--radius-sm)]', 'focus-visible:rounded-[var(--radius-sm)]')
+    expect(effortHalf).toHaveClass('rounded-r-[var(--radius-sm)]', 'focus-visible:rounded-[var(--radius-sm)]')
   })
 
   // On the phone composer this control sits between two 44px buttons and opens
@@ -981,7 +845,7 @@ describe('ModelSelector', () => {
   })
 
   it('keeps every CLI effort stop scoped to the selected session', async () => {
-    const setSessionModelConfig = vi.fn()
+    const setSessionRuntime = vi.fn()
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -1019,7 +883,7 @@ describe('ModelSelector', () => {
       effortLevel: 'max',
     })
     useChatStore.setState({
-      setSessionModelConfig,
+      setSessionRuntime,
     } as Partial<ReturnType<typeof useChatStore.getState>>)
 
     render(<ModelSelector runtimeKey="session-1" />)
@@ -1037,7 +901,7 @@ describe('ModelSelector', () => {
       modelId: 'k3',
       effortLevel: 'max',
     })
-    expect(setSessionModelConfig).toHaveBeenCalledWith('session-1', {
+    expect(setSessionRuntime).toHaveBeenCalledWith('session-1', {
       providerId: 'kimi-provider',
       modelId: 'k3',
       effortLevel: 'xhigh',
@@ -1046,7 +910,7 @@ describe('ModelSelector', () => {
   })
 
   it('keeps effort selectable for unlisted Claude models from compatible providers', async () => {
-    const setSessionModelConfig = vi.fn()
+    const setSessionRuntime = vi.fn()
     useSettingsStore.setState({
       locale: 'en',
       availableModels: [],
@@ -1079,7 +943,7 @@ describe('ModelSelector', () => {
       effortLevel: 'high',
     })
     useChatStore.setState({
-      setSessionModelConfig,
+      setSessionRuntime,
     } as Partial<ReturnType<typeof useChatStore.getState>>)
 
     render(<ModelSelector runtimeKey="session-claude-future" />)
@@ -1097,7 +961,7 @@ describe('ModelSelector', () => {
     expect(useSessionRuntimeStore.getState().selections['session-claude-future']).toEqual(
       expectedSelection,
     )
-    expect(setSessionModelConfig).toHaveBeenCalledWith('session-claude-future', expectedSelection)
+    expect(setSessionRuntime).toHaveBeenCalledWith('session-claude-future', expectedSelection)
 
     await clickByRole('claude-opus-5, XuanShu API')
     await clickByRole(/claude-sonnet-5/i)
@@ -1251,13 +1115,14 @@ describe('ModelSelector', () => {
         supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
       },
     ]
-    const setSessionModelConfig = vi.fn()
-    useEchoFlowOpenAIOAuthStore.setState({
+    const setSessionRuntime = vi.fn()
+    useHahaOpenAIOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
       fetchStatus: async () => {},
     })
     useSettingsStore.setState({
       locale: 'en',
+      effortLevel: 'max',
       availableModels: openAIModels,
       currentModel: openAIModels[0],
       activeProviderName: 'ChatGPT Official',
@@ -1269,7 +1134,7 @@ describe('ModelSelector', () => {
       isLoading: true,
     })
     useChatStore.setState({
-      setSessionModelConfig,
+      setSessionRuntime,
     } as Partial<ReturnType<typeof useChatStore.getState>>)
 
     render(<ModelSelector runtimeKey="session-openai" />)
@@ -1285,39 +1150,11 @@ describe('ModelSelector', () => {
       modelId: 'gpt-5.5',
       effortLevel: 'medium',
     })
-    expect(setSessionModelConfig).toHaveBeenCalledWith('session-openai', {
+    expect(setSessionRuntime).toHaveBeenCalledWith('session-openai', {
       providerId: OPENAI_OFFICIAL_PROVIDER_ID,
       modelId: 'gpt-5.5',
       effortLevel: 'medium',
     })
-  })
-
-  it('uses the selected model default when a fresh session has no explicit effort', () => {
-    const model: ModelInfo = {
-      id: 'gpt-5.6-sol',
-      name: 'GPT-5.6-Sol',
-      description: 'Frontier model',
-      context: '353400',
-      defaultReasoningEffort: 'low',
-      supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-    }
-    useEchoFlowOpenAIOAuthStore.setState({
-      status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
-      fetchStatus: async () => {},
-    })
-    useSettingsStore.setState({
-      locale: 'en', availableModels: [model], currentModel: model,
-      activeProviderName: 'ChatGPT Official', effortLevel: 'max',
-    })
-    useProviderStore.setState({
-      providers: [], activeId: OPENAI_OFFICIAL_PROVIDER_ID,
-      hasLoadedProviders: true, isLoading: true,
-    })
-
-    render(<ModelSelector runtimeKey="fresh-session" />)
-
-    expect(screen.getByRole('button', { name: 'Effort: Low' })).toBeInTheDocument()
-    expect(useSessionRuntimeStore.getState().selections['fresh-session']).toBeUndefined()
   })
 
   it('uses each ChatGPT model reasoning catalog and resets unsupported effort to its default', async () => {
@@ -1339,7 +1176,7 @@ describe('ModelSelector', () => {
         supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
       },
     ]
-    useEchoFlowOpenAIOAuthStore.setState({
+    useHahaOpenAIOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
       fetchStatus: async () => {},
     })
@@ -1369,8 +1206,6 @@ describe('ModelSelector', () => {
       'ChatGPT Official · GPT-5.6-Sol',
     )
     expect(screen.queryByTestId('model-provider-badge')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-provider-button')).toHaveAttribute('title', 'ChatGPT Official · GPT-5.6-Sol')
-    expect(screen.getByTestId('model-provider-button')).toHaveTextContent('ChatGPT Official')
     expect(screen.getByRole('button', { name: 'Effort: Max' })).toBeInTheDocument()
     await clickByRole('Effort: Max')
     expect(screen.getByRole('slider', { name: 'Effort' })).toHaveAttribute('aria-valuemax', '4')
@@ -1385,18 +1220,12 @@ describe('ModelSelector', () => {
       modelId: 'gpt-5.5',
       effortLevel: 'medium',
     })
-    await act(async () => {
-      useSessionRuntimeStore.getState().markRequestPending('session-openai-effort')
-      useSessionRuntimeStore.getState().markRequestUnconfirmed('session-openai-effort')
-      await Promise.resolve()
-    })
 
     expect(screen.getByRole('button', { name: 'Effort: Medium' })).toBeInTheDocument()
     await clickByRole('Effort: Medium')
     expect(screen.getByRole('slider', { name: 'Effort' })).toHaveAttribute('aria-valuemax', '3')
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Effort' }), { key: 'End' })
-    expect(screen.getByRole('slider', { name: 'Effort' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Effort: X-High' })).toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: 'Effort' })).toHaveAttribute('aria-valuetext', 'X-High')
 
     expect(useSessionRuntimeStore.getState().selections['session-openai-effort']).toEqual({
       providerId: OPENAI_OFFICIAL_PROVIDER_ID,
@@ -1405,7 +1234,52 @@ describe('ModelSelector', () => {
     })
   })
 
-  it('keeps xhigh when switching from GPT-5.6-Sol to a compatible Kimi provider', async () => {
+  it('toggles Fast only for ChatGPT Official OAuth and keeps it across effort and model changes', async () => {
+    const setSessionRuntime = vi.fn()
+    useHahaOpenAIOAuthStore.setState({
+      status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
+      fetchStatus: async () => {},
+    })
+    useSettingsStore.setState({ locale: 'zh', effortLevel: 'high' })
+    useProviderStore.setState({ providers: [], activeId: OPENAI_OFFICIAL_PROVIDER_ID, hasLoadedProviders: true })
+    useChatStore.setState({ setSessionRuntime } as Partial<ReturnType<typeof useChatStore.getState>>)
+    useSessionRuntimeStore.getState().setSelection('fast-session', {
+      providerId: OPENAI_OFFICIAL_PROVIDER_ID, modelId: 'gpt-6-sol', effortLevel: 'high',
+    })
+
+    render(<ModelSelector runtimeKey="fast-session" />)
+    await clickByRole('推理强度: 高')
+    const fast = screen.getByRole('switch', { name: 'Fast 模式' })
+    expect(fast).not.toBeChecked()
+    expect(screen.getByText(/1.5/)).toBeInTheDocument()
+    fireEvent.click(fast)
+    expect(fast).toBeChecked()
+    expect(setSessionRuntime).toHaveBeenLastCalledWith('fast-session', {
+      providerId: OPENAI_OFFICIAL_PROVIDER_ID, modelId: 'gpt-6-sol', effortLevel: 'high', openAIFastMode: true,
+    })
+    fireEvent.keyDown(screen.getByRole('slider', { name: '推理强度' }), { key: 'ArrowLeft' })
+    expect(useSessionRuntimeStore.getState().selections['fast-session']).toMatchObject({ effortLevel: 'medium', openAIFastMode: true })
+    await clickByRole(/GPT-6-Sol/i)
+    await clickByRole(/GPT-6-Luna/i)
+    expect(useSessionRuntimeStore.getState().selections['fast-session']).toMatchObject({ modelId: 'gpt-6-luna', openAIFastMode: true })
+    await clickByRole('推理强度: 中 · Fast 模式')
+    fireEvent.click(screen.getByRole('switch', { name: 'Fast 模式' }))
+    expect(useSessionRuntimeStore.getState().selections['fast-session']).toMatchObject({ openAIFastMode: false })
+    expect(setSessionRuntime).toHaveBeenLastCalledWith('fast-session', expect.objectContaining({ openAIFastMode: false }))
+  })
+
+  it('never offers the OAuth Fast switch for Claude Official or API-key providers', async () => {
+    useSettingsStore.setState({ locale: 'en', effortLevel: 'high' })
+    useProviderStore.setState({ providers: [], activeId: null, hasLoadedProviders: true })
+    useSessionRuntimeStore.getState().setSelection('claude-session', {
+      providerId: null, modelId: 'claude-opus-4-8', effortLevel: 'high',
+    })
+    render(<ModelSelector runtimeKey="claude-session" />)
+    await clickByRole('Effort: High')
+    expect(screen.queryByRole('switch', { name: 'Fast mode' })).not.toBeInTheDocument()
+  })
+
+  it('keeps xhigh but drops OAuth Fast when switching from GPT-5.6-Sol to Kimi', async () => {
     const solModel: ModelInfo = {
       id: 'gpt-5.6-sol',
       name: 'GPT-5.6-Sol',
@@ -1414,8 +1288,8 @@ describe('ModelSelector', () => {
       defaultReasoningEffort: 'low',
       supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     }
-    const setSessionModelConfig = vi.fn()
-    useEchoFlowOpenAIOAuthStore.setState({
+    const setSessionRuntime = vi.fn()
+    useHahaOpenAIOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
       fetchStatus: async () => {},
     })
@@ -1449,9 +1323,10 @@ describe('ModelSelector', () => {
       providerId: OPENAI_OFFICIAL_PROVIDER_ID,
       modelId: 'gpt-5.6-sol',
       effortLevel: 'xhigh',
+      openAIFastMode: true,
     })
     useChatStore.setState({
-      setSessionModelConfig,
+      setSessionRuntime,
     } as Partial<ReturnType<typeof useChatStore.getState>>)
 
     render(<ModelSelector runtimeKey="session-kimi-switch" />)
@@ -1467,7 +1342,7 @@ describe('ModelSelector', () => {
     expect(useSessionRuntimeStore.getState().selections['session-kimi-switch']).toEqual(
       expectedSelection,
     )
-    expect(setSessionModelConfig).toHaveBeenCalledWith('session-kimi-switch', expectedSelection)
+    expect(setSessionRuntime).toHaveBeenCalledWith('session-kimi-switch', expectedSelection)
     expect(screen.getByRole('button', { name: 'Effort: X-High' })).toBeInTheDocument()
   })
 
@@ -1517,7 +1392,7 @@ describe('ModelSelector', () => {
       context: '',
       supportedReasoningEfforts: [],
     }]
-    useEchoFlowGrokOAuthStore.setState({
+    useHahaGrokOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: 'grok@example.com' },
       fetchStatus: async () => {},
     })
@@ -1548,6 +1423,230 @@ describe('ModelSelector', () => {
     expect(screen.queryByRole('button', { name: /Effort:/i })).not.toBeInTheDocument()
   })
 
+  describe('DeepSeek Account', () => {
+    const savedProvider = {
+      id: 'provider-a',
+      presetId: 'custom',
+      name: 'Provider A',
+      apiKey: '***',
+      baseUrl: 'https://api.example.com',
+      apiFormat: 'anthropic' as const,
+      models: { main: 'provider-main', haiku: '', sonnet: '', opus: '' },
+    }
+
+    function useSavedProviderActive() {
+      useSettingsStore.setState({
+        locale: 'en',
+        availableModels: MODELS,
+        currentModel: MODELS[0],
+        activeProviderName: 'Provider A',
+      })
+      useProviderStore.setState({
+        providers: [savedProvider],
+        activeId: 'provider-a',
+        hasLoadedProviders: true,
+        isLoading: false,
+      })
+      useHahaOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+      useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+      useHahaGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+    }
+
+    it('does not offer DeepSeek Account models while signed out', async () => {
+      useSavedProviderActive()
+      useHahaDeepSeekOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+
+      render(<ModelSelector runtimeKey="session-ds-out" />)
+      await clickByRole(/provider-main/i)
+
+      const dropdown = screen.getByTestId('model-selector-dropdown')
+      expect(dropdown.textContent).toContain('Provider A')
+      expect(dropdown.textContent).not.toContain('DeepSeek Account')
+      expect(dropdown.textContent).not.toContain('deepseek-v4')
+    })
+
+    it('lists the account models once signed in and selects one for the session', async () => {
+      useSavedProviderActive()
+      useHahaDeepSeekOAuthStore.setState({
+        status: { loggedIn: true, name: 'Ada', contact: 'a***@example.com' },
+        fetchStatus: async () => {},
+      })
+
+      render(<ModelSelector runtimeKey="session-ds-in" />)
+      await clickByRole(/provider-main/i)
+
+      const dropdown = screen.getByTestId('model-selector-dropdown')
+      expect(dropdown.textContent).toContain('DeepSeek Account')
+      // The `[1m]` alias row stands for the listed Flash model instead of
+      // repeating it; Pro remains available as an explicit alternative.
+      expect(dropdown.textContent).not.toContain('deepseek-v4-flash')
+      expect(within(dropdown).getAllByRole('button', { name: /DeepSeek-V4\.1-Flash/ })).toHaveLength(1)
+      expect(within(dropdown).getAllByRole('button', { name: /DeepSeek-V4-Pro/ })).toHaveLength(1)
+      await act(async () => {
+        fireEvent.click(within(dropdown).getByRole('button', { name: /DeepSeek-V4\.1-Flash/ }))
+        await Promise.resolve()
+      })
+
+      expect(useSessionRuntimeStore.getState().selections['session-ds-in']).toMatchObject({
+        providerId: 'deepseek-account',
+        modelId: 'deepseek-flash[1m]',
+      })
+    })
+
+    it('builds the account alias rows from the mapping saved in Settings', async () => {
+      useSavedProviderActive()
+      useProviderStore.setState({
+        deepSeekAccountModels: {
+          main: 'deepseek-flash',
+          haiku: 'deepseek-flash',
+          sonnet: 'deepseek-v4-pro',
+          opus: 'deepseek-v4-pro',
+        },
+      })
+      useHahaDeepSeekOAuthStore.setState({
+        status: { loggedIn: true, name: null, contact: null },
+        fetchStatus: async () => {},
+      })
+
+      render(<ModelSelector runtimeKey="session-ds-saved" />)
+      await clickByRole(/provider-main/i)
+
+      const dropdown = screen.getByTestId('model-selector-dropdown')
+      const flash = within(dropdown).getByRole('button', { name: /DeepSeek-V4\.1-Flash/ })
+      expect(flash.textContent).toContain('Main Model · Haiku Model')
+      const pro = within(dropdown).getByRole('button', { name: /DeepSeek-V4-Pro/ })
+      expect(pro.textContent).toContain('Sonnet Model · Opus Model')
+      // The default mapping's `[1m]` alias is not what the user saved.
+      expect(dropdown.textContent).not.toContain('deepseek-v4-pro[1m]')
+      await act(async () => {
+        fireEvent.click(pro)
+        await Promise.resolve()
+      })
+      expect(useSessionRuntimeStore.getState().selections['session-ds-saved']).toMatchObject({
+        providerId: 'deepseek-account',
+        modelId: 'deepseek-v4-pro',
+      })
+    })
+
+    it('offers the models of the live account listing while the account is the default provider', async () => {
+      useHahaOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+      useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+      useHahaGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+      useHahaDeepSeekOAuthStore.setState({ status: { loggedIn: true, name: null, contact: null }, fetchStatus: async () => {} })
+      const listed = [
+        { id: 'deepseek-v4-pro[1m]', name: 'DeepSeek-V4-Pro', description: 'Main model', context: '1048576' },
+        { id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash', description: 'Haiku model', context: '1048576' },
+        { id: 'deepseek-v5-preview', name: 'DeepSeek-V5-Preview', description: '', context: '' },
+      ]
+      useSettingsStore.setState({
+        locale: 'en',
+        availableModels: listed,
+        currentModel: listed[0],
+        activeProviderName: 'DeepSeek Account',
+      })
+      useProviderStore.setState({
+        providers: [],
+        activeId: 'deepseek-account',
+        hasLoadedProviders: true,
+        isLoading: false,
+      })
+
+      render(<ModelSelector runtimeKey="session-ds-live" />)
+      await clickByRole(/DeepSeek-V4-Pro/i)
+
+      const dropdown = screen.getByTestId('model-selector-dropdown')
+      await act(async () => {
+        fireEvent.click(within(dropdown).getByRole('button', { name: /DeepSeek-V5-Preview/ }))
+        await Promise.resolve()
+      })
+      expect(useSessionRuntimeStore.getState().selections['session-ds-live']).toMatchObject({
+        providerId: 'deepseek-account',
+        modelId: 'deepseek-v5-preview',
+      })
+    })
+
+    it.each([
+      ['deepseek-v4-pro[1m]', 'DeepSeek-V4-Pro'],
+      ['deepseek-flash', 'DeepSeek-V4.1-Flash'],
+    ])('keeps restored DeepSeek selection %s and its catalog display name', (modelId, modelName) => {
+      useSavedProviderActive()
+      useHahaDeepSeekOAuthStore.setState({ status: null, fetchStatus: async () => {} })
+      useSessionRuntimeStore.getState().setSelection('session-ds-restored', {
+        providerId: 'deepseek-account',
+        modelId,
+      })
+
+      render(<ModelSelector runtimeKey="session-ds-restored" />)
+
+      expect(screen.getByRole('button', { name: `${modelName}, DeepSeek Account` })).toBeInTheDocument()
+      expect(useSessionRuntimeStore.getState().selections['session-ds-restored']).toMatchObject({
+        providerId: 'deepseek-account',
+        modelId,
+      })
+    })
+
+    it('fetches the DeepSeek sign-in status when the selector opens', async () => {
+      useSavedProviderActive()
+      const fetchStatus = vi.fn(async () => {})
+      useHahaDeepSeekOAuthStore.setState({ status: null, fetchStatus })
+
+      render(<ModelSelector runtimeKey="session-ds-lazy" />)
+      expect(fetchStatus).not.toHaveBeenCalled()
+      await clickByRole(/provider-main/i)
+
+      expect(fetchStatus).toHaveBeenCalledTimes(1)
+    })
+
+    it('opens the selector instead of routing to settings when DeepSeek is the only login', async () => {
+      useSettingsStore.setState({ locale: 'en', currentModel: undefined, activeProviderName: null })
+      useProviderStore.setState({ providers: [], activeId: null, hasLoadedProviders: true, isLoading: false })
+      useHahaOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+      useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+      useHahaGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+      useHahaDeepSeekOAuthStore.setState({
+        status: { loggedIn: true, name: null, contact: null },
+        fetchStatus: async () => {},
+      })
+
+      render(<ModelSelector runtimeKey="session-ds-only" />)
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button'))
+        await Promise.resolve()
+      })
+
+      expect(useUIStore.getState().pendingSettingsTab).not.toBe('providers')
+      expect(screen.getByTestId('model-selector-dropdown').textContent).toContain('DeepSeek Account')
+    })
+
+    it('opens the selector after the status fetch finds a DeepSeek login nobody had checked yet', async () => {
+      useSettingsStore.setState({ locale: 'en', currentModel: undefined, activeProviderName: null })
+      useProviderStore.setState({ providers: [], activeId: null, hasLoadedProviders: true, isLoading: false })
+      useHahaOAuthStore.setState({ status: null, fetchStatus: async () => {
+        useHahaOAuthStore.setState({ status: { loggedIn: false } })
+      } })
+      useHahaOpenAIOAuthStore.setState({ status: null, fetchStatus: async () => {
+        useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false } })
+      } })
+      useHahaGrokOAuthStore.setState({ status: null, fetchStatus: async () => {
+        useHahaGrokOAuthStore.setState({ status: { loggedIn: false } })
+      } })
+      useHahaDeepSeekOAuthStore.setState({ status: null, fetchStatus: async () => {
+        useHahaDeepSeekOAuthStore.setState({ status: { loggedIn: true, name: null, contact: null } })
+      } })
+
+      render(<ModelSelector runtimeKey="session-ds-late" />)
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button'))
+        await Promise.resolve()
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId('model-selector-dropdown').textContent).toContain('DeepSeek Account')
+      })
+      expect(useUIStore.getState().pendingSettingsTab).not.toBe('providers')
+    })
+  })
+
   it('replaces a stale Grok runtime model with the current official default', async () => {
     const grokModels: ModelInfo[] = [{
       id: 'grok-4.7',
@@ -1557,7 +1656,7 @@ describe('ModelSelector', () => {
       defaultReasoningEffort: 'high',
       supportedReasoningEfforts: ['xhigh', 'high', 'medium', 'low'],
     }]
-    useEchoFlowGrokOAuthStore.setState({
+    useHahaGrokOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: 'grok@example.com' },
       fetchStatus: async () => {},
     })
@@ -1608,9 +1707,9 @@ describe('ModelSelector', () => {
   })
 
   it('hides official provider sections when OAuth is not logged in', async () => {
-    useEchoFlowOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
-    useEchoFlowOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
-    useEchoFlowGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+    useHahaOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+    useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+    useHahaGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -1688,5 +1787,107 @@ describe('ModelSelector', () => {
     expect(dropdown.style.top).toBe('158px')
     expect(dropdown.style.left).toBe('160px')
     expect(dropdown.style.width).toBe('360px')
+  })
+})
+
+describe('delegation catalog', () => {
+  it('uses server provider identity without reconciling it against stale global providers', async () => {
+    useSettingsStore.setState({ locale: 'en' })
+    const fetchProviders = vi.fn()
+    useProviderStore.setState({ hasLoadedProviders: true, providers: [], fetchProviders })
+    const onRuntimeSelectionChange = vi.fn()
+    render(<ModelSelector ariaLabel="Delegated model" runtimeSelection={{ providerId: 'server-one', modelId: 'same' }} onRuntimeSelectionChange={onRuntimeSelectionChange} runtimeChoices={[
+      { providerId: 'server-one', providerName: 'Channel one', isDefault: false, models: [{ id: 'same', name: 'Same', description: '', context: '', supportedReasoningEfforts: [] }] },
+      { providerId: 'server-two', providerName: 'Channel two', isDefault: false, models: [{ id: 'same', name: 'Same', description: '', context: '', supportedReasoningEfforts: [] }] },
+    ]} />)
+    expect(screen.getByRole('button', { name: 'Delegated model' })).toHaveTextContent('Channel one')
+    await clickByRole('Delegated model')
+    const matches = screen.getAllByRole('button', { name: 'Same' })
+    fireEvent.click(matches[1]!)
+    expect(onRuntimeSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'server-two', modelId: 'same' }))
+    expect(fetchProviders).not.toHaveBeenCalled()
+  })
+})
+
+describe('controlled runtime pickers outside the composer', () => {
+  const zhipu = {
+    id: 'zhipu', presetId: 'zhipuglm', name: 'Zhipu', apiFormat: 'anthropic' as const,
+    apiKey: 'fixture', baseUrl: 'http://127.0.0.1:1',
+    models: { main: 'glm-5.3', haiku: 'glm-5.3', sonnet: 'glm-5.3', opus: 'glm-5.3' },
+  }
+
+  it('edits a member effort in place, limited to what its provider model accepts', async () => {
+    useSettingsStore.setState({ locale: 'en', effortLevel: 'high' })
+    useProviderStore.setState({ hasLoadedProviders: true, providers: [zhipu], activeId: null })
+    const onRuntimeSelectionChange = vi.fn()
+    render(<ModelSelector appearance="field" effortEditable ariaLabel="Member model" runtimeSelection={{ providerId: 'zhipu', modelId: 'glm-5.3', effortLevel: 'high' }} onRuntimeSelectionChange={onRuntimeSelectionChange} />)
+
+    // A field shows its provider even while the effort pill is present.
+    expect(screen.getByRole('button', { name: 'Member model' })).toHaveTextContent('Zhipu')
+    await clickByRole(/^Effort: High/)
+    const stops = within(screen.getByTestId('reasoning-effort-popover')).getAllByTestId('reasoning-effort-stop')
+    expect(stops.map(stop => stop.getAttribute('title'))).toEqual(['Low', 'High', 'Max'])
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Effort' }), { key: 'ArrowRight' })
+
+    expect(onRuntimeSelectionChange).toHaveBeenCalledWith({ providerId: 'zhipu', modelId: 'glm-5.3', effortLevel: 'max' })
+    // Controlled pickers own no session: nothing is written to the session store.
+    expect(useSessionRuntimeStore.getState().selections).toEqual({})
+  })
+
+  it('says Default for a member without an effort instead of borrowing the composer level', async () => {
+    // A member launched without an effort runs on its model's default, so the
+    // global composer default ("Low" here) must not be shown as its effort.
+    useSettingsStore.setState({ locale: 'en', effortLevel: 'low' })
+    useProviderStore.setState({ hasLoadedProviders: true, providers: [zhipu], activeId: null })
+    const onRuntimeSelectionChange = vi.fn()
+    render(<ModelSelector appearance="field" effortEditable ariaLabel="Member model" runtimeSelection={{ providerId: 'zhipu', modelId: 'glm-5.3' }} onRuntimeSelectionChange={onRuntimeSelectionChange} />)
+
+    await clickByRole('Effort: Default')
+    const stops = within(screen.getByTestId('reasoning-effort-popover')).getAllByTestId('reasoning-effort-stop')
+    expect(stops.filter(stop => stop.hasAttribute('data-selected'))).toHaveLength(0)
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Effort' }), { key: 'End' })
+    expect(onRuntimeSelectionChange).toHaveBeenCalledWith({ providerId: 'zhipu', modelId: 'glm-5.3', effortLevel: 'max' })
+  })
+
+  it('hands an effort change alone to onEffortChange when the picker stands in for several runtimes', async () => {
+    useSettingsStore.setState({ locale: 'en', effortLevel: 'high' })
+    useProviderStore.setState({ hasLoadedProviders: true, providers: [zhipu], activeId: null })
+    const onRuntimeSelectionChange = vi.fn()
+    const onEffortChange = vi.fn()
+    render(<ModelSelector appearance="field" effortEditable ariaLabel="Batch model" runtimeSelection={{ providerId: 'zhipu', modelId: 'glm-5.3', effortLevel: 'high' }} onRuntimeSelectionChange={onRuntimeSelectionChange} onEffortChange={onEffortChange} />)
+
+    await clickByRole(/^Effort: High/)
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Effort' }), { key: 'ArrowLeft' })
+
+    expect(onEffortChange).toHaveBeenCalledWith('low')
+    expect(onRuntimeSelectionChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps leading non-provider choices intact and lists only saved API providers', async () => {
+    useSettingsStore.setState({ locale: 'en' })
+    useProviderStore.setState({ hasLoadedProviders: true, providers: [zhipu], activeId: 'zhipu' })
+    useHahaOAuthStore.setState({ status: { loggedIn: true } as never })
+    const onRuntimeSelectionChange = vi.fn()
+    render(<ModelSelector
+      appearance="field"
+      ariaLabel="Agent model"
+      savedProvidersOnly
+      leadingChoices={[{ providerId: '__session__', providerName: 'Session provider', isDefault: false, models: [
+        { id: 'inherit', name: 'Inherit from parent', description: '', context: '' },
+        { id: 'opus', name: 'opus', description: '', context: '' },
+      ] }]}
+      runtimeSelection={{ providerId: '__session__', modelId: 'inherit' }}
+      onRuntimeSelectionChange={onRuntimeSelectionChange}
+    />)
+
+    // The unknown leading provider id is not "repaired" into the active provider.
+    expect(screen.getByRole('button', { name: 'Agent model' })).toHaveTextContent('Inherit from parent')
+    await clickByRole('Agent model')
+    const picker = screen.getByTestId('model-selector-dropdown')
+    expect(within(picker).getByText('Session provider')).toBeInTheDocument()
+    expect(within(picker).getByText('Zhipu')).toBeInTheDocument()
+    expect(within(picker).queryByText('Claude Official')).not.toBeInTheDocument()
+    fireEvent.click(within(picker).getByRole('button', { name: /^opus/ }))
+    expect(onRuntimeSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ providerId: '__session__', modelId: 'opus' }))
   })
 })

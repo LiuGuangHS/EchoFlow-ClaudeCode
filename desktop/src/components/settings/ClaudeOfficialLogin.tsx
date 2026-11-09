@@ -2,16 +2,19 @@
 //
 // 显示当前 Claude Official OAuth 登录状态,提供 Login / Logout 按钮。
 // 点击 Login 调 desktop host shell.open 打开浏览器走 OAuth flow;浏览器回 callback
-// 到 EchoFlow server 后,store 的 polling 自动刷新 UI 展示"已登录"。
+// 到 haha server 后,store 的 polling 自动刷新 UI 展示"已登录"。
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { CircleCheck } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
-import { useEchoFlowOAuthStore } from '../../stores/echoFlowOAuthStore'
+import { useHahaOAuthStore } from '../../stores/hahaOAuthStore'
 import { useTranslation } from '../../i18n'
 import { getDesktopHost } from '../../lib/desktopHost'
+import { OfficialLoginRiskDialog } from './OfficialLoginRiskDialog'
 
 export function ClaudeOfficialLogin() {
   const t = useTranslation()
+  const [riskDialogOpen, setRiskDialogOpen] = useState(false)
   const {
     status,
     isLoading,
@@ -21,7 +24,7 @@ export function ClaudeOfficialLogin() {
     logout,
     startPolling,
     stopPolling,
-  } = useEchoFlowOAuthStore()
+  } = useHahaOAuthStore()
 
   useEffect(() => {
     fetchStatus()
@@ -36,7 +39,7 @@ export function ClaudeOfficialLogin() {
         startPolling()
       } catch (err) {
         console.error('[ClaudeOfficialLogin] shellOpen failed:', err)
-        useEchoFlowOAuthStore.setState({
+        useHahaOAuthStore.setState({
           error: t('settings.claudeOfficialLogin.openBrowserFailed'),
         })
       }
@@ -65,9 +68,10 @@ export function ClaudeOfficialLogin() {
       ? status.subscriptionType.toUpperCase()
       : t('settings.claudeOfficialLogin.subTypeUnknown')
     return (
-      <div className="flex items-center gap-3 text-sm">
-        <span className="text-[var(--color-success)]">
-          ✓ {t('settings.claudeOfficialLogin.loggedInPrefix')} {subTypeLabel})
+      <div className="flex flex-wrap items-center gap-3 text-[13px]">
+        <span className="inline-flex items-center gap-1.5 text-[var(--color-success)]">
+          <CircleCheck size={14} strokeWidth={1.75} aria-hidden="true" />
+          {t('settings.claudeOfficialLogin.loggedInPrefix')} {subTypeLabel})
         </span>
         <Button variant="secondary" size="sm" onClick={logout} disabled={isLoading}>
           {isLoading
@@ -80,10 +84,15 @@ export function ClaudeOfficialLogin() {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-sm text-[var(--color-text-secondary)]">
+      <div className="text-[13px] leading-5 text-[var(--color-text-secondary)]">
         {t('settings.claudeOfficialLogin.intro')}
       </div>
-      <Button onClick={handleLogin} disabled={isLoading} className="self-start">
+      <Button
+        size="base"
+        onClick={() => setRiskDialogOpen(true)}
+        disabled={isLoading}
+        className="self-start"
+      >
         {isLoading
           ? t('settings.claudeOfficialLogin.loginStarting')
           : t('settings.claudeOfficialLogin.loginButton')}
@@ -93,6 +102,15 @@ export function ClaudeOfficialLogin() {
           {t('settings.claudeOfficialLogin.errorPrefix')}{error}
         </div>
       )}
+      <OfficialLoginRiskDialog
+        open={riskDialogOpen}
+        provider="claude"
+        onClose={() => setRiskDialogOpen(false)}
+        onConfirm={() => {
+          setRiskDialogOpen(false)
+          void handleLogin()
+        }}
+      />
     </div>
   )
 }

@@ -1,10 +1,17 @@
+import { useUIStore } from '@/stores/uiStore'
 import { getComposerViewForTesting } from './MentionComposer'
 import { useTeamPlanStore } from '@/stores/teamPlanStore'
+import { useTeamStore } from '@/stores/teamStore'
+import type { TeamDetail, TeamMember } from '@/types/team'
 import type { TeamPlanRecord } from '../../../../src/shared/teamPlan'
 import { useSideChatStore } from '@/stores/sideChatStore'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@testing-library/jest-dom'
+import { withAgentTeamRequest } from '@/lib/agentTeamRequest'
+import { COMPUTER_USE_ENABLE_REQUEST } from '@/lib/computerUseEnable'
+import { AGENT_TEAMS_NOTICE_STORAGE_KEY, dismissAgentTeamsNotice } from '@/lib/agentTeamsNotice'
+import { readRecentSkills, RECENT_SKILLS_STORAGE_KEY } from '@/lib/recentSkills'
 import { act, StrictMode } from 'react'
 
 const viewportMocks = vi.hoisted(() => ({
@@ -41,8 +48,9 @@ const mocks = vi.hoisted(() => ({
   voiceCatalog: vi.fn(async () => ({
     supported: false,
     providers: [],
-    preferences: { enabled: false, providerId: 'sensevoice-local', language: 'auto', downloadSource: 'auto' },
+    preferences: { enabled: false, providerId: 'sensevoice-local', language: 'auto', downloadSource: 'auto', correctionEnabled: false, correctionProviderId: null, correctionModelId: null },
     limits: { maxAudioSeconds: 60, maxAudioBytes: 1_000_000 },
+    correction: { defaultTarget: null, target: null },
   })),
 }))
 
@@ -122,8 +130,8 @@ vi.mock('../controls/PermissionModeSelector', () => ({
   // Surfaces `compact` because that prop is the difference between the labelled
   // pill and the bare icon the real selector renders, and the composer decides
   // it from the column width.
-  PermissionModeSelector: ({ compact, sessionId }: { compact?: boolean; sessionId?: string }) => (
-    <button type="button" data-testid="permission-mode-selector" data-session={sessionId} data-compact={compact ? 'true' : 'false'}>
+  PermissionModeSelector: ({ compact, sessionId, trigger, menuAlign }: { compact?: boolean; sessionId?: string; trigger?: string; menuAlign?: string }) => (
+    <button type="button" data-testid="permission-mode-selector" data-session={sessionId} data-compact={compact ? 'true' : 'false'} data-trigger={trigger} data-menu-align={menuAlign}>
       Permissions
     </button>
   ),
@@ -148,7 +156,7 @@ vi.mock('../controls/ModelSelector', async () => {
 import { ChatInput } from './ChatInput'
 import { getComposerElement, getComposerText, getComposerView, setComposerSelection, setComposerText } from './composerTestUtils'
 import { useVoiceInputStore } from '../../stores/voiceInputStore'
-import { useChatStore } from '../../stores/chatStore'
+import { useChatStore, type RepositoryLaunchDraftState } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useSessionRuntimeStore } from '../../stores/sessionRuntimeStore'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -159,6 +167,8 @@ import { workflowsApi } from '../../api/workflows'
 import { computerUseApi } from '../../api/computerUse'
 import { browserHost } from '../../lib/desktopHost/browserHost'
 import { settingsApi } from '../../api/settings'
+import { useCapabilityCatalogStore } from '../../stores/capabilityCatalogStore'
+import type { SlashCommandOption } from '../../types/slashCommand'
 import {
   captureProjectDisplayNameHydrationRevision,
   hydrateProjectDisplayNames,
@@ -246,8 +256,11 @@ describe('ChatInput file mentions', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.removeItem(RECENT_SKILLS_STORAGE_KEY)
+    localStorage.removeItem(AGENT_TEAMS_NOTICE_STORAGE_KEY)
     useSideChatStore.setState({ entries: {} })
     useTeamPlanStore.setState({ bySession: {} })
+    useTeamStore.setState({ workbenchesBySession: {} })
     mocks.voiceSupported.mockReturnValue(false)
     useVoiceInputStore.setState({ catalog: null, loading: false, error: null })
     mocks.sideOpen.mockResolvedValue('side-tab')
@@ -456,6 +469,29 @@ describe('ChatInput file mentions', () => {
     expect(screen.queryByTestId('diff-comment-card')).not.toBeInTheDocument()
   })
 
+  it('holds a long run of selected-text references in a capped tray above the editor (#1838)', () => {
+    act(() => {
+      for (let index = 0; index < 20; index += 1) {
+        useWorkspaceChatContextStore.getState().addReference(sessionId, {
+          kind: 'chat-selection',
+          path: 'chat://assistant/reply-1',
+          name: 'AI reply',
+          quote: `selected passage ${index}`,
+          sourceRole: 'assistant',
+          messageId: 'reply-1',
+        })
+      }
+    })
+
+    render(<ChatInput />)
+
+    const tray = within(screen.getByTestId('chat-input-panel')).getByTestId('composer-attachment-tray')
+    expect(within(tray).getAllByRole('button', { name: 'Remove AI reply' })).toHaveLength(20)
+    expect(tray.className).toMatch(/(^|\s)max-h-\[/)
+    expect(tray).toHaveClass('overflow-y-auto')
+    expect(tray).not.toContainElement(screen.getByRole('textbox'))
+  })
+
   it('keeps unsent composer drafts isolated when switching between session tabs', async () => {
     const historySessionId = 'history-session'
     useTabStore.setState({
@@ -586,7 +622,7 @@ describe('ChatInput file mentions', () => {
     expect(getComposerText()).toBe('keep this draft')
   })
 
-  it('keeps the unsent draft when switching project on an empty active session', async () => {
+  it.each(['standard', 'lean'] as const)('keeps the unsent draft and %s profile when switching project on an empty active session', async (agentProfile) => {
     installElectronFileHost()
     mocks.dialogOpen.mockResolvedValueOnce('/other')
     mocks.create.mockResolvedValueOnce({ sessionId: 'session-project-switch', workDir: '/other' })
@@ -599,6 +635,7 @@ describe('ChatInput file mentions', () => {
     useSessionStore.setState({
       sessions: [{
         id: sessionId,
+        agentProfile,
         title: 'Project',
         createdAt: '2026-05-01T00:00:00.000Z',
         modifiedAt: '2026-05-01T00:00:00.000Z',
@@ -644,12 +681,76 @@ describe('ChatInput file mentions', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Choose a different folder/ }))
 
     await waitFor(() => {
-      expect(mocks.create).toHaveBeenCalledWith({ workDir: '/other' })
+      expect(mocks.create).toHaveBeenCalledWith({ workDir: '/other', ...(agentProfile === 'lean' ? { agentProfile } : {}) })
     })
     await waitFor(() => {
       expect(useTabStore.getState().activeTabId).toBe('session-project-switch')
     })
     expect(getComposerText()).toBe('draft before switching project')
+  })
+
+  it('restores path-only files and images from an edit fallback without losing their paths', async () => {
+    render(<ChatInput compact />)
+    act(() => useChatStore.getState().queueComposerPrefill(sessionId, {
+      text: 'edited prompt',
+      attachments: [
+        { type: 'file', name: 'notes.md', path: '/repo/notes.md' },
+        { type: 'image', name: 'shot.png', path: '/repo/shot.png', mimeType: 'image/png' },
+      ],
+    }))
+    await waitFor(() => expect(getComposerText()).toBe('edited prompt'))
+    fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+    expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+      content: 'edited prompt',
+      attachments: [
+        expect.objectContaining({ type: 'file', path: '/repo/notes.md' }),
+        expect.objectContaining({ type: 'image', path: '/repo/shot.png', mimeType: 'image/png' }),
+      ],
+    }))
+  })
+
+  it('restores removable workspace and session references from an edit fallback', async () => {
+    render(<ChatInput compact />)
+    act(() => useChatStore.getState().queueComposerPrefill(sessionId, {
+      text: 'edited prompt',
+      attachments: [{ type: 'file', name: 'app.ts', path: '/repo/app.ts', lineStart: 3, lineEnd: 5, quote: 'for (;;) {}', note: 'stop this loop', diffSide: 'new', hunkId: 'hunk-1' }],
+      sessionReferences: [{ sessionId: 'referenced-session' }],
+    }))
+    await waitFor(() => expect(getComposerText()).toContain('edited prompt'))
+    expect(screen.getByRole('button', { name: /Remove app.ts/ })).toBeTruthy()
+    expect(getComposerElement().querySelector('[data-mention-kind="session"]')).toBeTruthy()
+    fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+    expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+      content: expect.stringContaining('for (;;) {}'),
+      attachments: [expect.objectContaining({ path: '/repo/app.ts', lineStart: 3, lineEnd: 5, quote: 'for (;;) {}', note: 'stop this loop' })],
+      sessionReferences: [{ sessionId: 'referenced-session' }],
+    }))
+    const message = useChatStore.getState().sessions[sessionId]!.messages.findLast((row) => row.type === 'user_text')
+    expect(message).toMatchObject({ attachments: [expect.objectContaining({ diffSide: 'new', hunkId: 'hunk-1' })] })
+  })
+
+  it('restores file mention pills from a draft prefill', async () => {
+    render(<ChatInput compact />)
+    act(() => useChatStore.getState().queueComposerPrefill(sessionId, {
+      text: 'review @README.md please',
+      mentions: [{
+        label: 'README.md',
+        path: '/repo/README.md',
+        isDirectory: false,
+        tokenOrdinal: 0,
+      }],
+    }))
+
+    await waitFor(() => expect(getComposerText()).toBe('review @README.md please'))
+    expect(getComposerElement().querySelector('.composer-mention')).toHaveAttribute(
+      'data-mention-path',
+      '/repo/README.md',
+    )
+
+    fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+    expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+      content: 'review @"/repo/README.md" please',
+    }))
   })
 
   it('restores an unsent composer draft after the composer unmounts', async () => {
@@ -753,7 +854,7 @@ describe('ChatInput file mentions', () => {
     expect(parentEditor.textContent).toBe('parent draft')
     expect(mocks.wsSend).not.toHaveBeenCalledWith(sessionId, expect.objectContaining({ type: 'user_message' }))
     expect(container.querySelector('[data-session-id="side-scoped"]')).toBeInTheDocument()
-    expect(mocks.listReferences).toHaveBeenCalledWith('/child', undefined)
+    expect(mocks.listReferences).toHaveBeenCalledWith('/child', undefined, undefined)
   })
 
   it('accepts asynchronous image paste in an explicit child while the global tab stays on its parent', async () => {
@@ -766,6 +867,236 @@ describe('ChatInput file mentions', () => {
     fireEvent.paste(editor, { clipboardData: { files: [], getData: () => '', items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }] } })
     await waitFor(() => expect(within(shells[1] as HTMLElement).getByRole('img')).toBeInTheDocument())
     expect(within(shells[0] as HTMLElement).queryByRole('img')).not.toBeInTheDocument()
+  })
+
+  it('requires a permission change before sending a restored lean plan session', () => {
+    useSessionStore.setState(state => ({ sessions: state.sessions.map(session => ({ ...session, agentProfile: 'lean' as const, permissionMode: 'plan' })) }))
+    render(<ChatInput compact />)
+    setComposerText('Fix the calculation', 19)
+    fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+    expect(mocks.wsSend).not.toHaveBeenCalledWith(sessionId, expect.objectContaining({ type: 'user_message' }))
+    expect(getComposerText()).toBe('Fix the calculation')
+    expect(useUIStore.getState().toasts.at(-1)?.message).toContain('Choose another permission mode')
+    expect(useSessionStore.getState().sessions[0]?.permissionMode).toBe('plan')
+  })
+
+  it('sends an absolute file path as ordinary input in lean mode', async () => {
+    useSessionStore.setState(state => ({ sessions: state.sessions.map(session => ({ ...session, agentProfile: 'lean' as const })) }))
+    render(<ChatInput compact />)
+    setComposerText('/tmp/cart.js fix the total', 26)
+    fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+    await waitFor(() => expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, expect.objectContaining({ type: 'user_message' })))
+  })
+
+  it('restores the immutable lean badge with lean creation disabled and rejects the typed side-chat shortcut', () => {
+    useSettingsStore.setState({ leanModeEnabled: false })
+    useSessionStore.setState(state => ({ sessions: state.sessions.map(session => ({ ...session, agentProfile: 'lean' as const })) }))
+    render(<ChatInput compact />)
+    expect(screen.getByText('Lean')).toHaveAttribute('title', 'Mode is fixed for this conversation. Start a new chat to change it.')
+    expect(mocks.listReferences).toHaveBeenCalledWith('/repo', undefined, 'lean')
+    expect(screen.queryByRole('button', { name: /^Agent mode:/ })).not.toBeInTheDocument()
+    setComposerText('/btw Why this change?', 21)
+    fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+    expect(mocks.sideOpen).not.toHaveBeenCalled()
+    expect(mocks.wsSend).not.toHaveBeenCalledWith(sessionId, expect.objectContaining({ type: 'user_message' }))
+    expect(getComposerText()).toBe('/btw Why this change?')
+    expect(useUIStore.getState().toasts.some(toast => toast.message === 'This command is unavailable in lean mode. Start a standard chat to use it.')).toBe(true)
+  })
+
+  // The badge used to read "Lean · experimental" next to an info button. On a
+  // phone that pair squeezed the model beside it down to a single letter
+  // ("e  Low"), and on desktop it pushed the trailing controls onto a second
+  // line. The toolbar now carries a short, locked chip, and the "+" menu has
+  // the Agent mode row with the explanation; the phone has it in its + sheet.
+  it('marks a lean conversation with a locked chip and explains the mode in the + menu', () => {
+    useSessionStore.setState(state => ({ sessions: state.sessions.map(session => ({ ...session, agentProfile: 'lean' as const })) }))
+    render(<ChatInput compact />)
+    expect(screen.queryByText('Lean · experimental')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'About lean mode' })).not.toBeInTheDocument()
+    const chip = screen.getByTestId('agent-profile-chip')
+    expect(chip).toHaveTextContent('Lean')
+    expect(within(chip).queryByRole('button')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open composer tools' }))
+    const row = screen.getByRole('radiogroup', { name: 'Agent mode' })
+    expect(within(row).getByRole('radio', { name: 'Lean' })).toBeChecked()
+    expect(within(row).getByRole('radio', { name: 'Standard' })).toBeDisabled()
+    const detail = screen.getByTestId('agent-profile-detail')
+    expect(detail).toHaveTextContent('Mode is fixed for this conversation')
+    expect(detail).toHaveTextContent('Unavailable')
+  })
+
+  it('shows a standard conversation no mode chip and no mode row', () => {
+    render(<ChatInput compact />)
+    expect(screen.queryByTestId('agent-profile-chip')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open composer tools' }))
+    expect(screen.queryByRole('radiogroup', { name: 'Agent mode' })).not.toBeInTheDocument()
+  })
+
+  it('moves the locked lean badge off the phone toolbar into the + sheet, leaving the model its room', async () => {
+    viewportMocks.isMobile = true
+    useSessionStore.setState(state => ({ sessions: state.sessions.map(session => ({ ...session, agentProfile: 'lean' as const })) }))
+    render(<ChatInput />)
+    await waitFor(() => {
+      expect(mocks.getGitInfo).toHaveBeenCalledWith(sessionId)
+    })
+    expect(screen.queryByText('Lean')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'About lean mode' })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('agent-profile-control')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-shell')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open composer tools' }))
+    const row = within(screen.getByTestId('mobile-composer-sheet')).getByRole('button', { name: /^Agent mode/ })
+    expect(row).toHaveTextContent('Lean · experimental')
+    fireEvent.click(row)
+
+    // One sheet at a time, and a locked mode has nothing to choose, only to read.
+    const modeSheet = await screen.findByTestId('agent-profile-sheet')
+    expect(screen.queryByTestId('mobile-composer-sheet')).not.toBeInTheDocument()
+    expect(within(modeSheet).queryByRole('radio')).not.toBeInTheDocument()
+    expect(modeSheet).toHaveTextContent('Mode is fixed for this conversation')
+    expect(modeSheet).toHaveTextContent('Unavailable')
+  })
+
+  // On desktop the lean badge and its info button used to share the row with
+  // the project, branch and model, and the row wrapped its trailing group onto a
+  // second line to make room, which left the first line's right half empty.
+  // The lean mode is a chip in the leading group now, so the row never wraps.
+  // jsdom lays nothing out; this pins the pieces that keep that from coming back.
+  it.each([false, true])('keeps the desktop toolbar to one row, the leading group giving way (lean session %s)', (lean) => {
+    stubComposerColumnWidth(640)
+    if (lean) useSessionStore.setState(state => ({ sessions: state.sessions.map(session => ({ ...session, agentProfile: 'lean' as const })) }))
+    render(<ChatInput compact />)
+    const toolbar = screen.getByTestId('chat-input-toolbar')
+    const leading = screen.getByTestId('chat-input-toolbar-leading')
+    const trailing = screen.getByTestId('chat-input-toolbar-trailing')
+
+    expect(toolbar).not.toHaveClass('flex-wrap')
+    expect(leading).toHaveClass('min-w-0', 'shrink')
+    expect(trailing).toHaveClass('shrink-0')
+    expect(trailing).not.toHaveClass('min-w-max')
+    expect(trailing).toContainElement(screen.getByTestId('model-selector-shell'))
+    expect(screen.queryByTestId('agent-profile-control')).not.toBeInTheDocument()
+    if (lean) expect(leading).toContainElement(screen.getByTestId('agent-profile-chip'))
+    // Permission leads the trailing group as a quiet glyph; it is not in the leading one.
+    const permission = screen.getByTestId('permission-mode-selector')
+    expect(permission).toHaveAttribute('data-trigger', 'quiet')
+    // The trigger is at the card's right: its menu opens leftwards, inside the card.
+    expect(permission).toHaveAttribute('data-menu-align', 'right')
+    expect(trailing.firstElementChild).toContainElement(permission)
+    expect(leading).not.toContainElement(permission)
+  })
+
+  // A phone keeps the row it always had; its mode lives in the + sheet.
+  it.each([
+    { label: 'a standard session on a phone', phone: true, lean: false },
+    { label: 'a lean session on a phone, whose badge moved to the + sheet', phone: true, lean: true },
+  ])('leaves the toolbar as it always was for $label', async ({ phone, lean }) => {
+    viewportMocks.isMobile = phone
+    if (!phone) stubComposerColumnWidth(640)
+    if (lean) useSessionStore.setState(state => ({ sessions: state.sessions.map(session => ({ ...session, agentProfile: 'lean' as const })) }))
+    render(<ChatInput compact={!phone} />)
+    await waitFor(() => {
+      expect(mocks.getGitInfo).toHaveBeenCalledWith(sessionId)
+    })
+    const toolbar = screen.getByTestId('chat-input-toolbar')
+    const trailing = screen.getByTestId('chat-input-toolbar-trailing')
+    const model = screen.getByTestId('model-selector-shell')
+
+    expect(phone).toBe(true)
+    expect(toolbar).not.toHaveClass('flex-wrap')
+    expect(toolbar).toHaveClass('gap-1')
+    expect(trailing).toHaveClass('min-w-0', 'flex-1')
+    expect(trailing).not.toHaveClass('min-w-max')
+    // No slot around the picker: it is a direct child of the trailing group.
+    expect(model.parentElement).toBe(trailing)
+  })
+
+  it('offers no mode row on a standard phone session', async () => {
+    viewportMocks.isMobile = true
+    render(<ChatInput />)
+    await waitFor(() => {
+      expect(mocks.getGitInfo).toHaveBeenCalledWith(sessionId)
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Open composer tools' }))
+    const sheet = screen.getByTestId('mobile-composer-sheet')
+    expect(within(sheet).getByRole('button', { name: /Execution Permissions/ })).toBeInTheDocument()
+    expect(within(sheet).queryByRole('button', { name: /^Agent mode/ })).not.toBeInTheDocument()
+  })
+
+  describe('lean slash commands', () => {
+    const leanUnavailable = 'This command is unavailable in lean mode. Start a standard chat to use it.'
+    // `.claude/commands/foo.md` as the server lists it for a lean session: a
+    // sourceless command that already passed the lean runtime rule.
+    const legacyCommand = { name: 'foo', description: 'Project legacy command', argumentHint: '<topic>', kind: 'command' as const }
+    const openLeanSession = (slashCommands: SlashCommandOption[]) => {
+      useUIStore.setState({ toasts: [] })
+      useSessionStore.setState(state => ({ sessions: state.sessions.map(session => ({ ...session, agentProfile: 'lean' as const })) }))
+      useChatStore.setState({ sessions: { [sessionId]: { ...useChatStore.getState().sessions[sessionId]!, slashCommands } } })
+    }
+
+    it('offers and sends a legacy custom command the lean session list includes', async () => {
+      openLeanSession([legacyCommand])
+      // The lean mention list carries the same file as a skill identity.
+      mocks.listReferences.mockResolvedValue({ plugins: [], skills: [{ kind: 'skill', id: 'foo', name: 'foo', displayName: 'foo', description: 'Project legacy command', source: 'projectSettings', modelText: 'Use the Skill tool with skill: "foo" for this request.' }] })
+      render(<ChatInput compact />)
+      setComposerText('/fo', 3)
+      expect(await screen.findByRole('option', { name: '/foo' })).toBeInTheDocument()
+      setComposerText('/foo bar', 8)
+      act(() => fireEvent.keyDown(getComposerElement(), { key: 'Enter' }))
+      expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, { type: 'user_message', content: '/foo bar', attachments: [] })
+      expect(useUIStore.getState().toasts.map(toast => toast.message)).not.toContain(leanUnavailable)
+    })
+
+    it.each(['/agent debug this', '/plan', '/team build it', '/workflow run', '/btw why'])('keeps rejecting %s next to a listed custom command', (text) => {
+      openLeanSession([legacyCommand])
+      render(<ChatInput compact />)
+      setComposerText(text, text.length)
+      act(() => fireEvent.keyDown(getComposerElement(), { key: 'Enter' }))
+      expect(mocks.wsSend).not.toHaveBeenCalledWith(sessionId, expect.objectContaining({ type: 'user_message' }))
+      expect(mocks.sideOpen).not.toHaveBeenCalled()
+      expect(getComposerText()).toBe(text)
+      expect(useUIStore.getState().toasts.at(-1)?.message).toBe(leanUnavailable)
+    })
+
+    it.each([
+      ['a listed command of that name', '/btw why', [legacyCommand, { name: 'btw', description: 'Project note command', kind: 'command' as const }]],
+      ['uppercase input', '/BTW why', [legacyCommand]],
+    ])('keeps /btw unavailable with %s', (_case, text, slashCommands) => {
+      // The desktop turns /btw into a side chat before any runtime sees it, and
+      // lean offers no side chat — so no list entry can make it available.
+      openLeanSession(slashCommands)
+      render(<ChatInput compact />)
+      setComposerText(text, text.length)
+      act(() => fireEvent.keyDown(getComposerElement(), { key: 'Enter' }))
+      expect(mocks.sideOpen).not.toHaveBeenCalled()
+      expect(mocks.wsSend).not.toHaveBeenCalledWith(sessionId, expect.objectContaining({ type: 'user_message' }))
+      expect(useUIStore.getState().toasts.at(-1)?.message).toBe(leanUnavailable)
+    })
+
+    it('runs a listed command that shares a desktop built-in name, as the runtime would', () => {
+      // A project `review.md` shadows the built-in /review in the CLI loader, and
+      // the server listed it for this lean session.
+      openLeanSession([{ name: 'review', description: 'Project review command', kind: 'command' }])
+      render(<ChatInput compact />)
+      setComposerText('/review src', 11)
+      act(() => fireEvent.keyDown(getComposerElement(), { key: 'Enter' }))
+      expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, { type: 'user_message', content: '/review src', attachments: [] })
+    })
+
+    it('keeps lean built-ins and leaves unlisted names to the runtime while the session list is unavailable', async () => {
+      // Empty while the request is in flight, and after it failed.
+      openLeanSession([])
+      render(<ChatInput compact />)
+      setComposerText('/co', 3)
+      expect(await screen.findByRole('option', { name: '/compact' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: '/context' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: '/config' })).not.toBeInTheDocument()
+      setComposerText('/foo bar', 8)
+      act(() => fireEvent.keyDown(getComposerElement(), { key: 'Enter' }))
+      expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, { type: 'user_message', content: '/foo bar', attachments: [] })
+      expect(useUIStore.getState().toasts.map(toast => toast.message)).not.toContain(leanUnavailable)
+    })
   })
 
   it.each(['idle', 'streaming'] as const)('routes /btw immediately while %s without main send or queue', async (chatState) => {
@@ -781,6 +1112,21 @@ describe('ChatInput file mentions', () => {
     expect(useChatStore.getState().sessions[sessionId]?.messages).toEqual(before)
     expect(mocks.wsSend).not.toHaveBeenCalledWith(sessionId, expect.objectContaining({ type: 'user_message' }))
     expect(getComposerText()).toBe('')
+  })
+
+  it('leaves /btw out of the slash menu until the session has a conversation to fork', async () => {
+    useSessionStore.setState(state => ({ sessions: state.sessions.map(session => ({ ...session, messageCount: 0 })) }))
+    useChatStore.setState(state => ({ sessions: { [sessionId]: { ...state.sessions[sessionId]!, messages: [] } } }))
+    render(<ChatInput />)
+    const btwOptions = () => screen.queryAllByRole('option').filter(option => option.textContent?.startsWith('/btw'))
+    setComposerText('/bt', 3)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)) })
+    expect(btwOptions()).toEqual([])
+
+    act(() => useChatStore.setState(state => ({ sessions: { [sessionId]: { ...state.sessions[sessionId]!, messages: [{ id: 'first', type: 'user_text', content: 'hi', timestamp: 1 }] } } })))
+    setComposerText('', 0)
+    setComposerText('/bt', 3)
+    await waitFor(() => expect(btwOptions()).toHaveLength(1))
   })
 
   it('opens an empty full side chat with /btw without sending a main message', async () => {
@@ -898,7 +1244,7 @@ describe('ChatInput file mentions', () => {
       expect(getComposerElement()).toHaveAttribute('contenteditable', 'false')
       expect(getComposerElement()).toHaveAttribute(
         'data-placeholder',
-        'Answer the question above first — EchoFlow is waiting on it.',
+        'Answer the question above first — Claude is waiting on it.',
       )
     })
 
@@ -945,7 +1291,7 @@ describe('ChatInput file mentions', () => {
       expect(getComposerElement()).toHaveAttribute('contenteditable', 'true')
       expect(getComposerElement()).toHaveAttribute(
         'data-placeholder',
-        'Ask EchoFlow to edit, debug or explain...',
+        'Ask Claude to edit, debug or explain...',
       )
     })
   })
@@ -1091,16 +1437,17 @@ describe('ChatInput file mentions', () => {
     render(<ChatInput variant="hero" />)
 
     const panel = screen.getByTestId('chat-input-panel')
-    // 20px composer corner + the composer step of the shadow scale, the same
-    // shell EmptySession renders (docs/redesign-paper-ink-seal.md §2).
-    expect(panel).toHaveClass('rounded-[var(--radius-2xl)]', 'glass-panel--composer')
+    // The floating card (「素」): `--radius-xl` + the composer step of the
+    // shadow scale, the same shell EmptySession renders.
+    expect(panel).toHaveClass('rounded-[var(--radius-xl)]', 'glass-panel--composer')
     expect(panel).not.toHaveClass('rounded-b-none')
 
     // One pill in the toolbar instead of a three-button bar welded to the
     // panel's bottom edge — which is what used to square off that edge.
     const pill = await screen.findByRole('button', { name: 'Location: repo / main' })
     expect(panel).toContainElement(pill)
-    expect(pill).toHaveClass('h-9')
+    // A 28px toolbar control like its neighbours, not a bordered pill.
+    expect(pill).toHaveClass('h-7')
     expect(screen.queryByText('Select a project...')).not.toBeInTheDocument()
 
     await openLocationMenu()
@@ -1237,7 +1584,9 @@ describe('ChatInput file mentions', () => {
 
     const send = screen.getByRole('button', { name: 'Run' })
     expect(send).toHaveClass('rounded-full', 'h-8', 'w-8')
-    expect(send).toHaveTextContent('arrow_upward')
+    // Terracotta is the send key's alone.
+    expect(send).toHaveClass('bg-[var(--color-brand)]')
+    expect(send.querySelector('[data-icon="send"]')).toBeInTheDocument()
 
     await act(async () => {
       useChatStore.setState({
@@ -1250,7 +1599,11 @@ describe('ChatInput file mentions', () => {
 
     const stop = screen.getByRole('button', { name: 'Stop' })
     expect(stop).toHaveClass('rounded-full', 'h-8', 'w-8')
-    expect(stop).toHaveTextContent('stop')
+    // Mid-turn the same circle turns ink with a filled square — a running turn
+    // must not read as the error-red danger button.
+    expect(stop).toHaveClass('bg-[var(--color-btn-primary-bg)]')
+    expect(stop).not.toHaveClass('bg-[var(--color-error)]')
+    expect(stop.querySelector('[data-icon="stop"]')).toBeInTheDocument()
     expect(stop).not.toBeDisabled()
   })
 
@@ -1315,6 +1668,44 @@ describe('ChatInput file mentions', () => {
 
     act(() => { useTeamPlanStore.setState({ bySession: { [sessionId]: { ...entry, plan: { ...plan, state: 'interrupted' } } } }) })
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument()
+  })
+
+  it('stops offering Stop once Stop has paused every member of a running team', () => {
+    const plan: TeamPlanRecord = {
+      schemaVersion: 1, planId: 'approved-plan', sessionId, teamName: 'approved-team',
+      incarnationId: 'incarnation', revision: 2, state: 'running', workDir: '/repo', createdAt: 1, updatedAt: 2,
+      leaderRuntime: { providerId: 'fake-provider', modelId: 'fake-model' }, members: [], tasks: [],
+    }
+    useTeamPlanStore.setState({ bySession: { [sessionId]: { plan, loading: false, busy: false, error: null, conflict: false } } })
+    const showTeam = (readerActivity: TeamMember['activity']) => {
+      const team: TeamDetail = {
+        name: 'approved-team',
+        leadAgentId: 'team-lead@approved-team',
+        leadSessionId: sessionId,
+        members: [
+          // The lead's own row never says whether the team still runs.
+          { agentId: 'team-lead@approved-team', name: 'team-lead', role: 'team-lead', status: 'idle' },
+          { agentId: 'reader@approved-team', name: 'reader', role: 'reader', status: 'idle', activity: readerActivity },
+          { agentId: 'writer@approved-team', name: 'writer', role: 'writer', status: 'completed', activity: 'exited' },
+        ],
+      }
+      useTeamStore.setState({
+        workbenchesBySession: {
+          [sessionId]: { teamName: team.name, loading: false, error: null, snapshots: [{ version: '1', generatedAt: '', team, tasks: [], messages: [] }] },
+        },
+      })
+    }
+    act(() => showTeam('active'))
+    render(<ChatInput compact />)
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument()
+
+    // The plan stays running while paused, so only the members tell that
+    // nothing is left to stop; a Stop button here invites endless clicking.
+    act(() => showTeam('stopped'))
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument()
+
+    act(() => showTeam('idle'))
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument()
   })
 
   it.each(['local_bash', 'dream'])('does not turn Run into Stop for a running %s task', (taskType) => {
@@ -1384,18 +1775,18 @@ describe('ChatInput file mentions', () => {
     expect(screen.queryByTestId('run-location-outside')).not.toBeInTheDocument()
   })
 
-  // The band cancels the panel's `p-3`, so it has to follow the panel's padding
-  // rather than the control layout. A wide column beside an open panel renders
-  // the wide toolbar inside a `p-3` panel; keying the band on the controls would
-  // have inset the divider by 12px there.
-  it('keeps the toolbar band matched to the panel padding when a wide column sits beside a panel', async () => {
+  // The card has one geometry at every width: the old narrow-layout band
+  // (`-mx-3` cancelling a `p-3` panel) is gone with the divider it drew, so a
+  // wide column beside a panel and a full-width column render the same card.
+  it('keeps one card geometry when a wide column sits beside a panel', async () => {
     stubComposerColumnWidth(580)
 
     render(<ChatInput compact />)
 
     await screen.findByTestId('run-location-readonly')
-    expect(screen.getByTestId('chat-input-panel')).toHaveClass('p-3')
-    expect(screen.getByTestId('chat-input-toolbar')).toHaveClass('-mx-3')
+    expect(screen.getByTestId('chat-input-panel')).toHaveClass('p-2')
+    expect(screen.getByTestId('chat-input-toolbar')).toHaveClass('pt-1.5')
+    expect(screen.getByTestId('chat-input-toolbar').className).not.toMatch(/-m[xy]-\d/)
   })
 
   it('uses the persisted message count to keep reopened sessions in context mode while history loads', async () => {
@@ -1679,6 +2070,222 @@ describe('ChatInput file mentions', () => {
       type: 'user_message',
       content: 'run with preserved permissions',
       attachments: [],
+    })
+  })
+
+  // An empty chat can wait for its first message while the checkout moves (a
+  // `git switch` in a terminal), and the server switches the checkout to any
+  // launch branch that is not the current one. A branch the controls chose on
+  // their own has to follow the repository, not be launched as it was.
+  describe('a launch branch chosen for the user while the chat waited', () => {
+    function seedEmptySession(repositoryLaunchDraft?: RepositoryLaunchDraftState) {
+      useSessionStore.setState({
+        sessions: [{
+          id: sessionId,
+          title: 'Project',
+          createdAt: '2026-05-01T00:00:00.000Z',
+          modifiedAt: '2026-05-01T00:00:00.000Z',
+          messageCount: 0,
+          projectPath: '/repo',
+          workDir: '/repo',
+          workDirExists: true,
+        }],
+        activeSessionId: sessionId,
+      })
+      useChatStore.setState({
+        sessions: {
+          [sessionId]: {
+            messages: [],
+            chatState: 'idle',
+            connectionState: 'connected',
+            streamingText: '',
+            streamingToolInput: '',
+            activeToolUseId: null,
+            activeToolName: null,
+            activeThinkingId: null,
+            pendingPermission: null,
+            pendingComputerUsePermission: null,
+            tokenUsage: { input_tokens: 0, output_tokens: 0 },
+            streamingResponseChars: 0,
+            elapsedSeconds: 0,
+            statusVerb: '',
+            slashCommands: [],
+            agentTaskNotifications: {},
+            elapsedTimer: null,
+            ...(repositoryLaunchDraft ? { repositoryLaunchDraft } : {}),
+          },
+        },
+      })
+    }
+
+    /** The repository after `git switch feature/a` in a terminal. */
+    function movedToFeatureA() {
+      const context = okRepositoryContext()
+      return {
+        ...context,
+        currentBranch: 'feature/a',
+        branches: context.branches.map((branch) => ({
+          ...branch,
+          current: branch.name === 'feature/a',
+          checkedOut: branch.name === 'feature/a',
+        })),
+      }
+    }
+
+    it('launches on the checkout as it is at send time', async () => {
+      mocks.create.mockResolvedValueOnce({ sessionId: 'created-fresh-branch', workDir: '/repo' })
+      seedEmptySession()
+      render(<ChatInput variant="hero" />)
+      expect(await screen.findByRole('button', { name: 'Location: repo / main' })).toBeInTheDocument()
+
+      mocks.getRepositoryContext.mockResolvedValue(movedToFeatureA())
+      setComposerText('continue here', 13)
+      fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+
+      await waitFor(() => {
+        expect(mocks.create).toHaveBeenCalledWith({
+          workDir: '/repo',
+          repository: { branch: 'feature/a', worktree: false },
+        })
+      })
+    })
+
+    it('says in the store which branch the controls chose, and that a pick is the user\'s', async () => {
+      seedEmptySession()
+      render(<ChatInput variant="hero" />)
+      expect(await screen.findByRole('button', { name: 'Location: repo / main' })).toBeInTheDocument()
+      await waitFor(() => {
+        expect(useChatStore.getState().sessions[sessionId]?.repositoryLaunchDraft?.branchAutomatic).toBe(true)
+      })
+
+      await openBranchList()
+      fireEvent.click(await screen.findByRole('option', { name: /feature\/a/ }))
+      await waitFor(() => {
+        expect(useChatStore.getState().sessions[sessionId]?.repositoryLaunchDraft).toMatchObject({
+          branch: 'feature/a',
+          branchAutomatic: false,
+        })
+      })
+    })
+
+    // The controls sit on the toolbar when the column is wide enough and below the
+    // composer when it is not: two instances in ChatInput, both of which carry
+    // the same wiring.
+    const PLACEMENTS = [
+      { width: 640, where: 'on the toolbar' },
+      { width: 320, where: 'below the composer' },
+    ]
+
+    /** A second empty chat in the same project, next to the one `seedEmptySession` made. */
+    function addEmptySession(
+      id: string,
+      repositoryLaunchDraft: RepositoryLaunchDraftState,
+      composerDraft?: { input: string; attachments: never[]; mentions: never[] },
+    ) {
+      useSessionStore.setState(state => ({
+        sessions: [...state.sessions, {
+          id,
+          title: 'Project',
+          createdAt: '2026-05-01T00:00:00.000Z',
+          modifiedAt: '2026-05-01T00:00:00.000Z',
+          messageCount: 0,
+          projectPath: '/repo',
+          workDir: '/repo',
+          workDirExists: true,
+        }],
+      }))
+      useChatStore.setState(state => ({
+        sessions: {
+          ...state.sessions,
+          [id]: {
+            ...state.sessions[sessionId]!,
+            repositoryLaunchDraft,
+            ...(composerDraft ? { composerDraft } : {}),
+          },
+        },
+      }))
+    }
+
+    // ChatInput is reused as the user moves between empty chats, so what the
+    // controls hold about *which* branch they chose themselves must follow the
+    // chat, not stay with the one shown before.
+    it.each(PLACEMENTS)('judges each empty chat by its own record of who chose its branch, with the controls $where', async ({ width }) => {
+      stubComposerColumnWidth(width)
+      mocks.getRepositoryContext.mockResolvedValue(movedToFeatureA())
+      seedEmptySession({ workDir: '/repo', branch: 'main', useWorktree: false, branchAutomatic: false })
+      addEmptySession('session-second', { workDir: '/repo', branch: 'main', useWorktree: false, branchAutomatic: true })
+      render(<ChatInput variant="hero" />)
+      // The first chat's `main` was picked by the user, so it stays.
+      expect(await screen.findByRole('button', { name: 'Location: repo / main' })).toBeInTheDocument()
+
+      act(() => { useTabStore.setState({ activeTabId: 'session-second' }) })
+
+      // The second chat's `main` was chosen for the user, so it follows the checkout.
+      expect(await screen.findByRole('button', { name: 'Location: repo / feature/a' })).toBeInTheDocument()
+      await waitFor(() => {
+        expect(useChatStore.getState().sessions['session-second']?.repositoryLaunchDraft?.branch).toBe('feature/a')
+      })
+      expect(useChatStore.getState().sessions[sessionId]?.repositoryLaunchDraft).toMatchObject({ branch: 'main', branchAutomatic: false })
+    })
+
+    // The send waits for the launch branch to be read again. A user who moves to
+    // another chat in that moment must not lose that chat's draft to the clear
+    // that follows the send.
+    it('leaves another chat\'s draft alone when the user moves to it while the send waits', async () => {
+      seedEmptySession({ workDir: '/repo', branch: 'main', useWorktree: false, branchAutomatic: true })
+      addEmptySession(
+        'session-second',
+        { workDir: '/repo', branch: 'main', useWorktree: false, branchAutomatic: true },
+        { input: 'half-written reply in the second chat', attachments: [], mentions: [] },
+      )
+      render(<ChatInput variant="hero" />)
+      expect(await screen.findByRole('button', { name: 'Location: repo / main' })).toBeInTheDocument()
+
+      let finishRead!: (context: ReturnType<typeof okRepositoryContext>) => void
+      mocks.getRepositoryContext.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve as typeof finishRead }))
+      setComposerText('send me from the first chat', 27)
+      fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+      await waitFor(() => expect(finishRead).toBeTypeOf('function'))
+
+      act(() => { useTabStore.setState({ activeTabId: 'session-second' }) })
+      await waitFor(() => expect(getComposerText()).toBe('half-written reply in the second chat'))
+
+      await act(async () => { finishRead(okRepositoryContext()) })
+
+      await waitFor(() => {
+        expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, expect.objectContaining({ type: 'user_message', content: 'send me from the first chat' }))
+      })
+      // The first chat's saved draft went with the send; the second chat's did not.
+      expect(getComposerText()).toBe('half-written reply in the second chat')
+      expect(useChatStore.getState().sessions[sessionId]?.composerDraft).toBeFalsy()
+    })
+
+    it.each(PLACEMENTS)('does not read the repository on a window focus while the chat is hidden, with the controls $where', async ({ width }) => {
+      stubComposerColumnWidth(width)
+      seedEmptySession()
+      const { rerender } = render(<ChatInput variant="hero" />)
+      expect(await screen.findByRole('button', { name: 'Location: repo / main' })).toBeInTheDocument()
+      rerender(<ChatInput variant="hero" visible={false} />)
+      const reads = mocks.getRepositoryContext.mock.calls.length
+
+      act(() => { window.dispatchEvent(new Event('focus')) })
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
+
+      expect(mocks.getRepositoryContext).toHaveBeenCalledTimes(reads)
+    })
+
+    it.each([
+      { branchAutomatic: true, expected: 'feature/a' },
+      { branchAutomatic: false, expected: 'main' },
+    ])('after the controls are mounted again, a stored branch follows the checkout only when it was chosen for the user (%j)', async ({ branchAutomatic, expected }) => {
+      mocks.getRepositoryContext.mockResolvedValue(movedToFeatureA())
+      seedEmptySession({ workDir: '/repo', branch: 'main', useWorktree: false, branchAutomatic })
+      render(<ChatInput variant="hero" />)
+
+      expect(await screen.findByRole('button', { name: `Location: repo / ${expected}` })).toBeInTheDocument()
+      await waitFor(() => {
+        expect(useChatStore.getState().sessions[sessionId]?.repositoryLaunchDraft?.branch).toBe(expected)
+      })
     })
   })
 
@@ -2025,9 +2632,9 @@ describe('ChatInput file mentions', () => {
     act(() => useSessionRuntimeStore.getState().setSelection(sessionId, { providerId: null, modelId: 'opus' }))
     try {
       render(<ChatInput compact />)
-      await waitFor(() => expect(mocks.listReferences).toHaveBeenLastCalledWith(expect.anything(), 'claude-official'))
+      await waitFor(() => expect(mocks.listReferences).toHaveBeenLastCalledWith(expect.anything(), 'claude-official', undefined))
       act(() => useSessionRuntimeStore.getState().setSelection(sessionId, { providerId: 'grok-official', modelId: 'grok-4.7' }))
-      await waitFor(() => expect(mocks.listReferences).toHaveBeenLastCalledWith(expect.anything(), 'grok-official'))
+      await waitFor(() => expect(mocks.listReferences).toHaveBeenLastCalledWith(expect.anything(), 'grok-official', undefined))
       setComposerText('@imagegen', 9)
       fireEvent.click(await screen.findByRole('option', { name: /imagegen/i }))
       await waitFor(() => expect(document.querySelector('[data-mention-kind="skill"]')).toBeInTheDocument())
@@ -2051,10 +2658,12 @@ describe('ChatInput file mentions', () => {
     expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, {
       type: 'user_message', content: 'Use the Skill tool with skill: "team:review" for this request.', attachments: [],
     })
+    // The sent bubble names the pill from what this composer listed.
+    expect(useCapabilityCatalogStore.getState().entries['skill:skill:team:review']).toEqual({ label: 'Review' })
   })
 
   it.each(['@', '/', '/empty', '+'] as const)('hides withdrawn bundled capabilities in %s while keeping personal skills and other plugins', async (entry) => {
-    const withdrawnPackage = 'office-frontend-design@echoflow-connectors'
+    const withdrawnPackage = 'office-frontend-design@haha-connectors'
     mocks.listReferences.mockResolvedValue({
       plugins: [
         { kind: 'plugin', id: withdrawnPackage, name: 'office-frontend-design', displayName: 'Removed frontend plugin', description: 'Design', source: withdrawnPackage, modelText: 'Use removed plugin' },
@@ -2073,7 +2682,7 @@ describe('ChatInput file mentions', () => {
     render(<ChatInput compact />)
     if (entry === '+') {
       fireEvent.click(screen.getByLabelText('Open composer tools'))
-      fireEvent.change(screen.getByRole('combobox', { name: 'Search skills, plugins, files…' }), { target: { value: 'design' } })
+      fireEvent.change(screen.getByRole('combobox', { name: 'Search skills, connectors, files…' }), { target: { value: 'design' } })
     } else if (entry === '/empty') setComposerText('/', 1)
     else setComposerText(`${entry}design`, 7)
     expect(await screen.findByRole('option', { name: 'Personal frontend design' })).toBeInTheDocument()
@@ -2108,6 +2717,7 @@ describe('ChatInput file mentions', () => {
     fireEvent.click(screen.getByLabelText('Open composer tools'))
     await waitFor(() => expect(mocks.listReferences.mock.calls.length).toBeGreaterThan(initialCalls))
     fireEvent.click(await screen.findByRole('option', { name: /^Skills/ }))
+    fireEvent.click(await screen.findByRole('option', { name: /^All skills/ }))
     expect(screen.queryByRole('option', { name: 'Old skill' })).not.toBeInTheDocument()
 
     await act(async () => resolveRefresh({ plugins: [], skills: result === 'replacement' ? [newSkill] : [] }))
@@ -2124,7 +2734,7 @@ describe('ChatInput file mentions', () => {
     render(<ChatInput compact />)
     setComposerText('Please review ', 14)
     fireEvent.click(screen.getByLabelText('Open composer tools'))
-    fireEvent.change(screen.getByRole('combobox', { name: 'Search skills, plugins, files…' }), { target: { value: 'README' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search skills, connectors, files…' }), { target: { value: 'README' } })
     fireEvent.click(await screen.findByRole('option', { name: 'README.md' }))
 
     await waitFor(() => {
@@ -2133,7 +2743,7 @@ describe('ChatInput file mentions', () => {
     expect(document.querySelector('.composer-mention')).toHaveTextContent('@README.md')
     expect(getComposerText()).toContain('Please review @README.md')
     expect(mocks.search).toHaveBeenCalledWith('README', '/repo', { signal: expect.any(AbortSignal) })
-    expect(screen.queryByRole('combobox', { name: 'Search skills, plugins, files…' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Search skills, connectors, files…' })).not.toBeInTheDocument()
     expect(mocks.wsSend).not.toHaveBeenCalled()
     fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
     expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, expect.objectContaining({
@@ -2151,6 +2761,7 @@ describe('ChatInput file mentions', () => {
 
     fireEvent.click(screen.getByLabelText('Open composer tools'))
     fireEvent.click(await screen.findByRole('option', { name: /^Skills/ }))
+    fireEvent.click(await screen.findByRole('option', { name: /^All skills/ }))
     fireEvent.click(await screen.findByRole('option', { name: /Design/ }))
 
     await waitFor(() => expect(document.querySelector('[data-mention-kind="skill"]')).toBeInTheDocument())
@@ -2169,7 +2780,8 @@ describe('ChatInput file mentions', () => {
     render(<ChatInput compact />)
 
     fireEvent.click(screen.getByLabelText('Open composer tools'))
-    fireEvent.click(screen.getByRole('option', { name: 'More tools' }))
+    // Agents sit on the menu's first level; there is no More row to open first.
+    expect(screen.queryByRole('option', { name: 'More tools' })).not.toBeInTheDocument()
     fireEvent.click(await screen.findByRole('option', { name: /^Agents/ }))
     fireEvent.click(await screen.findByRole('option', { name: /debugger/ }))
 
@@ -2177,9 +2789,12 @@ describe('ChatInput file mentions', () => {
     expect(mocks.wsSend).not.toHaveBeenCalled()
   })
 
-  it('toggles Computer Use from the capability menu with a rollback on failure', async () => {
-    const getStatus = vi.spyOn(computerUseApi, 'getStatus').mockResolvedValue({
+  it('turns Computer Use on from the capability menu only after the consent dialog', async () => {
+    vi.spyOn(computerUseApi, 'getStatus').mockResolvedValue({
       supported: true,
+      platform: 'darwin',
+      engine: 'macos-native',
+      permissions: { accessibility: true, screenRecording: true },
     } as Awaited<ReturnType<typeof computerUseApi.getStatus>>)
     vi.spyOn(computerUseApi, 'getAuthorizedApps').mockResolvedValue({
       enabled: false,
@@ -2188,16 +2803,125 @@ describe('ChatInput file mentions', () => {
       pythonPath: null,
     })
     const setAuthorizedApps = vi.spyOn(computerUseApi, 'setAuthorizedApps').mockResolvedValue({ ok: true })
+    const openPermissionCard = vi.spyOn(computerUseApi, 'openPermissionCard').mockResolvedValue({ ok: true })
     render(<ChatInput compact />)
 
     fireEvent.click(screen.getByLabelText('Open composer tools'))
     const row = await screen.findByRole('option', { name: /Computer use/ })
     await waitFor(() => expect(row.querySelector('input[type="checkbox"]')).not.toBeChecked())
 
+    // The switch asks first; dismissing the dialog changes nothing.
     fireEvent.click(row.querySelector('input[type="checkbox"]')!)
-    await waitFor(() => expect(setAuthorizedApps).toHaveBeenCalledWith({ enabled: true }))
+    const dialog = await screen.findByRole('dialog')
+    expect(setAuthorizedApps).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(setAuthorizedApps).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByLabelText('Open composer tools'))
+    fireEvent.click((await screen.findByRole('option', { name: /Computer use/ })).querySelector('input[type="checkbox"]')!)
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Enable Computer Use' }))
+    await waitFor(() => expect(setAuthorizedApps).toHaveBeenCalledWith(COMPUTER_USE_ENABLE_REQUEST))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    // Permissions already granted: no macOS permission card.
+    expect(openPermissionCard).not.toHaveBeenCalled()
+  })
+
+  it('turns Computer Use off from the capability menu without asking', async () => {
+    vi.spyOn(computerUseApi, 'getStatus').mockResolvedValue({ supported: true, platform: 'darwin' } as Awaited<ReturnType<typeof computerUseApi.getStatus>>)
+    vi.spyOn(computerUseApi, 'getAuthorizedApps').mockResolvedValue({
+      enabled: true,
+      authorizedApps: [],
+      grantFlags: { clipboardRead: true, clipboardWrite: true, systemKeyCombos: true },
+      pythonPath: null,
+    })
+    const setAuthorizedApps = vi.spyOn(computerUseApi, 'setAuthorizedApps').mockRejectedValue(new Error('disk full'))
+    render(<ChatInput compact />)
+
+    fireEvent.click(screen.getByLabelText('Open composer tools'))
+    const row = await screen.findByRole('option', { name: /Computer use/ })
     await waitFor(() => expect(row.querySelector('input[type="checkbox"]')).toBeChecked())
-    expect(getStatus).toHaveBeenCalled()
+    fireEvent.click(row.querySelector('input[type="checkbox"]')!)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(setAuthorizedApps).toHaveBeenCalledWith({ enabled: false })
+    // The write failed: the switch rolls back.
+    await waitFor(() => expect(row.querySelector('input[type="checkbox"]')).toBeChecked())
+  })
+
+  it('sends one message as an Agent Team request while the bubble keeps the typed text', async () => {
+    render(<ChatInput compact />)
+    setComposerText('Ship the release checklist', 26)
+
+    fireEvent.click(screen.getByLabelText('Open composer tools'))
+    fireEvent.click((await screen.findByRole('option', { name: /Agent Teams/ })).querySelector('input[type="checkbox"]')!)
+
+    // Arming costs tokens and time, so the first attempt explains that. Cancel
+    // leaves the composer plain; confirming arms it.
+    const notice = await screen.findByRole('dialog')
+    expect(notice).toHaveTextContent('Uses a lot of tokens')
+    fireEvent.click(within(notice).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByTestId('agent-team-chip')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Open composer tools'))
+    fireEvent.click((await screen.findByRole('option', { name: /Agent Teams/ })).querySelector('input[type="checkbox"]')!)
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Turn on anyway' }))
+    const chip = await screen.findByTestId('agent-team-chip')
+    expect(chip).toHaveTextContent('Agent Teams')
+
+    fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+    expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, {
+      type: 'user_message',
+      content: withAgentTeamRequest('Ship the release checklist'),
+      attachments: [],
+    })
+    const messages = useChatStore.getState().sessions[sessionId]?.messages ?? []
+    expect(messages[messages.length - 1]).toMatchObject({ type: 'user_text', content: 'Ship the release checklist' })
+    // Armed for one message only.
+    expect(screen.queryByTestId('agent-team-chip')).not.toBeInTheDocument()
+
+    // The first turn finished; the next message goes out as a plain one.
+    act(() => {
+      useChatStore.setState(state => ({ sessions: { ...state.sessions, [sessionId]: { ...state.sessions[sessionId]!, chatState: 'idle' } } }))
+    })
+    setComposerText('Follow-up', 9)
+    fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+    expect(mocks.wsSend).toHaveBeenLastCalledWith(sessionId, { type: 'user_message', content: 'Follow-up', attachments: [] })
+  })
+
+  it('disarms Agent Team from the chip before sending', async () => {
+    dismissAgentTeamsNotice()
+    render(<ChatInput compact />)
+    fireEvent.click(screen.getByLabelText('Open composer tools'))
+    fireEvent.click((await screen.findByRole('option', { name: /Agent Teams/ })).querySelector('input[type="checkbox"]')!)
+    fireEvent.click(within(await screen.findByTestId('agent-team-chip')).getByRole('button', { name: 'Remove Agent Teams' }))
+    expect(screen.queryByTestId('agent-team-chip')).not.toBeInTheDocument()
+
+    setComposerText('Just me', 7)
+    fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+    expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, { type: 'user_message', content: 'Just me', attachments: [] })
+  })
+
+  it('lists a skill under Recently used after it was sent', async () => {
+    const design = {
+      kind: 'skill' as const, id: 'design', name: 'design', displayName: 'Design',
+      description: 'Create interfaces', source: 'user', modelText: 'Use the Skill tool with skill: "design" for this request.',
+    }
+    mocks.listReferences.mockResolvedValue({ plugins: [], skills: [design] })
+    render(<ChatInput compact />)
+
+    fireEvent.click(screen.getByLabelText('Open composer tools'))
+    fireEvent.click(await screen.findByRole('option', { name: /^Skills/ }))
+    expect(screen.queryByText('Recently used')).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('option', { name: /^All skills/ }))
+    fireEvent.click(await screen.findByRole('option', { name: /Design/ }))
+    await waitFor(() => expect(document.querySelector('[data-mention-kind="skill"]')).toBeInTheDocument())
+    fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+    expect(readRecentSkills()).toEqual(['design'])
+
+    fireEvent.click(screen.getByLabelText('Open composer tools'))
+    fireEvent.click(await screen.findByRole('option', { name: /^Skills/ }))
+    expect(await screen.findByText('Recently used')).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /Design/ })).toBeInTheDocument()
   })
 
   it('inserts a selected @ file as an inline mention pill and sends its absolute path', async () => {
@@ -2648,16 +3372,15 @@ describe('ChatInput file mentions', () => {
     expect(panel).not.toHaveClass('overflow-hidden')
   })
 
-  it.each([320, 400, 529, 530, 640])('lets the model yield space without compressing toolbar actions in a %ipx desktop column', (width) => {
+  it.each([320, 400, 529, 530, 640])('keeps the toolbar actions at their width and lets the leading group give way in a %ipx desktop column', (width) => {
     stubComposerColumnWidth(width)
     render(<ChatInput compact />)
-    expect(screen.getByTestId('chat-input-toolbar-leading')).toHaveClass('shrink-0')
+    expect(screen.getByTestId('chat-input-toolbar-leading')).toHaveClass('min-w-0', 'shrink')
     if (width >= 530) {
-      expect(screen.getByTestId('chat-input-toolbar-leading')).toHaveClass('max-w-[55%]')
       expect(screen.getByTestId('chat-input-toolbar-location')).toHaveClass('min-w-0', 'flex-1')
     }
-    expect(screen.getByTestId('chat-input-toolbar-trailing')).toHaveClass('min-w-0', 'flex-1', 'justify-end')
-    expect(screen.getByTestId('model-selector-shell')).toHaveClass('min-w-0', 'flex-1')
+    expect(screen.getByTestId('chat-input-toolbar-trailing')).toHaveClass('shrink-0', 'justify-end')
+    expect(screen.getByTestId('model-selector-shell')).toHaveClass('shrink-0')
     expect(screen.getByRole('button', { name: 'Run' })).toHaveClass('shrink-0')
   })
 
@@ -2690,7 +3413,7 @@ describe('ChatInput file mentions', () => {
     // to `.glass-panel`'s own `box-shadow` on stylesheet order — so the phone
     // composer silently rendered the floating-overlay shadow instead.
     expect(screen.getByTestId('chat-input-panel')).toHaveClass('glass-panel--composer')
-    expect(screen.getByTestId('chat-input-panel')).toHaveClass('rounded-[var(--radius-2xl)]')
+    expect(screen.getByTestId('chat-input-panel')).toHaveClass('rounded-[var(--radius-xl)]')
     expect(screen.getByTestId('chat-input-panel')).not.toHaveClass('rounded-b-none')
     expect(screen.getByTestId('chat-input-toolbar-leading')).toHaveClass('shrink-0', 'gap-1')
     expect(screen.getByTestId('chat-input-toolbar-trailing')).toHaveClass('min-w-0', 'flex-1', 'justify-end', 'gap-1')
@@ -2705,6 +3428,80 @@ describe('ChatInput file mentions', () => {
     expect(fileSearchMenu).not.toHaveTextContent('Navigate')
   })
 
+  it('moves the low-frequency controls off the phone toolbar into the + sheet', async () => {
+    viewportMocks.isMobile = true
+
+    render(<ChatInput />)
+    await waitFor(() => {
+      expect(mocks.getGitInfo).toHaveBeenCalledWith(sessionId)
+    })
+
+    // Context usage stays mounted to keep tracking, but takes no toolbar slot.
+    expect(screen.getByTestId('context-usage-indicator')).not.toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open composer tools' }))
+    const sheet = screen.getByTestId('mobile-composer-sheet')
+    expect(within(sheet).getByRole('button', { name: /Execution Permissions/ })).toHaveTextContent('Ask permissions')
+    // The phone sheet must not grab focus: that would throw the keyboard up
+    // over the list that was just opened.
+    expect(within(sheet).getByRole('combobox')).not.toHaveFocus()
+
+    fireEvent.click(within(sheet).getByRole('button', { name: /^Context/ }))
+
+    // One sheet at a time: the + sheet closes before the breakdown opens.
+    expect(screen.queryByTestId('mobile-composer-sheet')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('context-usage-sheet')).toBeInTheDocument()
+  })
+
+  it('hands the phone composer slot to the approval bar while a request waits, and takes it back', async () => {
+    viewportMocks.isMobile = true
+    render(<ChatInput />)
+    await waitFor(() => {
+      expect(mocks.getGitInfo).toHaveBeenCalledWith(sessionId)
+    })
+    const request = { requestId: 'perm-1', toolName: 'Bash', toolUseId: 'toolu-1', input: { command: 'bun run build' } }
+
+    act(() => {
+      useChatStore.setState((state) => ({
+        sessions: {
+          ...state.sessions,
+          [sessionId]: { ...state.sessions[sessionId]!, pendingPermission: request, pendingPermissions: { [request.requestId]: request } },
+        },
+      }))
+    })
+    expect(screen.getByTestId('mobile-approval-dock')).toHaveTextContent('bun run build')
+    expect(screen.queryByTestId('chat-input-panel')).not.toBeInTheDocument()
+
+    act(() => {
+      useChatStore.setState((state) => ({
+        sessions: {
+          ...state.sessions,
+          [sessionId]: { ...state.sessions[sessionId]!, pendingPermission: null, pendingPermissions: {} },
+        },
+      }))
+    })
+    expect(screen.queryByTestId('mobile-approval-dock')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-input-panel')).toBeInTheDocument()
+  })
+
+  it('leaves the desktop composer alone while a request waits, since the card is in the transcript', async () => {
+    render(<ChatInput />)
+    await waitFor(() => {
+      expect(mocks.getGitInfo).toHaveBeenCalledWith(sessionId)
+    })
+    const request = { requestId: 'perm-1', toolName: 'Bash', toolUseId: 'toolu-1', input: { command: 'bun run build' } }
+    act(() => {
+      useChatStore.setState((state) => ({
+        sessions: {
+          ...state.sessions,
+          [sessionId]: { ...state.sessions[sessionId]!, pendingPermission: request, pendingPermissions: { [request.requestId]: request } },
+        },
+      }))
+    })
+    expect(screen.queryByTestId('mobile-approval-dock')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-input-panel')).toBeInTheDocument()
+  })
+
   it('keeps the active-session toolbar in flow so multiline caret cannot render behind controls', async () => {
     render(<ChatInput />)
 
@@ -2716,7 +3513,7 @@ describe('ChatInput file mentions', () => {
     const toolbar = screen.getByTestId('chat-input-toolbar')
 
     expect(toolbar).not.toHaveClass('absolute')
-    expect(toolbar).toHaveClass('mt-3')
+    expect(toolbar).toHaveClass('pt-1.5')
     expect(input).not.toHaveClass('pb-12')
     expect(input).not.toHaveClass('pb-14')
   })
@@ -2726,26 +3523,28 @@ describe('ChatInput file mentions', () => {
   // same place in both. The live one used to weld itself to the panel edge
   // with `-mx-4 -mb-4`, which pulled every control 4px left and stretched the
   // divider across the panel the moment the first message landed.
-  it('keeps the wide composer toolbar inset when a draft turns into a live session', async () => {
+  it('keeps the composer toolbar in place when a draft turns into a live session', async () => {
     const { unmount } = render(<ChatInput variant="hero" />)
 
     const draftToolbar = screen.getByTestId('chat-input-toolbar')
-    expect(draftToolbar).toHaveClass('pt-3')
+    const draftPanel = screen.getByTestId('chat-input-panel')
+    const draftGeometry = { toolbar: draftToolbar.className, panel: draftPanel.className }
     expect(draftToolbar.className).not.toMatch(/-m[xy]-\d/)
     unmount()
 
     const live = render(<ChatInput variant="default" />)
 
-    const liveToolbar = screen.getByTestId('chat-input-toolbar')
-    expect(liveToolbar).toHaveClass('pt-3')
-    expect(liveToolbar.className).not.toMatch(/-m[xy]-\d/)
+    // Same row, same card: nothing shifts when the first message lands.
+    expect(screen.getByTestId('chat-input-toolbar').className).toBe(draftGeometry.toolbar)
+    expect(screen.getByTestId('chat-input-panel').className).toBe(draftGeometry.panel)
     live.unmount()
 
-    // The narrow composer keeps the band: `p-3` leaves too little room to
-    // spend on inset, and it never swaps variants mid-session.
+    // The narrow composer is the same card too; only the shell's outer
+    // padding follows `compact`.
     render(<ChatInput compact />)
 
-    expect(screen.getByTestId('chat-input-toolbar')).toHaveClass('-mx-3')
+    expect(screen.getByTestId('chat-input-toolbar').className).toBe(draftGeometry.toolbar)
+    expect(screen.getByTestId('chat-input-toolbar').className).not.toMatch(/-m[xy]-\d/)
   })
 
   // The hero row is `flex`, and a paragraph holding an unbreakable run (a
@@ -3215,6 +4014,106 @@ describe('ChatInput file mentions', () => {
     }
   })
 
+  describe('prompt suggestions', () => {
+    const ghost = () => getComposerElement().querySelector('[data-prompt-suggestion]')
+
+    function offerSuggestion(suggestion: string) {
+      act(() => {
+        useSettingsStore.setState({ nextPromptSuggestionsEnabled: true })
+        useChatStore.getState().handleServerMessage(sessionId, { type: 'prompt_suggestion', suggestion })
+      })
+    }
+
+    beforeEach(() => {
+      useSettingsStore.setState({ chatSendBehavior: 'enter' })
+    })
+
+    afterEach(() => {
+      useSettingsStore.setState({ nextPromptSuggestionsEnabled: false })
+    })
+
+    it('shows the predicted prompt as ghost text and Tab fills the draft without sending it', () => {
+      render(<ChatInput />)
+      offerSuggestion('run the tests')
+
+      expect(ghost()).toHaveTextContent('run the tests')
+      expect(ghost()?.querySelector('kbd')).toHaveTextContent('Tab')
+      expect(ghost()).toHaveAttribute('aria-hidden', 'true')
+      // The ghost takes the placeholder's line instead of overlapping it.
+      expect(getComposerElement()).toHaveAttribute('data-placeholder', '')
+
+      fireEvent.keyDown(getComposerElement(), { key: 'Tab' })
+
+      expect(getComposerText()).toBe('run the tests')
+      expect(ghost()).toBeNull()
+      expect(mocks.wsSend).not.toHaveBeenCalled()
+
+      fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+      expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, {
+        type: 'user_message',
+        content: 'run the tests',
+        attachments: [],
+      })
+      expect(useChatStore.getState().sessions[sessionId]?.promptSuggestion).toBeNull()
+    })
+
+    it('accepts with ArrowRight, hides while typing, comes back on an empty draft, and Esc dismisses it', () => {
+      render(<ChatInput />)
+      offerSuggestion('commit this')
+
+      fireEvent.keyDown(getComposerElement(), { key: 'ArrowRight' })
+      expect(getComposerText()).toBe('commit this')
+      expect(ghost()).toBeNull()
+
+      setComposerText('')
+      expect(ghost()).toHaveTextContent('commit this')
+      setComposerText('n')
+      expect(ghost()).toBeNull()
+      // Tab on a non-empty draft is not an accept.
+      fireEvent.keyDown(getComposerElement(), { key: 'Tab' })
+      expect(getComposerText()).toBe('n')
+      setComposerText('')
+      expect(ghost()).toHaveTextContent('commit this')
+
+      fireEvent.keyDown(getComposerElement(), { key: 'Escape' })
+      expect(ghost()).toBeNull()
+      expect(useChatStore.getState().sessions[sessionId]?.promptSuggestion).toBeNull()
+      fireEvent.keyDown(getComposerElement(), { key: 'Tab' })
+      expect(getComposerText()).toBe('')
+      expect(mocks.wsSend).not.toHaveBeenCalled()
+    })
+
+    it('never sends the suggestion from Enter on an empty draft', () => {
+      render(<ChatInput />)
+      offerSuggestion('push it')
+
+      fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+
+      expect(mocks.wsSend).not.toHaveBeenCalled()
+      expect(getComposerText()).toBe('')
+      expect(ghost()).toHaveTextContent('push it')
+    })
+
+    it('stays hidden while the setting is off, a modifier is held, or the composer tools menu owns Tab', () => {
+      render(<ChatInput />)
+      offerSuggestion('run the tests')
+      act(() => useSettingsStore.setState({ nextPromptSuggestionsEnabled: false }))
+      expect(ghost()).toBeNull()
+      fireEvent.keyDown(getComposerElement(), { key: 'Tab' })
+      expect(getComposerText()).toBe('')
+
+      act(() => useSettingsStore.setState({ nextPromptSuggestionsEnabled: true }))
+      expect(ghost()).toHaveTextContent('run the tests')
+      fireEvent.keyDown(getComposerElement(), { key: 'Tab', shiftKey: true })
+      expect(getComposerText()).toBe('')
+
+      fireEvent.click(screen.getByLabelText('Open composer tools'))
+      expect(ghost()).toBeNull()
+      fireEvent.keyDown(getComposerElement(), { key: 'Tab' })
+      expect(getComposerText()).toBe('')
+    })
+  })
+
   describe('voice input', () => {
     let finishTranscription: (text: string) => void
     const recording = () => ({
@@ -3232,8 +4131,9 @@ describe('ChatInput file mentions', () => {
             info: { id: 'sensevoice-local', name: 'SenseVoice', location: 'local', languages: ['auto', 'zh'] },
             preparation: { phase: 'ready' },
           }],
-          preferences: { enabled: true, providerId: 'sensevoice-local', language: 'zh', downloadSource: 'auto' },
+          preferences: { enabled: true, providerId: 'sensevoice-local', language: 'zh', downloadSource: 'auto', correctionEnabled: false, correctionProviderId: null, correctionModelId: null },
           limits: { maxAudioSeconds: 60, maxAudioBytes: 1_000_000 },
+          correction: { defaultTarget: null, target: null },
         },
       })
       mocks.voiceStartRecording.mockImplementation(async () => activeRecording)
@@ -3246,7 +4146,7 @@ describe('ChatInput file mentions', () => {
 
     async function dictate() {
       await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Dictate' }))
+        fireEvent.click(screen.getByRole('button', { name: /^Dictate( \(.+\))?$/ }))
       })
       await act(async () => {
         fireEvent.click(await screen.findByRole('button', { name: 'Stop recording and transcribe' }))
@@ -3257,6 +4157,10 @@ describe('ChatInput file mentions', () => {
     beforeEach(() => {
       activeRecording = recording()
       armVoice()
+      // Voice input exists only in the desktop app.
+      window.desktopHost = { ...browserHost, kind: 'electron', isDesktop: true }
+      // jsdom has no canvas; the recording bar's trace draws nothing without one.
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
     })
 
     it('puts the microphone between the model picker and the send button', () => {
@@ -3271,10 +4175,40 @@ describe('ChatInput file mentions', () => {
       expect(trailing.lastElementChild).toBe(screen.getByRole('button', { name: 'Run' }))
     })
 
+    it('hides the predicted prompt while recording so Tab cannot mix it into the transcript', async () => {
+      const ghost = () => getComposerElement().querySelector('[data-prompt-suggestion]')
+      render(<ChatInput />)
+      act(() => {
+        useSettingsStore.setState({ nextPromptSuggestionsEnabled: true })
+        useChatStore.getState().handleServerMessage(sessionId, { type: 'prompt_suggestion', suggestion: '跑一下测试' })
+      })
+      try {
+        expect(ghost()).not.toBeNull()
+
+        await act(async () => {
+          fireEvent.click(screen.getByRole('button', { name: /^Dictate( \(.+\))?$/ }))
+        })
+        expect(ghost()).toBeNull()
+        fireEvent.keyDown(getComposerElement(), { key: 'Tab' })
+        expect(getComposerText()).toBe('')
+
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel recording (Esc)' }))
+        expect(ghost()).not.toBeNull()
+      } finally {
+        useSettingsStore.setState({ nextPromptSuggestionsEnabled: false })
+      }
+    })
+
     it('does not render the microphone until dictation is ready', () => {
       useVoiceInputStore.setState({
-        catalog: { ...useVoiceInputStore.getState().catalog!, preferences: { enabled: false, providerId: 'sensevoice-local', language: 'zh', downloadSource: 'auto' } },
+        catalog: { ...useVoiceInputStore.getState().catalog!, preferences: { enabled: false, providerId: 'sensevoice-local', language: 'zh', downloadSource: 'auto', correctionEnabled: false, correctionProviderId: null, correctionModelId: null } },
       })
+      render(<ChatInput />)
+      expect(screen.queryByTestId('voice-input')).toBeNull()
+    })
+
+    it('does not render the microphone in the browser (H5)', () => {
+      Reflect.deleteProperty(window, 'desktopHost')
       render(<ChatInput />)
       expect(screen.queryByTestId('voice-input')).toBeNull()
     })
@@ -3294,12 +4228,54 @@ describe('ChatInput file mentions', () => {
       expect(mocks.wsSend).not.toHaveBeenCalled()
     })
 
+    it('hands the toolbar row to the recording bar and gives it back', async () => {
+      render(<ChatInput />)
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /^Dictate( \(.+\))?$/ }))
+      })
+
+      expect(screen.getByTestId('voice-recording-bar')).toBeVisible()
+      expect(screen.getByTestId('chat-input-toolbar-leading')).not.toBeVisible()
+      expect(screen.getByTestId('chat-input-toolbar-trailing')).not.toBeVisible()
+      // Hidden, not unmounted: the model picker keeps its own state.
+      expect(screen.getByTestId('model-selector-shell')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel recording (Esc)' }))
+
+      expect(screen.queryByTestId('voice-recording-bar')).toBeNull()
+      expect(screen.getByTestId('chat-input-toolbar-trailing')).toBeVisible()
+      expect(screen.getByRole('button', { name: /^Dictate( \(.+\))?$/ })).toBeVisible()
+    })
+
+    it('sends the dictated text through the composer\'s own send path', async () => {
+      render(<ChatInput />)
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /^Dictate( \(.+\))?$/ }))
+      })
+      await act(async () => {
+        fireEvent.click(await screen.findByRole('button', { name: 'Transcribe and send' }))
+      })
+      expect(mocks.wsSend).not.toHaveBeenCalled()
+
+      await act(async () => {
+        finishTranscription('你好')
+      })
+
+      expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+        type: 'user_message',
+        content: '你好',
+      }))
+      expect(getComposerText()).toBe('')
+    })
+
     it('keeps the text aside when the message was sent while it was being recognised', async () => {
+      useSettingsStore.setState({ chatSendBehavior: 'enter' })
       render(<ChatInput />)
       setComposerText('question')
 
       await dictate()
-      fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+      // The send button is hidden behind the recording bar; Enter still sends.
+      fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
       expect(getComposerText()).toBe('')
       await act(async () => {
         finishTranscription('late words')
@@ -3327,7 +4303,7 @@ describe('ChatInput file mentions', () => {
     it('abandons the recording when the composer is hidden', async () => {
       const { rerender } = render(<ChatInput sessionId={sessionId} />)
       await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Dictate' }))
+        fireEvent.click(screen.getByRole('button', { name: /^Dictate( \(.+\))?$/ }))
       })
       await screen.findByRole('button', { name: 'Stop recording and transcribe' })
 

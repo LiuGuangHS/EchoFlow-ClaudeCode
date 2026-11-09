@@ -9,6 +9,14 @@ import { useTranslation } from '@/i18n'
 type ImageProps = Pick<ImgHTMLAttributes<HTMLImageElement>, 'src' | 'alt' | 'title' | 'width' | 'height' | 'className'>
 type Props = HTMLAttributes<HTMLDivElement> & { html: string }
 
+// Only the mounts created below can carry source identity. Raw HTML attributes
+// cannot impersonate the URL that passed the caller's image resolver.
+const originalImageSources = new WeakMap<HTMLElement, string>()
+
+export function originalMarkdownImageSource(image: HTMLImageElement): string | undefined {
+  return image.parentElement ? originalImageSources.get(image.parentElement) : undefined
+}
+
 function imageName(src: string, fallback: string): string {
   if (/^(blob:|data:)/i.test(src)) return fallback
   try {
@@ -23,10 +31,11 @@ function imageName(src: string, fallback: string): string {
 function MarkdownImage(props: ImageProps) {
   const t = useTranslation()
   const errorId = useId()
-  const [status, setStatus] = useState<'initial' | 'failed' | 'retrying'>('initial')
+  const [status, setStatus] = useState<'initial' | 'unavailable' | 'failed' | 'retrying'>('initial')
   const [attempt, setAttempt] = useState(0)
   const name = imageName(props.src ?? '', props.alt || t('assistantOutputs.kind.image'))
-  const showError = status !== 'initial'
+  const hidden = status !== 'initial'
+  const showError = status === 'failed' || status === 'retrying'
 
   return (
     <>
@@ -34,11 +43,17 @@ function MarkdownImage(props: ImageProps) {
         {...props}
         key={attempt}
         retryWithCredential={attempt > 0}
-        hidden={showError}
-        style={{ display: showError ? 'none' : undefined }}
+        hidden={hidden}
+        style={{ display: hidden ? 'none' : undefined }}
         onLoad={() => setStatus('initial')}
-        onFailure={() => setStatus('failed')}
+        onFailure={setStatus}
       />
+      {/* A picture the server will not serve (missing, outside the readable roots)
+          is not a fault to retry. Like any image that cannot be shown, it falls
+          back to its text alternative. */}
+      {status === 'unavailable' && props.alt && (
+        <span className="text-[var(--color-text-tertiary)]">{props.alt}</span>
+      )}
       {showError && (
         <span className="not-prose my-2 flex max-w-full flex-col gap-2">
           <span id={errorId}>
@@ -99,7 +114,12 @@ function MarkdownHtmlContent({ html, ...props }: Props) {
   }, [html])
 
   useLayoutEffect(() => {
-    setMounts(Array.from(containerRef.current?.querySelectorAll<HTMLElement>('[data-md-image]') ?? []))
+    const imageMounts = Array.from(containerRef.current?.querySelectorAll<HTMLElement>('[data-md-image]') ?? [])
+    imageMounts.forEach((mount, index) => {
+      const src = prepared.images[index]?.src
+      if (src) originalImageSources.set(mount, src)
+    })
+    setMounts(imageMounts)
   }, [prepared])
 
   return (

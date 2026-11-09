@@ -1,26 +1,15 @@
 import type { DesktopUpdateDownloadEvent } from '../../src/lib/desktopHost/types'
 import { existsSync } from 'node:fs'
 import { clearAppManagedPortableEnv } from './appMode'
-import { isVerifiedDifferentialDownloadFeed, type UpdateFeedConfig } from './updateFeed'
-
-export type ElectronUpdateFileInfo = {
-  url: string
-  sha512?: string
-  sha2?: string
-  size?: number
-}
 
 export type ElectronUpdateInfo = {
   version: string
   body?: string | null
   releaseNotes?: string | Array<{ note?: string | null }> | null
-  files?: ElectronUpdateFileInfo[]
-  path?: string
-  sha512?: string
-  sha2?: string
 }
 
 export type ElectronUpdateCheckResult = {
+  isUpdateAvailable?: boolean
   updateInfo?: ElectronUpdateInfo
 } | null
 
@@ -30,9 +19,9 @@ export type ElectronUpdateCheckOptions = {
 
 export type ElectronUpdaterLike = {
   autoDownload: boolean
+  autoInstallOnAppQuit: boolean
   disableDifferentialDownload?: boolean
   logger?: unknown
-  setFeedURL?(options: string): void
   checkForUpdates(): Promise<ElectronUpdateCheckResult>
   downloadUpdate(): Promise<unknown>
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void
@@ -43,18 +32,6 @@ export type ElectronUpdaterLike = {
 export type ElectronUpdateMetadata = {
   version: string
   body: string | null
-  feedUrl?: string | null
-  feedAttempts?: ElectronUpdateFeedAttempt[]
-  files?: ElectronUpdateFileInfo[]
-  path?: string
-  sha512?: string
-  sha2?: string
-}
-
-export type ElectronUpdateFeedAttempt = {
-  feedUrl: string | null
-  result: 'selected' | 'no-update' | 'missing-metadata' | 'mismatched-metadata' | 'error'
-  error?: string
 }
 
 export type ElectronUpdaterProxyController = {
@@ -63,15 +40,6 @@ export type ElectronUpdaterProxyController = {
 
 export type ElectronUpdaterRuntimeOptions = {
   updateConfigPath?: string
-  feedUrl?: string | null
-  feedUrls?: Array<string | null | undefined>
-  metadataFeedUrl?: string | null
-  metadataFallbackUrls?: Array<string | null | undefined>
-  downloadFeedUrls?: Array<string | null | undefined>
-  differentialDownload?: boolean
-  differentialDownloadFeedUrls?: string[]
-  differentialDownloadContracts?: UpdateFeedConfig['differentialDownloadContracts']
-  differentialDownloadContract?: UpdateFeedConfig['differentialDownloadContracts'][string]
 }
 
 export type UpdaterSessionProxyConfig = {
@@ -98,10 +66,6 @@ export function normalizeUpdateInfo(info: ElectronUpdateInfo | undefined): Elect
   return {
     version: info.version,
     body: info.body ?? releaseNotes ?? null,
-    ...(info.files ? { files: info.files } : {}),
-    ...(info.path ? { path: info.path } : {}),
-    ...(info.sha512 ? { sha512: info.sha512 } : {}),
-    ...(info.sha2 ? { sha2: info.sha2 } : {}),
   }
 }
 
@@ -125,92 +89,13 @@ function isMissingUpdateMetadataError(error: unknown): boolean {
   return referencesChannelMetadata && /cannot find|not found|404/i.test(message)
 }
 
-class MissingUpdateMetadataError extends Error {
-  constructor() {
-    super('Electron update channel metadata is missing')
-    this.name = 'MissingUpdateMetadataError'
-  }
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-function formatFeedAttempt(attempt: ElectronUpdateFeedAttempt): string {
-  const feedUrl = attempt.feedUrl ?? 'default feed'
-  return attempt.error
-    ? `${attempt.result} ${feedUrl}: ${attempt.error}`
-    : `${attempt.result} ${feedUrl}`
-}
-
-function withFeedAttemptErrorMessage(
-  error: unknown,
-  attempts: ElectronUpdateFeedAttempt[],
-): Error {
-  const message = getErrorMessage(error)
-  if (!attempts.length) return error instanceof Error ? error : new Error(message)
-  const diagnostics = attempts.map(formatFeedAttempt).join('; ')
-  const nextError = new Error(`${message} (update feeds tried: ${diagnostics})`)
-  if (error instanceof Error) {
-    nextError.name = error.name
-  }
-  return nextError
-}
-
-function withFeedDiagnostics(
-  update: ElectronUpdateMetadata,
-  feedUrl: string,
-  attempts: ElectronUpdateFeedAttempt[],
-): ElectronUpdateMetadata {
-  const selectedAttempt: ElectronUpdateFeedAttempt = { feedUrl, result: 'selected' }
-  return {
-    ...update,
-    feedUrl,
-    feedAttempts: [...attempts, selectedAttempt],
-  }
-}
-
-function normalizeFeedUrls(runtimeOptions: ElectronUpdaterRuntimeOptions): string[] {
-  const sourceUrls = runtimeOptions.feedUrls?.some(feedUrl => !!feedUrl?.trim())
-    ? runtimeOptions.feedUrls
-    : [runtimeOptions.feedUrl]
-  const urls: string[] = []
-  for (const rawUrl of sourceUrls ?? []) {
-    const feedUrl = rawUrl?.trim()
-    if (feedUrl && !urls.includes(feedUrl)) urls.push(feedUrl)
-  }
-  return urls
-}
-
-function updateMetadataFingerprint(update: ElectronUpdateMetadata | null): string | null {
-  if (!update) return null
-
-  const files = (update.files ?? []).map(file => ({
-    name: file.url.split(/[?#]/, 1)[0]?.split('/').at(-1) ?? file.url,
-    sha512: file.sha512 ?? null,
-    sha2: file.sha2 ?? null,
-    size: file.size ?? null,
-  }))
-
-  return JSON.stringify({
-    version: update.version,
-    files,
-    path: update.path?.split(/[?#]/, 1)[0]?.split('/').at(-1) ?? null,
-    sha512: update.sha512 ?? null,
-    sha2: update.sha2 ?? null,
-  })
-}
-
 export class ElectronUpdaterService {
   private readonly updater: ElectronUpdaterLike
   private readonly proxyController?: ElectronUpdaterProxyController
   private readonly updateConfigPath?: string
-  private readonly metadataFeedUrl?: string
-  private readonly metadataFallbackUrls: string[]
-  private readonly downloadFeedUrls: string[]
   private pendingUpdate: ElectronUpdateMetadata | null = null
-  private lastFeedAttempts: ElectronUpdateFeedAttempt[] = []
   private downloaded = false
+  private installRequested = false
   private proxyKey: string | null = null
 
   constructor(
@@ -221,23 +106,14 @@ export class ElectronUpdaterService {
     this.updater = updater
     this.proxyController = proxyController
     this.updateConfigPath = runtimeOptions.updateConfigPath
-    this.metadataFeedUrl = runtimeOptions.metadataFeedUrl?.trim() || undefined
-    this.metadataFallbackUrls = normalizeFeedUrls({ feedUrls: runtimeOptions.metadataFallbackUrls })
-    this.downloadFeedUrls = normalizeFeedUrls({
-      feedUrls: runtimeOptions.downloadFeedUrls ?? runtimeOptions.feedUrls,
-      feedUrl: runtimeOptions.feedUrl,
-    })
     this.updater.autoDownload = false
-    const differentialFeedUrls = runtimeOptions.differentialDownloadFeedUrls ?? []
-    const differentialDownloadContracts = runtimeOptions.differentialDownloadContracts ?? {}
-    const verifiedFeed = this.downloadFeedUrls.find(feedUrl =>
-      differentialFeedUrls.includes(feedUrl)
-      && isVerifiedDifferentialDownloadFeed(feedUrl, {
-        differentialDownloadFeedUrls: differentialFeedUrls,
-        differentialDownloadContracts,
-      }),
-    )
-    this.updater.disableDifferentialDownload = !(runtimeOptions.differentialDownload === true && !!verifiedFeed)
+    // Background downloads must stay pending after "Later", normal quits,
+    // and app-mode restarts. On macOS this also keeps the ZIP out of Squirrel
+    // until the user explicitly requests quitAndInstall.
+    this.updater.autoInstallOnAppQuit = false
+    // Differential download issues many small sequential range requests and is
+    // RTT-bound against the GitHub CDN, so it downloads far below line speed.
+    this.updater.disableDifferentialDownload = true
     this.updater.logger = null
   }
 
@@ -252,80 +128,28 @@ export class ElectronUpdaterService {
     this.proxyKey = nextProxyKey
   }
 
-  private setFeedUrl(feedUrl: string) {
-    if (!this.updater.setFeedURL) {
-      throw new Error('Electron updater does not support custom update feed URLs')
-    }
-    this.updater.setFeedURL(feedUrl)
-  }
-
-  private async checkForUpdatesOnCurrentFeed(): Promise<ElectronUpdateMetadata | null> {
+  async checkForUpdates(options?: ElectronUpdateCheckOptions): Promise<ElectronUpdateMetadata | null> {
+    this.installRequested = false
+    let result: ElectronUpdateCheckResult
     try {
+      await this.applyProxy(options)
       if (this.updateConfigPath && !existsSync(this.updateConfigPath)) {
-        return null
+        result = null
+      } else {
+        result = await this.updater.checkForUpdates()
       }
-      return normalizeUpdateInfo((await this.updater.checkForUpdates())?.updateInfo)
     } catch (error) {
       if (!isMissingUpdateMetadataError(error)) throw error
-      throw new MissingUpdateMetadataError()
+      result = null
     }
-  }
-
-  async checkForUpdates(options?: ElectronUpdateCheckOptions): Promise<ElectronUpdateMetadata | null> {
-    await this.applyProxy(options)
-    this.pendingUpdate = null
-    this.lastFeedAttempts = []
+    this.pendingUpdate = result?.isUpdateAvailable === false ? null : normalizeUpdateInfo(result?.updateInfo)
     this.downloaded = false
-
-    const primaryFeedUrl = this.metadataFeedUrl ?? this.downloadFeedUrls[0] ?? null
-    // 顺序回退链：主元数据源不可用（缺 yml、网络错误、空响应）时继续试兜底源。
-    // 显式配置的单源没有兜底（metadataFallbackUrls 为空），链就只有主源。
-    const feedChain: Array<string | null> = [primaryFeedUrl]
-    for (const fallbackUrl of this.metadataFallbackUrls) {
-      if (!feedChain.includes(fallbackUrl)) feedChain.push(fallbackUrl)
-    }
-
-    const attempts: ElectronUpdateFeedAttempt[] = []
-    let firstError: unknown = null
-    for (const feedUrl of feedChain) {
-      try {
-        if (feedUrl) this.setFeedUrl(feedUrl)
-        const update = await this.checkForUpdatesOnCurrentFeed()
-        if (!update) {
-          attempts.push({ feedUrl, result: 'no-update' })
-          continue
-        }
-        const updateWithDiagnostics = withFeedDiagnostics(update, feedUrl ?? 'default feed', attempts)
-        this.pendingUpdate = updateWithDiagnostics
-        this.lastFeedAttempts = updateWithDiagnostics.feedAttempts ?? []
-        return updateWithDiagnostics
-      } catch (error) {
-        attempts.push({
-          feedUrl,
-          result: error instanceof MissingUpdateMetadataError ? 'missing-metadata' : 'error',
-          error: getErrorMessage(error),
-        })
-        if (!(error instanceof MissingUpdateMetadataError) && firstError === null) firstError = error
-      }
-    }
-
-    this.lastFeedAttempts = attempts
-    // 全链缺元数据 = 静默无更新（与单源老行为一致）；出现过普通错误则必须抛出，
-    // 不能把「网络断了」伪装成「没有更新」。
-    if (firstError !== null) throw withFeedAttemptErrorMessage(firstError, attempts)
-    return null
-  }
-
-  getLastFeedAttempts(): ElectronUpdateFeedAttempt[] {
-    return [...this.lastFeedAttempts]
+    return this.pendingUpdate
   }
 
   async downloadUpdate(emit: (event: DesktopUpdateDownloadEvent) => void): Promise<void> {
     if (!this.pendingUpdate) {
-      await this.checkForUpdates()
-      if (!this.pendingUpdate) {
-        throw new Error('No Electron update is available to download')
-      }
+      throw new Error('No Electron update is available to download')
     }
     if (this.downloaded) {
       emit({ event: 'Finished' })
@@ -349,53 +173,21 @@ export class ElectronUpdaterService {
 
     this.updater.on('download-progress', onProgress)
     try {
-      const update = this.pendingUpdate
-      if (!update) throw new Error('No Electron update is available to download')
-      let lastError: unknown = null
-      const downloadFeedUrls: Array<string | null> = this.downloadFeedUrls.length > 0
-        ? this.downloadFeedUrls
-        : [null]
-
-      for (const feedUrl of downloadFeedUrls) {
-        try {
-          if (feedUrl) {
-            this.setFeedUrl(feedUrl)
-            const candidate = await this.checkForUpdatesOnCurrentFeed()
-            if (!candidate) {
-              this.lastFeedAttempts = [...this.lastFeedAttempts, { feedUrl, result: 'no-update' }]
-              continue
-            }
-            if (updateMetadataFingerprint(candidate) !== updateMetadataFingerprint(update)) {
-              this.lastFeedAttempts = [...this.lastFeedAttempts, { feedUrl, result: 'mismatched-metadata' }]
-              continue
-            }
-          }
-          await this.updater.downloadUpdate()
-          if (!started) {
-            emit({ event: 'Started', data: { contentLength: null } })
-          }
-          emit({ event: 'Finished' })
-          this.downloaded = true
-          return
-        } catch (error) {
-          lastError = error
-          this.lastFeedAttempts = [...this.lastFeedAttempts, {
-            feedUrl,
-            result: error instanceof MissingUpdateMetadataError ? 'missing-metadata' : 'error',
-            error: getErrorMessage(error),
-          }]
-        }
+      await this.updater.downloadUpdate()
+      if (!started) {
+        emit({ event: 'Started', data: { contentLength: null } })
       }
-
-      throw withFeedAttemptErrorMessage(lastError ?? new Error('Update download failed'), this.lastFeedAttempts)
+      emit({ event: 'Finished' })
+      this.downloaded = true
     } finally {
       this.updater.off('download-progress', onProgress)
     }
   }
 
   cancelInstall() {
-    this.pendingUpdate = null
-    this.downloaded = false
+    // The renderer retains the downloaded update on an install/relaunch
+    // failure. Revoke the install request, but keep the download retryable.
+    this.installRequested = false
   }
 
   stageDownloadedUpdate() {
@@ -405,14 +197,21 @@ export class ElectronUpdaterService {
     if (!this.downloaded) {
       throw new Error('Electron update has not finished downloading')
     }
+    this.installRequested = true
   }
 
   hasDownloadedUpdate(): boolean {
     return !!this.pendingUpdate && this.downloaded
   }
 
+  hasStagedUpdate(): boolean {
+    return this.hasDownloadedUpdate() && this.installRequested
+  }
+
   quitAndInstallDownloadedUpdate(env: NodeJS.ProcessEnv = process.env) {
-    this.stageDownloadedUpdate()
+    if (!this.hasStagedUpdate()) {
+      throw new Error('Electron update installation has not been requested')
+    }
     // The NSIS installer spawned here inherits this process's environment.
     // Hand it the same clean environment a manually launched setup gets, so
     // its legacy-data checks read the persisted app-mode.json instead of a

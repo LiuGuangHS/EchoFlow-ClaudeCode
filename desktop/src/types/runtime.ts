@@ -1,11 +1,8 @@
 import type { ReasoningEffortLevel } from './settings'
 
-export type ModelConfig = {
-  id?: string
+export type RuntimeSelection = {
   providerId: string | null
   modelId: string
   effortLevel?: ReasoningEffortLevel
+  openAIFastMode?: boolean
 }
-
-/** @deprecated Use ModelConfig for model selection. */
-export type RuntimeSelection = Omit<ModelConfig, 'id'>

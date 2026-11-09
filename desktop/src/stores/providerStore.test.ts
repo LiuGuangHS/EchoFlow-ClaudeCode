@@ -114,9 +114,10 @@ describe('providerStore runtime refresh', () => {
         ? { main: 'gpt-6-astra', haiku: 'gpt-6-luna', sonnet: 'gpt-6-sol', opus: 'gpt-6-astra' }
         : id === 'grok-official'
           ? { main: 'grok-4.7-fast', haiku: 'grok-4.7-mini', sonnet: 'grok-4.7-fast', opus: 'grok-4.7' }
-          : { main: 'claude-sonnet-5', haiku: 'claude-haiku-4-5', sonnet: 'claude-sonnet-5', opus: 'claude-opus-5-5' },
+          : id === 'deepseek-account'
+            ? { main: 'deepseek-v4-pro[1m]', haiku: 'deepseek-v4-flash', sonnet: 'deepseek-v4-pro[1m]', opus: 'deepseek-v4-pro[1m]' }
+            : { main: 'claude-sonnet-5', haiku: 'claude-haiku-4-5', sonnet: 'claude-sonnet-5', opus: 'claude-opus-5-5' },
     }))
-    providersApiMock.activate.mockResolvedValue({ ok: true })
   })
 
   it('reapplies an updated active provider to idle connected sessions using default runtime', async () => {
@@ -220,6 +221,20 @@ describe('providerStore runtime refresh', () => {
     expect(setSelectionMock).toHaveBeenCalledWith('restored', { providerId: provider.id, modelId: 'model-main[1m]' })
   })
 
+  it('keeps the saved DeepSeek account mapping from the providers list', async () => {
+    const saved = { main: 'deepseek-flash', haiku: 'deepseek-flash', sonnet: 'deepseek-v4-pro', opus: 'deepseek-v4-pro' }
+    providersApiMock.list.mockResolvedValue({ providers: [], activeId: null, deepSeekAccountModels: saved })
+    const { useProviderStore } = await import('./providerStore')
+
+    await useProviderStore.getState().fetchProviders()
+    expect(useProviderStore.getState().deepSeekAccountModels).toEqual(saved)
+
+    // An older server without the field leaves the known mapping in place.
+    providersApiMock.list.mockResolvedValue({ providers: [], activeId: null })
+    await useProviderStore.getState().fetchProviders()
+    expect(useProviderStore.getState().deepSeekAccountModels).toEqual(saved)
+  })
+
   it('restores the configured OpenAI model when activating built-in ChatGPT Official', async () => {
     providersApiMock.activate.mockResolvedValue({ ok: true })
     providersApiMock.list.mockResolvedValue({
@@ -243,6 +258,28 @@ describe('providerStore runtime refresh', () => {
 
     expect(settingsSetModelMock).toHaveBeenCalledWith('grok-4.7-fast')
     expect(settingsFetchAllMock).toHaveBeenCalled()
+  })
+
+  it('restores the configured DeepSeek model when activating the built-in DeepSeek Account', async () => {
+    providersApiMock.activate.mockResolvedValue({ ok: true })
+    providersApiMock.list.mockResolvedValue({ providers: [], activeId: 'deepseek-account' })
+
+    const { useProviderStore } = await import('./providerStore')
+    await useProviderStore.getState().activateProvider('deepseek-account')
+
+    expect(providersApiMock.getOfficialModels).toHaveBeenCalledWith('deepseek-account')
+    expect(settingsSetModelMock).toHaveBeenCalledWith('deepseek-v4-pro[1m]')
+    expect(settingsFetchAllMock).toHaveBeenCalled()
+  })
+
+  it('keeps the built-in DeepSeek Account in the display order when the server order omits it', async () => {
+    providersApiMock.list.mockResolvedValue({ providers: [], activeId: null })
+
+    const { useProviderStore } = await import('./providerStore')
+    expect(useProviderStore.getInitialState().providerOrder).toContain('deepseek-account')
+    await useProviderStore.getState().fetchProviders()
+
+    expect(useProviderStore.getState().providerOrder).toContain('deepseek-account')
   })
 
   it('restores the configured Claude model when activating Claude Official', async () => {
@@ -327,21 +364,68 @@ describe('providerStore reorderProviders', () => {
     const b = makeProvider({ id: 'b', name: 'B' })
     providersApiMock.reorder.mockResolvedValue({
       providers: [b, a],
-      providerOrder: ['openai-official', 'b', 'claude-official', 'a', 'grok-official'],
+      providerOrder: ['openai-official', 'b', 'claude-official', 'a', 'grok-official', 'deepseek-account'],
     })
 
     const { useProviderStore } = await import('./providerStore')
     useProviderStore.setState({
       providers: [a, b],
-      providerOrder: ['a', 'b', 'claude-official', 'openai-official', 'grok-official'],
+      providerOrder: ['a', 'b', 'claude-official', 'openai-official', 'grok-official', 'deepseek-account'],
       activeId: null,
     })
 
-    await useProviderStore.getState().reorderProviders(['openai-official', 'b', 'claude-official', 'a', 'grok-official'])
+    const reordered = ['openai-official', 'b', 'claude-official', 'a', 'grok-official', 'deepseek-account']
+    await useProviderStore.getState().reorderProviders(reordered)
 
-    expect(providersApiMock.reorder).toHaveBeenCalledWith(['openai-official', 'b', 'claude-official', 'a', 'grok-official'])
-    expect(useProviderStore.getState().providerOrder).toEqual(['openai-official', 'b', 'claude-official', 'a', 'grok-official'])
+    expect(providersApiMock.reorder).toHaveBeenCalledWith(reordered)
+    expect(useProviderStore.getState().providerOrder).toEqual(reordered)
     expect(useProviderStore.getState().providers.map((p) => p.id)).toEqual(['b', 'a'])
+  })
+
+  it('keeps the dragged order and active provider after settings refetches the list', async () => {
+    const a = makeProvider({ id: 'a', name: 'A' })
+    const b = makeProvider({ id: 'b', name: 'B' })
+    const draggedOrder = ['openai-official', 'b', 'claude-official', 'a', 'grok-official', 'deepseek-account']
+    providersApiMock.reorder.mockResolvedValue({ providers: [b, a], providerOrder: draggedOrder })
+    providersApiMock.list.mockResolvedValue({ providers: [b, a], activeId: a.id, providerOrder: draggedOrder })
+
+    const { useProviderStore } = await import('./providerStore')
+    useProviderStore.setState({
+      providers: [a, b],
+      providerOrder: ['a', 'b', 'claude-official', 'openai-official', 'grok-official', 'deepseek-account'],
+      activeId: a.id,
+    })
+
+    await useProviderStore.getState().reorderProviders(draggedOrder)
+    expect(providersApiMock.reorder).toHaveBeenCalledWith(draggedOrder)
+    expect(useProviderStore.getState().activeId).toBe(a.id)
+    // Closing and reopening Settings mounts the page and calls fetchProviders again.
+    await useProviderStore.getState().fetchProviders()
+
+    expect(useProviderStore.getState().providerOrder).toEqual(draggedOrder)
+    expect(useProviderStore.getState().providers.map((p) => p.id)).toEqual(['b', 'a'])
+    expect(useProviderStore.getState().activeId).toBe(a.id)
+  })
+
+  it('falls back to saved providers plus built-ins when an older server omits providerOrder', async () => {
+    const a = makeProvider({ id: 'a', name: 'A' })
+    const b = makeProvider({ id: 'b', name: 'B' })
+    providersApiMock.list.mockResolvedValue({ providers: [b, a], activeId: a.id })
+
+    const { useProviderStore } = await import('./providerStore')
+    useProviderStore.setState({
+      providers: [],
+      providerOrder: ['openai-official', 'claude-official', 'grok-official', 'deepseek-account'],
+      activeId: null,
+    })
+
+    await useProviderStore.getState().fetchProviders()
+
+    expect(useProviderStore.getState().providerOrder).toEqual([
+      'b', 'a', 'claude-official', 'openai-official', 'grok-official', 'deepseek-account',
+    ])
+    expect(useProviderStore.getState().providers.map((p) => p.id)).toEqual(['b', 'a'])
+    expect(useProviderStore.getState().activeId).toBe(a.id)
   })
 
   it('rolls back to the previous order when the request fails', async () => {

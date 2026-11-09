@@ -12,10 +12,7 @@ const EXPECTED_GROK_SELECTION = {
 describe('sessionRuntimeStore runtime cleanup', () => {
   beforeEach(() => {
     localStorage.clear()
-    useSessionRuntimeStore.setState({
-      selections: {},
-      runtimeRequestStatusBySessionId: {},
-    })
+    useSessionRuntimeStore.setState({ selections: {} })
   })
 
   it('keeps side-chat models in memory without changing the stored parent choice, even after close', () => {
@@ -25,10 +22,10 @@ describe('sessionRuntimeStore runtime cleanup', () => {
     registerSideChatSession('side-runtime-test', 'parent')
     store.setSelection('side-runtime-test', { providerId: 'example', modelId: 'side-model' })
     expect(useSessionRuntimeStore.getState().selections['side-runtime-test']?.modelId).toBe('side-model')
-    expect(JSON.parse(localStorage.getItem('echoflow-code-session-runtime')!)).toEqual({ parent })
+    expect(JSON.parse(localStorage.getItem('cc-haha-session-runtime')!)).toEqual({ parent })
     unregisterSideChatSession('side-runtime-test')
     store.setSelection('side-runtime-test', { providerId: 'example', modelId: 'late-update' })
-    expect(JSON.parse(localStorage.getItem('echoflow-code-session-runtime')!)).toEqual({ parent })
+    expect(JSON.parse(localStorage.getItem('cc-haha-session-runtime')!)).toEqual({ parent })
   })
 
   it('keeps an explicit model choice through stale, matching, then stale metadata refreshes', () => {
@@ -46,7 +43,7 @@ describe('sessionRuntimeStore runtime cleanup', () => {
     }, oldSession]) {
       store.syncFromSessions([metadata], startedWith)
       expect(useSessionRuntimeStore.getState().selections[oldSession.id]).toEqual(next)
-      expect(JSON.parse(localStorage.getItem('echoflow-code-session-runtime')!)[oldSession.id]).toEqual(next)
+      expect(JSON.parse(localStorage.getItem('cc-haha-session-runtime')!)[oldSession.id]).toEqual(next)
     }
   })
 
@@ -87,13 +84,14 @@ describe('sessionRuntimeStore runtime cleanup', () => {
         effortLevel: 'max',
       })
 
-    expect(useSessionRuntimeStore.getState().selections['session-grok']).toEqual(
-      EXPECTED_GROK_SELECTION,
-    )
-    expect(JSON.parse(localStorage.getItem('echoflow-code-session-runtime')!)).toEqual({
-      'session-grok': EXPECTED_GROK_SELECTION,
-    })
-  })
+      expect(useSessionRuntimeStore.getState().selections['session-grok']).toEqual(
+        EXPECTED_GROK_SELECTION,
+      )
+      expect(JSON.parse(localStorage.getItem('cc-haha-session-runtime')!)).toEqual({
+        'session-grok': EXPECTED_GROK_SELECTION,
+      })
+    },
+  )
 
   it('does not let retired Grok session metadata restore the removed model', () => {
     useSessionRuntimeStore.getState().syncFromSessions([{
@@ -109,7 +107,7 @@ describe('sessionRuntimeStore runtime cleanup', () => {
   })
 
   it('cleans a retired Grok selection loaded from localStorage', async () => {
-    localStorage.setItem('echoflow-code-session-runtime', JSON.stringify({
+    localStorage.setItem('cc-haha-session-runtime', JSON.stringify({
       'session-loaded-grok': {
         providerId: 'grok-official',
         modelId: 'grok-build',
@@ -123,89 +121,38 @@ describe('sessionRuntimeStore runtime cleanup', () => {
     expect(loadedStore.getState().selections['session-loaded-grok']).toEqual(
       EXPECTED_GROK_SELECTION,
     )
-    expect(JSON.parse(localStorage.getItem('echoflow-code-session-runtime')!)).toEqual({
+    expect(JSON.parse(localStorage.getItem('cc-haha-session-runtime')!)).toEqual({
       'session-loaded-grok': EXPECTED_GROK_SELECTION,
     })
   })
 
-  it('does not transfer request status when moving a selection to a new session', () => {
-    const store = useSessionRuntimeStore.getState()
-    store.setSelection('old-session', {
-      providerId: 'provider-a',
-      modelId: 'model-a',
-    })
-    store.markRequestPending('old-session')
-
-    store.moveSelection('old-session', 'new-session')
-
-    expect(useSessionRuntimeStore.getState().selections).toEqual({
-      'new-session': { providerId: 'provider-a', modelId: 'model-a' },
-    })
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({})
-  })
-
-  it('clears request status when moving a session without a persisted selection', () => {
-    const store = useSessionRuntimeStore.getState()
-    store.markRequestPending('old-session')
-
-    store.moveSelection('old-session', 'new-session')
-
-    expect(useSessionRuntimeStore.getState().selections).toEqual({})
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({})
-  })
-
-  it('keeps runtime request state when session metadata reconciles configured selection', () => {
-    const store = useSessionRuntimeStore.getState()
-    store.markRequestPending('session-pending')
-    store.markRequestPending('session-failed')
-    store.markRequestFailed('session-failed')
-
-    store.syncFromSessions([
-      {
-        id: 'session-pending',
-        runtimeProviderId: 'provider-b',
-        runtimeModelId: 'model-b',
-      } as SessionListItem,
-      {
-        id: 'session-failed',
-        runtimeProviderId: null,
-        runtimeModelId: 'model-a',
-      } as SessionListItem,
-    ])
-
-    expect(useSessionRuntimeStore.getState().selections).toMatchObject({
-      'session-pending': { providerId: 'provider-b', modelId: 'model-b' },
-      'session-failed': { providerId: null, modelId: 'model-a' },
-    })
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
-      'session-pending': 'pending',
-      'session-failed': 'failed',
-    })
-  })
-
   it('preserves a custom-provider xhigh selection loaded from localStorage', async () => {
-    const expectedSelection = {
-      providerId: 'kimi-provider',
-      modelId: 'k3',
-      effortLevel: 'xhigh',
-    }
-    localStorage.setItem('echoflow-code-session-runtime', JSON.stringify({
-      'session-loaded-kimi': expectedSelection,
+    localStorage.setItem('cc-haha-session-runtime', JSON.stringify({
+      'session-loaded-kimi': {
+        providerId: 'kimi-provider',
+        modelId: 'k3',
+        effortLevel: 'xhigh',
+      },
     }))
     vi.resetModules()
 
     const { useSessionRuntimeStore: loadedStore } = await import('./sessionRuntimeStore')
 
+    const expectedSelection = {
+      providerId: 'kimi-provider',
+      modelId: 'k3',
+      effortLevel: 'xhigh',
+    }
     expect(loadedStore.getState().selections['session-loaded-kimi']).toEqual(
       expectedSelection,
     )
-    expect(JSON.parse(localStorage.getItem('echoflow-code-session-runtime')!)).toEqual({
+    expect(JSON.parse(localStorage.getItem('cc-haha-session-runtime')!)).toEqual({
       'session-loaded-kimi': expectedSelection,
     })
   })
 
   it('drops only the legacy Claude Official opus[1m] default and preserves the same suffix for third-party providers', async () => {
-    localStorage.setItem('echoflow-code-session-runtime', JSON.stringify({
+    localStorage.setItem('cc-haha-session-runtime', JSON.stringify({
       'session-loaded-claude': {
         providerId: null,
         modelId: 'opus[1m]',
@@ -227,13 +174,39 @@ describe('sessionRuntimeStore runtime cleanup', () => {
       modelId: 'MiniMax-M3[1m]',
       effortLevel: 'max',
     })
-    expect(JSON.parse(localStorage.getItem('echoflow-code-session-runtime')!)).toEqual({
+    expect(JSON.parse(localStorage.getItem('cc-haha-session-runtime')!)).toEqual({
       'session-loaded-minimax': {
         providerId: 'provider-minimax',
         modelId: 'MiniMax-M3[1m]',
         effortLevel: 'max',
       },
     })
+  })
+
+  it('migrates legacy selections without Fast to standard mode and strips Fast from non-OAuth providers', async () => {
+    localStorage.setItem('cc-haha-session-runtime', JSON.stringify({
+      legacy: { providerId: 'openai-official', modelId: 'gpt-6-sol', effortLevel: 'high' },
+      invalid: { providerId: 'api-provider', modelId: 'gpt-6-sol', effortLevel: 'high', openAIFastMode: true },
+      enabled: { providerId: 'openai-official', modelId: 'gpt-6-sol', effortLevel: 'high', openAIFastMode: true },
+    }))
+    vi.resetModules()
+    const { useSessionRuntimeStore: loadedStore } = await import('./sessionRuntimeStore')
+    expect(loadedStore.getState().selections.legacy?.openAIFastMode).toBeUndefined()
+    expect(loadedStore.getState().selections.invalid?.openAIFastMode).toBeUndefined()
+    expect(loadedStore.getState().selections.enabled?.openAIFastMode).toBe(true)
+    expect(JSON.parse(localStorage.getItem('cc-haha-session-runtime')!).invalid.openAIFastMode).toBeUndefined()
+  })
+
+  it('keeps Fast through stale session-list refreshes and accepts an explicit remote disable', () => {
+    const store = useSessionRuntimeStore.getState()
+    store.setSelection('fast', { providerId: 'openai-official', modelId: 'gpt-6-sol', effortLevel: 'high', openAIFastMode: true })
+    store.syncFromSessions([{ id: 'fast', runtimeProviderId: 'openai-official', runtimeModelId: 'gpt-6-sol', effortLevel: 'high' } as SessionListItem])
+    expect(useSessionRuntimeStore.getState().selections.fast?.openAIFastMode).toBe(true)
+    store.settleSelection('fast')
+    store.syncFromSessions([{
+      id: 'fast', runtimeProviderId: 'openai-official', runtimeModelId: 'gpt-6-sol', effortLevel: 'high', openAIFastMode: false,
+    } as SessionListItem])
+    expect(useSessionRuntimeStore.getState().selections.fast?.openAIFastMode).toBe(false)
   })
 
   it('does not restore a legacy Claude Official default from old session metadata', () => {

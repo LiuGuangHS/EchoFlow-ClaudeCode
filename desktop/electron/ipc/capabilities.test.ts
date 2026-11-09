@@ -9,34 +9,55 @@ import {
 } from './capabilities'
 
 describe('Electron IPC capabilities', () => {
-  it('allows only the main app to request EchoFlow sign-in for a known endpoint', () => {
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, undefined)).toBe(true)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint: 'main' })).toBe(true)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint: 'dedicated' })).toBe(true)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint: 'other' })).toBe(false)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { cookie: 'secret' })).toBe(false)
-    expect(isElectronIpcChannelAllowedForPetWindow(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen)).toBe(false)
+  it('accepts only boolean power preferences and denies the pet renderer access', () => {
+    const channel = ELECTRON_IPC_CHANNELS.powerSetPreventSleepWhileRunning
+    expect(validateElectronIpcPayload(channel, true)).toBe(true)
+    expect(validateElectronIpcPayload(channel, false)).toBe(true)
+    for (const payload of [undefined, null, 'true', 1, {}, { enabled: true }]) {
+      expect(validateElectronIpcPayload(channel, payload)).toBe(false)
+    }
+    expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
   })
-  it('scopes EchoFlow sign-out to one endpoint and never carries credentials', () => {
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowSignOut, undefined)).toBe(true)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint: 'main' })).toBe(true)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint: 'dedicated' })).toBe(true)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint: 'other' })).toBe(false)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { cookie: 'secret' })).toBe(false)
-    expect(isElectronIpcChannelAllowedForPetWindow(ELECTRON_IPC_CHANNELS.echoFlowSignOut)).toBe(false)
+  it('validates migration paths and identities and keeps migration IPC unavailable to pet windows', () => {
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.migrationPrepare, { targetDir: 'D:\\cc-haha-data' })).toBe(true)
+    for (const payload of [undefined, {}, { targetDir: '' }, { targetDir: '   ' }, { targetDir: 2 }, { targetDir: 'bad\u0000path' }, { targetDir: 'D:\\data', sourceDir: 'C:\\data' }]) {
+      expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.migrationPrepare, payload)).toBe(false)
+    }
+    for (const channel of [ELECTRON_IPC_CHANNELS.migrationStart, ELECTRON_IPC_CHANNELS.migrationCancel]) {
+      expect(validateElectronIpcPayload(channel, { id: 'migration-1' })).toBe(true)
+      for (const payload of [undefined, {}, { id: '' }, { id: '../other' }, { id: 'x'.repeat(201) }, { id: 'migration-1', targetDir: 'D:\\data' }]) {
+        expect(validateElectronIpcPayload(channel, payload)).toBe(false)
+      }
+    }
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.migrationStatus, undefined)).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.migrationStatus, {})).toBe(false)
+    for (const channel of [ELECTRON_IPC_CHANNELS.migrationPrepare, ELECTRON_IPC_CHANNELS.migrationStart, ELECTRON_IPC_CHANNELS.migrationStatus, ELECTRON_IPC_CHANNELS.migrationCancel]) {
+      expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
+    }
   })
-  it('restricts public access credentials and consent to validated desktop IPC', () => {
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.publicAccessSaveCredential, 'fake-token')).toBe(true)
-    for (const value of ['', 'a b', 'x'.repeat(4097), {}, null]) {
-      expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.publicAccessSaveCredential, value)).toBe(false)
+
+  it('restricts public tunnel consent to validated desktop IPC and retires credential channels', () => {
+    for (const channel of ['desktop:public-access:save-credential', 'desktop:public-access:delete-credential']) {
+      expect(isElectronIpcChannel(channel)).toBe(false)
     }
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.publicAccessStart, PUBLIC_ACCESS_CONSENT_VERSION)).toBe(true)
-    for (const value of [0, PUBLIC_ACCESS_CONSENT_VERSION - 1, PUBLIC_ACCESS_CONSENT_VERSION + 1, '2', null]) {
+    for (const value of [0, PUBLIC_ACCESS_CONSENT_VERSION - 1, PUBLIC_ACCESS_CONSENT_VERSION + 1, '3', null]) {
       expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.publicAccessStart, value)).toBe(false)
     }
     for (const channel of Object.values(ELECTRON_IPC_CHANNELS).filter(value => value.startsWith('desktop:public-access:'))) {
       expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
     }
+  })
+
+  it('accepts only typed Cloudflare configuration and a fixed local port', () => {
+    const channel = ELECTRON_IPC_CHANNELS.publicAccessConfigure
+    const configuration = { mode: 'named', customUrl: 'https://phone.example.test', localPort: 17463 }
+    expect(validateElectronIpcPayload(channel, configuration)).toBe(true)
+    expect(validateElectronIpcPayload(channel, { mode: 'quick', customUrl: '', localPort: 17463 })).toBe(true)
+    for (const value of [undefined, {}, { ...configuration, customUrl: 'http://phone.example.test' }, { ...configuration, customUrl: 'https://phone.example.test/remote' }, { ...configuration, customUrl: 'https://user:password@phone.example.test' }, { ...configuration, localPort: 80 }, { ...configuration, localPort: '17463' }, { ...configuration, mode: 'ngrok' }, { ...configuration, mode: 'tailscale' }, { ...configuration, localHost: '0.0.0.0' }, { ...configuration, command: 'cloudflared tunnel run' }]) {
+      expect(validateElectronIpcPayload(channel, value)).toBe(false)
+    }
+    expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
   })
 
   it('accepts only the typed browser-menu fields and keeps the channel unavailable to pets', () => {
@@ -54,31 +75,23 @@ describe('Electron IPC capabilities', () => {
     ]) expect(validateElectronIpcPayload(channel, { ...payload, ...patch })).toBe(false)
   })
 
-  it('accepts optional initial browser visibility without widening the create payload', () => {
+  it('requires the renderer guest id on create and accepts no geometry', () => {
     const channel = ELECTRON_IPC_CHANNELS.workspaceBrowserCreate
-    const identity = { tabId: 'wb-1', storageId: 'store-1' }
+    const identity = { tabId: 'wb-1', storageId: 'store-1', webContentsId: 7 }
     expect(validateElectronIpcPayload(channel, identity)).toBe(true)
-    expect(validateElectronIpcPayload(channel, { ...identity, visible: false })).toBe(true)
-    expect(validateElectronIpcPayload(channel, { ...identity, visible: true })).toBe(true)
-    for (const visible of ['false', 0, null, {}]) {
-      expect(validateElectronIpcPayload(channel, { ...identity, visible })).toBe(false)
+    expect(validateElectronIpcPayload(channel, { ...identity, url: 'https://example.com/' })).toBe(true)
+    for (const webContentsId of [undefined, 0, -1, 1.5, '7', Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(validateElectronIpcPayload(channel, { ...identity, webContentsId })).toBe(false)
     }
-    expect(validateElectronIpcPayload(channel, { ...identity, visible: false, unknown: true })).toBe(false)
+    // Pages are drawn by the renderer now; the old native-view options are gone.
+    expect(validateElectronIpcPayload(channel, { ...identity, visible: false })).toBe(false)
+    expect(validateElectronIpcPayload(channel, { ...identity, bounds: { x: 0, y: 0, width: 1, height: 1 } })).toBe(false)
   })
 
   it('has a validator for every exposed invoke channel', () => {
     expect(Object.keys(ELECTRON_IPC_VALIDATORS).sort()).toEqual(
       Object.values(ELECTRON_IPC_CHANNELS).sort(),
     )
-  })
-
-  it('limits presentation snapshots to a single browser page id', () => {
-    const channel = ELECTRON_IPC_CHANNELS.workspaceBrowserSnapshot
-    expect(validateElectronIpcPayload(channel, { tabId: 'wb-1' })).toBe(true)
-    for (const payload of [{}, { tabId: '' }, { tabId: 'wb-1', kind: 'full' }, { tabId: 'wb-1', url: 'https://example.com' }]) {
-      expect(validateElectronIpcPayload(channel, payload)).toBe(false)
-    }
-    expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
   })
 
   it('rejects channels outside the desktop host contract', () => {
@@ -95,8 +108,8 @@ describe('Electron IPC capabilities', () => {
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.clipboardReadText, undefined)).toBe(true)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.clipboardWriteText, 'paste me')).toBe(true)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.clipboardWriteText, { text: 'paste me' })).toBe(false)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.traceOpenWindow, '4673a448-9e2c-475e-898d-9aa0ee2d1ab7')).toBe(true)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.traceOpenWindow, '../escape')).toBe(false)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.petsFocusSession, '4673a448-9e2c-475e-898d-9aa0ee2d1ab7')).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.petsFocusSession, '../escape')).toBe(false)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.windowClose, undefined)).toBe(true)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.windowClose, {})).toBe(false)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.windowStartDragging, undefined)).toBe(true)
@@ -145,11 +158,7 @@ describe('Electron IPC capabilities', () => {
       extra: true,
     })).toBe(false)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: 'http://127.0.0.1:7890' })).toBe(true)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: 'https://proxy.example.com:8443' })).toBe(true)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: '' })).toBe(false)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: 'http://user:password@127.0.0.1:7890' })).toBe(false)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: 'socks5://127.0.0.1:7890' })).toBe(false)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: 'http://127.0.0.1:70000' })).toBe(false)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: 'http://127.0.0.1:7890', extra: true })).toBe(false)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.appSetLocalePreference, 'zh-TW')).toBe(true)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.appSetLocalePreference, 'fr')).toBe(false)
@@ -234,60 +243,6 @@ describe('Electron IPC capabilities', () => {
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.petsFocusMainWindow, {})).toBe(false)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.petsFocusSession, 'session-123')).toBe(true)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.petsFocusSession, '../escape')).toBe(false)
-  })
-
-  it('validates runtime discovery IPC without accepting probe commands', () => {
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, undefined)).toBe(true)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, {})).toBe(false)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, { includeWsl: true })).toBe(true)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, { includeWsl: 'true' })).toBe(false)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath, '/opt/bin/codex')).toBe(true)
-    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath, 'C:\\Tools\\codex.exe')).toBe(true)
-    for (const invalid of [undefined, '', 'relative/codex', 'C:codex.exe', '/opt/codex\n', '/'.repeat(4097), { path: '/opt/codex', args: ['evil'] }]) {
-      expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath, invalid)).toBe(false)
-    }
-    expect(isElectronIpcChannelAllowedForPetWindow(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath)).toBe(false)
-  })
-
-  it('keeps the reveal-in-folder channel to a plain string and away from pets', () => {
-    // Revealing is the read-only counterpart to openPath: it must take a path
-    // and nothing else, and the transparent pet window must not be able to
-    // drive the file manager.
-    const channel = ELECTRON_IPC_CHANNELS.shellShowItemInFolder
-    expect(validateElectronIpcPayload(channel, '/usr/local/bin/claude')).toBe(true)
-    expect(validateElectronIpcPayload(channel, 'C:\\Tools\\claude.exe')).toBe(true)
-    // `''` is a string, so it passes here and is refused downstream by the
-    // absolute-path check — same contract as the other shell path channels.
-    for (const invalid of [undefined, 42, { path: '/usr/local/bin/claude' }, ['/usr/local/bin/claude']]) {
-      expect(validateElectronIpcPayload(channel, invalid)).toBe(false)
-    }
-    expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
-  })
-
-  it('validates Claude Code runtime IPC without accepting executable paths', () => {
-    expect(validateElectronIpcPayload(
-      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
-      'bundled',
-    )).toBe(true)
-    expect(validateElectronIpcPayload(
-      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
-      'installed',
-    )).toBe(true)
-    expect(validateElectronIpcPayload(
-      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
-      '/tmp/claude',
-    )).toBe(false)
-    expect(validateElectronIpcPayload(
-      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
-      { runtimeId: 'installed' },
-    )).toBe(false)
-    expect(validateElectronIpcPayload(
-      ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode,
-      undefined,
-    )).toBe(true)
-    expect(isElectronIpcChannelAllowedForPetWindow(
-      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
-    )).toBe(false)
   })
 
   it('pins the reported appearance colors to literal 6-digit hex', () => {

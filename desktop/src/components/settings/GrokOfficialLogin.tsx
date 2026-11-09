@@ -1,18 +1,20 @@
 import { useEffect, useState } from 'react'
-import { Copy, LogIn, LogOut } from 'lucide-react'
+import { CircleCheck, Copy, LogIn, LogOut } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
-import { useEchoFlowGrokOAuthStore } from '../../stores/echoFlowGrokOAuthStore'
+import { useHahaGrokOAuthStore } from '../../stores/hahaGrokOAuthStore'
 import { useTranslation } from '../../i18n'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { getDesktopHost } from '../../lib/desktopHost'
-import { echoFlowGrokOAuthApi } from '../../api/echoFlowGrokOAuth'
+import { hahaGrokOAuthApi } from '../../api/hahaGrokOAuth'
+import { OfficialLoginRiskDialog } from './OfficialLoginRiskDialog'
 
 export function GrokOfficialLogin() {
   const t = useTranslation()
   const [manualAuthorizeUrl, setManualAuthorizeUrl] = useState<string | null>(null)
+  const [riskDialogOpen, setRiskDialogOpen] = useState(false)
   const [isAwaitingAuthorization, setIsAwaitingAuthorization] = useState(false)
   const { status, isLoading, error, fetchStatus, login, logout, startPolling, stopPolling } =
-    useEchoFlowGrokOAuthStore()
+    useHahaGrokOAuthStore()
 
   useEffect(() => {
     void fetchStatus()
@@ -26,7 +28,7 @@ export function GrokOfficialLogin() {
   useEffect(() => {
     if (!status?.loggedIn || !isAwaitingAuthorization) return
     setIsAwaitingAuthorization(false)
-    void getDesktopHost().shell.open(echoFlowGrokOAuthApi.successUrl()).catch((err) => {
+    void getDesktopHost().shell.open(hahaGrokOAuthApi.successUrl()).catch((err) => {
       console.error('[GrokOfficialLogin] success page open failed:', err)
     })
   }, [isAwaitingAuthorization, status?.loggedIn])
@@ -43,7 +45,7 @@ export function GrokOfficialLogin() {
         startPolling()
       } catch (err) {
         console.error('[GrokOfficialLogin] shellOpen failed:', err)
-        useEchoFlowGrokOAuthStore.setState({
+        useHahaGrokOAuthStore.setState({
           error: t('settings.grokOfficialLogin.openBrowserFailed'),
         })
       }
@@ -57,10 +59,10 @@ export function GrokOfficialLogin() {
     if (await copyTextToClipboard(manualAuthorizeUrl)) {
       setManualAuthorizeUrl(null)
       setIsAwaitingAuthorization(true)
-      useEchoFlowGrokOAuthStore.setState({ error: null })
+      useHahaGrokOAuthStore.setState({ error: null })
       startPolling()
     } else {
-      useEchoFlowGrokOAuthStore.setState({
+      useHahaGrokOAuthStore.setState({
         error: t('settings.grokOfficialLogin.copyLinkFailed'),
       })
     }
@@ -93,8 +95,9 @@ export function GrokOfficialLogin() {
 
   if (status.loggedIn) {
     return (
-      <div data-testid="grok-official-login" className="flex items-center gap-3 text-sm">
-        <span className="text-[var(--color-success)]">
+      <div data-testid="grok-official-login" className="flex flex-wrap items-center gap-3 text-[13px]">
+        <span className="inline-flex min-w-0 items-center gap-1.5 text-[var(--color-success)]">
+          <CircleCheck size={14} strokeWidth={1.75} aria-hidden="true" className="shrink-0" />
           {t('settings.grokOfficialLogin.loggedInPrefix')} {status.email || t('settings.grokOfficialLogin.accountUnknown')}
         </span>
         <Button
@@ -112,17 +115,27 @@ export function GrokOfficialLogin() {
 
   return (
     <div data-testid="grok-official-login" className="flex flex-col gap-2">
-      <div className="text-sm text-[var(--color-text-secondary)]">{t('settings.grokOfficialLogin.intro')}</div>
+      <div className="text-[13px] leading-5 text-[var(--color-text-secondary)]">{t('settings.grokOfficialLogin.intro')}</div>
       <Button
-        onClick={handleLogin}
+        size="base"
+        onClick={() => setRiskDialogOpen(true)}
         disabled={isLoading}
-        icon={<LogIn className="h-4 w-4" aria-hidden="true" />}
+        icon={<LogIn size={14} strokeWidth={1.75} aria-hidden="true" />}
         className="self-start"
       >
         {isLoading ? t('settings.grokOfficialLogin.loginStarting') : t('settings.grokOfficialLogin.loginButton')}
       </Button>
       {error && <div className="text-xs text-[var(--color-error)]">{t('settings.grokOfficialLogin.errorPrefix')}{error}</div>}
       {manualAuthorizeButton}
+      <OfficialLoginRiskDialog
+        open={riskDialogOpen}
+        provider="grok"
+        onClose={() => setRiskDialogOpen(false)}
+        onConfirm={() => {
+          setRiskDialogOpen(false)
+          void handleLogin()
+        }}
+      />
     </div>
   )
 }

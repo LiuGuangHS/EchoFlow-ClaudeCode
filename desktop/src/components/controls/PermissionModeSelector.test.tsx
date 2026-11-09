@@ -41,7 +41,6 @@ vi.mock('../../i18n', () => ({
     'permMode.permShell': 'Run shell commands',
     'permMode.permPackages': 'Install packages',
     'permMode.enableBypassBtn': 'Enable bypass',
-    'permMode.disabledDuringTurn': 'Cannot switch permissions while session is active',
     'permMode.enableAutoTitle': 'Enable Auto mode?',
     'permMode.enableAutoBody': 'Auto mode reduces prompts but does not guarantee safety.',
     'permMode.enableAutoDetail': 'Claude reviews tool calls and blocks actions it considers risky.',
@@ -51,7 +50,8 @@ vi.mock('../../i18n', () => ({
   }[key] ?? key),
 }))
 
-import { PermissionModeSelector } from './PermissionModeSelector'
+import { createRef } from 'react'
+import { PermissionModeSelector, type PermissionModeSelectorHandle } from './PermissionModeSelector'
 import { useChatStore, type PerSessionState } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useSessionStore } from '../../stores/sessionStore'
@@ -98,6 +98,13 @@ describe('PermissionModeSelector', () => {
     useSessionStore.setState({ sessions: [], activeSessionId: null })
     useTabStore.setState({ activeTabId: null, tabs: [] })
     useUIStore.setState({ toasts: [] })
+  })
+
+  it('hides plan for lean drafts while preserving other permission options', () => {
+    render(<PermissionModeSelector lean value="default" onChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Ask permissions' }))
+    expect(screen.queryByRole('menuitem', { name: /Plan mode/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Auto accept edits/ })).toBeInTheDocument()
   })
 
   it('explicit child scope ignores a busy selected parent and updates only the child', () => {
@@ -178,6 +185,34 @@ describe('PermissionModeSelector', () => {
     expect(screen.getByRole('menuitem', { name: /Auto accept edits/ })).toBeInTheDocument()
   })
 
+  it('keeps the phone toolbar free of the trigger until some writes run unattended', () => {
+    viewportMocks.isMobile = true
+    useTabStore.setState({ activeTabId: 'tab', tabs: [] })
+    useChatStore.setState({ sessions: { tab: { ...makeChatSession('idle'), permissionMode: 'default' } } })
+
+    render(<PermissionModeSelector compact trigger="elevatedOnly" />)
+    expect(screen.queryByRole('button', { name: 'Ask permissions' })).not.toBeInTheDocument()
+
+    act(() => useChatStore.setState({ sessions: { tab: { ...makeChatSession('idle'), permissionMode: 'bypassPermissions' } } }))
+    expect(screen.getByRole('button', { name: 'Bypass permissions' })).toHaveClass('h-11', 'w-11')
+  })
+
+  it('opens from its handle with no trigger on screen, mid-turn included', () => {
+    viewportMocks.isMobile = true
+    useTabStore.setState({ activeTabId: 'tab', tabs: [] })
+    useChatStore.setState({ sessions: { tab: makeChatSession('idle') } })
+    const handle = createRef<PermissionModeSelectorHandle>()
+
+    render(<PermissionModeSelector ref={handle} compact trigger="elevatedOnly" />)
+    act(() => handle.current?.open())
+    expect(screen.getByRole('dialog', { name: 'Execution Permissions' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    act(() => useChatStore.setState({ sessions: { tab: makeChatSession('streaming') } }))
+    act(() => handle.current?.open())
+    expect(screen.getByRole('dialog', { name: 'Execution Permissions' })).toBeInTheDocument()
+  })
+
   it('uses the active tab workspace when showing the bypass confirmation path', () => {
     useSessionStore.setState({
       activeSessionId: 'previous-session',
@@ -221,12 +256,12 @@ describe('PermissionModeSelector', () => {
     expect(screen.queryByText('C:\\Users\\LinTan')).not.toBeInTheDocument()
   })
 
-  it('disables the trigger button when the session turn is active', () => {
+  it('switches the session mode while its turn is running', () => {
     const setSessionPermissionMode = vi.fn()
     useChatStore.setState({
       setSessionPermissionMode,
       sessions: {
-        'current-tab': makeChatSession('thinking'),
+        'current-tab': makeChatSession('tool_executing'),
       },
     })
     useSessionStore.setState({
@@ -248,23 +283,23 @@ describe('PermissionModeSelector', () => {
     })
     useTabStore.setState({
       activeTabId: 'current-tab',
-      tabs: [{ sessionId: 'current-tab', title: 'Current', type: 'session', status: 'idle' }],
+      tabs: [{ sessionId: 'current-tab', title: 'Current', type: 'session', status: 'running' }],
     })
 
     render(<PermissionModeSelector />)
 
     const trigger = screen.getByRole('button', { name: 'Ask permissions' })
-    expect(trigger).toBeDisabled()
-    expect(trigger).toHaveAttribute('title', 'Cannot switch permissions while session is active')
-
+    expect(trigger).toBeEnabled()
     fireEvent.click(trigger)
-    // Menu should not open when disabled
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
-    expect(setSessionPermissionMode).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('menuitem', { name: /Auto accept edits/ }))
+
+    expect(setSessionPermissionMode).toHaveBeenCalledWith('current-tab', 'acceptEdits')
   })
 
-  it('closes an open permission menu when the session turn starts', () => {
+  it('keeps an open permission menu usable when the session turn starts', () => {
+    const setSessionPermissionMode = vi.fn()
     useChatStore.setState({
+      setSessionPermissionMode,
       sessions: {
         'current-tab': makeChatSession('idle'),
       },
@@ -276,10 +311,7 @@ describe('PermissionModeSelector', () => {
 
     render(<PermissionModeSelector />)
 
-    const trigger = screen.getByRole('button', { name: 'Ask permissions' })
-    fireEvent.click(trigger)
-    expect(screen.getByRole('menuitem', { name: /Auto accept edits/ })).toBeInTheDocument()
-
+    fireEvent.click(screen.getByRole('button', { name: 'Ask permissions' }))
     act(() => {
       useChatStore.setState({
         sessions: {
@@ -287,13 +319,15 @@ describe('PermissionModeSelector', () => {
         },
       })
     })
+    fireEvent.click(screen.getByRole('menuitem', { name: /Auto accept edits/ }))
 
-    expect(trigger).toBeDisabled()
-    expect(screen.queryByRole('menuitem', { name: /Auto accept edits/ })).not.toBeInTheDocument()
+    expect(setSessionPermissionMode).toHaveBeenCalledWith('current-tab', 'acceptEdits')
   })
 
-  it('closes an open bypass confirmation when the session turn starts', () => {
+  it('confirms bypass for a session whose turn started behind the dialog', () => {
+    const setSessionPermissionMode = vi.fn()
     useChatStore.setState({
+      setSessionPermissionMode,
       sessions: {
         'current-tab': makeChatSession('idle'),
       },
@@ -307,76 +341,17 @@ describe('PermissionModeSelector', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Ask permissions' }))
     fireEvent.click(screen.getByRole('menuitem', { name: /Bypass permissions/ }))
-    expect(screen.getByRole('dialog', { name: 'Enable bypass mode' })).toBeInTheDocument()
-
     act(() => {
       useChatStore.setState({
         sessions: {
-          'current-tab': makeChatSession('tool_executing'),
+          'current-tab': makeChatSession('permission_pending'),
         },
       })
     })
+    fireEvent.click(screen.getByRole('button', { name: 'Enable bypass' }))
 
+    expect(setSessionPermissionMode).toHaveBeenCalledWith('current-tab', 'bypassPermissions')
     expect(screen.queryByRole('dialog', { name: 'Enable bypass mode' })).not.toBeInTheDocument()
-  })
-
-  it('rejects a stale menu action when the turn starts before click dispatch', () => {
-    const setSessionPermissionMode = vi.fn()
-    useChatStore.setState({
-      setSessionPermissionMode,
-      sessions: {
-        'current-tab': makeChatSession('idle'),
-      },
-    })
-    useTabStore.setState({
-      activeTabId: 'current-tab',
-      tabs: [{ sessionId: 'current-tab', title: 'Current', type: 'session', status: 'idle' }],
-    })
-
-    render(<PermissionModeSelector />)
-    fireEvent.click(screen.getByRole('button', { name: 'Ask permissions' }))
-    const menuItem = screen.getByRole('menuitem', { name: /Auto accept edits/ })
-
-    act(() => {
-      useChatStore.setState({
-        sessions: {
-          'current-tab': makeChatSession('thinking'),
-        },
-      })
-      menuItem.click()
-    })
-
-    expect(setSessionPermissionMode).not.toHaveBeenCalled()
-  })
-
-  it('rejects a stale bypass confirmation when the turn starts before click dispatch', () => {
-    const setSessionPermissionMode = vi.fn()
-    useChatStore.setState({
-      setSessionPermissionMode,
-      sessions: {
-        'current-tab': makeChatSession('idle'),
-      },
-    })
-    useTabStore.setState({
-      activeTabId: 'current-tab',
-      tabs: [{ sessionId: 'current-tab', title: 'Current', type: 'session', status: 'idle' }],
-    })
-
-    render(<PermissionModeSelector />)
-    fireEvent.click(screen.getByRole('button', { name: 'Ask permissions' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: /Bypass permissions/ }))
-    const confirmButton = screen.getByRole('button', { name: 'Enable bypass' })
-
-    act(() => {
-      useChatStore.setState({
-        sessions: {
-          'current-tab': makeChatSession('tool_executing'),
-        },
-      })
-      confirmButton.click()
-    })
-
-    expect(setSessionPermissionMode).not.toHaveBeenCalled()
   })
 
   it('rejects a stale menu action after the active tab changes', () => {
@@ -450,6 +425,26 @@ describe('PermissionModeSelector', () => {
     expect(onChange).toHaveBeenCalledWith('acceptEdits')
   })
 
+  it('opens the desktop menu from the trigger start edge by default', () => {
+    render(<PermissionModeSelector value="default" onChange={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ask permissions' }))
+
+    const menu = screen.getByRole('menu')
+    expect(menu).toHaveClass('left-0')
+    expect(menu).not.toHaveClass('right-0')
+  })
+
+  it('anchors the desktop menu to the trigger end edge when asked to align right', () => {
+    render(<PermissionModeSelector value="default" onChange={vi.fn()} menuAlign="right" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ask permissions' }))
+
+    const menu = screen.getByRole('menu')
+    expect(menu).toHaveClass('right-0')
+    expect(menu).not.toHaveClass('left-0')
+  })
+
   it('shows Auto beside the existing permission modes', () => {
     render(<PermissionModeSelector value="default" onChange={vi.fn()} />)
 
@@ -465,20 +460,20 @@ describe('PermissionModeSelector', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Ask permissions' }))
     const autoItem = screen.getByRole('menuitem', { name: /Auto mode/ })
-    expect(autoItem.querySelector('.material-symbols-outlined')).toHaveTextContent('autoplay')
-    expect(autoItem.querySelector('.material-symbols-outlined')).not.toHaveTextContent('auto_awesome')
+    expect(autoItem.querySelector('svg.lucide-circle-play')).toBeInTheDocument()
+    expect(autoItem.querySelector('svg.lucide-sparkles')).not.toBeInTheDocument()
 
     // The full trigger states the mode as a risk-coloured dot, not the glyph —
     // the glyph identifies the mode in the menu, the colour ranks it on the
     // toolbar. The compact trigger has no label, so it keeps the glyph.
     rerender(<PermissionModeSelector value="auto" onChange={vi.fn()} />)
     const trigger = screen.getByRole('button', { name: 'Auto mode' })
-    expect(trigger).not.toHaveTextContent('autoplay')
+    expect(trigger.querySelector('svg.lucide-circle-play')).not.toBeInTheDocument()
     expect(trigger.querySelector('[data-testid="permission-mode-dot"]')).toBeInTheDocument()
 
     rerender(<PermissionModeSelector value="auto" onChange={vi.fn()} compact />)
-    expect(screen.getByRole('button', { name: 'Auto mode' }))
-      .toHaveTextContent('autoplay')
+    expect(screen.getByRole('button', { name: 'Auto mode' }).querySelector('svg.lucide-circle-play'))
+      .toBeInTheDocument()
   })
 
   it('ranks permission modes by risk on the toolbar trigger', () => {
@@ -489,7 +484,8 @@ describe('PermissionModeSelector', () => {
         .querySelector('[data-testid="permission-mode-dot"]')
         ?.className ?? ''
 
-    expect(dotClass()).toContain('--color-text-tertiary')
+    // Every write still asks first: the safe (green) end of the scale.
+    expect(dotClass()).toContain('--color-success')
 
     rerender(<PermissionModeSelector value="acceptEdits" onChange={vi.fn()} />)
     expect(dotClass()).toContain('--color-warning')
@@ -499,38 +495,45 @@ describe('PermissionModeSelector', () => {
     expect(dotClass()).toContain('--color-error')
   })
 
-  it('renders the visually larger Auto glyph at a reduced size', () => {
+  it('draws every menu glyph and the compact trigger glyph on the same 16px/14px lucide grid', () => {
     const { rerender } = render(
       <PermissionModeSelector value="default" onChange={vi.fn()} />,
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Ask permissions' }))
-    const autoIcon = screen
-      .getByRole('menuitem', { name: /Auto mode/ })
-      .querySelector('.material-symbols-outlined')
-    expect(autoIcon).toHaveClass('text-[18px]')
+    for (const item of screen.getAllByRole('menuitem')) {
+      expect(item.querySelector('[data-mode-icon] svg')).toHaveAttribute('width', '16')
+    }
 
-    rerender(<PermissionModeSelector value="auto" onChange={vi.fn()} />)
-    const triggerIcon = screen
-      .getByRole('button', { name: 'Auto mode' })
-      .querySelector('.material-symbols-outlined')
-    expect(triggerIcon).toHaveClass('text-[12px]')
+    rerender(<PermissionModeSelector value="auto" onChange={vi.fn()} compact />)
+    expect(screen.getByRole('button', { name: 'Auto mode' }).querySelector('svg'))
+      .toHaveAttribute('width', '14')
   })
 
-  it('keeps every row on one text column despite the reduced Auto glyph', () => {
+  it('keeps every row on one text column whatever the glyph', () => {
     render(<PermissionModeSelector value="default" onChange={vi.fn()} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Ask permissions' }))
     const icons = screen
       .getAllByRole('menuitem')
-      .map((item) => item.querySelector('.material-symbols-outlined'))
+      .map((item) => item.querySelector('[data-mode-icon]'))
 
     expect(icons).toHaveLength(5)
-    // The box, not the glyph, sets where the title starts. Without it the
-    // 18px Auto glyph pulled its own title 2px left of the other four.
+    // The box, not the glyph, sets where the title starts.
     for (const icon of icons) {
-      expect(icon).toHaveClass('w-5', 'shrink-0', 'text-center')
+      expect(icon).toHaveClass('w-5', 'shrink-0', 'justify-center')
     }
+  })
+
+  it('marks the current mode with the terracotta check, not a filled row', () => {
+    render(<PermissionModeSelector value="default" onChange={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ask permissions' }))
+    const current = screen.getByRole('menuitem', { name: /Ask permissions/ })
+    expect(current.querySelector('svg.lucide-check')).toHaveClass('text-[var(--color-brand)]')
+    expect(current).toHaveClass('bg-[var(--color-surface-hover)]')
+    expect(screen.getByRole('menuitem', { name: /Auto accept edits/ }).querySelector('svg.lucide-check'))
+      .not.toBeInTheDocument()
   })
 
   it('does not change mode when first-use Auto confirmation is cancelled', () => {
@@ -677,7 +680,7 @@ describe('PermissionModeSelector', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('keeps Auto behind the active-turn guard', () => {
+  it('applies Auto to a running session through its opt-in confirmation', async () => {
     const setSessionPermissionMode = vi.fn()
     useSettingsStore.setState({ autoModeOptInAccepted: true } as never)
     useChatStore.setState({
@@ -693,11 +696,14 @@ describe('PermissionModeSelector', () => {
 
     render(<PermissionModeSelector />)
 
-    const trigger = screen.getByRole('button', { name: 'Ask permissions' })
-    expect(trigger).toBeDisabled()
-    fireEvent.click(trigger)
-    expect(screen.queryByRole('menuitem', { name: /Auto mode/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Ask permissions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Auto mode/ }))
     expect(setSessionPermissionMode).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Enable Auto mode' }))
+
+    await waitFor(() => {
+      expect(setSessionPermissionMode).toHaveBeenCalledWith('current-tab', 'auto')
+    })
   })
 
   it('closes the permission menu when its trigger is clicked again', () => {
@@ -752,5 +758,44 @@ describe('PermissionModeSelector', () => {
     openDialog()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('dialog', { name: 'Enable bypass mode' })).not.toBeInTheDocument()
+  })
+})
+
+describe('the quiet trigger', () => {
+  it('is a bare glyph while every write asks first, and the named chip once some run unattended', () => {
+    viewportMocks.isMobile = false
+    useTabStore.setState({ activeTabId: 'tab', tabs: [] })
+    useChatStore.setState({ sessions: { tab: { ...makeChatSession('idle'), permissionMode: 'default' } } })
+
+    render(<PermissionModeSelector trigger="quiet" />)
+    const glyph = screen.getByRole('button', { name: 'Ask permissions' })
+    expect(glyph.textContent).toBe('')
+    expect(glyph).toHaveClass('h-7', 'w-7')
+    expect(screen.queryByTestId('permission-mode-dot')).not.toBeInTheDocument()
+
+    act(() => useChatStore.setState({ sessions: { tab: { ...makeChatSession('idle'), permissionMode: 'bypassPermissions' } } }))
+    const chip = screen.getByRole('button', { name: 'Bypass permissions' })
+    expect(chip).toHaveTextContent('Bypass permissions')
+    expect(chip).not.toHaveClass('w-7')
+    expect(screen.getByTestId('permission-mode-dot')).toBeInTheDocument()
+  })
+
+  it('names plan mode too: it shares the default\'s dot colour but is not the default', () => {
+    viewportMocks.isMobile = false
+    useTabStore.setState({ activeTabId: 'tab', tabs: [] })
+    useChatStore.setState({ sessions: { tab: { ...makeChatSession('idle'), permissionMode: 'plan' } } })
+    render(<PermissionModeSelector trigger="quiet" />)
+    const chip = screen.getByRole('button', { name: 'Plan mode' })
+    expect(chip).toHaveTextContent('Plan mode')
+    expect(chip).not.toHaveClass('w-7')
+  })
+
+  it('still opens the mode menu from the glyph', () => {
+    viewportMocks.isMobile = false
+    useTabStore.setState({ activeTabId: 'tab', tabs: [] })
+    useChatStore.setState({ sessions: { tab: { ...makeChatSession('idle'), permissionMode: 'default' } } })
+    render(<PermissionModeSelector trigger="quiet" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Ask permissions' }))
+    expect(screen.getByRole('menuitem', { name: /Auto accept edits/ })).toBeInTheDocument()
   })
 })

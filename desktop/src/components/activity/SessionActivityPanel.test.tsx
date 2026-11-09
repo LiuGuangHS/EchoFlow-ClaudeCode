@@ -37,7 +37,13 @@ vi.mock('../../i18n', () => ({
       'session.activity.section.workflow': 'Workflow',
       'session.activity.section.backgroundTasks': 'Background Tasks',
       'session.activity.section.subagents': 'SubAgents',
+      'session.activity.section.sessions': 'Delegated sessions',
       'session.activity.section.sources': 'Sources',
+      'delegation.active': 'Running',
+      'delegation.queued': 'Queued',
+      'delegation.openNamed': 'Open session: {name}',
+      'delegation.pendingSwitch.afterTurnFrom': 'Switches after this turn · now {model}',
+      'delegation.pendingSwitch.waiting': 'Switches once the other sessions finish their turn',
       'session.activity.empty.tasks': 'No tasks',
       'session.activity.empty.team': 'No team members',
       'session.activity.empty.backgroundTasks': 'No background tasks',
@@ -99,6 +105,7 @@ function model(overrides: Partial<SessionActivityModel> = {}): SessionActivityMo
         emptyLabel: 'No SubAgents',
         rows: [{ id: 'tool-1', section: 'subagents', label: 'Kuhn', status: 'running', toolUseId: 'tool-1', openable: true }],
       },
+      sessions: { id: 'sessions', title: 'Delegated sessions', emptyLabel: 'No delegated sessions', rows: [] },
       sources: { id: 'sources', title: 'Sources', emptyLabel: 'No sources', rows: [] },
     },
     ...overrides,
@@ -107,6 +114,81 @@ function model(overrides: Partial<SessionActivityModel> = {}): SessionActivityMo
 
 describe('SessionActivityPanel', () => {
   afterEach(cleanup)
+
+  it('lists delegated sessions with the model each will run and opens the session itself', () => {
+    const onOpenDelegatedSession = vi.fn()
+    const base = model()
+    render(
+      <SessionActivityPanel
+        model={model({
+          sections: {
+            ...base.sections,
+            tasks: { ...base.sections.tasks, rows: [] },
+            subagents: { ...base.sections.subagents, rows: [] },
+            sessions: {
+              ...base.sections.sessions,
+              rows: [
+                {
+                  id: 'session:batch:security',
+                  section: 'sessions',
+                  label: 'Security review',
+                  status: 'running',
+                  openable: true,
+                  delegatedSession: {
+                    key: 'batch:security',
+                    sessionId: 'child-security',
+                    title: 'Security review',
+                    status: 'running',
+                    modelLabel: 'MiniMax-M3.1-Flash[1m] · MiniMax',
+                    pendingSwitch: { phase: 'afterTurn', currentModelLabel: 'deepseek-flash[1m]' },
+                  },
+                },
+                {
+                  id: 'session:batch:ux',
+                  section: 'sessions',
+                  label: 'UX review',
+                  status: 'pending',
+                  openable: true,
+                  delegatedSession: {
+                    key: 'batch:ux',
+                    sessionId: 'child-ux',
+                    title: 'UX review',
+                    status: 'queued',
+                    modelLabel: 'MiniMax-M3.1-Flash[1m] · MiniMax',
+                    pendingSwitch: { phase: 'waiting' },
+                  },
+                },
+              ],
+            },
+          },
+        })}
+        open
+        onClose={vi.fn()}
+        onOpenSubagent={vi.fn()}
+        onOpenDelegatedSession={onOpenDelegatedSession}
+        sectionAccessories={{ sessions: { action: <button type="button">Change models</button>, footer: <p>Waiting for current turns</p> } }}
+        placement="rail"
+      />,
+    )
+
+    const section = screen.getByRole('region', { name: 'Delegated sessions' })
+    expect(within(section).getAllByText('MiniMax-M3.1-Flash[1m] · MiniMax')).toHaveLength(2)
+    const pending = within(section).getAllByTestId('delegated-session-pending-switch')
+    expect(pending[0]).toHaveTextContent('Switches after this turn · now deepseek-flash[1m]')
+    expect(pending[1]).toHaveTextContent('Switches once the other sessions finish their turn')
+    expect(within(section).getByRole('button', { name: 'Change models' })).toBeInTheDocument()
+    expect(within(section).getByText('Waiting for current turns')).toBeInTheDocument()
+
+    // The button's label replaces the row text for screen readers, so the
+    // model and the pending switch must be in it, not only on screen.
+    expect(within(section).getByRole('button', {
+      name: 'Open session: Security review · Running · MiniMax-M3.1-Flash[1m] · MiniMax · Switches after this turn · now deepseek-flash[1m]',
+    })).toBeInTheDocument()
+    fireEvent.click(within(section).getByRole('button', {
+      name: 'Open session: UX review · Queued · MiniMax-M3.1-Flash[1m] · MiniMax · Switches once the other sessions finish their turn',
+    }))
+    expect(onOpenDelegatedSession).toHaveBeenCalledWith('child-ux', 'UX review')
+  })
 
   it('tints the row icon tile by status so a one-line row still states what happened', () => {
     render(
@@ -137,9 +219,11 @@ describe('SessionActivityPanel', () => {
 
     // 30px matches AgentMascot, so SubAgent and background rows share a text column.
     expect(running?.className).toContain('h-[30px]')
-    expect(running?.className).toContain('bg-[var(--color-brand-soft)]')
+    // Running reads as info, never brand: terracotta is not a status colour.
+    expect(running?.className).toContain('bg-[var(--color-info-container)]')
+    expect(running?.className).not.toContain('brand')
     // Paired tokens, never a raw accent on its own container (AGENTS.md 3.2).
-    expect(running?.className).toContain('text-[var(--color-on-brand-soft)]')
+    expect(running?.className).toContain('text-[var(--color-on-info-container)]')
     expect(failed?.className).toContain('bg-[var(--color-error-container)]')
     expect(failed?.className).toContain('text-[var(--color-on-error-container)]')
   })
@@ -203,7 +287,7 @@ describe('SessionActivityPanel', () => {
     expect(screen.getByLabelText('Task completed')).toBeInTheDocument()
     expect(screen.getByLabelText('Task in progress')).toBeInTheDocument()
     expect(screen.getByLabelText('Task pending')).toBeInTheDocument()
-    // The in-progress marker is the design's terracotta ring — a bordered
+    // The in-progress marker is the design's info-blue ring — a bordered
     // circle, not an icon — so the animation classes sit on the marker itself.
     // It still stops rather than slows under reduced motion, which is why this
     // panel does not use `Spinner`.
@@ -712,6 +796,19 @@ describe('SessionActivityPanel', () => {
     fireEvent.pointerDown(screen.getByText('Activity trigger icon'))
 
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('opens as a bottom sheet on the phone, which a tap inside does not close', () => {
+    const onClose = vi.fn()
+    render(<SessionActivityPanel model={model()} open onClose={onClose} onOpenSubagent={vi.fn()} placement="sheet" />)
+
+    const sheet = screen.getByTestId('session-activity-sheet')
+    expect(screen.queryByTestId('session-activity-panel')).not.toBeInTheDocument()
+    fireEvent.pointerDown(sheet)
+    expect(onClose).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('renders as a rail without closing on outside pointerdown', () => {

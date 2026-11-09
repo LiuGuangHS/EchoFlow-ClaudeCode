@@ -144,10 +144,9 @@ describe('DirectoryPicker', () => {
 
     const trigger = screen.getByRole('button')
     expect(trigger).toHaveTextContent('project')
-    // The workbar trigger shares the launch row's outlined-pill recipe (see
-    // RepositoryLaunchControls.workbarButtonClassName): the directory, branch
-    // and worktree chips sit on one row and must read as one family.
-    expect(trigger.className).toContain('rounded-[var(--radius-lg)]')
+    // The workbar trigger is a form field in ProjectEditorModal, where it stands
+    // in for a secondary button: the same h-9 hairline-bordered 8px block.
+    expect(trigger.className).toContain('rounded-[var(--radius-md)]')
     expect(trigger.className).toContain('border-[var(--color-border)]')
     expect(trigger.className).not.toContain('rounded-full')
   })
@@ -217,6 +216,32 @@ describe('DirectoryPicker', () => {
     expect(menu).toHaveStyle({ left: '612px', width: '400px' })
   })
 
+  it('caps the menu at the room left below the trigger in a short window', async () => {
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 620 })
+    vi.mocked(sessionsApi.getRecentProjects).mockResolvedValue({ projects: [] })
+
+    try {
+      render(<DirectoryPicker value="/workspace/project" onChange={vi.fn()} />)
+
+      const trigger = screen.getByRole('button')
+      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+        x: 40, y: 260, top: 260, left: 40, right: 130, bottom: 290, width: 90, height: 30,
+        toJSON: () => ({}),
+      } as DOMRect)
+
+      fireEvent.click(trigger)
+
+      // 620 - 290 (trigger bottom) - 4 (gap) - 12 (viewport margin): more room
+      // below than above, yet less than the menu wants. It used to run off the
+      // bottom edge of a window this short.
+      const menu = await screen.findByTestId('directory-picker-menu')
+      expect(menu).toHaveStyle({ top: '294px', maxHeight: '314px' })
+    } finally {
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
+    }
+  })
+
   it('renders browse entries without nesting interactive buttons', async () => {
     vi.mocked(sessionsApi.getRecentProjects).mockResolvedValue({ projects: [] })
     vi.mocked(filesystemApi.browse).mockResolvedValue({
@@ -235,43 +260,6 @@ describe('DirectoryPicker', () => {
     expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('validateDOMNesting'))
 
     errorSpy.mockRestore()
-  })
-
-  it('browses and selects Linux paths when native folder dialogs are unavailable', async () => {
-    vi.mocked(sessionsApi.getRecentProjects).mockResolvedValue({ projects: [] })
-    vi.mocked(filesystemApi.browse)
-      .mockResolvedValueOnce({
-        currentPath: '/home',
-        parentPath: '/',
-        entries: [{ name: 'user', path: '/home/user', isDirectory: true }],
-      })
-      .mockResolvedValueOnce({
-        currentPath: '/home/user',
-        parentPath: '/home',
-        entries: [{ name: 'project', path: '/home/user/project', isDirectory: true }],
-      })
-
-    window.desktopHost = {
-      ...browserHost,
-      kind: 'electron',
-      isDesktop: true,
-      capabilities: {
-        ...browserHost.capabilities,
-        dialogs: false,
-      },
-    }
-    const onChange = vi.fn()
-    render(<DirectoryPicker value="" onChange={onChange} />)
-
-    fireEvent.click(screen.getByRole('button', { name: /选择项目|Select a project/ }))
-    fireEvent.click(await screen.findByText(/选择其他文件夹|Choose a different folder/))
-
-    expect(filesystemApi.browse).toHaveBeenNthCalledWith(1, undefined)
-    fireEvent.click(await screen.findByRole('button', { name: /user/ }))
-    await waitFor(() => expect(filesystemApi.browse).toHaveBeenNthCalledWith(2, '/home/user'))
-    fireEvent.click(await screen.findByRole('button', { name: /^(选择|Select)$/ }))
-
-    expect(onChange).toHaveBeenCalledWith('/home/user/project')
   })
 
   it('uses the injected desktop host for native folder selection', async () => {

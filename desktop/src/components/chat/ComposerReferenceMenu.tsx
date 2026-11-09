@@ -8,10 +8,12 @@ import { rankComposerSuggestions } from '@/components/chat/composerSuggestionSea
 import { ApiError } from '@/api/client'
 import { filesystemApi } from '@/api/filesystem'
 import { useTranslation } from '@/i18n'
+import { useRoomAbove } from '@/hooks/useRoomAbove'
 import { safeMentionIcon, type NewComposerMention } from '@/lib/composerMentions'
 import { publicAssetPath } from '@/lib/publicAsset'
 import type { ComposerReferenceCandidate } from '@/types/composerReference'
 import { referenceFallbackIcon, skillSourceLabelKey } from './referencePresentation'
+import { COMPOSER_KBD, COMPOSER_MENU_SECTION } from './composerMenuStyles'
 
 type FileEntry = { name: string, path: string, isDirectory: boolean, relativePath?: string }
 type Row = { key: string, label: string, description: string, searchTerms?: string[], contentMatch?: boolean, session?: SessionCandidate, shortId?: string, source?: string, mention?: NewComposerMention, file?: FileEntry, icon?: ReactNode, onSelect?: () => void }
@@ -23,6 +25,7 @@ type Props = {
   compact?: boolean
   embedded?: boolean
   browseReferences?: boolean
+  allowBelow?: boolean
   actions?: Array<{ key: string, label: string, description?: string, icon?: ReactNode, onSelect: () => void }>
   references: ComposerReferenceCandidate[]
   referencesLoading?: boolean
@@ -35,7 +38,7 @@ type Props = {
 export function getComposerReferenceOptionId(id: string, index: number): string { return `${id}-option-${index}` }
 
 export const ComposerReferenceMenu = forwardRef<ComposerReferenceMenuHandle, Props>(function ComposerReferenceMenu({
-  id, cwd, filter = '', compact = false, embedded = false, browseReferences = false, actions = [], references, referencesLoading = false, referencesError,
+  id, cwd, filter = '', compact = false, embedded = false, browseReferences = false, allowBelow = false, actions = [], references, referencesLoading = false, referencesError,
   onSelect, onNavigate, onActiveChange,
 }, ref) {
   const t = useTranslation()
@@ -63,6 +66,7 @@ export const ComposerReferenceMenu = forwardRef<ComposerReferenceMenuHandle, Pro
   const [result, setResult] = useState<{ key: string, entries: FileEntry[], root: string, current: string, error?: 'denied' | 'failed' } | null>(null)
   const [selection, setSelection] = useState<{ query: string, key: string } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const [roomRef, room, side] = useRoomAbove<HTMLDivElement>({ allowBelow })
   const rootRef = useRef({ cwd, path: cwd })
   if (rootRef.current.cwd !== cwd) rootRef.current = { cwd, path: cwd }
   const currentResult = !browseReferences && result?.key === queryKey ? result : null
@@ -160,14 +164,14 @@ export const ComposerReferenceMenu = forwardRef<ComposerReferenceMenuHandle, Pro
 
   let offset = 0
   return (
-    <div className={embedded ? 'min-w-0' : `absolute bottom-full left-0 w-full z-[var(--z-dropdown)] mb-2 overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-overlay)] `} onMouseDown={event => event.preventDefault()}>
-      <div ref={listRef} id={id} role="listbox" aria-label={t('chat.references')} aria-busy={loading || referencesLoading || sessionLoading} className="min-w-0 max-h-[min(320px,45vh)] overflow-y-auto p-1.5">
+    <div ref={embedded ? undefined : roomRef} style={embedded ? undefined : { maxHeight: room }} className={embedded ? 'flex min-h-0 min-w-0 flex-col' : `absolute ${side === 'bottom' ? 'top-full mt-2' : 'bottom-full mb-2'} left-0 w-full z-[var(--z-dropdown)] flex flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-dropdown)] `} onMouseDown={event => event.preventDefault()}>
+      <div ref={listRef} id={id} role="listbox" aria-label={t('chat.references')} aria-busy={loading || referencesLoading || sessionLoading} className="min-h-0 min-w-0 max-h-[min(320px,45vh)] overflow-y-auto p-1">
         {visibleGroups.map(group => {
           const start = offset
           offset += group.rows.length
           if (!group.rows.length) return null
           return <div key={group.kind} role="group" aria-label={group.label}>
-            {!isSearching ? <div className="px-3 pb-1 pt-2 text-xs font-medium text-[var(--color-text-tertiary)]">{group.label}</div> : null}
+            {!isSearching ? <div className={COMPOSER_MENU_SECTION}>{group.label}</div> : null}
             {group.rows.map((row, position) => {
               const index = start + position
               const Icon = referenceFallbackIcon(row.file ? (row.file.isDirectory ? 'directory' : 'file') : row.mention?.kind ?? 'skill')
@@ -179,23 +183,23 @@ export const ComposerReferenceMenu = forwardRef<ComposerReferenceMenuHandle, Pro
                   if ((event.target as Element).closest('[data-navigate-directory]')) navigate(row)
                   else select(row)
                 }}
-                icon={row.icon ?? (row.mention?.icon ? <img src={publicAssetPath(row.mention.icon)} alt="" className="h-5 w-5 shrink-0 object-contain" /> : <Icon aria-hidden="true" className="h-5 w-5 shrink-0 text-[var(--color-text-secondary)]" strokeWidth={1.7} />)}
+                icon={row.icon ?? (row.mention?.icon ? <img src={publicAssetPath(row.mention.icon)} alt="" className="h-4 w-4 shrink-0 object-contain" /> : <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-[var(--color-text-tertiary)]" strokeWidth={1.75} />)}
                 trailing={<>
                   {sourceLabel ? <span className="shrink-0 text-xs text-[var(--color-text-tertiary)]">{t(sourceLabel)}</span> : null}
-                  {row.file?.isDirectory ? <span data-navigate-directory title={t('fileSearch.openFolder')} className="-my-2 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center"><ChevronRight aria-hidden="true" className="h-4 w-4 text-[var(--color-text-tertiary)]" /></span> : null}
+                  {row.file?.isDirectory ? <span data-navigate-directory title={t('fileSearch.openFolder')} className="-my-1.5 -mr-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-selected)]"><ChevronRight aria-hidden="true" className="h-3.5 w-3.5 text-[var(--color-text-tertiary)]" /></span> : null}
                 </>}
               />
             })}
           </div>
         })}
-        {loading || referencesLoading || sessionLoading ? <div role="status" className="px-3 py-2 text-xs text-[var(--color-text-tertiary)]">{t('fileSearch.searching')}</div> : null}
-        {currentResult?.error ? <div role="alert" className="px-3 py-2 text-xs text-[var(--color-error)]">{t(currentResult.error === 'denied' ? 'fileSearch.accessDenied' : 'fileSearch.loadFailed')}</div> : null}
-        {sessionError ? <div role="alert" className="px-3 py-2 text-xs text-[var(--color-error)]">{t('chat.sessionReferencesLoadFailed')}</div> : null}
-        {referencesError ? <div role="alert" className="px-3 py-2 text-xs text-[var(--color-error)]">{t('chat.referencesLoadFailed')}</div> : null}
-        {!rows.length && !loading && !referencesLoading && !sessionLoading && !sessionError && !currentResult?.error && !referencesError ? <div className="px-3 py-3 text-xs text-[var(--color-text-tertiary)]">{t('chat.referencesEmpty')}</div> : null}
+        {loading || referencesLoading || sessionLoading ? <div role="status" className="px-2 py-2 text-xs text-[var(--color-text-tertiary)]">{t('fileSearch.searching')}</div> : null}
+        {currentResult?.error ? <div role="alert" className="px-2 py-2 text-xs text-[var(--color-error)]">{t(currentResult.error === 'denied' ? 'fileSearch.accessDenied' : 'fileSearch.loadFailed')}</div> : null}
+        {sessionError ? <div role="alert" className="px-2 py-2 text-xs text-[var(--color-error)]">{t('chat.sessionReferencesLoadFailed')}</div> : null}
+        {referencesError ? <div role="alert" className="px-2 py-2 text-xs text-[var(--color-error)]">{t('chat.referencesLoadFailed')}</div> : null}
+        {!rows.length && !loading && !referencesLoading && !sessionLoading && !sessionError && !currentResult?.error && !referencesError ? <div className="px-2 py-3 text-xs text-[var(--color-text-tertiary)]">{t('chat.referencesEmpty')}</div> : null}
       </div>
       {!isSearching && !embedded ? <div className="border-t border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-text-tertiary)]">{t('chat.referenceSearchHint')}</div> : null}
-      {!compact && !embedded ? <div className="flex items-center gap-2 border-t border-[var(--color-border)] px-4 py-2 text-[10px] text-[var(--color-text-tertiary)]"><kbd>↑↓</kbd><span>{t('fileSearch.navigate')}</span><kbd className="ml-2">Enter / Tab</kbd><span>{t('fileSearch.select')}</span><kbd className="ml-2">→</kbd><span>{t('fileSearch.open')}</span><kbd className="ml-2">Esc</kbd><span>{t('fileSearch.close')}</span></div> : null}
+      {!compact && !embedded ? <div className="flex items-center gap-1.5 border-t border-[var(--color-border)] px-3 py-2 text-[11px] text-[var(--color-text-tertiary)]"><kbd className={COMPOSER_KBD}>↑↓</kbd><span>{t('fileSearch.navigate')}</span><kbd className={`${COMPOSER_KBD} ml-2`}>Enter / Tab</kbd><span>{t('fileSearch.select')}</span><kbd className={`${COMPOSER_KBD} ml-2`}>→</kbd><span>{t('fileSearch.open')}</span><kbd className={`${COMPOSER_KBD} ml-2`}>Esc</kbd><span>{t('fileSearch.close')}</span></div> : null}
     </div>
   )
 })

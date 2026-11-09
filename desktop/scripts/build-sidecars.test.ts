@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import path, { join as joinPath } from 'node:path'
 import { promisify } from 'node:util'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   ADAPTER_FLAGS,
   reserveLocalPort,
@@ -21,7 +21,7 @@ function readBuildScript() {
 
 function readCliLauncher() {
   return readFileSync(
-    path.resolve(import.meta.dirname, '../../bin/echoflow-code'),
+    path.resolve(import.meta.dirname, '../../bin/claude-haha'),
     'utf8',
   )
 }
@@ -36,22 +36,6 @@ function extractWindowsX64BunTarget(source: string) {
   const match = source.match(/case 'x86_64-pc-windows-msvc':[\s\S]*?return '([^']+)'/)
   return match?.[1] ?? null
 }
-
-describe('sidecar build configuration', () => {
-  it('builds the host sidecar before starting Electron development', () => {
-    const packageJson = readJson(path.resolve(import.meta.dirname, '../package.json'))
-    expect(packageJson.scripts?.['electron:dev']).toBe(
-      'bun run build:sidecars && bun run build:electron && bun run ./scripts/electron-dev.ts',
-    )
-  })
-
-  it('checks that the compiler actually wrote the sidecar executable', () => {
-    expect(readBuildScript()).toContain(
-      'Compiler reported success but did not produce',
-    )
-    expect(readBuildScript()).toContain('await Bun.file(outputPath).exists()')
-  })
-})
 
 type SidecarProcess = {
   child: ChildProcessWithoutNullStreams
@@ -84,7 +68,7 @@ function controlledSidecarEnvironment(
     ...env,
     HOME: homeDir,
     CLAUDE_CONFIG_DIR: configDir,
-    ECHOFLOW_LOCAL_ACCESS_TOKEN: localAccessToken,
+    CC_HAHA_LOCAL_ACCESS_TOKEN: localAccessToken,
     NODE_ENV: 'test',
     NO_PROXY: '127.0.0.1,localhost,::1',
     no_proxy: '127.0.0.1,localhost,::1',
@@ -400,6 +384,9 @@ describe('build-sidecars Windows x64 target mapping', () => {
     expect(desktopPackage.scripts?.['test:compiled-sidecar-smoke']).toContain(
       'scripts/image-processor-packaging.test.ts',
     )
+    expect(desktopPackage.scripts?.['test:compiled-sidecar-smoke']).toContain(
+      'scripts/prepare-cloudflared.test.ts',
+    )
     expect(rootPackage.scripts?.['check:native']).toContain(
       'test:compiled-sidecar-smoke',
     )
@@ -478,15 +465,43 @@ describe('build-sidecars Windows x64 target mapping', () => {
     }
   })
 
+  it('does not start a request if the process-alive check exhausts the readiness deadline', async () => {
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.fn<typeof fetch>()
+    globalThis.fetch = fetchMock
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    try {
+      const readiness = expect(waitForCompiledSidecar({
+        baseUrl: 'http://127.0.0.1:1',
+        expectedSessionId: 'never-ready',
+        deadlineMs: 25,
+        exited: new Promise(() => {}),
+        logs: () => '',
+        localAccessToken: 'not-used',
+      })).rejects.toThrow(
+        'compiled sidecar did not become ready (compiled sidecar request deadline exceeded)',
+      )
+
+      // Model a busy event loop: wall time passes before the zero-delay alive check.
+      vi.setSystemTime(Date.now() + 25)
+      await vi.advanceTimersByTimeAsync(0)
+      await readiness
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('bounds a sidecar response with headers but a never-ending body and still cleans up', async () => {
     const originalFetch = globalThis.fetch
     const originalEnvironment = {
       HOME: process.env.HOME,
       CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
-      ECHOFLOW_LOCAL_INDEX: process.env.ECHOFLOW_LOCAL_INDEX,
-      ECHOFLOW_LOCAL_ACCESS_TOKEN: process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN,
+      CC_HAHA_LOCAL_INDEX: process.env.CC_HAHA_LOCAL_INDEX,
+      CC_HAHA_LOCAL_ACCESS_TOKEN: process.env.CC_HAHA_LOCAL_ACCESS_TOKEN,
     }
-    const rootDir = await mkdtemp(joinPath(tmpdir(), 'echoflow-code-hung-sidecar-smoke-'))
+    const rootDir = await mkdtemp(joinPath(tmpdir(), 'cc-haha-hung-sidecar-smoke-'))
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -502,25 +517,32 @@ describe('build-sidecars Windows x64 target mapping', () => {
       logs: () => '',
     }
     let bodyCancelCount = 0
+    let responseBody: ReadableStream<Uint8Array> | undefined
     let rejectCancellation: ((error: Error) => void) | undefined
-    globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode('{"partial":'))
-      },
-      cancel() {
-        bodyCancelCount += 1
-        return new Promise<void>((_resolve, reject) => {
-          rejectCancellation = reject
-        })
-      },
-    }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    })) as typeof fetch
+    const fetchMock = vi.fn(async () => {
+      responseBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"partial":'))
+        },
+        cancel() {
+          bodyCancelCount += 1
+          return new Promise<void>((_resolve, reject) => {
+            rejectCancellation = reject
+          })
+        },
+      })
+      return new Response(responseBody, {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    globalThis.fetch = fetchMock as typeof fetch
 
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    const startedAt = Date.now()
     let guardTimer: ReturnType<typeof setTimeout> | undefined
     try {
-      const rejection = await Promise.race([
+      const readiness = expect(Promise.race([
         waitForCompiledSidecar({
           baseUrl: 'http://127.0.0.1:1',
           expectedSessionId: 'never-ready',
@@ -532,22 +554,29 @@ describe('build-sidecars Windows x64 target mapping', () => {
         new Promise<never>((_resolve, reject) => {
           guardTimer = setTimeout(
             () => reject(new Error('never-ending response body guard fired')),
-            // Hang guard, not a budget: it only fires when the bounded read
-            // never settles because the deadline mechanism regressed.
-            5_000,
+            250,
           )
         }),
-      ]).then(
-        () => { throw new Error('expected waitForCompiledSidecar to reject') },
-        (error: Error) => error,
+      ])).rejects.toThrow(
+        'compiled sidecar did not become ready (compiled sidecar request deadline exceeded)',
       )
-      expect(rejection.message).toContain('compiled sidecar did not become ready')
-      // Mechanism assertion: the bounded read was cut by the request deadline,
-      // never by waiting out the never-ending body. Wall-clock speed is not an
-      // invariant of this test — the timing window also covers OS teardown.
-      expect(rejection.message).toContain('compiled sidecar request deadline exceeded')
+
+      // Enter the body read before spending the request's deadline budget.
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(responseBody?.locked).toBe(true)
+      await vi.advanceTimersByTimeAsync(24)
+      expect(bodyCancelCount).toBe(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await readiness
+      expect(Date.now() - startedAt).toBe(25)
+      expect(bodyCancelCount).toBe(1)
+      expect(rejectCancellation).toBeTypeOf('function')
+      rejectCancellation?.(new Error('late body cancellation rejection'))
+      await vi.advanceTimersByTimeAsync(0)
     } finally {
       if (guardTimer) clearTimeout(guardTimer)
+      vi.useRealTimers()
       globalThis.fetch = originalFetch
       try {
         await terminateCompiledSidecar(processHandle)
@@ -556,16 +585,13 @@ describe('build-sidecars Windows x64 target mapping', () => {
       }
     }
 
-    expect(bodyCancelCount).toBeGreaterThan(0)
-    rejectCancellation?.(new Error('late body cancellation rejection'))
-    await new Promise(resolveWait => setTimeout(resolveWait, 0))
     expect(child.exitCode !== null || child.signalCode !== null).toBe(true)
     expect(await stat(rootDir).then(() => true, () => false)).toBe(false)
     expect(process.env.HOME).toBe(originalEnvironment.HOME)
     expect(process.env.CLAUDE_CONFIG_DIR).toBe(originalEnvironment.CLAUDE_CONFIG_DIR)
-    expect(process.env.ECHOFLOW_LOCAL_INDEX).toBe(originalEnvironment.ECHOFLOW_LOCAL_INDEX)
-    expect(process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBe(
-      originalEnvironment.ECHOFLOW_LOCAL_ACCESS_TOKEN,
+    expect(process.env.CC_HAHA_LOCAL_INDEX).toBe(originalEnvironment.CC_HAHA_LOCAL_INDEX)
+    expect(process.env.CC_HAHA_LOCAL_ACCESS_TOKEN).toBe(
+      originalEnvironment.CC_HAHA_LOCAL_ACCESS_TOKEN,
     )
   })
 })
@@ -592,7 +618,7 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar local-index smok
     )
     await stat(builtExecutable)
 
-    const rootDir = await mkdtemp(joinPath(tmpdir(), 'echoflow-code-compiled-sidecar-smoke-'))
+    const rootDir = await mkdtemp(joinPath(tmpdir(), 'cc-haha-compiled-sidecar-smoke-'))
     const unicodeInstallDir = joinPath(rootDir, '中文 安装目录')
     const executable = process.platform === 'win32'
       ? joinPath(unicodeInstallDir, path.basename(builtExecutable))
@@ -606,7 +632,7 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar local-index smok
     const authenticationProofs: CompiledSidecarAuthProof[] = []
     const databasePath = joinPath(
       configDir,
-      'echoflow-code',
+      'cc-haha',
       'db',
       'index-v1.sqlite',
     )
@@ -717,8 +743,8 @@ describe('build-sidecars cu-helper macOS gating', () => {
 describe.skipIf(!compiledSidecarSmokeEnabled || process.platform !== 'darwin')('staged cu-helper resource smoke', () => {
   it('loads optional cursor resources from a relocated staged app instead of the build tree', async context => {
     const exec = promisify(execFile)
-    const sourceApp = path.resolve(import.meta.dirname, '../src-tauri/binaries/echoflow-code-computer-use.app')
-    const inner = path.join('Contents', 'MacOS', 'echoflow-code-computer-use')
+    const sourceApp = path.resolve(import.meta.dirname, '../src-tauri/binaries/cc-haha-computer-use.app')
+    const inner = path.join('Contents', 'MacOS', 'cc-haha-computer-use')
     const { stdout: architectures } = await exec('/usr/bin/lipo', ['-archs', path.join(sourceApp, inner)])
     const hostArch = process.arch === 'arm64' ? 'arm64' : 'x86_64'
     if (!architectures.trim().split(/\s+/).includes(hostArch)) {
@@ -728,7 +754,7 @@ describe.skipIf(!compiledSidecarSmokeEnabled || process.platform !== 'darwin')('
     }
     const fixtureRoot = await mkdtemp(path.join(tmpdir(), 'cu-helper-staged-resources-'))
     try {
-      const app = path.join(fixtureRoot, 'echoflow-code-computer-use.app')
+      const app = path.join(fixtureRoot, 'cc-haha-computer-use.app')
       await cp(sourceApp, app, { recursive: true, verbatimSymlinks: true })
       const home = path.join(fixtureRoot, 'home')
       const config = path.join(fixtureRoot, 'config')
@@ -750,7 +776,7 @@ describe.skipIf(!compiledSidecarSmokeEnabled || process.platform !== 'darwin')('
       }
       expect(report.resourceDirectory).not.toBeNull()
       expect(await realpath(report.resourceDirectory!)).toBe(await realpath(path.join(
-        app, 'Contents', 'Resources', 'cu-helper_echoflow-code-computer-use.bundle', 'LensSequence',
+        app, 'Contents', 'Resources', 'cu-helper_cc-haha-computer-use.bundle', 'LensSequence',
       )))
       expect(Number.isInteger(report.frameCount)).toBe(true)
       expect(report.frameCount).toBeGreaterThanOrEqual(0)
@@ -777,7 +803,7 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar adapters mode', 
 
     // An isolated HOME/CLAUDE_CONFIG_DIR: the launcher reads adapters.json, and
     // this must never see the developer's real credentials.
-    const rootDir = await mkdtemp(joinPath(tmpdir(), 'echoflow-code-adapters-smoke-'))
+    const rootDir = await mkdtemp(joinPath(tmpdir(), 'cc-haha-adapters-smoke-'))
     try {
       const child = spawn(executable, ['adapters', '--app-root', repoRoot, ...args], {
         env: {

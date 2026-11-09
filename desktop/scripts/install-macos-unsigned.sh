@@ -3,7 +3,7 @@ set -euo pipefail
 
 # install-macos-unsigned.sh
 #
-# Installs the unsigned macOS build of EchoFlow Code from a DMG that sits
+# Installs the unsigned macOS build of Claude Code Haha from a DMG that sits
 # next to this script (download both from the same GitHub Release into one
 # folder, e.g. ~/Downloads, then run this script).
 #
@@ -14,9 +14,9 @@ set -euo pipefail
 #
 # Usage:
 #   bash install-macos-unsigned.sh                       # auto-pick the DMG next to this script
-#   bash install-macos-unsigned.sh /path/to/EchoFlow-Code-0.4.1-mac-arm64.dmg
+#   bash install-macos-unsigned.sh /path/to/Claude-Code-Haha-0.7.7-macOS-Apple-Silicon.dmg
 
-APP_NAME="EchoFlow Code.app"
+APP_NAME="Claude Code Haha.app"
 APP_PATH="/Applications/${APP_NAME}"
 
 script_dir() {
@@ -29,11 +29,11 @@ find_dmg() {
   local arch
   arch="$(uname -m)"
 
+  # Releases name the DMG by chip (macOS-Apple-Silicon / macOS-Intel), local
+  # and development builds by arch (macOS-arm64 / macOS-x64), and releases
+  # before 0.7.7 used mac-arm64 / mac-x64.
   shopt -s nullglob
-  local matches=("${dir}"/EchoFlow-Code-*-mac-*.dmg)
-  if [ "${#matches[@]}" -eq 0 ]; then
-    matches=("${dir}"/EchoFlow-ClaudeCode-*-mac-*.dmg)
-  fi
+  local matches=("${dir}"/Claude-Code-Haha-*-macOS-*.dmg "${dir}"/Claude-Code-Haha-*-mac-*.dmg)
   shopt -u nullglob
 
   if [ "${#matches[@]}" -eq 0 ]; then
@@ -45,17 +45,19 @@ find_dmg() {
     return 0
   fi
 
-  local wanted="mac-x64"
+  local wanted=("macOS-Intel.dmg" "macOS-x64.dmg" "mac-x64.dmg")
   if [ "$arch" = "arm64" ]; then
-    wanted="mac-arm64"
+    wanted=("macOS-Apple-Silicon.dmg" "macOS-arm64.dmg" "mac-arm64.dmg")
   fi
 
-  local dmg
-  for dmg in "${matches[@]}"; do
-    if [[ "$(basename "$dmg")" == *"${wanted}.dmg" ]]; then
-      printf '%s\n' "$dmg"
-      return 0
-    fi
+  local suffix dmg
+  for suffix in "${wanted[@]}"; do
+    for dmg in "${matches[@]}"; do
+      if [[ "$(basename "$dmg")" == *"-${suffix}" ]]; then
+        printf '%s\n' "$dmg"
+        return 0
+      fi
+    done
   done
 
   printf '%s\n' "${matches[0]}"
@@ -68,9 +70,9 @@ main() {
   local dmg="${1:-}"
   if [ -z "$dmg" ]; then
     if ! dmg="$(find_dmg "$base_dir")"; then
-      echo "No EchoFlow Code macOS DMG found next to this script."
+      echo "No Claude Code Haha macOS DMG found next to this script."
       echo "Download the DMG into the same folder as this script, then run it again."
-      echo "Usage: bash install-macos-unsigned.sh /path/to/EchoFlow-Code-0.4.1-mac-arm64.dmg"
+      echo "Usage: bash install-macos-unsigned.sh /path/to/Claude-Code-Haha-0.7.7-macOS-Apple-Silicon.dmg"
       exit 1
     fi
   fi
@@ -102,11 +104,11 @@ main() {
     exit 1
   fi
 
-  osascript -e 'quit app "EchoFlow Code"' >/dev/null 2>&1 || true
+  osascript -e 'quit app "Claude Code Haha"' >/dev/null 2>&1 || true
 
   if [ -d "$APP_PATH" ]; then
     local backup
-    backup="${HOME}/.Trash/EchoFlow Code.$(date +%Y%m%d%H%M%S).app"
+    backup="${HOME}/.Trash/Claude Code Haha.$(date +%Y%m%d%H%M%S).app"
     echo "Moving existing app to: $backup"
     mv "$APP_PATH" "$backup"
   fi
@@ -115,7 +117,7 @@ main() {
   ditto "$app_in_volume" "$APP_PATH"
   xattr -dr com.apple.quarantine "$APP_PATH" 2>/dev/null || true
 
-  echo "Opening EchoFlow Code..."
+  echo "Opening Claude Code Haha..."
   open "$APP_PATH"
 }
 

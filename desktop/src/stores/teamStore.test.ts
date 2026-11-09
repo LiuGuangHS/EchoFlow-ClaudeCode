@@ -1,14 +1,15 @@
+import { ApiError } from '../api/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   memberSessionId,
+  memberReplySettlement,
   mergeMemberTranscriptDelta,
   mergeMemberTranscriptMessages,
   useTeamStore,
 } from './teamStore'
 import { registerAgentRunSession, useChatStore } from './chatStore'
 import { useTabStore } from './tabStore'
-import { ApiError } from '../api/client'
-import type { UIMessage } from '../types/chat'
+import type { TeamMemberStatus, UIMessage } from '../types/chat'
 import type { TeamWorkbenchSnapshot } from '../types/team'
 
 const {
@@ -140,6 +141,103 @@ describe('teamStore incremental transcript polling', () => {
     const merged = mergeMemberTranscriptMessages([], transcript)
 
     expect(merged.map(message => message.id)).toEqual(['server-1', 'server-2'])
+  })
+
+  it('reconciles a steered send with its mailbox echo persisted minutes later', () => {
+    // A steer sent mid-turn persists only when the member consumes its mailbox,
+    // so the durable user echo can carry a timestamp minutes after the send.
+    const existing = [
+      userMessage('durable-1', 'queued output', 900),
+      userMessage('pending-1', '改为 portal 渲染', 1_000, true),
+    ]
+    const delta = [
+      { ...userMessage('server-echo', '改为 portal 渲染', 400_000), teammateFrom: 'user' },
+    ]
+
+    const merged = mergeMemberTranscriptDelta(existing, delta)
+
+    expect(merged.map(message => message.id)).toEqual(['durable-1', 'server-echo'])
+  })
+
+  it('does not let an older identical user echo consume a newer pending send', () => {
+    const existing = [
+      userMessage('server-echo', '继续', 1_000),
+      userMessage('pending-1', '继续', 400_000, true),
+    ]
+
+    const merged = mergeMemberTranscriptDelta(existing, [])
+
+    expect(merged.map(message => message.id)).toEqual(['server-echo', 'pending-1'])
+  })
+
+  it('keeps a pending send unmatched by teammate-to-teammate rows', () => {
+    const existing = [
+      userMessage('pending-1', '重新跑一遍测试', 1_000, true),
+    ]
+    const delta = [
+      { ...userMessage('server-1', '重新跑一遍测试', 1_100), teammateFrom: 'team-lead' },
+    ]
+
+    const merged = mergeMemberTranscriptDelta(existing, delta)
+
+    expect(merged.map(message => message.id)).toEqual(['server-1', 'pending-1'])
+  })
+
+  describe('memberReplySettlement', () => {
+    function assistantText(id: string, content: string, timestamp: number): UIMessage {
+      return { id, type: 'assistant_text', content, timestamp }
+    }
+
+    function teammateUserEcho(id: string, content: string, timestamp: number): UIMessage {
+      return { id, type: 'user_text', content, timestamp, teammateFrom: 'user' }
+    }
+
+    it('settles a steered turn whose prompt persisted late as a user echo', () => {
+      const messages: UIMessage[] = [
+        teammateUserEcho('echo-1', '补一下边界钳制', 400_000),
+        assistantText('a1', '已补齐', 401_000),
+      ]
+
+      const settlement = memberReplySettlement(messages, {
+        content: '补一下边界钳制',
+        sentAt: 1_000,
+        baselineMessageKeys: new Set(),
+      })
+
+      expect(settlement.settled).toBe(true)
+      expect(settlement.promptKey).toContain('echo-1')
+    })
+
+    it('does not settle on a prompt row that predates the send', () => {
+      const messages: UIMessage[] = [
+        teammateUserEcho('echo-0', '继续', 1_000),
+        assistantText('a0', '好的', 2_000),
+      ]
+
+      const settlement = memberReplySettlement(messages, {
+        content: '继续',
+        sentAt: 400_000,
+        baselineMessageKeys: new Set(),
+      })
+
+      expect(settlement.settled).toBe(false)
+    })
+
+    it('bounds the settled turn at the next steered prompt', () => {
+      const messages: UIMessage[] = [
+        teammateUserEcho('echo-1', '第一步', 400_000),
+        teammateUserEcho('echo-2', '第二步', 500_000),
+        assistantText('a2', '完成第二步', 501_000),
+      ]
+
+      const settlement = memberReplySettlement(messages, {
+        content: '第一步',
+        sentAt: 1_000,
+        baselineMessageKeys: new Set(),
+      })
+
+      expect(settlement.settled).toBe(false)
+    })
   })
 
   it('starts the first transcript read on member selection and shares it with the mounted page', async () => {
@@ -1388,41 +1486,118 @@ describe('teamStore workbench timeline', () => {
     useTeamStore.getState().clearTeam()
   })
 
-  it('negative-caches a 404 discovery but still honors force', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-10-31T00:00:00.000Z'))
-    getWorkbenchForSessionMock.mockRejectedValueOnce(new ApiError(404, {}))
-    await useTeamStore.getState().fetchTeamForSession('no-team-session')
-    await useTeamStore.getState().fetchTeamForSession('no-team-session')
-    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(1)
-    await useTeamStore.getState().fetchTeamForSession('no-team-session', { force: true })
-    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(2)
-    vi.useRealTimers()
-  })
-
-  it('does not negative-cache transient failures', async () => {
-    getWorkbenchForSessionMock.mockRejectedValue(new ApiError(502, {}))
-    await useTeamStore.getState().fetchTeamForSession('error-session')
-    await useTeamStore.getState().fetchTeamForSession('error-session')
-    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(2)
-  })
-
-  it('discovers a newly created team after the negative TTL expires', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-10-31T00:00:00.000Z'))
-    getWorkbenchForSessionMock.mockRejectedValueOnce(new ApiError(404, {}))
-    await useTeamStore.getState().fetchTeamForSession('later-team')
-    vi.advanceTimersByTime(5_001)
-    getWorkbenchForSessionMock.mockResolvedValue({
-      sessionId: 'later-team',
-      teamName: 'team-workbench',
-      source: 'live',
-      snapshots: [workbench('1', 'pending')],
+  function absentWorkbench(sessionId = 'lead-session') {
+    return new ApiError(404, {
+      error: 'NOT_FOUND',
+      message: `No Agent Teams workbench for session: ${sessionId}`,
     })
-    await useTeamStore.getState().fetchTeamForSession('later-team')
+  }
+
+  it('backs off confirmed absence per session, then discovers a workbench after expiry', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    try {
+      getWorkbenchForSessionMock.mockRejectedValue(absentWorkbench())
+      await useTeamStore.getState().fetchTeamForSession('lead-session')
+      now.mockReturnValue(60_999)
+      await useTeamStore.getState().fetchTeamForSession('lead-session')
+      expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(1)
+      getWorkbenchForSessionMock.mockRejectedValueOnce(absentWorkbench('other-session'))
+      await useTeamStore.getState().fetchTeamForSession('other-session')
+      expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(2)
+      const snapshot = workbench('new-v1', 'in_progress')
+      getWorkbenchForSessionMock.mockResolvedValue({
+        sessionId: 'lead-session', teamName: 'team-workbench', source: 'live', snapshots: [snapshot],
+      })
+      now.mockReturnValue(61_000)
+      await useTeamStore.getState().fetchTeamForSession('lead-session')
+      expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(3)
+      expect(useTeamStore.getState().workbenchesBySession['lead-session']?.snapshots).toEqual([snapshot])
+      now.mockReturnValue(66_000)
+      await useTeamStore.getState().fetchTeamForSession('lead-session')
+      expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(4)
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it.each([
+    new ApiError(500, { error: 'INTERNAL_ERROR', message: 'unavailable' }),
+    new ApiError(404, { error: 'NOT_FOUND', message: 'Unknown API route' }),
+    new ApiError(404, { error: 'NOT_FOUND', message: 'No Agent Teams workbench for session: other-session' }),
+    new ApiError(403, { error: 'FORBIDDEN', message: 'denied' }),
+    new TypeError('Failed to fetch'),
+    new Error('Request timed out after 120s'),
+  ])('does not cache a discovery failure as absence: %s', async (error) => {
+    getWorkbenchForSessionMock.mockRejectedValueOnce(error).mockResolvedValueOnce({
+      sessionId: 'lead-session', teamName: 'team-workbench', source: 'live',
+      snapshots: [workbench('v1', 'pending')],
+    })
+    await useTeamStore.getState().fetchTeamForSession('lead-session')
+    await useTeamStore.getState().fetchTeamForSession('lead-session')
     expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(2)
-    expect(useTeamStore.getState().workbenchesBySession['later-team']).toBeDefined()
-    vi.useRealTimers()
+    expect(useTeamStore.getState().teamNameBySession['lead-session']).toBe('team-workbench')
+  })
+
+  it('invalidates absence on reconnect, team creation and store reset', async () => {
+    getWorkbenchForSessionMock.mockRejectedValue(absentWorkbench())
+    await useTeamStore.getState().fetchTeamForSession('lead-session')
+    await useTeamStore.getState().fetchTeamForSession('lead-session', { force: true })
+    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(2)
+    getTeamMock.mockRejectedValue(new Error('not ready'))
+    getWorkbenchMock.mockRejectedValue(new Error('not ready'))
+    useTeamStore.getState().handleTeamCreated('team-workbench', 'lead-session')
+    await useTeamStore.getState().fetchTeamForSession('lead-session')
+    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(3)
+    useTeamStore.getState().clearTeam()
+    await useTeamStore.getState().fetchTeamForSession('lead-session')
+    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('clears cached absence when a named workbench update arrives', async () => {
+    getWorkbenchForSessionMock.mockRejectedValueOnce(absentWorkbench())
+    await useTeamStore.getState().fetchTeamForSession('lead-session')
+    getWorkbenchMock.mockResolvedValueOnce(workbench('v1', 'pending'))
+    await useTeamStore.getState().fetchWorkbench('team-workbench')
+    getWorkbenchForSessionMock.mockResolvedValueOnce({
+      sessionId: 'lead-session', teamName: 'team-workbench', source: 'live',
+      snapshots: [workbench('v2', 'completed')],
+    })
+    await useTeamStore.getState().fetchTeamForSession('lead-session')
+    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(2)
+    expect(useTeamStore.getState().workbenchesBySession['lead-session']?.snapshots.at(-1)?.version).toBe('v2')
+  })
+
+  it('does not retain a previous absence when forced discovery fails transiently', async () => {
+    getWorkbenchForSessionMock.mockRejectedValueOnce(absentWorkbench())
+    await useTeamStore.getState().fetchTeamForSession('lead-session')
+    getWorkbenchForSessionMock.mockRejectedValueOnce(new ApiError(500, { message: 'unavailable' }))
+    await useTeamStore.getState().fetchTeamForSession('lead-session', { force: true })
+    await useTeamStore.getState().fetchTeamForSession('lead-session')
+    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not let a stale missing response suppress discovery after creation or reset', async () => {
+    for (const invalidate of [
+      () => useTeamStore.getState().handleTeamCreated('team-workbench', 'lead-session'),
+      () => useTeamStore.getState().clearTeam(),
+    ]) {
+      useTeamStore.getState().clearTeam()
+      const pending = deferred<never>()
+      getWorkbenchForSessionMock.mockReset().mockReturnValueOnce(pending.promise)
+      getTeamMock.mockRejectedValue(new Error('not ready'))
+      getWorkbenchMock.mockRejectedValue(new Error('not ready'))
+      const discovery = useTeamStore.getState().fetchTeamForSession('lead-session')
+      invalidate()
+      pending.reject(absentWorkbench())
+      await discovery
+      getWorkbenchForSessionMock.mockResolvedValueOnce({
+        sessionId: 'lead-session', teamName: 'team-workbench', source: 'live',
+        snapshots: [workbench('v1', 'pending')],
+      })
+      await useTeamStore.getState().fetchTeamForSession('lead-session')
+      expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(2)
+      expect(useTeamStore.getState().teamNameBySession['lead-session']).toBe('team-workbench')
+    }
   })
 
   it('keeps each member model through the roster read instead of dropping it', async () => {
@@ -1977,6 +2152,303 @@ describe('teamStore workbench timeline', () => {
     expect(
       useTeamStore.getState().getMemberBySessionId('team-member:lead@team-workbench'),
     ).toMatchObject({ agentId: 'lead@team-workbench' })
+  })
+})
+
+describe('teamStore member recovery states', () => {
+  const WORKER_ID = 'worker@team-workbench'
+  const retry = { attempt: 2, max: 5, nextAt: 1_790_000_045_000 }
+
+  /** A workbench whose worker carries server-shaped fields, e.g. `status: 'failed'`. */
+  function workbenchWithWorker(version: string, worker: Record<string, unknown>): TeamWorkbenchSnapshot {
+    const base = workbench(version, 'in_progress')
+    return {
+      ...base,
+      team: {
+        ...base.team,
+        members: [
+          base.team.members[0]!,
+          { ...base.team.members[1]!, ...worker } as TeamWorkbenchSnapshot['team']['members'][number],
+        ],
+      },
+    }
+  }
+
+  function latestWorker() {
+    return useTeamStore.getState().workbenchesBySession['lead-session']?.snapshots.at(-1)
+      ?.team.members.find((member) => member.agentId === WORKER_ID)
+  }
+
+  beforeEach(() => {
+    vi.useRealTimers()
+    getMemberTranscriptMock.mockReset()
+    getWorkbenchForSessionMock.mockReset()
+    getWorkbenchMock.mockReset()
+    getTeamMock.mockReset()
+    sendMemberMessageMock.mockReset()
+    sendMemberMessageMock.mockResolvedValue({ ok: true })
+    useTeamStore.getState().clearTeam()
+    useChatStore.setState({ sessions: {} })
+    useTabStore.setState({ tabs: [], activeTabId: null })
+  })
+
+  afterEach(() => {
+    useTeamStore.getState().clearTeam()
+  })
+
+  it('reads stopped, failed and retrying members from the team roster', async () => {
+    getTeamMock.mockResolvedValue({
+      name: 'team-recovery',
+      leadAgentId: 'lead@team-recovery',
+      members: [
+        {
+          agentId: 'crashed@team-recovery',
+          name: 'crashed',
+          status: 'failed',
+          activity: 'stopped',
+          lastError: 'Restart failed: spawn ENOENT',
+        },
+        {
+          agentId: 'retrying@team-recovery',
+          name: 'retrying',
+          status: 'idle',
+          activity: 'idle',
+          lastError: 'Provider stream ended without message_stop',
+          autoRetry: retry,
+        },
+        {
+          // A malformed record must not invent a failure or a schedule.
+          agentId: 'garbled@team-recovery',
+          name: 'garbled',
+          status: 'idle',
+          activity: 'idle',
+          lastError: '   ',
+          autoRetry: { attempt: '2', max: 5, nextAt: 1 },
+        },
+      ],
+    })
+
+    await useTeamStore.getState().fetchTeamDetail('team-recovery')
+
+    const [crashed, retrying, garbled] = useTeamStore.getState().activeTeam?.members ?? []
+    expect(crashed).toMatchObject({
+      status: 'error',
+      activity: 'stopped',
+      lastError: 'Restart failed: spawn ENOENT',
+    })
+    expect(crashed?.autoRetry).toBeUndefined()
+    expect(retrying).toMatchObject({
+      status: 'idle',
+      activity: 'idle',
+      lastError: 'Provider stream ended without message_stop',
+      autoRetry: retry,
+    })
+    expect(garbled?.lastError).toBeUndefined()
+    expect(garbled?.autoRetry).toBeUndefined()
+  })
+
+  it('carries recovery state through live and archived workbench snapshots', async () => {
+    getWorkbenchMock.mockResolvedValue(workbenchWithWorker('v1', {
+      status: 'failed',
+      activity: 'idle',
+      lastError: 'Credit balance is too low',
+    }))
+    await useTeamStore.getState().fetchWorkbench('team-workbench')
+    expect(latestWorker()).toMatchObject({ status: 'error', lastError: 'Credit balance is too low' })
+
+    getWorkbenchForSessionMock.mockResolvedValue({
+      sessionId: 'lead-session',
+      teamName: 'team-workbench',
+      source: 'archive',
+      snapshots: [workbenchWithWorker('v2', { status: 'idle', activity: 'stopped', autoRetry: retry })],
+    })
+    await useTeamStore.getState().fetchTeamForSession('lead-session', { force: true })
+
+    // A snapshot that no longer records the failure has recovered from it.
+    expect(latestWorker()).toMatchObject({ status: 'idle', activity: 'stopped', autoRetry: retry })
+    expect(latestWorker()?.lastError).toBeUndefined()
+  })
+
+  it('applies watcher patches to every view, clearing on null and keeping what was omitted', () => {
+    const snapshot = workbench('v1', 'in_progress')
+    const memberSession = memberSessionId(WORKER_ID)
+    useTeamStore.setState({
+      activeTeam: snapshot.team,
+      memberTeamBySession: { [memberSession]: snapshot.team },
+      workbenchesBySession: {
+        'lead-session': { teamName: 'team-workbench', snapshots: [snapshot], loading: false, error: null },
+      },
+    })
+    const workerViews = () => {
+      const state = useTeamStore.getState()
+      return [
+        state.activeTeam,
+        state.memberTeamBySession[memberSession],
+        state.workbenchesBySession['lead-session']?.snapshots.at(-1)?.team,
+      ].map((team) => team?.members.find((member) => member.agentId === WORKER_ID))
+    }
+    const update = (patch: Partial<TeamMemberStatus>) => useTeamStore.getState().handleTeamUpdate(
+      'team-workbench',
+      [{ agentId: WORKER_ID, role: 'worker', status: 'idle', ...patch }],
+    )
+
+    update({
+      status: 'error',
+      activity: 'stopped',
+      lastError: 'Restart failed: spawn ENOENT',
+      autoRetry: null,
+    })
+    for (const worker of workerViews()) {
+      expect(worker).toMatchObject({
+        status: 'error',
+        activity: 'stopped',
+        lastError: 'Restart failed: spawn ENOENT',
+      })
+      expect(worker?.autoRetry).toBeUndefined()
+    }
+
+    update({ activity: 'idle', lastError: 'API Error: 529 overloaded', autoRetry: retry })
+    for (const worker of workerViews()) {
+      expect(worker).toMatchObject({
+        status: 'idle',
+        activity: 'idle',
+        lastError: 'API Error: 529 overloaded',
+        autoRetry: retry,
+      })
+    }
+
+    // A server that predates the failure fields says nothing about them.
+    update({ activity: 'active', status: 'running' })
+    for (const worker of workerViews()) {
+      expect(worker).toMatchObject({ lastError: 'API Error: 529 overloaded', autoRetry: retry })
+    }
+
+    update({ activity: 'idle', lastError: null, autoRetry: null })
+    for (const worker of workerViews()) {
+      expect(worker?.lastError).toBeUndefined()
+      expect(worker?.autoRetry).toBeUndefined()
+    }
+  })
+
+  it('shows a failed member busy while the turn that brings it back runs', async () => {
+    getMemberTranscriptMock.mockResolvedValue({ messages: [] })
+    getWorkbenchMock.mockResolvedValueOnce(workbenchWithWorker('v1', {
+      status: 'failed',
+      activity: 'idle',
+      lastError: 'Credit balance is too low',
+    }))
+    await useTeamStore.getState().fetchWorkbench('team-workbench')
+    const sessionId = memberSessionId(WORKER_ID)
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('idle')
+
+    // The runtime keeps the failure on record until the new turn succeeds.
+    getWorkbenchMock.mockResolvedValueOnce(workbenchWithWorker('v2', {
+      status: 'failed',
+      activity: 'active',
+      lastError: 'Credit balance is too low',
+    }))
+    await useTeamStore.getState().fetchWorkbench('team-workbench')
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('thinking')
+
+    getWorkbenchMock.mockResolvedValueOnce(workbenchWithWorker('v3', { status: 'idle', activity: 'idle' }))
+    await useTeamStore.getState().fetchWorkbench('team-workbench')
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('idle')
+  })
+
+  it('waits for a failed member to answer the message sent to recover it', async () => {
+    getMemberTranscriptMock.mockResolvedValue({ messages: [] })
+    getWorkbenchMock.mockResolvedValue(workbenchWithWorker('v1', {
+      status: 'failed',
+      activity: 'idle',
+      lastError: 'Credit balance is too low',
+    }))
+    await useTeamStore.getState().fetchWorkbench('team-workbench')
+    const sessionId = memberSessionId(WORKER_ID)
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+    expect(getMemberTranscriptMock).toHaveBeenCalledTimes(1)
+
+    await useTeamStore.getState().sendMessageToMember(sessionId, 'Credits topped up, please continue')
+
+    expect(sendMemberMessageMock).toHaveBeenCalledWith(
+      'team-workbench',
+      WORKER_ID,
+      'Credits topped up, please continue',
+    )
+    // The conversation keeps following the transcript, and the failure still
+    // on record is the one this message answers, so it does not end the wait.
+    expect(getMemberTranscriptMock).toHaveBeenCalledTimes(2)
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('thinking')
+
+    // A different failure since then means the recovery turn failed as well.
+    useTeamStore.getState().handleTeamUpdate('team-workbench', [{
+      agentId: WORKER_ID,
+      role: 'worker',
+      status: 'error',
+      activity: 'idle',
+      lastError: 'API Error: 401 invalid x-api-key',
+      autoRetry: null,
+    }])
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('idle')
+  })
+
+  it('stops waiting for a reply once the member fails after the message', async () => {
+    getMemberTranscriptMock.mockResolvedValue({ messages: [] })
+    getWorkbenchMock.mockResolvedValue(workbenchWithWorker('v1', { status: 'idle', activity: 'idle' }))
+    await useTeamStore.getState().fetchWorkbench('team-workbench')
+    const sessionId = memberSessionId(WORKER_ID)
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+
+    await useTeamStore.getState().sendMessageToMember(sessionId, 'Please review the API routes')
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('thinking')
+
+    useTeamStore.getState().handleTeamUpdate('team-workbench', [{
+      agentId: WORKER_ID,
+      role: 'worker',
+      status: 'error',
+      activity: 'idle',
+      lastError: 'Credit balance is too low',
+      autoRetry: null,
+    }])
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('idle')
+  })
+
+  it('stops waiting once a command the member ran shows up, even though it never replies', async () => {
+    const timestamp = new Date().toISOString()
+    getMemberTranscriptMock.mockResolvedValue({ messages: [] })
+    getWorkbenchMock.mockResolvedValue(workbenchWithWorker('v1', { status: 'idle', activity: 'idle' }))
+    await useTeamStore.getState().fetchWorkbench('team-workbench')
+    const sessionId = memberSessionId(WORKER_ID)
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+
+    await useTeamStore.getState().sendMessageToMember(sessionId, '/compact')
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('thinking')
+
+    // What the member's CLI records for /compact: a summary and the command, no reply.
+    getMemberTranscriptMock.mockResolvedValue({ messages: [
+      { id: 'boundary', type: 'system', content: 'Conversation compacted', timestamp },
+      { id: 'summary', type: 'user', content: 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary: reviewed the routes.', timestamp },
+      { id: 'command', type: 'user', content: '<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>', timestamp },
+      { id: 'output', type: 'user', content: '<local-command-stdout>Compacted </local-command-stdout>', timestamp },
+    ] })
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('idle')
+  })
+
+  it('keeps waiting for the reply to an ordinary message whose prompt already shows', async () => {
+    const timestamp = new Date().toISOString()
+    getMemberTranscriptMock.mockResolvedValue({ messages: [] })
+    getWorkbenchMock.mockResolvedValue(workbenchWithWorker('v1', { status: 'idle', activity: 'idle' }))
+    await useTeamStore.getState().fetchWorkbench('team-workbench')
+    const sessionId = memberSessionId(WORKER_ID)
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+
+    await useTeamStore.getState().sendMessageToMember(sessionId, 'compact the notes please')
+    getMemberTranscriptMock.mockResolvedValue({ messages: [
+      { id: 'echo', type: 'user', content: 'compact the notes please', timestamp },
+    ] })
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('thinking')
   })
 })
 

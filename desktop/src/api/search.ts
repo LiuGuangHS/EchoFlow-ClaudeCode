@@ -22,7 +22,6 @@ export type SessionMatch = {
 
 export type SessionSearchResult = {
   sessionId: string
-  archived?: boolean
   title: string
   projectPath: string
   workDir: string | null
@@ -44,7 +43,6 @@ export type SessionSearchOptions = {
   project?: string
   modifiedAfter?: string
   modifiedBefore?: string
-  includeArchived?: boolean
 }
 
 export const searchApi = {

@@ -16,6 +16,8 @@ NODE_MODULES_DIR="${DESKTOP_DIR}/node_modules"
 BUILD_IMAGE="node:22-bullseye"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
+  # The rebuilt module lands in build/Release, which node-pty loads before its
+  # platform prebuilds, so running this elsewhere would break the local terminal.
   echo "[rebuild-node-pty-linux] This script must run on Linux." >&2
   exit 1
 fi

@@ -20,8 +20,8 @@ vi.mock('@tauri-apps/plugin-shell', () => ({
   open: shellOpenMock,
 }))
 
-vi.mock('../../api/echoFlowOpenAIOAuth', () => ({
-  echoFlowOpenAIOAuthApi: {
+vi.mock('../../api/hahaOpenAIOAuth', () => ({
+  hahaOpenAIOAuthApi: {
     start: startMock,
     status: statusMock,
     logout: logoutMock,
@@ -33,11 +33,11 @@ vi.mock('@/lib/clipboard', () => ({
 }))
 
 import { ChatGPTOfficialLogin } from './ChatGPTOfficialLogin'
-import { useEchoFlowOpenAIOAuthStore } from '../../stores/echoFlowOpenAIOAuthStore'
+import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { browserHost } from '../../lib/desktopHost/browserHost'
 
-const initialOAuthState = useEchoFlowOpenAIOAuthStore.getState()
+const initialOAuthState = useHahaOpenAIOAuthStore.getState()
 
 describe('ChatGPTOfficialLogin', () => {
   beforeEach(() => {
@@ -49,7 +49,7 @@ describe('ChatGPTOfficialLogin', () => {
     copyTextToClipboardMock.mockReset()
     Reflect.deleteProperty(window, 'desktopHost')
     useSettingsStore.setState({ locale: 'en' })
-    useEchoFlowOpenAIOAuthStore.setState({
+    useHahaOpenAIOAuthStore.setState({
       ...initialOAuthState,
       status: null,
       isPolling: false,
@@ -60,8 +60,8 @@ describe('ChatGPTOfficialLogin', () => {
 
   afterEach(() => {
     act(() => {
-      useEchoFlowOpenAIOAuthStore.getState().stopPolling()
-      useEchoFlowOpenAIOAuthStore.setState(initialOAuthState)
+      useHahaOpenAIOAuthStore.getState().stopPolling()
+      useHahaOpenAIOAuthStore.setState(initialOAuthState)
     })
     vi.useRealTimers()
     cleanup()
@@ -95,6 +95,9 @@ describe('ChatGPTOfficialLogin', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Sign in with ChatGPT' }))
     })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'I understand, continue' }))
+    })
 
     expect(hostOpen).toHaveBeenCalledWith(authorizeUrl)
     expect(shellOpenMock).not.toHaveBeenCalled()
@@ -106,8 +109,8 @@ describe('ChatGPTOfficialLogin', () => {
     })
 
     expect(copyTextToClipboardMock).toHaveBeenCalledWith(authorizeUrl)
-    expect(useEchoFlowOpenAIOAuthStore.getState().error).toBeNull()
-    expect(useEchoFlowOpenAIOAuthStore.getState().isPolling).toBe(true)
+    expect(useHahaOpenAIOAuthStore.getState().error).toBeNull()
+    expect(useHahaOpenAIOAuthStore.getState().isPolling).toBe(true)
     expect(screen.queryByText(/Unable to open browser/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Copy authorization link' })).not.toBeInTheDocument()
   })
@@ -139,14 +142,51 @@ describe('ChatGPTOfficialLogin', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Sign in with ChatGPT' }))
     })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'I understand, continue' }))
+    })
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Copy authorization link' }))
     })
 
     expect(copyTextToClipboardMock).toHaveBeenCalledWith(authorizeUrl)
-    expect(useEchoFlowOpenAIOAuthStore.getState().isPolling).toBe(false)
+    expect(useHahaOpenAIOAuthStore.getState().isPolling).toBe(false)
     expect(screen.getByText(/Unable to copy authorization link/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Copy authorization link' })).toBeInTheDocument()
+  })
+
+  it('asks for risk confirmation before starting login and skips it on cancel', async () => {
+    const hostOpen = vi.fn().mockResolvedValue(undefined)
+    window.desktopHost = {
+      ...browserHost,
+      kind: 'electron',
+      isDesktop: true,
+      capabilities: { ...browserHost.capabilities, shell: true },
+      shell: { ...browserHost.shell, open: hostOpen },
+    }
+    statusMock.mockResolvedValue({ loggedIn: false })
+    startMock.mockResolvedValue({
+      authorizeUrl: 'https://chatgpt.com/oauth/authorize?state=openai-state',
+      state: 'openai-state',
+    })
+
+    render(<ChatGPTOfficialLogin />)
+    await screen.findByRole('button', { name: 'Sign in with ChatGPT' })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Sign in with ChatGPT' }))
+    })
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByText('Relatively low')).toBeInTheDocument()
+    expect(startMock).not.toHaveBeenCalled()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    })
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(startMock).not.toHaveBeenCalled()
+    expect(hostOpen).not.toHaveBeenCalled()
   })
 })

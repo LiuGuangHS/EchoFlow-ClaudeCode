@@ -5,9 +5,9 @@
  * ---------------
  * The native Computer Use helper refuses commands unless its caller chain is
  * cryptographically the desktop app: `ClientAttestation.swift` requires the
- * host (`com.echoflow.code.desktop`), the sidecar
- * (`com.echoflow.code.desktop.sidecar`) and the helper
- * (`dev.echoflow.cu-helper`) to share one signing certificate — same team, same
+ * host (`com.claude-code-haha.desktop`), the sidecar
+ * (`com.claude-code-haha.desktop.sidecar`) and the helper
+ * (`dev.cchaha.cu-helper`) to share one signing certificate — same team, same
  * leaf. If any link is ad-hoc or signed by a different cert, every helper call
  * returns `unauthorized_client` and Computer Use is dead in the water.
  *
@@ -38,7 +38,7 @@ export function codesignTimestampArgument(identity: SigningIdentity | null): '--
 }
 
 /** The fixed code-signing identifier the helper's attestation policy expects. */
-export const SIDECAR_SIGNING_IDENTIFIER = 'com.echoflow.code.desktop.sidecar'
+export const SIDECAR_SIGNING_IDENTIFIER = 'com.claude-code-haha.desktop.sidecar'
 
 /**
  * Pick a stable signing identity out of `security find-identity -v -p codesigning`

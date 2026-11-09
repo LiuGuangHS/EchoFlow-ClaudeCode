@@ -1,10 +1,13 @@
-import type { ModelSlot } from '@/lib/providerModelContext'
+import { MODEL_SLOTS, type ModelSlot } from '@/lib/providerModelContext'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { ArrowRight, Check, ChevronDown } from 'lucide-react'
 import {
-  BUNDLED_PROVIDER_PRESETS,
-  getBundledPresetReasoningProviderKind,
-} from '../../config/providerPresets'
+  COMPOSER_MENU_ITEM,
+  COMPOSER_MENU_ITEM_ACTIVE,
+  COMPOSER_MENU_SECTION,
+} from '@/components/chat/composerMenuStyles'
+import { getBundledPresetReasoningProviderKind } from '../../config/providerPresets'
 import { OFFICIAL_MODELS } from '../../constants/modelCatalog'
 import {
   OPENAI_OFFICIAL_MODELS,
@@ -13,41 +16,48 @@ import {
 import { useTranslation } from '../../i18n'
 import { useChatStore } from '../../stores/chatStore'
 import { useProviderStore } from '../../stores/providerStore'
+import { formatTokenLimit, isMagpieProvider, useMagpieStore } from '../../stores/magpieStore'
 import { DRAFT_RUNTIME_SELECTION_KEY, useSessionRuntimeStore } from '../../stores/sessionRuntimeStore'
 import { useSettingsStore } from '../../stores/settingsStore'
-import type { SavedProvider } from '../../types/provider'
+import type { MagpieModel, ModelMapping, SavedProvider } from '../../types/provider'
 import type { RuntimeSelection } from '../../types/runtime'
 import type { ModelInfo, ReasoningEffortLevel } from '../../types/settings'
 import { useDismissable } from '@/hooks/useDismissable'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
 import { isDesktopRuntime } from '../../lib/desktopRuntime'
 import {
+  getProviderModelCapabilityOverride,
   normalizeRuntimeSelection,
   reconcileRuntimeSelection,
   resolveDefaultRuntimeSelection,
   resolveProviderSlotModelId,
 } from '../../lib/runtimeSelection'
-import { useEchoFlowOAuthStore } from '../../stores/echoFlowOAuthStore'
-import { useEchoFlowOpenAIOAuthStore } from '../../stores/echoFlowOpenAIOAuthStore'
-import { useEchoFlowGrokOAuthStore } from '../../stores/echoFlowGrokOAuthStore'
+import { useHahaOAuthStore } from '../../stores/hahaOAuthStore'
+import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
+import { useHahaGrokOAuthStore } from '../../stores/hahaGrokOAuthStore'
 import {
   GROK_OFFICIAL_MODELS,
   GROK_OFFICIAL_PROVIDER_ID,
 } from '../../constants/grokOfficialProvider'
+import { useHahaDeepSeekOAuthStore } from '../../stores/hahaDeepSeekOAuthStore'
+import {
+  DEEPSEEK_ACCOUNT_CATALOG_MODELS,
+  DEEPSEEK_ACCOUNT_PROVIDER_ID,
+  buildDeepSeekAccountProvider,
+} from '../../constants/deepseekAccountProvider'
 import { MobileBottomSheet } from '@/components/ui/MobileBottomSheet'
 import { SearchField } from '@/components/ui/SearchField'
 import { ReasoningEffortPopover } from './ReasoningEffortPopover'
 import { useUIStore } from '../../stores/uiStore'
 import { SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
 import {
-  getModelReasoningCapabilityOverride,
   isOpenAIReasoningModel,
   isModelReasoningEffort,
   normalizeModelReasoningEffort,
   resolveModelReasoningProfile,
 } from '../../../../src/shared/modelReasoning'
 
-type ProviderChoice = {
+export type ModelProviderChoice = {
   providerId: string | null
   providerName: string
   isDefault: boolean
@@ -63,12 +73,28 @@ type Props = {
    * feature to prepend semantic choices such as an inherited model.
    */
   models?: ModelInfo[]
+  /** Server-authoritative catalog for delegation, without changing global provider state. */
+  runtimeChoices?: ModelProviderChoice[]
   ariaLabel?: string
   appearance?: 'toolbar' | 'field'
   runtimeSelection?: RuntimeSelection
   onRuntimeSelectionChange?: (selection: RuntimeSelection) => void
   runtimeKey?: string
   lockedProviderId?: string | null
+  /** Lets a controlled runtime picker edit effort too, as the composer does. */
+  effortEditable?: boolean
+  /**
+   * Receives effort changes on their own, for a picker that stands in for
+   * several runtimes and must not copy its provider and model onto them.
+   */
+  onEffortChange?: (level: ReasoningEffortLevel) => void
+  /**
+   * Choices listed above the providers that are not provider-backed, e.g. an
+   * Agent following its session. Their selections keep the given providerId.
+   */
+  leadingChoices?: ModelProviderChoice[]
+  /** List only saved API providers, leaving out account sign-ins. */
+  savedProvidersOnly?: boolean
   disabled?: boolean
   compact?: boolean
   fluid?: boolean
@@ -91,36 +117,58 @@ const DROPDOWN_GAP = 8
 const VIEWPORT_MARGIN = 16
 const DROPDOWN_MAX_HEIGHT = 420
 const DROPDOWN_MIN_HEIGHT = 180
-const PROVIDER_PRESET_DEFAULT_ENVS = new Map(
-  BUNDLED_PROVIDER_PRESETS.map(preset => [preset.id, preset.defaultEnv ?? {}]),
-)
-
-function getProviderModelCapabilityOverride(
-  provider: SavedProvider,
-  modelId: string,
-): string | undefined {
-  return getModelReasoningCapabilityOverride(
-    modelId,
-    {
-      ...provider.models,
-      haiku: resolveProviderSlotModelId(provider, 'haiku'),
-      sonnet: resolveProviderSlotModelId(provider, 'sonnet'),
-      opus: resolveProviderSlotModelId(provider, 'opus'),
-    },
-    PROVIDER_PRESET_DEFAULT_ENVS.get(provider.presetId) ?? {},
-  )
-}
-
 function officialChoices(
   providerId: string | null,
   models: ModelInfo[],
   isDefault: boolean,
   officialName: string,
-): ProviderChoice {
+): ModelProviderChoice {
   return {
     providerId,
     providerName: officialName,
     isDefault,
+    models,
+  }
+}
+
+function baseModelId(id: string): string {
+  return id.trim().replace(/\[1m\]$/i, '')
+}
+
+/**
+ * The account login keeps the API-key provider's alias rows (slot labels,
+ * reasoning options) for the mapping the user saved in Settings, named the way
+ * the account names its models, followed by
+ * the account models no alias points at. While the account is the active
+ * provider, `availableModels` carries the server's live `/models` listing.
+ */
+function deepSeekAccountChoice(
+  activeId: string | null,
+  providerName: string,
+  labels: Record<ModelSlot, string>,
+  availableModels: ModelInfo[],
+  savedModels: ModelMapping,
+): ModelProviderChoice {
+  const provider = buildDeepSeekAccountProvider(savedModels)
+  const isActive = activeId === DEEPSEEK_ACCOUNT_PROVIDER_ID
+  const catalog = isActive && availableModels.length > 0
+    ? availableModels
+    : DEEPSEEK_ACCOUNT_CATALOG_MODELS
+  const namesByBaseId = new Map(catalog.map((model) => [baseModelId(model.id), model.name]))
+  const models = buildProviderModels(provider, labels).map((model) => ({
+    ...model,
+    name: namesByBaseId.get(baseModelId(model.id)) ?? model.name,
+  }))
+  const mappedBaseIds = new Set(models.map((model) => baseModelId(model.id)))
+  for (const listed of catalog) {
+    if (mappedBaseIds.has(baseModelId(listed.id))) continue
+    mappedBaseIds.add(baseModelId(listed.id))
+    models.push(buildProviderModelRow(provider, listed.id, listed.name, ''))
+  }
+  return {
+    providerId: DEEPSEEK_ACCOUNT_PROVIDER_ID,
+    providerName,
+    isDefault: isActive,
     models,
   }
 }
@@ -141,14 +189,10 @@ function buildProviderModels(
   provider: SavedProvider,
   labels: Record<ModelSlot, string>,
 ): ModelInfo[] {
-  const entries: Array<{ id: string; label: string }> = [
-    ...(provider.availableModels ?? []).map(model => ({ id: model.id, label: provider.credentialSource?.tokenName ? `EchoFlow · ${provider.credentialSource.tokenName}` : provider.name })),
-    { id: resolveProviderSlotModelId(provider, 'main'), label: labels.main },
-    { id: resolveProviderSlotModelId(provider, 'fable'), label: labels.fable },
-    { id: resolveProviderSlotModelId(provider, 'haiku'), label: labels.haiku },
-    { id: resolveProviderSlotModelId(provider, 'sonnet'), label: labels.sonnet },
-    { id: resolveProviderSlotModelId(provider, 'opus'), label: labels.opus },
-  ]
+  const entries = MODEL_SLOTS.map(slot => ({
+    id: resolveProviderSlotModelId(provider, slot),
+    label: labels[slot],
+  }))
 
   const byId = new Map<string, { id: string; labels: string[] }>()
   for (const entry of entries) {
@@ -163,24 +207,47 @@ function buildProviderModels(
     byId.set(entry.id, { id: entry.id, labels: [entry.label] })
   }
 
-  return [...byId.values()].map((entry) => {
-    const reasoningProfile = resolveModelReasoningProfile(
-      entry.id,
-      provider.apiFormat,
-      getProviderModelCapabilityOverride(provider, entry.id),
-      getBundledPresetReasoningProviderKind(provider.presetId),
-    )
-    return {
-      id: entry.id,
-      name: entry.id,
-      description: entry.labels.join(' · '),
-      context: '',
-      supportedReasoningEfforts: [...(reasoningProfile?.supportedReasoningEfforts ?? [])],
-      ...(reasoningProfile?.defaultReasoningEffort
-        ? { defaultReasoningEffort: reasoningProfile.defaultReasoningEffort }
-        : {}),
-    }
-  })
+  return [...byId.values()].map((entry) =>
+    buildProviderModelRow(provider, entry.id, entry.id, entry.labels.join(' · ')))
+}
+
+/**
+ * Every model Magpie serves, in its catalog's order, then any mapped slot the
+ * catalog no longer lists (so the provider's own choice never disappears).
+ */
+function buildMagpieProviderModels(
+  provider: SavedProvider,
+  labels: Record<ModelSlot, string>,
+  catalog: readonly MagpieModel[],
+  describe: (model: MagpieModel) => string,
+): ModelInfo[] {
+  const rows = catalog.map((model) => buildProviderModelRow(provider, model.runtimeId, model.id, describe(model)))
+  const listed = new Set(rows.map((row) => row.id))
+  return [...rows, ...buildProviderModels(provider, labels).filter((row) => !listed.has(row.id))]
+}
+
+function buildProviderModelRow(
+  provider: SavedProvider,
+  id: string,
+  name: string,
+  description: string,
+): ModelInfo {
+  const reasoningProfile = resolveModelReasoningProfile(
+    id,
+    provider.apiFormat,
+    getProviderModelCapabilityOverride(provider, id),
+    getBundledPresetReasoningProviderKind(provider.presetId),
+  )
+  return {
+    id,
+    name,
+    description,
+    context: '',
+    supportedReasoningEfforts: [...(reasoningProfile?.supportedReasoningEfforts ?? [])],
+    ...(reasoningProfile?.defaultReasoningEffort
+      ? { defaultReasoningEffort: reasoningProfile.defaultReasoningEffort }
+      : {}),
+  }
 }
 
 function buildProviderChoices(
@@ -190,11 +257,16 @@ function buildProviderChoices(
   officialName: string,
   openAIOfficialName: string,
   grokOfficialName: string,
+  deepSeekAccountName: string,
+  deepSeekAccountModels: ModelMapping,
   labels: Record<ModelSlot, string>,
   claudeOfficialLoggedIn: boolean,
   openAIOfficialLoggedIn: boolean,
   grokOfficialLoggedIn: boolean,
-): ProviderChoice[] {
+  deepSeekAccountLoggedIn: boolean,
+  magpieCatalog: readonly MagpieModel[] | null = null,
+  describeMagpieModel: (model: MagpieModel) => string = (model) => model.displayName,
+): ModelProviderChoice[] {
   const claudeOfficialModels = activeId === null && availableModels.length > 0
     ? mergeOfficialModels(availableModels)
     : OFFICIAL_MODELS
@@ -205,7 +277,7 @@ function buildProviderChoices(
     ? availableModels
     : GROK_OFFICIAL_MODELS
 
-  const choices: ProviderChoice[] = []
+  const choices: ModelProviderChoice[] = []
 
   if (claudeOfficialLoggedIn) {
     choices.push(officialChoices(null, claudeOfficialModels, activeId === null, officialName))
@@ -226,13 +298,18 @@ function buildProviderChoices(
       grokOfficialName,
     ))
   }
+  if (deepSeekAccountLoggedIn) {
+    choices.push(deepSeekAccountChoice(activeId, deepSeekAccountName, labels, availableModels, deepSeekAccountModels))
+  }
 
   for (const provider of providers) {
     choices.push({
       providerId: provider.id,
       providerName: provider.name,
       isDefault: activeId === provider.id,
-      models: buildProviderModels(provider, labels),
+      models: isMagpieProvider(provider) && magpieCatalog?.length
+        ? buildMagpieProviderModels(provider, labels, magpieCatalog, describeMagpieModel)
+        : buildProviderModels(provider, labels),
     })
   }
 
@@ -248,12 +325,17 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
   value,
   onChange,
   models,
+  runtimeChoices,
   ariaLabel,
   appearance = 'toolbar',
   runtimeSelection: controlledRuntimeSelection,
   onRuntimeSelectionChange,
   runtimeKey,
   lockedProviderId,
+  effortEditable = false,
+  onEffortChange,
+  leadingChoices,
+  savedProvidersOnly = false,
   disabled = false,
   compact = false,
   fluid = false,
@@ -270,21 +352,21 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
   const {
     providers,
     activeId,
+    deepSeekAccountModels,
     hasLoadedProviders,
     isLoading: providersLoading,
     fetchProviders,
   } = useProviderStore()
-  const claudeOAuthStatus = useEchoFlowOAuthStore((s) => s.status)
-  const fetchClaudeOAuthStatus = useEchoFlowOAuthStore((s) => s.fetchStatus)
-  const openAIOAuthStatus = useEchoFlowOpenAIOAuthStore((s) => s.status)
-  const fetchOpenAIOAuthStatus = useEchoFlowOpenAIOAuthStore((s) => s.fetchStatus)
-  const grokOAuthStatus = useEchoFlowGrokOAuthStore((s) => s.status)
-  const fetchGrokOAuthStatus = useEchoFlowGrokOAuthStore((s) => s.fetchStatus)
+  const claudeOAuthStatus = useHahaOAuthStore((s) => s.status)
+  const fetchClaudeOAuthStatus = useHahaOAuthStore((s) => s.fetchStatus)
+  const openAIOAuthStatus = useHahaOpenAIOAuthStore((s) => s.status)
+  const fetchOpenAIOAuthStatus = useHahaOpenAIOAuthStore((s) => s.fetchStatus)
+  const grokOAuthStatus = useHahaGrokOAuthStore((s) => s.status)
+  const fetchGrokOAuthStatus = useHahaGrokOAuthStore((s) => s.fetchStatus)
+  const deepSeekOAuthStatus = useHahaDeepSeekOAuthStore((s) => s.status)
+  const fetchDeepSeekOAuthStatus = useHahaDeepSeekOAuthStore((s) => s.fetchStatus)
   const runtimeSelection = useSessionRuntimeStore((state) =>
     runtimeKey ? state.selections[runtimeKey] : undefined,
-  )
-  const runtimeRequestStatus = useSessionRuntimeStore((state) =>
-    runtimeKey ? state.runtimeRequestStatusBySessionId[runtimeKey] : undefined,
   )
   const [open, setOpen] = useState(false)
   const [effortOpen, setEffortOpen] = useState(false)
@@ -315,10 +397,11 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
   const isRuntimeScoped =
     !isControlled &&
     (runtimeKey !== undefined || onRuntimeSelectionChange !== undefined)
-  const canEditRuntimeEffort = runtimeKey !== undefined
+  const canEditRuntimeEffort = runtimeKey !== undefined || effortEditable
 
   useEffect(() => {
     if (
+      runtimeChoices !== undefined ||
       !isRuntimeScoped ||
       hasLoadedProviders ||
       providersLoading ||
@@ -326,15 +409,25 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
     ) return
     requestedProvidersRef.current = true
     void fetchProviders()
-  }, [fetchProviders, hasLoadedProviders, isRuntimeScoped, providersLoading])
+  }, [fetchProviders, hasLoadedProviders, isRuntimeScoped, providersLoading, runtimeChoices])
 
   useEffect(() => {
-    if (!isRuntimeScoped || !open || requestedOAuthStatusRef.current) return
+    if (runtimeChoices !== undefined || savedProvidersOnly || !isRuntimeScoped || !open || requestedOAuthStatusRef.current) return
     requestedOAuthStatusRef.current = true
     void fetchClaudeOAuthStatus()
     void fetchOpenAIOAuthStatus()
     void fetchGrokOAuthStatus()
-  }, [fetchClaudeOAuthStatus, fetchGrokOAuthStatus, fetchOpenAIOAuthStatus, isRuntimeScoped, open])
+    void fetchDeepSeekOAuthStatus()
+  }, [
+    fetchClaudeOAuthStatus,
+    fetchDeepSeekOAuthStatus,
+    fetchGrokOAuthStatus,
+    fetchOpenAIOAuthStatus,
+    isRuntimeScoped,
+    runtimeChoices,
+    savedProvidersOnly,
+    open,
+  ])
 
   const closeSelector = useCallback(() => setOpen(false), [])
 
@@ -411,20 +504,52 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
     [t],
   )
 
+  const magpieCatalog = useMagpieStore((store) => store.state?.models ?? null)
+  const describeMagpieModel = useCallback((model: MagpieModel) => [
+    model.displayName,
+    model.contextWindow !== undefined
+      ? t('settings.providers.magpie.contextTag', { size: formatTokenLimit(model.contextWindow) })
+      : model.isGroup ? null : t('settings.providers.magpie.unknownContext'),
+    model.reasoningEfforts.length > 0 ? t('settings.providers.magpie.reasoningTag') : null,
+  ].filter(Boolean).join(' · '), [t])
+
   const providerChoices = useMemo(
-    () => buildProviderChoices(
-      providers,
+    () => [...(leadingChoices ?? []), ...(runtimeChoices ?? buildProviderChoices(
+      savedProvidersOnly
+        ? providers.filter((provider) => (provider.runtimeKind ?? 'anthropic_compatible') === 'anthropic_compatible')
+        : providers,
       activeId,
       availableModels,
       t('settings.providers.officialName'),
       t('settings.providers.openaiOfficialName'),
       t('settings.providers.grokOfficialName'),
+      t('settings.providers.deepseekAccountName'),
+      deepSeekAccountModels,
       roleLabels,
-      claudeOAuthStatus?.loggedIn === true,
-      openAIOAuthStatus?.loggedIn === true,
-      grokOAuthStatus?.loggedIn === true,
-    ),
-    [activeId, availableModels, providers, roleLabels, t, claudeOAuthStatus, grokOAuthStatus, openAIOAuthStatus],
+      claudeOAuthStatus?.loggedIn === true && !savedProvidersOnly,
+      openAIOAuthStatus?.loggedIn === true && !savedProvidersOnly,
+      grokOAuthStatus?.loggedIn === true && !savedProvidersOnly,
+      deepSeekOAuthStatus?.loggedIn === true && !savedProvidersOnly,
+      magpieCatalog,
+      describeMagpieModel,
+    ))],
+    [
+      magpieCatalog,
+      describeMagpieModel,
+      leadingChoices,
+      savedProvidersOnly,
+      runtimeChoices,
+      activeId,
+      availableModels,
+      providers,
+      deepSeekAccountModels,
+      roleLabels,
+      t,
+      claudeOAuthStatus,
+      grokOAuthStatus,
+      openAIOAuthStatus,
+      deepSeekOAuthStatus,
+    ],
   )
   const normalizedSearchQuery = searchQuery.trim().toLocaleLowerCase()
   const selectableModels = isControlled && models ? models : availableModels
@@ -459,7 +584,12 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
       storeModel?.id,
     )
     : null
-  const resolvedRuntimeSelection = requestedRuntimeSelection
+  const isLeadingSelection = !!requestedRuntimeSelection && !!leadingChoices?.some(
+    (choice) => choice.providerId === requestedRuntimeSelection.providerId,
+  )
+  const resolvedRuntimeSelection = runtimeChoices !== undefined || isLeadingSelection
+    ? requestedRuntimeSelection
+    : requestedRuntimeSelection
     ? reconcileRuntimeSelection(requestedRuntimeSelection, {
       providers, activeId, hasLoadedProviders: hasLoadedProviders && lockedProviderId === undefined,
       currentModelId: storeModel?.id,
@@ -481,17 +611,26 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
           ? officialChoices(OPENAI_OFFICIAL_PROVIDER_ID, activeId === OPENAI_OFFICIAL_PROVIDER_ID && availableModels.length ? availableModels : OPENAI_OFFICIAL_MODELS, activeId === OPENAI_OFFICIAL_PROVIDER_ID, t('settings.providers.openaiOfficialName'))
           : activeRuntimeSelection.providerId === GROK_OFFICIAL_PROVIDER_ID
             ? officialChoices(GROK_OFFICIAL_PROVIDER_ID, activeId === GROK_OFFICIAL_PROVIDER_ID && availableModels.length ? availableModels : GROK_OFFICIAL_MODELS, activeId === GROK_OFFICIAL_PROVIDER_ID, t('settings.providers.grokOfficialName'))
-            : null)
+            : activeRuntimeSelection.providerId === DEEPSEEK_ACCOUNT_PROVIDER_ID
+              ? deepSeekAccountChoice(activeId, t('settings.providers.deepseekAccountName'), roleLabels, availableModels, deepSeekAccountModels)
+              : null)
     : null
 
   const selectedRuntimeModel = activeRuntimeSelection
-    ? selectedProviderChoice?.models.find((model) => model.id === activeRuntimeSelection.modelId)
-      ?? {
-        id: activeRuntimeSelection.modelId,
-        name: activeRuntimeSelection.modelId,
-        description: '',
-        context: '',
-      }
+    ? {
+      ...(selectedProviderChoice?.models.find((model) => model.id === activeRuntimeSelection.modelId)
+        // Account defaults can change their 1M marker without changing the
+        // catalog identity. Resolve metadata while retaining the session ID.
+        ?? (activeRuntimeSelection.providerId === DEEPSEEK_ACCOUNT_PROVIDER_ID
+          ? selectedProviderChoice?.models.find((model) => baseModelId(model.id) === baseModelId(activeRuntimeSelection.modelId))
+          : undefined)
+        ?? {
+          name: activeRuntimeSelection.modelId,
+          description: '',
+          context: '',
+        }),
+      id: activeRuntimeSelection.modelId,
+    }
     : null
 
   const selectedRuntimeProvider = activeRuntimeSelection?.providerId
@@ -510,30 +649,28 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
   const buttonProviderLabel = isRuntimeScoped
     ? selectedProviderChoice?.providerName ?? null
     : null
-  const runtimeRequestStatusMessage = runtimeRequestStatus === 'pending'
-    ? t('model.applyingConfiguration')
-    : runtimeRequestStatus === 'unconfirmed'
-      ? t('model.configurationUnconfirmed')
-      : runtimeRequestStatus === 'failed'
-        ? t('model.configurationApplyFailed')
-        : null
   const supportedRuntimeEfforts = selectedRuntimeModel?.supportedReasoningEfforts
-  const requestedRuntimeEffort = activeRuntimeSelection?.effortLevel
+  const requestedRuntimeEffort = activeRuntimeSelection?.effortLevel ?? effortLevel
   const selectedRuntimeEffort = selectedRuntimeModel && !runtimeEffortSuppressedByProvider
     ? supportedRuntimeEfforts?.length === 0
       ? undefined
-      : requestedRuntimeEffort && (
-          supportedRuntimeEfforts === undefined || supportedRuntimeEfforts.includes(requestedRuntimeEffort)
-        )
+      : supportedRuntimeEfforts === undefined || supportedRuntimeEfforts.includes(requestedRuntimeEffort)
         ? requestedRuntimeEffort
-        : selectedRuntimeModel.defaultReasoningEffort
-          ?? (supportedRuntimeEfforts === undefined || supportedRuntimeEfforts.includes(effortLevel)
-            ? effortLevel
-            : supportedRuntimeEfforts[0])
+        : selectedRuntimeModel.defaultReasoningEffort ?? supportedRuntimeEfforts[0]
+    : undefined
+  // A controlled runtime without an effort launches on the model's own
+  // default, which the global composer default must not pose as.
+  const runtimeEffortUnset = runtimeKey === undefined &&
+    controlledRuntimeSelection !== undefined &&
+    controlledRuntimeSelection.effortLevel === undefined
+  const runtimeEffortLabel = selectedRuntimeEffort
+    ? runtimeEffortUnset ? t('model.effortUnset') : effortLabels[selectedRuntimeEffort]
     : undefined
   const runtimeEffortOptions = supportedRuntimeEfforts === undefined
     ? EFFORT_OPTIONS.filter((option) => option.value !== 'xhigh')
     : EFFORT_OPTIONS.filter((option) => supportedRuntimeEfforts.includes(option.value))
+  const showEffortPill = canEditRuntimeEffort && !!selectedRuntimeEffort && runtimeEffortOptions.length > 0
+  const showOpenAIFastMode = activeRuntimeSelection?.providerId === OPENAI_OFFICIAL_PROVIDER_ID && lockedProviderId === undefined
 
   const navigateToProviderSettings = useCallback(() => {
     setOpen(false)
@@ -544,16 +681,21 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
   const openSelector = useCallback(() => {
     if (disabled) return
     setEffortOpen(false)
+    // Magpie's catalog changes in Magpie; read it again (the server caches it briefly).
+    if (useProviderStore.getState().providers.some(isMagpieProvider)) {
+      void useMagpieStore.getState().refresh()
+    }
 
-    if (!isRuntimeScoped || providerChoices.length > 0) {
+    if (runtimeChoices !== undefined || !isRuntimeScoped || providerChoices.length > 0) {
       setOpen(true)
       return
     }
 
-    const claudeStatus = useEchoFlowOAuthStore.getState().status
-    const openAIStatus = useEchoFlowOpenAIOAuthStore.getState().status
-    const grokStatus = useEchoFlowGrokOAuthStore.getState().status
-    const statuses = [claudeStatus, openAIStatus, grokStatus]
+    const claudeStatus = useHahaOAuthStore.getState().status
+    const openAIStatus = useHahaOpenAIOAuthStore.getState().status
+    const grokStatus = useHahaGrokOAuthStore.getState().status
+    const deepSeekStatus = useHahaDeepSeekOAuthStore.getState().status
+    const statuses = [claudeStatus, openAIStatus, grokStatus, deepSeekStatus]
     const providerState = useProviderStore.getState()
     if (providerState.providers.length > 0) {
       setOpen(true)
@@ -583,11 +725,13 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
         fetchClaudeOAuthStatus(),
         fetchOpenAIOAuthStatus(),
         fetchGrokOAuthStatus(),
+        fetchDeepSeekOAuthStatus(),
       ])
       const hasOfficialLogin = [
-        useEchoFlowOAuthStore.getState().status,
-        useEchoFlowOpenAIOAuthStore.getState().status,
-        useEchoFlowGrokOAuthStore.getState().status,
+        useHahaOAuthStore.getState().status,
+        useHahaOpenAIOAuthStore.getState().status,
+        useHahaGrokOAuthStore.getState().status,
+        useHahaDeepSeekOAuthStore.getState().status,
       ].some((status) => status?.loggedIn === true)
       if (hasOfficialLogin) {
         setOpen(true)
@@ -598,11 +742,13 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
   }, [
     disabled,
     fetchClaudeOAuthStatus,
+    fetchDeepSeekOAuthStatus,
     fetchGrokOAuthStatus,
     fetchOpenAIOAuthStatus,
     isRuntimeScoped,
     navigateToProviderSettings,
     providerChoices.length,
+    runtimeChoices,
   ])
 
   useImperativeHandle(selectorRef, () => ({
@@ -611,31 +757,19 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
 
   const handleRuntimeSelect = (selection: RuntimeSelection) => {
     if (lockedProviderId !== undefined && selection.providerId !== lockedProviderId) return
-    const runtimeStore = useSessionRuntimeStore.getState()
-    const currentSelection = controlledRuntimeSelection ?? (
-      runtimeKey ? runtimeStore.selections[runtimeKey] : undefined
-    )
     const provider = providers.find((entry) => entry.id === selection.providerId)
-    const normalizedSelection = normalizeRuntimeSelection(
+    const isLeadingChoice = !!leadingChoices?.some((choice) => choice.providerId === selection.providerId)
+    const normalizedSelection = runtimeChoices !== undefined || isLeadingChoice ? selection : normalizeRuntimeSelection(
       selection,
       provider?.apiFormat,
       provider ? getBundledPresetReasoningProviderKind(provider.presetId) : undefined,
     )
     if (lockedProviderId !== undefined) normalizedSelection.effortLevel = activeRuntimeSelection?.effortLevel
-    if (
-      currentSelection &&
-      currentSelection.providerId === normalizedSelection.providerId &&
-      currentSelection.modelId === normalizedSelection.modelId &&
-      currentSelection.effortLevel === normalizedSelection.effortLevel
-    ) {
-      setOpen(false)
-      return
-    }
     onRuntimeSelectionChange?.(normalizedSelection)
     if (runtimeKey) {
-      runtimeStore.setSelection(runtimeKey, normalizedSelection)
+      useSessionRuntimeStore.getState().setSelection(runtimeKey, normalizedSelection)
       if (runtimeKey !== DRAFT_RUNTIME_SELECTION_KEY) {
-        useChatStore.getState().setSessionModelConfig(runtimeKey, normalizedSelection)
+        useChatStore.getState().setSessionRuntime(runtimeKey, normalizedSelection)
       }
     }
     setOpen(false)
@@ -643,10 +777,19 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
 
   const handleRuntimeEffortSelect = (level: ReasoningEffortLevel) => {
     if (!activeRuntimeSelection || lockedProviderId !== undefined) return
+    if (onEffortChange) {
+      onEffortChange(level)
+      return
+    }
     handleRuntimeSelect({
       ...activeRuntimeSelection,
       effortLevel: level,
     })
+  }
+
+  const handleOpenAIFastModeChange = (enabled: boolean) => {
+    if (!activeRuntimeSelection || !showOpenAIFastMode) return
+    handleRuntimeSelect({ ...activeRuntimeSelection, openAIFastMode: enabled })
   }
 
   const hasMatchingModels = isRuntimeScoped
@@ -672,39 +815,39 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
           through it (and above the panel edge). As a sibling above the
           scrollport, the list is hard-clipped below the header instead. */}
       {!isMobileBrowser && (
-        <div className="flex-none border-b border-[var(--color-border)] px-3.5 pb-2 pt-3">
-          <div className="mb-2 px-1 text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-tertiary)]">
+        <div className="flex-none border-b border-[var(--color-border)] px-1 pb-1.5">
+          <div className={COMPOSER_MENU_SECTION}>
             {t('model.configuration')}
           </div>
           {searchField}
         </div>
       )}
-      <div className={`overflow-y-auto ${isMobileBrowser ? 'p-1' : 'min-h-0 flex-1 p-1.5'}`}>
+      <div className={`overflow-y-auto ${isMobileBrowser ? 'p-1' : 'min-h-0 flex-1 p-1'}`}>
         {!hasMatchingModels && (
           <div
             role="status"
-            className={`flex items-center justify-center px-4 text-center text-sm text-[var(--color-text-tertiary)] ${isMobileBrowser ? 'min-h-28' : 'min-h-24'}`}
+            className={`flex items-center justify-center px-4 text-center text-[13px] text-[var(--color-text-tertiary)] ${isMobileBrowser ? 'min-h-28' : 'min-h-24'}`}
           >
             {t('model.noMatches')}
           </div>
         )}
 
         {isRuntimeScoped ? (
-          <div className="space-y-3">
+          <div className="space-y-1">
             {filteredProviderChoices.map((choice) => (
-              <div key={choice.providerId ?? 'official'} className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2 px-3 pt-1">
-                  <span className="truncate text-xs font-semibold text-[var(--color-text-tertiary)]">
+              <div key={choice.providerId ?? 'official'}>
+                <div className={`flex items-center justify-between gap-2 ${COMPOSER_MENU_SECTION}`}>
+                  <span className="truncate">
                     {choice.providerName}
                   </span>
                   {choice.isDefault && (
-                    <span className="flex-shrink-0 text-[10px] font-medium text-[var(--color-text-tertiary)]">
+                    <span className="flex-shrink-0 font-normal">
                       {t('settings.providers.default')}
                     </span>
                   )}
                 </div>
 
-                <div className="space-y-1">
+                <div className="space-y-px">
                   {choice.models.map((model) => {
                     const isSelected =
                       activeRuntimeSelection?.providerId === choice.providerId &&
@@ -712,7 +855,6 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
                     return (
                       <button
                         key={`${choice.providerId ?? 'official'}:${model.id}`}
-                        disabled={disabled}
                         onClick={() => {
                           const supportedEfforts = model.supportedReasoningEfforts
                           const explicitEffort = activeRuntimeSelection?.effortLevel
@@ -740,47 +882,45 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
                             ? normalizedProviderEffort
                             : undefined
                           const nextEffort = supportedEfforts === undefined
-                            ? supportedProviderEffort ?? explicitEffort ?? model.defaultReasoningEffort ?? effortLevel
+                            ? explicitEffort ?? effortLevel
                             : supportedEfforts.length
                               ? supportedProviderEffort
                                 ?? (explicitEffort && supportedEfforts.includes(explicitEffort)
-                                  ? explicitEffort
-                                  : model.defaultReasoningEffort
-                                    ?? (supportedEfforts.includes(effortLevel) ? effortLevel : supportedEfforts[0]))
+                                ? explicitEffort
+                                : supportedEfforts.includes(effortLevel)
+                                  ? effortLevel
+                                  : model.defaultReasoningEffort ?? supportedEfforts[0])
                               : undefined
                           handleRuntimeSelect({
                             providerId: choice.providerId,
                             modelId: model.id,
                             ...(nextEffort ? { effortLevel: nextEffort } : {}),
+                            ...(choice.providerId === OPENAI_OFFICIAL_PROVIDER_ID &&
+                              activeRuntimeSelection?.providerId === OPENAI_OFFICIAL_PROVIDER_ID &&
+                              activeRuntimeSelection.openAIFastMode !== undefined
+                              ? { openAIFastMode: activeRuntimeSelection.openAIFastMode }
+                              : {}),
                           })
                         }}
-                        className={`
-                          w-full rounded-[var(--radius-md)] border px-3 text-left transition-colors
-                          ${isMobileBrowser ? 'min-h-[56px] py-3' : 'py-2'}
-                          ${isSelected
-                            ? 'border-[var(--color-model-option-selected-border)] bg-[var(--color-model-option-selected-bg)]'
-                            : 'border-transparent hover:bg-[var(--color-surface-hover)]'
-                          }
-                        `}
+                        aria-current={isSelected || undefined}
+                        className={`${COMPOSER_MENU_ITEM} ${isMobileBrowser ? 'min-h-[56px] py-3' : ''} ${isSelected ? COMPOSER_MENU_ITEM_ACTIVE : ''}`}
                       >
-                        <div className="flex items-center gap-3">
-                          <div className="min-w-0 flex-1">
-                            {/* Model ids are identifiers, so they sit in the
-                                mono face alongside paths and token counts. */}
-                            <div className="truncate font-mono text-[13px] font-medium text-[var(--color-text-primary)]">
-                              {model.name}
-                            </div>
-                            {model.description && (
-                              <div className="mt-0.5 truncate pr-[6px] text-[11px] text-[var(--color-text-tertiary)]">
-                                {model.description}
-                              </div>
-                            )}
+                        <div className="grid min-w-0 flex-1 gap-px">
+                          {/* Model ids are identifiers, so they sit in the
+                              mono face alongside paths and token counts. */}
+                          <div className="truncate font-mono text-[13px] text-[var(--color-text-primary)]">
+                            {model.name}
                           </div>
-
-                          {isSelected && (
-                            <span className="material-symbols-outlined flex-shrink-0 text-[16px] text-[var(--color-brand)]">check</span>
+                          {model.description && (
+                            <div className="truncate pr-[6px] text-xs text-[var(--color-text-tertiary)]">
+                              {model.description}
+                            </div>
                           )}
                         </div>
+
+                        {isSelected && (
+                          <Check aria-hidden="true" size={14} strokeWidth={2} className="flex-shrink-0 text-[var(--color-brand)]" />
+                        )}
                       </button>
                     )
                   })}
@@ -789,7 +929,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
             ))}
           </div>
         ) : (
-          <div className="space-y-1">
+          <div className="space-y-px">
             {filteredAvailableModels.map((model) => {
               const isSelected = model.id === selectedModel?.id
               return (
@@ -803,29 +943,21 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
                     }
                     setOpen(false)
                   }}
-                  className={`
-                    w-full rounded-[var(--radius-md)] px-3 text-left transition-colors
-                    ${isMobileBrowser ? 'min-h-[56px] py-3' : 'py-2'}
-                    ${isSelected
-                      ? 'border border-[var(--color-model-option-selected-border)] bg-[var(--color-model-option-selected-bg)]'
-                      : 'hover:bg-[var(--color-surface-hover)]'
-                    }
-                  `}
+                  aria-current={isSelected || undefined}
+                  className={`${COMPOSER_MENU_ITEM} ${isMobileBrowser ? 'min-h-[56px] py-3' : ''} ${isSelected ? COMPOSER_MENU_ITEM_ACTIVE : ''}`}
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-mono text-[13px] font-medium text-[var(--color-text-primary)]">{model.name}</div>
-                      {model.description && (
-                        <div className="mt-0.5 truncate text-[11px] text-[var(--color-text-tertiary)]">
-                          {model.description}
-                        </div>
-                      )}
-                    </div>
-
-                    {isSelected && (
-                      <span className="material-symbols-outlined flex-shrink-0 text-[16px] text-[var(--color-brand)]">check</span>
+                  <div className="grid min-w-0 flex-1 gap-px">
+                    <div className="truncate font-mono text-[13px] text-[var(--color-text-primary)]">{model.name}</div>
+                    {model.description && (
+                      <div className="truncate text-xs text-[var(--color-text-tertiary)]">
+                        {model.description}
+                      </div>
                     )}
                   </div>
+
+                  {isSelected && (
+                    <Check aria-hidden="true" size={14} strokeWidth={2} className="flex-shrink-0 text-[var(--color-brand)]" />
+                  )}
                 </button>
               )
             })}
@@ -855,7 +987,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
       <div
         ref={dropdownRef}
         data-testid="model-selector-dropdown"
-        className="fixed z-[var(--z-dropdown)] flex flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-overlay)]"
+        className="fixed z-[var(--z-dropdown)] flex flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-dropdown)]"
         style={{
           top: dropdownPosition.top,
           bottom: dropdownPosition.bottom,
@@ -884,10 +1016,10 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
           desktop composer, which narrows for the right panel, not for touch. */}
       <div
         ref={ref}
-        className={`flex min-w-0 items-stretch rounded-[var(--radius-md)] transition-colors ${
+        className={`flex min-w-0 items-stretch transition-colors ${
           appearance === 'field'
-            ? 'h-10 w-full border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-container-low)]'
-            : 'hover:bg-[var(--color-surface-hover)]'
+            ? 'h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-outline)]'
+            : `h-7 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-hover)] ${open || effortOpen ? 'bg-[var(--color-surface-hover)]' : ''}`
         } ${isMobileBrowser ? 'min-h-11' : ''} ${fluid ? 'w-full' : ''} ${disabled ? 'opacity-50' : ''}`}
       >
         <button
@@ -901,69 +1033,75 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
             openSelector()
           }}
           disabled={disabled}
-            aria-label={ariaLabel ?? (buttonProviderLabel ? `${buttonModelLabel}, ${buttonProviderLabel}` : buttonModelLabel)}
-            title={buttonProviderLabel ? `${buttonProviderLabel} · ${buttonModelLabel}` : buttonModelLabel}
-            data-testid={buttonProviderLabel ? 'model-provider-button' : undefined}
+          aria-label={ariaLabel ?? (buttonProviderLabel ? `${buttonModelLabel}, ${buttonProviderLabel}` : buttonModelLabel)}
+          title={buttonProviderLabel ? `${buttonProviderLabel} · ${buttonModelLabel}` : buttonModelLabel}
           // `focus-visible:rounded-*` restores the other pair of corners while
           // focused. The ring traces `border-radius`, so on the half-rounded
           // halves of this segmented control it otherwise drew a box that was
           // rounded down one side and square down the other.
-          className={`flex min-w-0 items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] disabled:cursor-not-allowed ${
+          className={`flex min-w-0 items-center gap-1.5 text-xs text-[var(--color-text-secondary)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] disabled:cursor-not-allowed ${
             appearance === 'field'
-              ? 'h-full w-full rounded-[var(--radius-md)] px-3 text-left'
-              : `rounded-l-[var(--radius-md)] focus-visible:rounded-[var(--radius-md)] ${fluid ? 'flex-1' : ''} ${compact ? 'max-w-[112px] py-1.5 pl-2.5 pr-1' : 'max-w-[220px] py-1.5 pl-2.5 pr-1'}`
+              ? `h-full min-w-0 flex-1 px-3 text-left ${showEffortPill ? 'rounded-l-[var(--radius-md)] focus-visible:rounded-[var(--radius-md)]' : 'rounded-[var(--radius-md)]'}`
+              : `rounded-l-[var(--radius-sm)] focus-visible:rounded-[var(--radius-sm)] pl-2 ${fluid ? 'flex-1' : ''} ${compact ? 'max-w-[112px]' : 'max-w-[220px]'} ${showEffortPill ? 'pr-1' : 'rounded-r-[var(--radius-sm)] pr-1.5'}`
           }`}
         >
-          <span className={`${appearance === 'field' ? 'text-sm font-normal' : compact ? 'text-xs font-medium' : 'text-[13px] font-medium'} min-w-0 flex-1 truncate text-[var(--color-text-primary)]`}>
+          <span className={`${appearance === 'field' ? 'text-[13px]' : 'text-xs'} min-w-0 flex-1 truncate text-[var(--color-text-primary)]`}>
             {buttonModelLabel}
           </span>
-          {!compact && buttonProviderLabel && (
+          {(appearance === 'field' || !canEditRuntimeEffort) && !compact && buttonProviderLabel && (
             <span className="max-w-[108px] flex-shrink-0 truncate text-[11px] text-[var(--color-text-tertiary)]">
               {buttonProviderLabel}
             </span>
           )}
-          <span className={`material-symbols-outlined flex-shrink-0 text-[var(--color-text-tertiary)] ${appearance === 'field' ? 'text-[16px]' : 'text-[12px]'}`}>
-            {needsProviderConfiguration ? 'arrow_forward' : 'expand_more'}
-          </span>
+          {needsProviderConfiguration
+            ? <ArrowRight aria-hidden="true" size={appearance === 'field' ? 16 : 12} strokeWidth={2} className="flex-shrink-0 text-[var(--color-text-tertiary)]" />
+            : !showEffortPill && <ChevronDown aria-hidden="true" size={appearance === 'field' ? 16 : 12} strokeWidth={2} className="flex-shrink-0 text-[var(--color-text-tertiary)]" />}
         </button>
 
-        {canEditRuntimeEffort && selectedRuntimeEffort && runtimeEffortOptions.length > 0 && (
+        {showEffortPill && selectedRuntimeEffort && (
           <button
             ref={effortButtonRef}
             type="button"
             disabled={disabled || lockedProviderId !== undefined}
-            aria-label={`${t('model.effort')}: ${effortLabels[selectedRuntimeEffort]}`}
+            aria-label={`${t('model.effort')}: ${runtimeEffortLabel}${showOpenAIFastMode && activeRuntimeSelection?.openAIFastMode ? ` · ${t('model.openAIFastMode')}` : ''}`}
             aria-expanded={effortOpen}
             onClick={() => {
               if (disabled) return
               setOpen(false)
               setEffortOpen(!effortOpen)
             }}
-            className={`shrink-0 rounded-r-[var(--radius-md)] pr-2.5 text-[var(--color-text-secondary)] outline-none transition-colors hover:text-[var(--color-text-primary)] focus-visible:rounded-[var(--radius-md)] focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] disabled:cursor-not-allowed ${compact ? 'pl-1 text-[10px]' : 'pl-1.5 text-[12px]'}`}
+            // The effort rides on the model name as a small sunken pill; the
+            // chevron moves here so the pair reads "model · effort ⌄".
+            className={`flex shrink-0 items-center gap-1 pl-0.5 text-[var(--color-text-tertiary)] outline-none transition-colors hover:text-[var(--color-text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] disabled:cursor-not-allowed ${
+              appearance === 'field'
+                ? 'rounded-r-[var(--radius-md)] pr-2.5 focus-visible:rounded-[var(--radius-md)]'
+                : 'rounded-r-[var(--radius-sm)] pr-1.5 focus-visible:rounded-[var(--radius-sm)]'
+            }`}
           >
-            {effortLabels[selectedRuntimeEffort]}
+            <span className="inline-flex h-[18px] items-center rounded-full bg-[var(--color-surface-container)] px-1.5 text-[11px]">
+              {runtimeEffortLabel}
+            </span>
+            {showOpenAIFastMode && activeRuntimeSelection?.openAIFastMode && (
+              <span className="text-[11px] text-[var(--color-text-secondary)]">{t('model.openAIFastMode')}</span>
+            )}
+            <ChevronDown aria-hidden="true" size={12} strokeWidth={2} className="flex-shrink-0" />
           </button>
         )}
       </div>
-      {runtimeRequestStatusMessage && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="mt-1 max-w-[220px] text-[10px] text-[var(--color-text-tertiary)]"
-        >
-          {runtimeRequestStatusMessage}
-        </div>
-      )}
       {dropdown}
       {canEditRuntimeEffort && selectedRuntimeEffort && (
         <ReasoningEffortPopover
           open={effortOpen}
           anchorRef={effortButtonRef}
           options={runtimeEffortOptions.map((option) => option.value)}
-          value={selectedRuntimeEffort}
+          value={runtimeEffortUnset ? null : selectedRuntimeEffort}
           labels={effortLabels}
           ariaLabel={t('model.effort')}
           onChange={handleRuntimeEffortSelect}
+          {...(showOpenAIFastMode ? {
+            fastMode: activeRuntimeSelection?.openAIFastMode === true,
+            onFastModeChange: handleOpenAIFastModeChange,
+          } : {})}
           onClose={() => setEffortOpen(false)}
         />
       )}

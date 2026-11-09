@@ -3,7 +3,6 @@ import type {
   DesktopHostUnlisten,
   DesktopUpdate,
   DesktopUpdateDownloadEvent,
-  DesktopUpdateFeedAttempt,
 } from './types'
 import {
   ELECTRON_EVENT_CHANNELS,
@@ -25,8 +24,6 @@ export type ElectronHostBridge = {
 type ElectronUpdateMetadata = {
   version: string
   body?: string | null
-  feedUrl?: string | null
-  feedAttempts?: DesktopUpdateFeedAttempt[]
 }
 
 function safeInvoke<T>(
@@ -48,8 +45,6 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
   const createUpdate = (metadata: ElectronUpdateMetadata): DesktopUpdate => ({
     version: metadata.version,
     body: metadata.body ?? null,
-    feedUrl: metadata.feedUrl ?? null,
-    feedAttempts: metadata.feedAttempts,
     async download(onEvent) {
       const unlisten = onEvent
         ? await subscribe<DesktopUpdateDownloadEvent>(ELECTRON_EVENT_CHANNELS.updateDownloadEvent, onEvent)
@@ -65,19 +60,23 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
   })
 
   return {
+    configImport: {
+      take: () => invoke(ELECTRON_IPC_CHANNELS.configImportTake),
+      ack: () => invoke(ELECTRON_IPC_CHANNELS.configImportAck),
+      onPending: handler => subscribe(ELECTRON_EVENT_CHANNELS.deepLink, () => handler()),
+    },
     publicAccess: {
       getStatus: () => invoke(ELECTRON_IPC_CHANNELS.publicAccessGetStatus),
-      saveCredential: token => invoke(ELECTRON_IPC_CHANNELS.publicAccessSaveCredential, token),
-      deleteCredential: () => invoke(ELECTRON_IPC_CHANNELS.publicAccessDeleteCredential),
+      configure: configuration => invoke(ELECTRON_IPC_CHANNELS.publicAccessConfigure, configuration),
       start: consentVersion => invoke(ELECTRON_IPC_CHANNELS.publicAccessStart, consentVersion),
       stop: () => invoke(ELECTRON_IPC_CHANNELS.publicAccessStop),
       setAutoStart: enabled => invoke(ELECTRON_IPC_CHANNELS.publicAccessSetAutoStart, enabled),
+      setP2PEnabled: enabled => invoke(ELECTRON_IPC_CHANNELS.publicAccessSetP2PEnabled, enabled),
     },
     kind: 'electron',
     isDesktop: true,
     capabilities: {
       appMode: true,
-      echoFlowAccount: true,
       clipboard: true,
       dialogs: true,
       notifications: true,
@@ -89,21 +88,9 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
       windowControls: true,
       zoom: true,
     },
-    echoFlow: {
-      openLogin: (endpoint = 'main') => invoke(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint }),
-      signOut: (endpoint = 'main') => invoke(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint }),
-      whenAccountRestored: () => invoke(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored),
-    },
-    runtimeDiscovery: {
-      list: options => invoke(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, options),
-      probePath: filePath => invoke(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath, filePath),
-    },
     runtime: {
       getServerUrl: () => invoke(ELECTRON_IPC_CHANNELS.runtimeGetServerUrl),
       getLocalAccessToken: () => invoke(ELECTRON_IPC_CHANNELS.runtimeGetLocalAccessToken),
-      getClaudeCode: () => invoke(ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode),
-      chooseClaudeCode: () => invoke(ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode),
-      setClaudeCode: runtimeId => invoke(ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode, runtimeId),
     },
     app: {
       getVersion: () => invoke(ELECTRON_IPC_CHANNELS.appGetVersion),
@@ -112,13 +99,15 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
       getPreferredSystemLanguages: () => invoke(ELECTRON_IPC_CHANNELS.appGetPreferredSystemLanguages),
       onLocaleChanged: handler => subscribe(ELECTRON_EVENT_CHANNELS.appLocaleChanged, handler),
     },
-    configImport: {
-      take: () => invoke(ELECTRON_IPC_CHANNELS.configImportTake),
-      ack: () => invoke(ELECTRON_IPC_CHANNELS.configImportAck),
-      onPending: handler => subscribe(ELECTRON_EVENT_CHANNELS.deepLink, () => handler()),
-    },
     commands: {
       invoke: (command, args) => invoke(ELECTRON_IPC_CHANNELS.commandInvoke, { command, args }),
+    },
+    power: {
+      getIdleActionState: () => invoke(ELECTRON_IPC_CHANNELS.powerGetIdleActionState),
+      configureIdleAction: settings => invoke(ELECTRON_IPC_CHANNELS.powerConfigureIdleAction, settings),
+      cancelIdleAction: () => invoke(ELECTRON_IPC_CHANNELS.powerCancelIdleAction),
+      onIdleActionState: handler => subscribe(ELECTRON_EVENT_CHANNELS.powerIdleActionState, handler),
+      setPreventSleepWhileRunning: enabled => invoke(ELECTRON_IPC_CHANNELS.powerSetPreventSleepWhileRunning, enabled),
     },
     clipboard: {
       readText: () => invoke(ELECTRON_IPC_CHANNELS.clipboardReadText),
@@ -141,10 +130,6 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
     shell: {
       open: target => invoke(ELECTRON_IPC_CHANNELS.shellOpen, target),
       openPath: path => invoke(ELECTRON_IPC_CHANNELS.shellOpenPath, path),
-      showItemInFolder: path => invoke(ELECTRON_IPC_CHANNELS.shellShowItemInFolder, path),
-    },
-    trace: {
-      openWindow: sessionId => invoke(ELECTRON_IPC_CHANNELS.traceOpenWindow, sessionId),
     },
     pets: {
       list: () => invoke(ELECTRON_IPC_CHANNELS.petsList),
@@ -226,9 +211,8 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
       create: (tabId, options) => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserCreate, {
         tabId,
         storageId: options.storageId,
+        webContentsId: options.webContentsId,
         ...(options.url === undefined ? {} : { url: options.url }),
-        ...(options.bounds === undefined ? {} : { bounds: options.bounds }),
-        ...(options.visible === undefined ? {} : { visible: options.visible }),
       }),
       navigate: (tabId, url) => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserNavigate, { tabId, url }),
       goBack: tabId => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserGoBack, { tabId }),
@@ -238,7 +222,6 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
         ...(options?.ignoreCache === undefined ? {} : { ignoreCache: options.ignoreCache }),
       }),
       stop: tabId => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserStop, { tabId }),
-      setBounds: (tabId, bounds) => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserSetBounds, { tabId, bounds }),
       setVisible: (tabId, visible) => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserSetVisible, { tabId, visible }),
       setZoom: (tabId, factor) => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserSetZoom, { tabId, factor }),
       find: (tabId, text, options) => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserFind, {
@@ -248,7 +231,6 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
       }),
       stopFind: tabId => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserStopFind, { tabId }),
       capture: (tabId, kind) => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserCapture, { tabId, kind }),
-      snapshot: (tabId) => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserSnapshot, { tabId }),
       message: (tabId, payload) => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserMessage, { tabId, payload }),
       printToPdf: tabId => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserPrintToPdf, { tabId }),
       close: tabId => invoke(ELECTRON_IPC_CHANNELS.workspaceBrowserClose, { tabId }),
@@ -259,17 +241,16 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
       set: config => invoke(ELECTRON_IPC_CHANNELS.appModeSet, config),
       prepareRestart: () => invoke(ELECTRON_IPC_CHANNELS.appModePrepareRestart),
       restart: () => invoke(ELECTRON_IPC_CHANNELS.appModeRestart),
+      migration: {
+        prepare: targetDir => invoke(ELECTRON_IPC_CHANNELS.migrationPrepare, { targetDir }),
+        start: id => invoke(ELECTRON_IPC_CHANNELS.migrationStart, { id }),
+        status: () => invoke(ELECTRON_IPC_CHANNELS.migrationStatus),
+        cancel: id => invoke(ELECTRON_IPC_CHANNELS.migrationCancel, { id }),
+        onProgress: handler => subscribe(ELECTRON_EVENT_CHANNELS.migrationProgress, handler),
+      },
     },
     adapters: {
       restartSidecar: () => invoke(ELECTRON_IPC_CHANNELS.adaptersRestartSidecar),
-    },
-    deepSeekHarness: {
-      getStatus: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessGetStatus),
-      start: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessStart),
-      stop: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessStop),
-      restart: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessRestart),
-      update: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessUpdate),
-      open: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessOpen),
     },
     zoom: {
       set: level => invoke(ELECTRON_IPC_CHANNELS.zoomSet, level),

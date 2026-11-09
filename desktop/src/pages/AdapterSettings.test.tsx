@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import '@testing-library/jest-dom'
 
 import { AdapterSettings } from './AdapterSettings'
@@ -8,7 +8,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import type { AdapterFileConfig } from '../types/adapter'
 
 const FEISHU_CREATE_BOT_URL = 'https://open.feishu.cn/page/openclaw?form=multiAgent'
-const IM_CONFIG_DOCS_URL = 'https://code.echoflow.cn/im/'
+const IM_CONFIG_DOCS_URL = 'https://cchaha.ai/im/'
 
 function renderAdapterSettings(
   config: AdapterFileConfig,
@@ -74,7 +74,7 @@ function renderAdapterSettings(
     ...overrides,
   } as Partial<ReturnType<typeof useAdapterStore.getState>>)
 
-  render(<AdapterSettings />)
+  return render(<AdapterSettings />)
 }
 
 afterEach(() => {
@@ -84,18 +84,6 @@ afterEach(() => {
 })
 
 describe('AdapterSettings IM setup entry', () => {
-  it('uses the shared checkbox contract for the Feishu streaming-card setting', () => {
-    renderAdapterSettings({ feishu: { appId: 'cli_test', appSecret: 'secret', streamingCard: false } })
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Feishu' }))
-
-    const checkbox = screen.getByRole('checkbox', { name: 'Streaming Card Mode' })
-    expect(checkbox).toHaveClass('focus-visible:ring-2')
-    const descriptionId = checkbox.getAttribute('aria-describedby')
-    expect(descriptionId).toBeTruthy()
-    expect(document.getElementById(descriptionId!)).toHaveTextContent('Real-time card updates for better experience')
-  })
-
   it('shows Telegram first by default and links to the unified documentation URL', () => {
     renderAdapterSettings({})
 
@@ -150,6 +138,47 @@ describe('AdapterSettings allowed project roots', () => {
     })
     expect(updateConfig.mock.calls[0]![0]).toMatchObject({
       allowedProjectRoots: ['/Users/me/work'],
+    })
+  })
+
+  describe('the "Saved" label', () => {
+    // Only the timers this page uses are faked: waitFor and the store promises
+    // keep running, so a save is flushed with `act` instead.
+    async function saveAndFlush() {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await act(async () => {})
+    }
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('goes back to "Save" after two seconds', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      renderAdapterSettings({ allowedProjectRoots: ['/Users/me/work'] })
+
+      await saveAndFlush()
+      expect(screen.getByRole('button', { name: 'Saved' })).toBeInTheDocument()
+
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+    })
+
+    // The reset used to be a bare setTimeout, so leaving Settings within the
+    // two seconds (or a test ending) let it fire into a torn-down tree and
+    // fail the whole run with "window is not defined".
+    it('leaves no timer behind once the page is closed', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      const { unmount } = renderAdapterSettings({ allowedProjectRoots: ['/Users/me/work'] })
+
+      await saveAndFlush()
+      expect(vi.getTimerCount()).toBe(1)
+
+      unmount()
+
+      expect(vi.getTimerCount()).toBe(0)
     })
   })
 
@@ -344,6 +373,33 @@ describe('AdapterSettings config saving', () => {
         permissionCardTemplateId: '',
       },
     })
+  })
+
+  // The streaming-card option moved from a bare native checkbox to the shared
+  // Switch; the toggle must still land in the saved Feishu patch both ways.
+  it('round-trips the Feishu streaming card switch into the saved patch', async () => {
+    const updateConfig = vi.fn(async (_patch: Partial<AdapterFileConfig>) => {})
+    renderAdapterSettings({ feishu: { appId: 'cli_x', appSecret: 'secret', streamingCard: false } }, { updateConfig })
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Feishu' }))
+    const toggle = screen.getByRole('switch', { name: 'Streaming Card Mode' })
+    expect(toggle).not.toBeChecked()
+    fireEvent.click(toggle)
+    expect(toggle).toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(updateConfig).toHaveBeenCalledTimes(1)
+    })
+    expect(updateConfig.mock.calls[0]![0].feishu).toMatchObject({ streamingCard: true })
+
+    fireEvent.click(toggle)
+    expect(toggle).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: /^Save/ }))
+    await waitFor(() => {
+      expect(updateConfig).toHaveBeenCalledTimes(2)
+    })
+    expect(updateConfig.mock.calls[1]![0].feishu).toMatchObject({ streamingCard: false })
   })
 })
 

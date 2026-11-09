@@ -12,23 +12,19 @@
   border-top: 1px solid var(--color-border-separator);
 }
 
+.team-plan-editor {
+  /* Plan text is model-written: a long identifier, path or URL has no break
+     opportunity and would otherwise widen the dialog scroller (#1523).
+     `anywhere` also lowers min-content, so grid/flex items can shrink. */
+  overflow-wrap: anywhere;
+}
+
 .team-plan-member {
   transition: background-color 180ms ease-out;
 }
 
 .team-plan-member:hover {
   background: var(--color-surface-hover);
-}
-
-.team-plan-chevron {
-  width: 6px;
-  height: 6px;
-  flex-shrink: 0;
-  margin: -3px 2px 0 0;
-  border-right: 1px solid currentColor;
-  border-bottom: 1px solid currentColor;
-  transform: rotate(45deg);
-  opacity: 0.6;
 }
 
 .team-plan-detail,

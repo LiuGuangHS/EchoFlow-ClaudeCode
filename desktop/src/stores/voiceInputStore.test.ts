@@ -15,6 +15,8 @@ vi.mock('@/api/voice', () => ({
 import { voiceApi } from '@/api/voice'
 import {
   selectActiveVoiceProvider,
+  selectVoiceCorrectionTarget,
+  selectVoiceInputNeedsModel,
   selectVoiceInputReady,
   useVoiceInputStore,
 } from './voiceInputStore'
@@ -33,8 +35,9 @@ function catalog(preparation: VoicePreparationState, patch: Partial<VoiceCatalog
   return {
     supported: true,
     providers: [provider(preparation)],
-    preferences: { enabled: true, providerId: ID, language: 'auto', downloadSource: 'auto' },
+    preferences: { enabled: true, providerId: ID, language: 'auto', downloadSource: 'auto', correctionEnabled: false, correctionProviderId: null, correctionModelId: null },
     limits: { maxAudioSeconds: 60, maxAudioBytes: 1_000_000 },
+    correction: { defaultTarget: null, target: null },
     ...patch,
   }
 }
@@ -44,9 +47,19 @@ const phase = () => useVoiceInputStore.getState().catalog?.providers[0]!.prepara
 /** Lets pending promise continuations run without advancing the fake clock. */
 const flush = () => vi.advanceTimersByTimeAsync(0)
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: Error) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
-  vi.clearAllMocks()
+  vi.resetAllMocks()
   useVoiceInputStore.setState({ catalog: null, loading: false, error: null })
 })
 
@@ -78,15 +91,64 @@ describe('voiceInputStore.loadCatalog', () => {
   })
 
   it('joins an in-flight load instead of issuing a second request', async () => {
-    let resolve!: (value: VoiceCatalog) => void
-    api.catalog.mockImplementation(() => new Promise(r => { resolve = r }))
+    const pending = deferred<VoiceCatalog>()
+    api.catalog.mockReturnValueOnce(pending.promise)
+    let joined = false
 
     const first = useVoiceInputStore.getState().loadCatalog()
-    const second = useVoiceInputStore.getState().loadCatalog({ force: true })
-    resolve(catalog({ phase: 'ready' }))
+    const second = useVoiceInputStore.getState().loadCatalog().then(() => { joined = true })
+    await flush()
+    expect.soft(joined).toBe(false)
+    pending.resolve(catalog({ phase: 'ready' }))
     await Promise.all([first, second])
 
     expect(api.catalog).toHaveBeenCalledTimes(1)
+    expect(joined).toBe(true)
+    expect(phase()).toBe('ready')
+  })
+
+  it('queues and coalesces forced refreshes without publishing the older catalog', async () => {
+    const oldLoad = deferred<VoiceCatalog>()
+    const freshLoad = deferred<VoiceCatalog>()
+    api.catalog.mockReturnValueOnce(oldLoad.promise).mockReturnValueOnce(freshLoad.promise)
+    let refreshed = false
+
+    const first = useVoiceInputStore.getState().loadCatalog()
+    const forced = useVoiceInputStore.getState().loadCatalog({ force: true }).then(() => { refreshed = true })
+    const alsoForced = useVoiceInputStore.getState().loadCatalog({ force: true })
+    await flush()
+    expect.soft(refreshed).toBe(false)
+    expect.soft(api.catalog).toHaveBeenCalledTimes(1)
+
+    oldLoad.resolve(catalog({ phase: 'downloading' }))
+    await flush()
+    expect.soft(api.catalog).toHaveBeenCalledTimes(2)
+    expect.soft(useVoiceInputStore.getState().catalog).toBeNull()
+    expect.soft(useVoiceInputStore.getState().loading).toBe(true)
+    expect.soft(refreshed).toBe(false)
+    await vi.advanceTimersByTimeAsync(500)
+    expect.soft(api.providerStatus).not.toHaveBeenCalled()
+
+    freshLoad.resolve(catalog({ phase: 'ready' }))
+    await Promise.all([first, forced, alsoForced])
+    expect(refreshed).toBe(true)
+    expect(phase()).toBe('ready')
+    expect(useVoiceInputStore.getState().loading).toBe(false)
+  })
+
+  it('runs a queued forced refresh even when the preceding load fails', async () => {
+    const oldLoad = deferred<VoiceCatalog>()
+    api.catalog.mockReturnValueOnce(oldLoad.promise).mockResolvedValueOnce(catalog({ phase: 'ready' }))
+    const first = useVoiceInputStore.getState().loadCatalog()
+    const forced = useVoiceInputStore.getState().loadCatalog({ force: true })
+
+    oldLoad.reject(new Error('old request failed'))
+    await Promise.all([first, forced])
+
+    expect(api.catalog).toHaveBeenCalledTimes(2)
+    expect(phase()).toBe('ready')
+    expect(useVoiceInputStore.getState().error).toBeNull()
+    expect(useVoiceInputStore.getState().loading).toBe(false)
   })
 
   it('records a failed load, clears the loading flag, and retries on the next call', async () => {
@@ -303,24 +365,86 @@ describe('voiceInputStore.cancelPrepare and removeAssets', () => {
 
 describe('voiceInputStore.updatePreferences', () => {
   it('merges the server-confirmed preferences into the catalog, leaving providers alone', async () => {
-    api.catalog.mockResolvedValue(catalog({ phase: 'ready' }, { preferences: { enabled: false, providerId: ID, language: 'auto', downloadSource: 'auto' } }))
+    api.catalog.mockResolvedValue(catalog({ phase: 'ready' }, { preferences: { enabled: false, providerId: ID, language: 'auto', downloadSource: 'auto', correctionEnabled: false, correctionProviderId: null, correctionModelId: null } }))
     await useVoiceInputStore.getState().loadCatalog()
-    api.updatePreferences.mockResolvedValue({ preferences: { enabled: true, providerId: ID, language: 'zh', downloadSource: 'auto' } })
+    api.updatePreferences.mockResolvedValue({ preferences: { enabled: true, providerId: ID, language: 'zh', downloadSource: 'auto', correctionEnabled: false, correctionProviderId: null, correctionModelId: null } })
 
     await useVoiceInputStore.getState().updatePreferences({ enabled: true, language: 'zh' })
 
     expect(api.updatePreferences).toHaveBeenCalledWith({ enabled: true, language: 'zh' })
-    expect(useVoiceInputStore.getState().catalog?.preferences).toEqual({ enabled: true, providerId: ID, language: 'zh', downloadSource: 'auto' })
+    expect(useVoiceInputStore.getState().catalog?.preferences).toEqual({ enabled: true, providerId: ID, language: 'zh', downloadSource: 'auto', correctionEnabled: false, correctionProviderId: null, correctionModelId: null })
     expect(phase()).toBe('ready')
   })
 
   it('leaves the catalog unchanged and lets the caller see the failure', async () => {
-    api.catalog.mockResolvedValue(catalog({ phase: 'ready' }, { preferences: { enabled: false, providerId: ID, language: 'auto', downloadSource: 'auto' } }))
+    api.catalog.mockResolvedValue(catalog({ phase: 'ready' }, { preferences: { enabled: false, providerId: ID, language: 'auto', downloadSource: 'auto', correctionEnabled: false, correctionProviderId: null, correctionModelId: null } }))
     await useVoiceInputStore.getState().loadCatalog()
     api.updatePreferences.mockRejectedValue(new Error('read-only'))
 
     await expect(useVoiceInputStore.getState().updatePreferences({ enabled: true })).rejects.toThrow('read-only')
     expect(useVoiceInputStore.getState().catalog?.preferences.enabled).toBe(false)
+  })
+
+  const TARGET = { providerId: 'kimi', providerName: 'Kimi', modelId: 'kimi-k2' }
+
+  it('reads back which model correction resolves to after a correction choice changes', async () => {
+    api.catalog.mockResolvedValue(catalog({ phase: 'ready' }))
+    await useVoiceInputStore.getState().loadCatalog()
+    const saved = { ...catalog({ phase: 'ready' }).preferences, correctionEnabled: true, correctionProviderId: 'kimi', correctionModelId: 'kimi-k2' }
+    api.updatePreferences.mockResolvedValue({ preferences: saved })
+    // The server's catalog carries the resolution, and a provider list this call must not adopt.
+    api.catalog.mockResolvedValue(catalog({ phase: 'unprepared' }, { correction: { defaultTarget: null, target: TARGET } }))
+
+    await useVoiceInputStore.getState().updatePreferences({ correctionProviderId: 'kimi', correctionModelId: 'kimi-k2' })
+
+    const state = useVoiceInputStore.getState().catalog!
+    expect(state.correction.target).toEqual(TARGET)
+    expect(state.preferences).toEqual(saved)
+    expect(phase()).toBe('ready')
+  })
+
+  it('does not re-read the catalog for preferences that do not touch correction', async () => {
+    api.catalog.mockResolvedValue(catalog({ phase: 'ready' }))
+    await useVoiceInputStore.getState().loadCatalog()
+    api.catalog.mockClear()
+    api.updatePreferences.mockResolvedValue({ preferences: catalog({ phase: 'ready' }).preferences })
+
+    await useVoiceInputStore.getState().updatePreferences({ language: 'zh' })
+
+    expect(api.catalog).not.toHaveBeenCalled()
+  })
+
+  it('keeps the saved preferences when reading the resolution back fails', async () => {
+    api.catalog.mockResolvedValue(catalog({ phase: 'ready' }))
+    await useVoiceInputStore.getState().loadCatalog()
+    const saved = { ...catalog({ phase: 'ready' }).preferences, correctionEnabled: true }
+    api.updatePreferences.mockResolvedValue({ preferences: saved })
+    api.catalog.mockRejectedValue(new Error('offline'))
+
+    await useVoiceInputStore.getState().updatePreferences({ correctionEnabled: true })
+
+    expect(useVoiceInputStore.getState().catalog?.preferences).toEqual(saved)
+  })
+})
+
+describe('selectVoiceCorrectionTarget', () => {
+  const TARGET = { providerId: 'kimi', providerName: 'Kimi', modelId: 'kimi-k2' }
+  const withCorrection = (correctionEnabled: boolean, target: typeof TARGET | null) => catalog({ phase: 'ready' }, {
+    preferences: { ...catalog({ phase: 'ready' }).preferences, correctionEnabled },
+    correction: { defaultTarget: TARGET, target },
+  })
+
+  it('is the resolved model only while correction is switched on', () => {
+    expect(selectVoiceCorrectionTarget({ catalog: withCorrection(true, TARGET) })).toEqual(TARGET)
+    expect(selectVoiceCorrectionTarget({ catalog: withCorrection(false, TARGET) })).toBeNull()
+    expect(selectVoiceCorrectionTarget({ catalog: withCorrection(true, null) })).toBeNull()
+    expect(selectVoiceCorrectionTarget({ catalog: null })).toBeNull()
+  })
+
+  it('reads a catalog from before correction existed as having no target', () => {
+    const old = withCorrection(true, TARGET) as Partial<VoiceCatalog>
+    delete old.correction
+    expect(selectVoiceCorrectionTarget({ catalog: old as VoiceCatalog })).toBeNull()
   })
 })
 
@@ -368,5 +492,22 @@ describe('selectVoiceInputReady', () => {
     expect(selectActiveVoiceProvider({
       catalog: { ...ready, preferences: { ...ready.preferences, providerId: 'missing' } },
     })).toBeUndefined()
+  })
+})
+
+describe('selectVoiceInputNeedsModel', () => {
+  it.each(['unprepared', 'downloading', 'verifying', 'failed', 'cancelled'] as const)('is true while switched on and the model is %s', (value) => {
+    expect(selectVoiceInputNeedsModel({ catalog: catalog({ phase: value }) })).toBe(true)
+  })
+
+  it('is false once the model is ready: the button records instead', () => {
+    expect(selectVoiceInputNeedsModel({ catalog: catalog({ phase: 'ready' }) })).toBe(false)
+  })
+
+  it('is false while switched off, unsupported, or before the catalog loads', () => {
+    const missing = catalog({ phase: 'unprepared' })
+    expect(selectVoiceInputNeedsModel({ catalog: { ...missing, preferences: { ...missing.preferences, enabled: false } } })).toBe(false)
+    expect(selectVoiceInputNeedsModel({ catalog: { ...missing, supported: false } })).toBe(false)
+    expect(selectVoiceInputNeedsModel({ catalog: null })).toBe(false)
   })
 })

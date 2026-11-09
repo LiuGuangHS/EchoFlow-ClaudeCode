@@ -188,9 +188,6 @@ describe('desktopRuntime browser H5 bootstrap', () => {
       runtime: {
         getServerUrl: vi.fn().mockResolvedValue(serverUrl),
         getLocalAccessToken: vi.fn().mockResolvedValue('desktop-local-token'),
-        getClaudeCode: vi.fn(),
-        chooseClaudeCode: vi.fn(),
-        setClaudeCode: vi.fn(),
       },
     }
     globalThis.fetch = vi.fn().mockResolvedValue(
@@ -220,9 +217,6 @@ describe('desktopRuntime browser H5 bootstrap', () => {
       runtime: {
         getServerUrl: vi.fn().mockResolvedValue(serverUrl),
         getLocalAccessToken: vi.fn().mockRejectedValue(new Error('ipc channel missing')),
-        getClaudeCode: vi.fn(),
-        chooseClaudeCode: vi.fn(),
-        setClaudeCode: vi.fn(),
       },
     }
     globalThis.fetch = vi.fn().mockResolvedValue(
@@ -262,9 +256,6 @@ describe('desktopRuntime browser H5 bootstrap', () => {
       runtime: {
         getServerUrl: vi.fn().mockRejectedValue(error),
         getLocalAccessToken: vi.fn().mockResolvedValue('desktop-local-token'),
-        getClaudeCode: vi.fn(),
-        chooseClaudeCode: vi.fn(),
-        setClaudeCode: vi.fn(),
       },
     }
 

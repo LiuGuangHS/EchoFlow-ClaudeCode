@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { browserHost } from '../../lib/desktopHost/browserHost'
 import { useOpenTargetStore } from '../../stores/openTargetStore'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -91,6 +91,38 @@ describe('AttachmentGallery', () => {
 
     expect(document.body.textContent).toContain('App.tsx:L10-L12')
     expect(document.body.textContent).toContain('const value = calculate(input) return value')
+  })
+
+  it.each(['composer', 'message'] as const)('shows Office annotation locations and requests in %s while retaining file actions', async (variant) => {
+    const onRemove = vi.fn()
+    const path = '/tmp/office-annotations/budget.xlsx'
+    const view = render(
+      <AttachmentGallery
+        variant={variant}
+        onRemove={variant === 'composer' ? onRemove : undefined}
+        attachments={[{
+          id: 'office-comment-1',
+          type: 'file',
+          name: 'budget.xlsx',
+          path,
+          note: 'Budget!B3\nChange the quantity to 5; keep the unit price unchanged.',
+          quote: '3',
+        }]}
+      />,
+    )
+
+    // Office comments have no diffSide: their location and request used to disappear.
+    expect(view.getByText(/Budget!B3/)).toHaveTextContent('Change the quantity to 5; keep the unit price unchanged.')
+    expect(view.getByText('3')).toBeVisible()
+    expect(view.queryByTestId('diff-comment-card')).not.toBeInTheDocument()
+    if (variant === 'composer') {
+      fireEvent.click(view.getByRole('button', { name: 'Remove budget.xlsx' }))
+      expect(onRemove).toHaveBeenCalledWith('office-comment-1')
+    } else {
+      fireEvent.click(view.getByRole('button', { name: 'Open budget.xlsx' }))
+      await waitFor(() => expect(openPath).toHaveBeenCalledWith(path))
+      expect(view.getByRole('button', { name: 'Open with' })).toBeInTheDocument()
+    }
   })
 
   it('keeps plain file chips on the one-line treatment', () => {
@@ -506,4 +538,125 @@ it.each(['composer', 'message'] as const)('labels a selected-text reference as t
   const view = render(<AttachmentGallery variant={variant} attachments={[{ type: 'file', name: 'AI reply', quote: 'quoted text', referenceKind: 'chat-selection' }]} />)
   expect(view.getByText('Selected text')).toBeInTheDocument()
   expect(view.queryByText('File')).not.toBeInTheDocument()
+})
+
+/**
+ * #1838: past a handful of selected-text references the composer's cards
+ * wrapped onto row after row with nothing bounding them. The composer grew
+ * until the transcript above it had no height left; at 20 cards in a 1280×820
+ * window the editor and the send button went off the bottom as well.
+ */
+describe('composer attachment tray', () => {
+  const selections = (count: number) => Array.from({ length: count }, (_, index) => ({
+    id: `selection-${index}`,
+    type: 'file' as const,
+    name: `AI reply ${index}`,
+    referenceKind: 'chat-selection' as const,
+    quote: `quoted text ${index}`,
+  }))
+
+  beforeEach(() => {
+    useSettingsStore.setState({ locale: 'en' })
+  })
+
+  it('scrolls a long run of cards inside a capped tray instead of growing the composer', () => {
+    const view = render(<AttachmentGallery variant="composer" onRemove={vi.fn()} attachments={selections(20)} />)
+
+    const tray = view.getByTestId('composer-attachment-tray')
+    expect(tray.className).toMatch(/(^|\s)max-h-\[/)
+    expect(tray).toHaveClass('overflow-y-auto')
+    for (let index = 0; index < 20; index += 1) {
+      expect(within(tray).getByRole('button', { name: `Remove AI reply ${index}` })).toBeInTheDocument()
+    }
+  })
+
+  it('leaves the attachments of a sent message uncapped', () => {
+    const view = render(<AttachmentGallery variant="message" attachments={selections(20)} />)
+
+    expect(view.queryByTestId('composer-attachment-tray')).not.toBeInTheDocument()
+  })
+
+  describe('revealing a new card', () => {
+    // jsdom has no layout. The stub puts the tray's visible box at 100–288px
+    // and its cards two to a row on a 76px pitch, moved up by its scrollTop.
+    const TRAY_TOP = 100
+    const TRAY_BOTTOM = 288
+    const originalRect = HTMLElement.prototype.getBoundingClientRect
+
+    beforeEach(() => {
+      HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect(this: HTMLElement) {
+        const tray = this.closest<HTMLElement>('[data-testid="composer-attachment-tray"]')
+        let box = { top: 0, bottom: 0 }
+        if (tray === this) {
+          box = { top: TRAY_TOP, bottom: TRAY_BOTTOM }
+        } else if (tray && this.parentElement === tray) {
+          const top = TRAY_TOP + 4 + Math.floor([...tray.children].indexOf(this) / 2) * 76 - tray.scrollTop
+          box = { top, bottom: top + 68 }
+        }
+        return { left: 0, right: 0, width: 0, height: box.bottom - box.top, x: 0, y: box.top, toJSON: () => ({}), ...box } as DOMRect
+      }
+    })
+
+    afterEach(() => {
+      HTMLElement.prototype.getBoundingClientRect = originalRect
+    })
+
+    function trackScrollTop(tray: HTMLElement) {
+      let scrollTop = 0
+      Object.defineProperty(tray, 'scrollTop', {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => { scrollTop = value },
+      })
+    }
+
+    it('scrolls a card added below the fold into view, and leaves the tray alone otherwise', () => {
+      const attachments = selections(7)
+      const view = render(<AttachmentGallery variant="composer" onRemove={vi.fn()} attachments={attachments.slice(0, 2)} />)
+      const tray = view.getByTestId('composer-attachment-tray')
+      trackScrollTop(tray)
+
+      // Cards 3 and 4 open the second row, still inside the tray.
+      view.rerender(<AttachmentGallery variant="composer" onRemove={vi.fn()} attachments={attachments.slice(0, 4)} />)
+      expect(tray.scrollTop).toBe(0)
+
+      // Card 7 opens a fourth row at 332–400px, 112px past the tray's edge.
+      view.rerender(<AttachmentGallery variant="composer" onRemove={vi.fn()} attachments={attachments} />)
+      expect(tray.scrollTop).toBe(112)
+
+      // Removing a card is not an addition to reveal, even when the card left
+      // last (256–324px with the tray back at the top) is out of view.
+      tray.scrollTop = 0
+      view.rerender(<AttachmentGallery variant="composer" onRemove={vi.fn()} attachments={attachments.slice(0, 6)} />)
+      expect(tray.scrollTop).toBe(0)
+    })
+
+    it('reveals a file attached ahead of the references, not the last card', () => {
+      const references = selections(6)
+      const view = render(<AttachmentGallery variant="composer" onRemove={vi.fn()} attachments={references} />)
+      const tray = view.getByTestId('composer-attachment-tray')
+      trackScrollTop(tray)
+      tray.scrollTop = 80
+
+      // The composer lists uploads before references, so a new upload lands in
+      // the first row: at 24px, above the visible box while the tray is scrolled.
+      const upload = { id: 'upload-1', type: 'file' as const, name: 'notes.md', path: '/repo/notes.md' }
+      view.rerender(<AttachmentGallery variant="composer" onRemove={vi.fn()} attachments={[upload, ...references]} />)
+
+      expect(tray.scrollTop).toBe(4)
+    })
+
+    it('reveals a reference added again, which moves its card to the end', () => {
+      const references = selections(6)
+      const view = render(<AttachmentGallery variant="composer" onRemove={vi.fn()} attachments={references} />)
+      const tray = view.getByTestId('composer-attachment-tray')
+      trackScrollTop(tray)
+
+      // The store drops the earlier copy and appends the reference again: no new
+      // id, but the first card is now the sixth, at 256–324px.
+      view.rerender(<AttachmentGallery variant="composer" onRemove={vi.fn()} attachments={[...references.slice(1), references[0]!]} />)
+
+      expect(tray.scrollTop).toBe(36)
+    })
+  })
 })

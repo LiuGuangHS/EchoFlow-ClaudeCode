@@ -7,10 +7,11 @@ import { useChatStore } from '@/stores/chatStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useTabStore } from '@/stores/tabStore'
 import type { UIMessage } from '@/types/chat'
+import type { GalleryImage } from '@/components/chat/conversationImageGallery'
 import { ToolCallBlock } from './ToolCallBlock'
 import { ToolCallGroup } from './ToolCallGroup'
 
-type GalleryImages = Array<{ src: string; name: string; path?: string }>
+type GalleryImages = GalleryImage[]
 
 // The real lightbox renders; it is wrapped only to record what it was handed.
 const lightbox = vi.hoisted(() => ({ images: [] as GalleryImages }))
@@ -151,8 +152,9 @@ describe('ToolCallBlock · images returned by a tool (#1397)', () => {
     const strip = row.querySelector('[data-tool-result-images]')!
     expect(strip).toBeTruthy()
     expect(disclosureOf(container).contains(strip)).toBe(false)
-    // The row has no card padding; the strip lines up with the row's own text.
-    expect(strip.className).toMatch(/\bpl-\[21px\]/)
+    // The row has no card padding; the strip hangs under the text column, past
+    // the 22px node and its gap, where the expanded details also start.
+    expect(strip.className).toMatch(/\bpl-\[30px\]/)
     expect(strip.className).not.toMatch(/\bpx-4\b/)
     expect(screen.getByRole('button', { name: 'Open image 1 of 1' })).toBeInTheDocument()
   })
@@ -296,7 +298,10 @@ describe('ToolCallBlock · opening a returned image', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open image 1 of 1' }))
 
     expect(lightbox.images).toEqual([
-      { src: 'blob:tool-image-1', name: 'pic.png', path: '/Users/me/project/shots/pic.png' },
+      {
+        src: 'blob:tool-image-1', name: 'pic.png', path: '/Users/me/project/shots/pic.png',
+        inline: { mediaType: 'image/png', data: MARKER },
+      },
     ])
     expect(screen.getByRole('dialog', { name: 'pic.png' })).toBeInTheDocument()
   })

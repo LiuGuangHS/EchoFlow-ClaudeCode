@@ -33,11 +33,8 @@ type RequestTiming = {
 }
 
 function getErrorMessage(status: number, body: unknown) {
-  if (body && typeof body === 'object') {
-    // EchoFlow routes answer `{ error, detail }`; the detail is the upstream
-    // gateway's own words, which is the only part that explains the refusal.
-    if ('detail' in body && typeof body.detail === 'string' && body.detail.trim()) return body.detail
-    if ('message' in body && typeof body.message === 'string') return body.message
+  if (body && typeof body === 'object' && 'message' in body && typeof body.message === 'string') {
+    return body.message
   }
 
   if (typeof body === 'string' && body.trim().length > 0) {
@@ -143,6 +140,7 @@ export type ApiRequestOptions = {
 }
 
 async function request<T>(method: string, path: string, body?: unknown, options?: ApiRequestOptions): Promise<T> {
+  const headers = buildHeaders()
   const timing: RequestTiming = {
     startedAt: monotonicNow(),
     attempts: 0,
@@ -170,7 +168,7 @@ async function request<T>(method: string, path: string, body?: unknown, options?
       try {
         return await fetch(`${baseUrl}${path}`, {
           method,
-          headers: buildHeaders(),
+          headers,
           body: body !== undefined ? JSON.stringify(body) : undefined,
           signal: controller.signal,
         })
@@ -360,12 +358,8 @@ async function recoverDesktopServerUrl(): Promise<boolean> {
   if (!host.isDesktop) return false
 
   if (!desktopServerRecovery) {
-    const recovery = Promise.all([
-      host.runtime.getServerUrl(),
-      host.runtime.getLocalAccessToken().catch(() => null),
-    ]).then(([serverUrl, localAccessToken]) => {
+    const recovery = host.runtime.getServerUrl().then((serverUrl) => {
       setBaseUrl(serverUrl)
-      setAuthToken(localAccessToken)
       return serverUrl
     })
     const trackedRecovery = recovery.finally(() => {
@@ -518,5 +512,5 @@ export const api = {
   post: <T>(path: string, body?: unknown, options?: ApiRequestOptions) => request<T>('POST', path, body, options),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
-  delete: <T>(path: string, body?: unknown) => request<T>('DELETE', path, body),
+  delete: <T>(path: string) => request<T>('DELETE', path),
 }

@@ -56,7 +56,35 @@ describe('Switch', () => {
     const { container: small } = render(<Switch checked onChange={() => {}} label="A" size="sm" />)
     const { container: medium } = render(<Switch checked onChange={() => {}} label="B" size="md" />)
 
-    expect(small.querySelector('.h-5.w-9')).toBeInTheDocument()
-    expect(medium.querySelector('.h-6.w-11')).toBeInTheDocument()
+    // 「素」 sizes: 28×16 and 32×18, each thumb travelling exactly
+    // track width − thumb − both 2px insets, so it lands flush on the right.
+    expect(small.querySelector('.h-4.w-7')).toBeInTheDocument()
+    expect(small.querySelector('.h-3.w-3.peer-checked\\:translate-x-\\[14px\\]')).toBeInTheDocument()
+    expect(medium.querySelector('.h-\\[18px\\].w-8')).toBeInTheDocument()
+    expect(medium.querySelector('.h-3\\.5.w-3\\.5.peer-checked\\:translate-x-\\[16px\\]')).toBeInTheDocument()
+  })
+
+  it('renders a label adornment that neither renames nor toggles the switch', () => {
+    const onChange = vi.fn()
+    render(
+      <Switch
+        checked={false}
+        onChange={onChange}
+        label="Enable lean mode"
+        description="Shorter prompts"
+        labelAdornment={<button type="button">What is lean mode?</button>}
+      />,
+    )
+    const toggle = screen.getByRole('switch', { name: 'Enable lean mode' })
+    expect(toggle).toHaveAccessibleDescription('Shorter prompts')
+    // An implicit <label> labels its first labelable descendant: without
+    // `htmlFor` the adornment button came first, took the label's name and
+    // swallowed clicks on the title meant for the switch.
+    const help = screen.getByRole('button', { name: 'What is lean mode?' })
+    fireEvent.click(help)
+    expect(onChange).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByText('Enable lean mode'))
+    expect(onChange).toHaveBeenCalledWith(true)
   })
 })

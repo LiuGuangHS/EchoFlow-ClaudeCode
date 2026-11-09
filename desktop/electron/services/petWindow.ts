@@ -16,11 +16,12 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { areStorageWritesFrozen } from './storageMaintenance'
 
 export const PET_WINDOW_WIDTH = 384
 export const PET_WINDOW_HEIGHT = 400
 export const PET_WINDOW_MARGIN = 24
-export const PET_WINDOW_PARTITION = 'echoflow-code-pet'
+export const PET_WINDOW_PARTITION = 'cc-haha-pet'
 export const PET_WINDOW_STATE_FILE = 'pet-window.json'
 
 const MAX_ABSOLUTE_SCREEN_COORDINATE = 1_000_000
@@ -152,7 +153,7 @@ export function petWindowStatePath(
   const configRoot = configuredRoot
     ? path.resolve(resolveHomePath(configuredRoot, normalizedHome))
     : path.join(normalizedHome, '.claude')
-  return path.join(configRoot, 'echoflow-code', PET_WINDOW_STATE_FILE)
+  return path.join(configRoot, 'cc-haha', PET_WINDOW_STATE_FILE)
 }
 
 export function readPetWindowPosition(
@@ -184,7 +185,7 @@ export function writePetWindowPosition(
   env: NodeJS.ProcessEnv = process.env,
   homeDir: string = os.homedir(),
 ): void {
-  if (!isPetWindowPosition(state)) return
+  if (areStorageWritesFrozen() || !isPetWindowPosition(state)) return
   const statePath = petWindowStatePath(env, homeDir)
   const temporaryPath = `${statePath}.${process.pid}.tmp`
   try {

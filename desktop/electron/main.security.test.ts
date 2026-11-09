@@ -7,6 +7,11 @@ import {
   createPreviewSessionPartition,
   isAllowlistedMainRendererMediaRequest,
 } from './services/previewSession'
+import { applyWorkspaceBrowserAttachPolicy } from './services/workspaceBrowserGuest'
+import {
+  WORKSPACE_BROWSER_INITIAL_SRC,
+  WORKSPACE_BROWSER_PARTITION,
+} from '../src/lib/workspace/browserGuestContract'
 
 const desktopRoot = existsSync(path.resolve(process.cwd(), 'electron', 'main.ts'))
   ? process.cwd()
@@ -29,19 +34,6 @@ const workspaceBrowserServiceSource = mainSource.slice(
 )
 
 describe('Electron preview security boundary', () => {
-  it('restricts EchoFlow account IPC to the main desktop frame', () => {
-    expect(mainSource).toContain("channel.startsWith('desktop:echoflow:')")
-    expect(mainSource).toContain('senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame')
-  })
-
-  it('forwards explicit WSL discovery requests from the main window', () => {
-    const handler = mainSource.slice(
-      mainSource.indexOf('ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet'),
-      mainSource.indexOf('ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath'),
-    )
-    expect(handler).toContain("includeWsl: (payload as { includeWsl?: boolean } | undefined)?.includeWsl === true")
-  })
-
   it('restricts public access management to the main desktop frame', () => {
     expect(mainSource).toContain("channel.startsWith('desktop:public-access:')")
     expect(mainSource).toContain('senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame')
@@ -59,7 +51,7 @@ describe('Electron preview security boundary', () => {
     const firstPartition = createPreviewSessionPartition()
     const secondPartition = createPreviewSessionPartition()
 
-    expect(firstPartition.startsWith('echoflow-code-preview-')).toBe(true)
+    expect(firstPartition.startsWith('cc-haha-preview-')).toBe(true)
     expect(firstPartition.startsWith('persist:')).toBe(false)
     expect(secondPartition).not.toBe(firstPartition)
     expect(mainSource).toContain('partition: createPreviewSessionPartition()')
@@ -93,9 +85,15 @@ describe('Electron preview security boundary', () => {
   })
 
   it('locks workspace browser sandboxing on', () => {
-    expect(workspaceBrowserServiceSource).toContain('sandbox: true')
-    expect(workspaceBrowserServiceSource).toContain('contextIsolation: true')
-    expect(workspaceBrowserServiceSource).toContain('nodeIntegration: false')
+    // Pages are `<webview>` guests now; their preferences are pinned by the
+    // attach policy, which the main window must install.
+    const preferences: Record<string, unknown> = { sandbox: false, contextIsolation: false, nodeIntegration: true }
+    expect(applyWorkspaceBrowserAttachPolicy(preferences, {
+      partition: WORKSPACE_BROWSER_PARTITION,
+      src: WORKSPACE_BROWSER_INITIAL_SRC,
+    }, { preload: '/preview-preload.cjs' })).toBe(true)
+    expect(preferences).toMatchObject({ sandbox: true, contextIsolation: true, nodeIntegration: false })
+    expect(mainWindowSource).toContain('installWorkspaceBrowserGuestPolicy(mainWindow.webContents')
   })
 
   it('lets only the main window host workspace browser pages', () => {
@@ -145,9 +143,15 @@ describe('Electron preview security boundary', () => {
   })
 
   it('locks workspace browser sandboxing on', () => {
-    expect(workspaceBrowserServiceSource).toContain('sandbox: true')
-    expect(workspaceBrowserServiceSource).toContain('contextIsolation: true')
-    expect(workspaceBrowserServiceSource).toContain('nodeIntegration: false')
+    // Pages are `<webview>` guests now; their preferences are pinned by the
+    // attach policy, which the main window must install.
+    const preferences: Record<string, unknown> = { sandbox: false, contextIsolation: false, nodeIntegration: true }
+    expect(applyWorkspaceBrowserAttachPolicy(preferences, {
+      partition: WORKSPACE_BROWSER_PARTITION,
+      src: WORKSPACE_BROWSER_INITIAL_SRC,
+    }, { preload: '/preview-preload.cjs' })).toBe(true)
+    expect(preferences).toMatchObject({ sandbox: true, contextIsolation: true, nodeIntegration: false })
+    expect(mainWindowSource).toContain('installWorkspaceBrowserGuestPolicy(mainWindow.webContents')
   })
 
   it('lets only the main window host workspace browser pages', () => {

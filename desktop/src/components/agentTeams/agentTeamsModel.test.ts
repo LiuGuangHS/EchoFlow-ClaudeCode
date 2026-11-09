@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { TeamMember, TeamWorkbenchSnapshot, TeamWorkbenchTask } from '../../types/team'
 import {
+  endedBeforeAnyMemberJoined,
   formatWorkbenchMessageTime,
+  getMemberWorkState,
   getWorkbenchPhase,
   getWorkbenchProgress,
   getWorkbenchTaskState,
@@ -14,6 +16,7 @@ import {
   runningTaskForMember,
   shortModelLabel,
   snapshotWithHistoricalMembers,
+  stalledTaskOwnerState,
   taskOwnedByMember,
   WORKBENCH_TASK_WIDTH,
 } from './agentTeamsModel'
@@ -159,6 +162,23 @@ describe('Agent Teams workbench model', () => {
     expect(inferTaskOwner(orphan, withReassignment)).toEqual({
       identity: 'reviewer',
       inferred: true,
+    })
+  })
+
+  it.each(['pending', 'in_progress', 'completed'] as const)('does not infer an explicitly cleared owner for a %s task', (status) => {
+    const cleared = task('7', status, [], '')
+    const frame = snapshot([cleared])
+    frame.messages = [{
+      id: 'old-assignment', from: 'team-lead', to: 'backend-dev', recipients: ['backend-dev'],
+      kind: 'system', protocolType: 'task_assignment', taskId: '7', text: 'Task 7',
+      timestamp: frame.generatedAt,
+    }]
+
+    expect(inferTaskOwner(cleared, frame)).toBeUndefined()
+    expect(inferTaskOwner({ ...cleared, owner: '  ' }, frame)).toBeUndefined()
+    // Only an absent field permits reconstruction of older task records.
+    expect(inferTaskOwner({ ...cleared, owner: undefined }, frame)).toEqual({
+      identity: 'backend-dev', inferred: true,
     })
   })
 
@@ -382,6 +402,24 @@ describe('Agent Teams workbench model', () => {
       ...finished,
       deletedAt: '2026-08-08T00:01:00.000Z',
     })).toBe('completed')
+    // A team removed with work left (the user ended it, or /clear) did not complete.
+    expect(getWorkbenchPhase({
+      ...snapshot([task('1', 'completed'), task('2', 'in_progress')]),
+      deletedAt: '2026-08-08T00:01:00.000Z',
+    })).toBe('ended')
+    expect(getWorkbenchPhase({ ...snapshot([]), deletedAt: '2026-08-08T00:01:00.000Z' })).toBe('completed')
+  })
+
+  it('treats a team removed before any member joined as having nothing to report', () => {
+    const lead: TeamMember = { agentId: 'lead@team-a', name: 'team-lead', role: 'team-lead', status: 'idle' }
+    const worker: TeamMember = { agentId: 'worker@team-a', name: 'worker', role: 'worker', status: 'completed' }
+    // A launch that failed before any member started leaves tasks and the lead only.
+    const unstarted = { ...snapshot([task('1', 'pending', [], 'worker')]), team: { ...snapshot([]).team, members: [lead] } }
+    const deletedAt = '2026-08-08T00:01:00.000Z'
+
+    expect(endedBeforeAnyMemberJoined({ ...unstarted, deletedAt })).toBe(true)
+    expect(endedBeforeAnyMemberJoined(unstarted)).toBe(false)
+    expect(endedBeforeAnyMemberJoined({ ...unstarted, deletedAt, team: { ...unstarted.team, members: [lead, worker] } })).toBe(false)
   })
 
   it('narrates protocol payloads instead of leaking their raw JSON into the feed', () => {
@@ -442,6 +480,37 @@ describe('Agent Teams workbench model', () => {
     // Two messages inside one snapshot used to render an identical `T+0`.
     expect(first).not.toBe(second)
     expect(formatWorkbenchMessageTime('not-a-date')).toBe('')
+  })
+})
+
+describe('Agent Teams stalled tasks', () => {
+  const member = (name: string, extra: Partial<TeamMember>): TeamMember => ({
+    agentId: `${name}@team-a`, name, role: name, status: 'idle', ...extra,
+  })
+  const withMembers = (tasks: TeamWorkbenchTask[], members: TeamMember[]): TeamWorkbenchSnapshot => {
+    const base = snapshot(tasks)
+    return { ...base, team: { ...base.team, members } }
+  }
+
+  it("reports the owner's state for an in-progress task its owner is no longer working on", () => {
+    // The task list keeps `in_progress` until the member itself updates it,
+    // so a stopped or failed owner would otherwise look busy on the board.
+    const frame = withMembers(
+      [task('1', 'in_progress', [], 'stopper'), task('2', 'in_progress', [], 'failer'), task('3', 'in_progress', [], 'retrier'), task('4', 'in_progress', [], 'worker')],
+      [
+        member('stopper', { activity: 'stopped' }),
+        member('failer', { status: 'error', activity: 'idle', lastError: 'Credit balance is too low' }),
+        member('retrier', { activity: 'idle', lastError: 'overloaded', autoRetry: { attempt: 1, max: 5, nextAt: 1 } }),
+        member('worker', { status: 'running', activity: 'active' }),
+      ],
+    )
+    expect(frame.tasks.map(item => stalledTaskOwnerState(item, frame))).toEqual(['stopped', 'error', 'retrying', undefined])
+  })
+
+  it('never marks finished, unstarted or unowned work as stalled', () => {
+    const owner = member('stopper', { activity: 'stopped' })
+    const frame = withMembers([task('1', 'completed', [], 'stopper'), task('2', 'pending', [], 'stopper'), task('3', 'in_progress')], [owner])
+    expect(frame.tasks.map(item => stalledTaskOwnerState(item, frame))).toEqual([undefined, undefined, undefined])
   })
 })
 
@@ -542,5 +611,94 @@ describe('Agent Teams member model display', () => {
     const merged = snapshotWithHistoricalMembers([earlier, later], 1)
 
     expect(merged?.team.members[0]?.model).toBe('claude-haiku-4-5')
+  })
+
+  it('drops a failure an earlier frame recorded once a later frame clears it', () => {
+    // The roster records a recovered member by leaving the failure out, so
+    // replaying the earlier frame underneath must not resurrect it.
+    const failed = memberSnapshot('2026-08-08T07:00:00.000Z', [{
+      ...worker,
+      status: 'idle',
+      activity: 'idle',
+      lastError: 'API Error: 529 overloaded',
+      autoRetry: { attempt: 1, max: 5, nextAt: Date.parse('2026-08-08T07:00:15.000Z') },
+    }])
+    const recovered = memberSnapshot('2026-08-08T07:05:00.000Z', [{
+      ...worker,
+      status: 'idle',
+      activity: 'idle',
+    }])
+
+    const replayed = snapshotWithHistoricalMembers([failed, recovered], 1)!.team.members[0]!
+    expect(replayed.lastError).toBeUndefined()
+    expect(replayed.autoRetry).toBeUndefined()
+    expect(getMemberWorkState(replayed)).toBe('idle')
+
+    const earlier = snapshotWithHistoricalMembers([failed, recovered], 0)!.team.members[0]!
+    expect(getMemberWorkState(earlier)).toBe('retrying')
+  })
+})
+
+describe('getMemberWorkState', () => {
+  const retry = { attempt: 2, max: 5, nextAt: Date.parse('2026-08-08T07:00:45.000Z') }
+
+  function member(overrides: Partial<TeamMember>): TeamMember {
+    return {
+      agentId: 'builder@team-a',
+      name: 'builder',
+      role: 'Frontend',
+      status: 'running',
+      ...overrides,
+    }
+  }
+
+  it('keeps stopped, retrying and failed members on the team rather than idle or gone', () => {
+    expect(getMemberWorkState(member({ status: 'idle', activity: 'stopped' }))).toBe('stopped')
+    expect(getMemberWorkState(member({
+      status: 'idle',
+      activity: 'idle',
+      lastError: 'Provider stream ended without message_stop',
+      autoRetry: retry,
+    }))).toBe('retrying')
+    expect(getMemberWorkState(member({
+      status: 'error',
+      activity: 'idle',
+      lastError: 'Credit balance is too low',
+    }))).toBe('error')
+    expect(getMemberWorkState(member({ status: 'completed', activity: 'exited' }))).toBe('exited')
+    expect(getMemberWorkState(member({ status: 'idle', activity: 'exited' }))).toBe('exited')
+  })
+
+  it('lets a live turn and a gone process outrank the failure record', () => {
+    // The runtime keeps the reason until the turn a message started succeeds,
+    // so a failed member that is mid-turn again is recovering, not failed.
+    expect(getMemberWorkState(member({
+      status: 'error',
+      activity: 'active',
+      lastError: 'Credit balance is too low',
+    }))).toBe('working')
+    // An automatic continuation in flight still carries its schedule.
+    expect(getMemberWorkState(member({ activity: 'active', autoRetry: retry }))).toBe('working')
+    // A stopped process never runs the retry it had scheduled, and a message,
+    // not the failure, is what brings it back.
+    expect(getMemberWorkState(member({ status: 'idle', activity: 'stopped', autoRetry: retry }))).toBe('stopped')
+    expect(getMemberWorkState(member({
+      status: 'error',
+      activity: 'stopped',
+      lastError: 'Restart failed: spawn ENOENT',
+    }))).toBe('stopped')
+    // Leaving the team stays final whatever else was recorded.
+    expect(getMemberWorkState(member({
+      status: 'completed',
+      activity: 'stopped',
+      lastError: 'Restart failed',
+      autoRetry: retry,
+    }))).toBe('exited')
+  })
+
+  it('reads the lead from its own session, not from member turn markers', () => {
+    const lead = member({ agentId: 'lead@team-a', activity: 'stopped', autoRetry: retry })
+    expect(getMemberWorkState(lead, { isLead: true, leadIsStreaming: true })).toBe('working')
+    expect(getMemberWorkState(lead, { isLead: true, leadIsStreaming: false })).toBe('idle')
   })
 })

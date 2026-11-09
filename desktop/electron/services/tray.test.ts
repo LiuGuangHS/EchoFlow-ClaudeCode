@@ -62,7 +62,7 @@ describe('Electron tray service', () => {
       const quit = vi.fn()
 
       const controller = await installTray({
-        app: { name: 'EchoFlow Code' } as never,
+        app: { name: 'Claude Code Haha' } as never,
         desktopRoot: root,
         show,
         quit,
@@ -79,14 +79,14 @@ describe('Electron tray service', () => {
 
       expect(trayMocks.createFromPath).toHaveBeenCalledWith(iconPath)
       expect(trayMocks.Tray).toHaveBeenCalledTimes(1)
-      expect(trayMocks.tray.setToolTip).toHaveBeenCalledWith('EchoFlow Code')
+      expect(trayMocks.tray.setToolTip).toHaveBeenCalledWith('Claude Code Haha')
       expect(trayMocks.buildFromTemplate).toHaveBeenCalledTimes(1)
 
       const template = trayMocks.buildFromTemplate.mock.calls[0]?.[0] as Array<{ label?: string, click?: () => void, type?: string }>
       expect(template.map(item => item.label ?? item.type)).toEqual([
-        'Show EchoFlow Code',
+        'Show Claude Code Haha',
         'separator',
-        'Quit EchoFlow Code',
+        'Quit Claude Code Haha',
       ])
 
       template[0]?.click?.()

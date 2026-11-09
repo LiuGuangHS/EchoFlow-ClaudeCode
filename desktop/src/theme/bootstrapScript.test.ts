@@ -48,13 +48,9 @@ function extractBootstrapScript(): string {
 
 const bootstrapScript = extractBootstrapScript()
 
-// Compile once: the matrix test invokes the identical script thousands of
-// times, and recompiling the same source per call is pure CPU waste.
-// eslint-disable-next-line no-new-func -- running the shipped script verbatim is the point
-const compiledBootstrapScript = new Function(bootstrapScript)
-
 function runBootstrapScript(): { theme: string | null; colorScheme: string; themeColor: string | null } {
-  compiledBootstrapScript()
+  // eslint-disable-next-line no-new-func -- running the shipped script verbatim is the point
+  new Function(bootstrapScript)()
   return {
     theme: document.documentElement.getAttribute('data-theme'),
     colorScheme: document.documentElement.style.colorScheme,

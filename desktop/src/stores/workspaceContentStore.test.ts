@@ -58,6 +58,20 @@ beforeEach(() => {
 })
 
 describe('file content', () => {
+  it('shares an in-flight file read with ordinary callers', async () => {
+    const pending = deferred<unknown>()
+    mocks.getWorkspaceFile.mockReturnValue(pending.promise)
+    const first = store().loadFile(SESSION, 'a.ts')
+    let joined = false
+    const second = store().loadFile(SESSION, 'a.ts').then(() => { joined = true })
+    await Promise.resolve()
+    expect(joined).toBe(false)
+    expect(mocks.getWorkspaceFile).toHaveBeenCalledTimes(1)
+    pending.resolve({ state: 'ok', path: 'a.ts', content: 'first response' })
+    await Promise.all([first, second])
+    expect(store().getFile(SESSION, 'a.ts')?.content).toBe('first response')
+  })
+
   it('reads a file once and serves the cache afterwards', async () => {
     mocks.getWorkspaceFile.mockResolvedValue({ state: 'ok', path: 'a.ts', content: 'x', language: 'ts', size: 1 })
 
@@ -117,6 +131,32 @@ describe('file content', () => {
 })
 
 describe('tree', () => {
+  it('shares an in-flight tree read with ordinary callers', async () => {
+    const pending = deferred<unknown>()
+    mocks.getWorkspaceTree.mockReturnValue(pending.promise)
+    const first = store().loadTree(SESSION, 'src')
+    let joined = false
+    const second = store().loadTree(SESSION, 'src').then(() => { joined = true })
+    await Promise.resolve()
+    expect(joined).toBe(false)
+    expect(mocks.getWorkspaceTree).toHaveBeenCalledTimes(1)
+    pending.resolve({ state: 'ok', path: 'src', entries: [] })
+    await Promise.all([first, second])
+    expect(store().getTree(SESSION, 'src')?.state).toBe('ok')
+  })
+
+  it.each(['rejection', 'error response'])('retries a %s when a directory is collapsed and reopened', async (failure) => {
+    if (failure === 'rejection') mocks.getWorkspaceTree.mockRejectedValueOnce(new Error('offline'))
+    else mocks.getWorkspaceTree.mockResolvedValueOnce({ state: 'error', path: 'src', entries: [], error: 'offline' })
+    mocks.getWorkspaceTree.mockResolvedValueOnce({ state: 'ok', path: 'src', entries: [] })
+    await store().toggleDirectory(SESSION, 'src')
+    expect(store().getTree(SESSION, 'src')?.state).toBe('error')
+    await store().toggleDirectory(SESSION, 'src')
+    await store().toggleDirectory(SESSION, 'src')
+    expect(mocks.getWorkspaceTree).toHaveBeenCalledTimes(2)
+    expect(store().getTree(SESSION, 'src')?.state).toBe('ok')
+  })
+
   it('expands a directory and loads it once', async () => {
     mocks.getWorkspaceTree.mockResolvedValue({ state: 'ok', path: 'src', entries: [] })
 
@@ -140,6 +180,40 @@ describe('tree', () => {
 })
 
 describe('invalidation', () => {
+  it('notifies searches for an accepted watch refresh with no cached tree and keeps revisions task scoped', async () => {
+    const signal = new AbortController().signal
+    await store().refreshWatchedPaths(SESSION, ['src/new.ts'], ['src'], signal)
+    expect(store().watchRevisionBySession[SESSION]).toBe(1)
+    expect(store().treeByKey).toEqual({})
+    await store().refreshWatchedPaths('session-b', ['other.ts'], [''], signal)
+    expect(store().watchRevisionBySession[SESSION]).toBe(1)
+    expect(store().watchRevisionBySession['session-b']).toBe(1)
+    store().clearSession(SESSION)
+    expect(store().watchRevisionBySession[SESSION]).toBeUndefined()
+    expect(store().watchRevisionBySession['session-b']).toBe(1)
+  })
+
+  it('does not increment aborted watch revisions or recreate them after an in-flight task release', async () => {
+    const abort = new AbortController()
+    abort.abort()
+    await store().refreshWatchedPaths(SESSION, ['src/a.ts'], ['src'], abort.signal)
+    expect(store().watchRevisionBySession[SESSION]).toBeUndefined()
+    mocks.getWorkspaceFile.mockResolvedValueOnce({ state: 'ok', path: 'src/a.ts', content: 'before', language: 'ts', size: 6 })
+    await store().loadFile(SESSION, 'src/a.ts')
+    const pending = deferred<unknown>()
+    mocks.getWorkspaceFile.mockReturnValueOnce(pending.promise)
+    const active = new AbortController()
+    const refresh = store().refreshWatchedPaths(SESSION, ['src/a.ts'], ['src'], active.signal)
+    expect(store().watchRevisionBySession[SESSION]).toBe(1)
+    active.abort()
+    store().clearSession(SESSION)
+    pending.resolve({ state: 'ok', path: 'src/a.ts', content: 'late', language: 'ts', size: 4 })
+    await refresh
+    await store().refreshWatchedPaths(SESSION, ['src/a.ts'], ['src'], active.signal)
+    expect(store().watchRevisionBySession[SESSION]).toBeUndefined()
+    expect(store().getFile(SESSION, 'src/a.ts')).toBeUndefined()
+  })
+
   it.each([
     { name: 'coarse-only', paths: [], directories: ['src'] },
     { name: 'mixed', paths: ['other/b.ts'], directories: ['src', 'other'] },
@@ -286,6 +360,46 @@ describe('invalidation', () => {
 })
 
 describe('session lifetime', () => {
+  it.each(['file', 'tree'] as const)('does not let an old %s request replace or release a reopened session request', async (kind) => {
+    const firstResult = deferred<unknown>()
+    const nextResult = deferred<unknown>()
+    const api = kind === 'file' ? mocks.getWorkspaceFile : mocks.getWorkspaceTree
+    const load = () => kind === 'file'
+      ? store().loadFile(SESSION, 'src')
+      : store().loadTree(SESSION, 'src')
+    api.mockReturnValueOnce(firstResult.promise).mockReturnValueOnce(nextResult.promise)
+    const first = load()
+    store().clearSession(SESSION)
+    const second = load()
+    firstResult.resolve({ state: 'ok', path: 'src', content: 'stale', entries: [] })
+    await first
+    expect(kind === 'file' ? store().getFile(SESSION, 'src')?.content : store().getTree(SESSION, 'src')).toBeUndefined()
+    const joined = load()
+    expect(api).toHaveBeenCalledTimes(2)
+    nextResult.resolve({ state: 'ok', path: 'src', content: 'fresh', entries: [] })
+    await Promise.all([second, joined])
+    expect(kind === 'file' ? store().getFile(SESSION, 'src')?.state : store().getTree(SESSION, 'src')?.state).toBe('ok')
+  })
+
+  it.each(['file', 'tree'] as const)('restarts a cancelled %s load without joining the abandoned request', async (kind) => {
+    const abandoned = deferred<unknown>()
+    const api = kind === 'file' ? mocks.getWorkspaceFile : mocks.getWorkspaceTree
+    const load = (signal?: AbortSignal) => kind === 'file'
+      ? store().loadFile(SESSION, 'src', { signal })
+      : store().loadTree(SESSION, 'src', { signal })
+    api.mockReturnValueOnce(abandoned.promise).mockResolvedValueOnce({ state: 'ok', path: 'src', content: 'fresh', entries: [] })
+    const abort = new AbortController()
+    const first = load(abort.signal)
+    abort.abort()
+    await load()
+    abandoned.resolve({ state: 'ok', path: 'src', content: 'stale', entries: [] })
+    await first
+    expect(api).toHaveBeenCalledTimes(2)
+    expect(kind === 'file' ? store().getFile(SESSION, 'src')?.state : store().getTree(SESSION, 'src')?.state).toBe('ok')
+    if (kind === 'file') expect(store().getFile(SESSION, 'src')?.content).toBe('fresh')
+    else expect(store().isTreeLoading(SESSION, 'src')).toBe(false)
+  })
+
   it('drops only the closed session', async () => {
     mocks.getWorkspaceFile.mockResolvedValue({ state: 'ok', path: 'a.ts', content: 'x', language: 'ts', size: 1 })
     await store().loadFile(SESSION, 'a.ts')
@@ -317,6 +431,18 @@ describe('session lifetime', () => {
 })
 
 describe('status probe', () => {
+  it('does not share a status probe with a file named status', async () => {
+    const pending = deferred<unknown>()
+    mocks.getWorkspaceStatus.mockReturnValueOnce(pending.promise)
+    mocks.getWorkspaceFile.mockResolvedValueOnce({ state: 'ok', path: 'status', content: 'file' })
+    const probe = store().loadStatus(SESSION)
+    await store().loadFile(SESSION, 'status')
+    expect(store().getFile(SESSION, 'status')?.content).toBe('file')
+    pending.resolve({ state: 'ok', workDir: '/repo', changedFiles: [] })
+    await probe
+    expect(store().statusBySession[SESSION]?.state).toBe('ok')
+  })
+
   it('does not re-request after a failure on every remount', async () => {
     mocks.getWorkspaceStatus.mockRejectedValue(new Error('offline'))
 

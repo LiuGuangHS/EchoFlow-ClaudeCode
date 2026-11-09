@@ -17,25 +17,11 @@ describe('resolveSidecarInvocation', () => {
     })
   })
 
-  it('defaults echoflow-code invocations to cli mode', () => {
+  it('defaults claude-haha invocations to cli mode', () => {
     expect(
       resolveSidecarInvocation(
         ['plugin', 'install', 'demo'],
-        '/Users/demo/.local/bin/echoflow-code',
-        null,
-      ),
-    ).toEqual({
-      mode: 'cli',
-      restArgs: ['plugin', 'install', 'demo'],
-      defaultAppRoot: '/Users/demo/.local/bin',
-    })
-  })
-
-  it('keeps legacy echoflow-code invocations compatible with cli mode', () => {
-    expect(
-      resolveSidecarInvocation(
-        ['plugin', 'install', 'demo'],
-        '/Users/demo/.local/bin/echoflow-code',
+        '/Users/demo/.local/bin/claude-haha',
         null,
       ),
     ).toEqual({

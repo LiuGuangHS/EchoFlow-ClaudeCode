@@ -12,13 +12,19 @@ import {
   GROK_OFFICIAL_PROVIDER_ID,
 } from '../constants/grokOfficialProvider'
 import {
+  DEEPSEEK_ACCOUNT_DEFAULT_MODEL_ID,
+  DEEPSEEK_ACCOUNT_PROVIDER_ID,
+} from '../constants/deepseekAccountProvider'
+import {
+  getModelReasoningCapabilityOverride,
   isModelReasoningEffort,
   normalizeModelReasoningEffort,
   resolveModelReasoningProfile,
   type ModelReasoningApiFormat,
   type ModelReasoningProviderKind,
 } from '../../../src/shared/modelReasoning'
-import { getBundledPresetReasoningProviderKind } from '../config/providerPresets'
+import { BUNDLED_PROVIDER_PRESETS, getBundledPresetReasoningProviderKind } from '../config/providerPresets'
+import type { ReasoningEffortLevel } from '../types/settings'
 
 const PROVIDER_MODEL_SLOTS = ['main', 'haiku', 'sonnet', 'opus', 'fable'] as const
 
@@ -36,6 +42,40 @@ export function resolveProviderSlotModelId(
   if (!modelId || enabled === undefined) return modelId
   const baseModelId = baseProviderModelId(modelId)
   return enabled ? `${baseModelId}[1m]` : baseModelId
+}
+
+const PROVIDER_PRESET_DEFAULT_ENVS = new Map(
+  BUNDLED_PROVIDER_PRESETS.map(preset => [preset.id, preset.defaultEnv ?? {}]),
+)
+
+export function getProviderModelCapabilityOverride(
+  provider: SavedProvider,
+  modelId: string,
+): string | undefined {
+  return getModelReasoningCapabilityOverride(
+    modelId,
+    {
+      ...provider.models,
+      haiku: resolveProviderSlotModelId(provider, 'haiku'),
+      sonnet: resolveProviderSlotModelId(provider, 'sonnet'),
+      opus: resolveProviderSlotModelId(provider, 'opus'),
+    },
+    PROVIDER_PRESET_DEFAULT_ENVS.get(provider.presetId) ?? {},
+  )
+}
+
+/** Effort levels a saved provider's model accepts; undefined when unknown. */
+export function getProviderModelReasoningEfforts(
+  provider: SavedProvider,
+  modelId: string,
+): ReasoningEffortLevel[] | undefined {
+  const efforts = resolveModelReasoningProfile(
+    modelId,
+    provider.apiFormat,
+    getProviderModelCapabilityOverride(provider, modelId),
+    getBundledPresetReasoningProviderKind(provider.presetId),
+  )?.supportedReasoningEfforts
+  return efforts ? [...efforts] : undefined
 }
 
 export function resolveProviderRuntimeModelId(provider: SavedProvider, modelId: string): string {
@@ -75,7 +115,9 @@ export function resolveActiveProviderRuntimeSelection(
         ? OPENAI_OFFICIAL_DEFAULT_MODEL_ID
         : inferredProviderId === GROK_OFFICIAL_PROVIDER_ID
           ? GROK_OFFICIAL_DEFAULT_MODEL_ID
-          : OFFICIAL_DEFAULT_MODEL_ID
+          : inferredProviderId === DEEPSEEK_ACCOUNT_PROVIDER_ID
+            ? DEEPSEEK_ACCOUNT_DEFAULT_MODEL_ID
+            : OFFICIAL_DEFAULT_MODEL_ID
     ),
   }
 }
@@ -111,7 +153,8 @@ export function reconcileRuntimeSelection(
   const provider = context.providers.find((entry) => entry.id === selection.providerId)
   const isOfficial = selection.providerId === null ||
     selection.providerId === OPENAI_OFFICIAL_PROVIDER_ID ||
-    selection.providerId === GROK_OFFICIAL_PROVIDER_ID
+    selection.providerId === GROK_OFFICIAL_PROVIDER_ID ||
+    selection.providerId === DEEPSEEK_ACCOUNT_PROVIDER_ID
   if (!provider && !isOfficial && context.hasLoadedProviders) {
     // Deleted/recreated providers must not carry their old model or effort into
     // the default provider. Use the same choice for rendering and transport.
@@ -138,6 +181,13 @@ export function normalizeRuntimeSelection(
   apiFormat?: ModelReasoningApiFormat,
   providerKind?: ModelReasoningProviderKind,
 ): RuntimeSelection {
+  if (selection.openAIFastMode !== undefined && (
+    selection.providerId !== OPENAI_OFFICIAL_PROVIDER_ID ||
+    typeof selection.openAIFastMode !== 'boolean'
+  )) {
+    const { openAIFastMode: _ignoredFastMode, ...runtime } = selection
+    selection = runtime
+  }
   if (
     selection.effortLevel === undefined ||
     selection.providerId === null

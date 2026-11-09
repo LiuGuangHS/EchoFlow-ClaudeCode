@@ -9,23 +9,23 @@ const { copyMock, logoutMock, startMock, statusMock } = vi.hoisted(() => ({
   statusMock: vi.fn(),
 }))
 
-vi.mock('../../api/echoFlowGrokOAuth', () => ({
-  echoFlowGrokOAuthApi: {
+vi.mock('../../api/hahaGrokOAuth', () => ({
+  hahaGrokOAuthApi: {
     start: startMock,
     status: statusMock,
     logout: logoutMock,
-    successUrl: () => 'http://127.0.0.1:3456/api/echoflow-grok-oauth/success',
+    successUrl: () => 'http://127.0.0.1:3456/api/haha-grok-oauth/success',
   },
 }))
 
 vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard: copyMock }))
 
 import { GrokOfficialLogin } from './GrokOfficialLogin'
-import { useEchoFlowGrokOAuthStore } from '../../stores/echoFlowGrokOAuthStore'
+import { useHahaGrokOAuthStore } from '../../stores/hahaGrokOAuthStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { browserHost } from '../../lib/desktopHost/browserHost'
 
-const initialOAuthState = useEchoFlowGrokOAuthStore.getState()
+const initialOAuthState = useHahaGrokOAuthStore.getState()
 
 describe('GrokOfficialLogin', () => {
   beforeEach(() => {
@@ -36,7 +36,7 @@ describe('GrokOfficialLogin', () => {
     })
     copyMock.mockResolvedValue(true)
     useSettingsStore.setState({ locale: 'en' })
-    useEchoFlowGrokOAuthStore.setState({
+    useHahaGrokOAuthStore.setState({
       ...initialOAuthState,
       status: null,
       isPolling: false,
@@ -46,8 +46,8 @@ describe('GrokOfficialLogin', () => {
   })
 
   afterEach(() => {
-    useEchoFlowGrokOAuthStore.getState().stopPolling()
-    useEchoFlowGrokOAuthStore.setState(initialOAuthState)
+    useHahaGrokOAuthStore.getState().stopPolling()
+    useHahaGrokOAuthStore.setState(initialOAuthState)
     Reflect.deleteProperty(window, 'desktopHost')
     cleanup()
     vi.restoreAllMocks()
@@ -67,6 +67,7 @@ describe('GrokOfficialLogin', () => {
     render(<GrokOfficialLogin />)
     await screen.findByRole('button', { name: 'Sign in with Grok' })
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Sign in with Grok' })))
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'I understand, continue' })))
 
     expect(open).toHaveBeenCalled()
     expect(screen.getByText(/Unable to open browser/)).toBeInTheDocument()
@@ -86,16 +87,42 @@ describe('GrokOfficialLogin', () => {
     render(<GrokOfficialLogin />)
     await screen.findByRole('button', { name: 'Sign in with Grok' })
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Sign in with Grok' })))
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'I understand, continue' })))
     expect(open).toHaveBeenCalledWith(expect.stringContaining('accounts.x.ai'))
 
     act(() => {
-      useEchoFlowGrokOAuthStore.setState({
+      useHahaGrokOAuthStore.setState({
         status: { loggedIn: true, expiresAt: Date.now() + 60_000, email: 'grok@example.com' },
       })
     })
 
     await waitFor(() => {
-      expect(open).toHaveBeenCalledWith('http://127.0.0.1:3456/api/echoflow-grok-oauth/success')
+      expect(open).toHaveBeenCalledWith('http://127.0.0.1:3456/api/haha-grok-oauth/success')
     })
+  })
+
+  it('asks for risk confirmation before starting login and skips it on cancel', async () => {
+    const open = vi.fn().mockResolvedValue(undefined)
+    window.desktopHost = {
+      ...browserHost,
+      kind: 'electron',
+      isDesktop: true,
+      capabilities: { ...browserHost.capabilities, shell: true },
+      shell: { ...browserHost.shell, open },
+    }
+
+    render(<GrokOfficialLogin />)
+    await screen.findByRole('button', { name: 'Sign in with Grok' })
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Sign in with Grok' })))
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByText('Medium')).toBeInTheDocument()
+    expect(startMock).not.toHaveBeenCalled()
+
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' })))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(startMock).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
   })
 })

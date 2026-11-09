@@ -11,21 +11,33 @@ if ($env:CI -ne 'true') {
   throw 'This installer smoke mutates Windows installer registry state and may run only on an ephemeral CI runner.'
 }
 
+# The package step has populated electron-builder's NSIS cache. Exercise the
+# actual helper writer and uninstall result handling before touching install state.
+Push-Location (Join-Path $PSScriptRoot '..\..')
+try {
+  & bun test ./scripts/pr/windows-installer-process-check.test.ts
+  if ($LASTEXITCODE -ne 0) {
+    throw 'Native installer helper write regression failed.'
+  }
+} finally {
+  Pop-Location
+}
+
 $resolvedArtifactsDir = (Resolve-Path -LiteralPath $ArtifactsDir).Path
 $installers = @(Get-ChildItem -LiteralPath $resolvedArtifactsDir -File |
-  Where-Object { $_.Name -like "EchoFlow-Code-*-win-$Arch.exe" })
+  Where-Object { $_.Name -like "Claude-Code-Haha-*-Windows-$Arch-Setup.exe" })
 if ($installers.Count -ne 1) {
   throw "Expected exactly one Windows $Arch installer in $resolvedArtifactsDir, found $($installers.Count)."
 }
 $installer = $installers[0].FullName
 
-$testRoot = Join-Path ([IO.Path]::GetTempPath()) "echoflow-code-installer-smoke-$([Guid]::NewGuid().ToString('N'))"
-$installDir = Join-Path $testRoot '中文 安装目录\EchoFlow Code'
+$testRoot = Join-Path ([IO.Path]::GetTempPath()) "cc-haha-installer-smoke-$([Guid]::NewGuid().ToString('N'))"
+$installDir = Join-Path $testRoot '中文 安装目录\Claude Code Haha'
 $appData = Join-Path $testRoot 'AppData\Roaming'
 $localAppData = Join-Path $testRoot 'AppData\Local'
 $userProfile = Join-Path $testRoot 'UserProfile'
-$appExe = Join-Path $installDir 'EchoFlow Code.exe'
-$uninstaller = Join-Path $installDir 'Uninstall EchoFlow Code.exe'
+$appExe = Join-Path $installDir 'Claude Code Haha.exe'
+$uninstaller = Join-Path $installDir 'Uninstall Claude Code Haha.exe'
 $recoveryHelper = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\build\recover-legacy-install-data.ps1')).Path
 $processHelper = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\build\check-install-processes.ps1')).Path
 $siblingProcess = $null
@@ -33,7 +45,7 @@ $installProcess = $null
 $bundledHelperProcess = $null
 
 $savedEnvironment = @{}
-foreach ($name in @('APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'CLAUDE_CONFIG_DIR', 'ECHOFLOW_APP_PORTABLE_DIR', 'COMPLUS_Version')) {
+foreach ($name in @('APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'CLAUDE_CONFIG_DIR', 'CC_HAHA_APP_PORTABLE_DIR', 'COMPLUS_Version')) {
   $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 
@@ -106,15 +118,16 @@ function Test-IsProcessElevated {
 }
 
 # The exact image names installer.nsh falls back to when PowerShell is
-# unavailable (see EchoFlowFindInstallProcess's findstr list). Without a CLR the
+# unavailable (see CcHahaFindInstallProcess's findstr list). Without a CLR the
 # installer cannot resolve paths, so it matches on these names alone and any
 # process carrying one -- whoever started it -- reads as "the app is still
 # running". Keep this in sync with installer.nsh.
 $installerFallbackImageNames = @(
-  'EchoFlow Code.exe',
+  'Claude Code Haha.exe',
   'claude-sidecar-x86_64-pc-windows-msvc.exe',
   'claude-sidecar-aarch64-pc-windows-msvc.exe',
   'claude-sidecar.exe',
+  'OpenConsole.exe',
   'winpty-agent.exe',
   'rg.exe'
 )
@@ -252,10 +265,10 @@ function Invoke-InstalledApplicationSmoke {
   $configDir = Join-Path $IsolatedUserProfile '.claude'
   $serverStateFile = Join-Path $configDir 'desktop-server-state.json'
   $windowLog = Join-Path $testRoot 'electron-window-smoke.jsonl'
-  $hostDiagnostics = Join-Path $configDir 'echoflow-code\diagnostics\electron-host.log'
+  $hostDiagnostics = Join-Path $configDir 'cc-haha\diagnostics\electron-host.log'
   $smokeEnvironmentNames = @(
     'CLAUDE_CONFIG_DIR',
-    'ECHOFLOW_ELECTRON_WINDOW_SMOKE_LOG',
+    'CC_HAHA_ELECTRON_WINDOW_SMOKE_LOG',
     'HOME',
     'CI',
     'NO_PROXY',
@@ -270,7 +283,7 @@ function Invoke-InstalledApplicationSmoke {
   try {
     New-Item -ItemType Directory -Path $configDir -Force | Out-Null
     $env:CLAUDE_CONFIG_DIR = $configDir
-    $env:ECHOFLOW_ELECTRON_WINDOW_SMOKE_LOG = $windowLog
+    $env:CC_HAHA_ELECTRON_WINDOW_SMOKE_LOG = $windowLog
     $env:HOME = $IsolatedUserProfile
     Remove-Item Env:CI -ErrorAction SilentlyContinue
     $env:NO_PROXY = '127.0.0.1,localhost,::1'
@@ -337,7 +350,7 @@ function Invoke-InstalledApplicationSmoke {
             -Stage 'Installed application Unicode-path smoke cleanup' `
             -Arguments @(
               '-InstallDir', $InstallDirectory,
-              '-ProcessName', 'EchoFlow Code.exe',
+              '-ProcessName', 'Claude Code Haha.exe',
               '-Action', 'KillForce',
               '-InstallerPid', [string]$PID,
               '-InstallerParentPid', '0'
@@ -378,11 +391,11 @@ function Invoke-LegacyRecoveryDiagnostic {
     '-CandidateInstallDir',
     $installDir,
     '-UserDataDir',
-    (Join-Path $appData 'EchoFlow Code'),
+    (Join-Path $appData 'Claude Code Haha'),
     '-RecoveryRoot',
-    (Join-Path $userProfile 'EchoFlow Code Data\Recovered'),
+    (Join-Path $userProfile 'Claude Code Haha Data\Recovered'),
     '-ProcessName',
-    'EchoFlow Code.exe',
+    'Claude Code Haha.exe',
     '-InstallerIdentitySafety',
     'trusted-user'
   )
@@ -405,7 +418,7 @@ try {
   $env:LOCALAPPDATA = $localAppData
   $env:USERPROFILE = $userProfile
   Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue
-  Remove-Item Env:ECHOFLOW_APP_PORTABLE_DIR -ErrorAction SilentlyContinue
+  Remove-Item Env:CC_HAHA_APP_PORTABLE_DIR -ErrorAction SilentlyContinue
 
   # Baseline before anything here starts a process. Whatever this prints was put
   # there by earlier steps of the job or by the runner image, and it is exactly
@@ -423,7 +436,7 @@ try {
 
   $processProbeSource = Join-Path $env:SystemRoot 'System32\ping.exe'
   $siblingDir = "$installDir Tools"
-  $siblingProbe = Join-Path $siblingDir 'EchoFlow Code.exe'
+  $siblingProbe = Join-Path $siblingDir 'Claude Code Haha.exe'
   New-Item -ItemType Directory -Path $siblingDir -Force | Out-Null
   Copy-Item -LiteralPath $processProbeSource -Destination $siblingProbe
   $siblingProcess = Start-Process -FilePath $siblingProbe -ArgumentList @('-t', '127.0.0.1') -PassThru
@@ -443,7 +456,7 @@ try {
     -ExpectedExitCode 0 `
     -Arguments @(
       '-InstallDir', $installDir,
-      '-ProcessName', 'EchoFlow Code.exe',
+      '-ProcessName', 'Claude Code Haha.exe',
       '-Action', 'Find',
       '-InstallerPid', [string]$PID,
       '-InstallerParentPid', [string]$installProcess.Id
@@ -459,7 +472,7 @@ try {
   $siblingProcess.Dispose()
   $siblingProcess = $null
 
-  $bundledHelperProbe = Join-Path $siblingDir 'rg.exe'
+  $bundledHelperProbe = Join-Path $siblingDir 'OpenConsole.exe'
   Copy-Item -LiteralPath $processProbeSource -Destination $bundledHelperProbe
   $bundledHelperProcess = Start-Process -FilePath $bundledHelperProbe -ArgumentList @('-t', '127.0.0.1') -PassThru
   Start-Sleep -Milliseconds 500

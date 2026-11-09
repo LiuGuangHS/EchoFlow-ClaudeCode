@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import type { App, Tray } from 'electron'
-import { ECHOFLOW_PRODUCT_NAME } from '../../src/constants/brand'
 
 type ElectronTrayRuntime = Pick<typeof import('electron'), 'Menu' | 'Tray' | 'nativeImage'>
 
@@ -43,12 +42,11 @@ export async function installTray({
   const { Menu, Tray, nativeImage } = electronRuntime ?? await import('electron')
   const icon = nativeImage.createFromPath(resolveTrayIconPath(desktopRoot))
   const tray = new Tray(icon)
-  const appName = app.name || ECHOFLOW_PRODUCT_NAME
-  tray.setToolTip(appName)
+  tray.setToolTip(app.name || 'Claude Code Haha')
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: `Show ${appName}`, click: show },
+    { label: 'Show Claude Code Haha', click: show },
     { type: 'separator' },
-    { label: `Quit ${appName}`, click: quit },
+    { label: 'Quit Claude Code Haha', click: quit },
   ]))
   tray.on('click', show)
 

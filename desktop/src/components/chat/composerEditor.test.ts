@@ -146,7 +146,7 @@ describe('deleteAdjacentMentionAtom', () => {
 
 describe('capability mentions', () => {
   const skill: ComposerMention = { kind: 'skill', id: 'design:poster', label: 'Poster Design', path: '', isDirectory: false, tokenOrdinal: 0, description: 'Create a poster', icon: '/connectors/canvas-design.svg', modelText: 'Use the Skill tool with skill: "design:poster" for this request.' }
-  const plugin: ComposerMention = { kind: 'plugin', id: 'office-hyperframes@echoflow-connectors', label: 'HyperFrames', path: '', isDirectory: false, tokenOrdinal: 0, description: 'Create videos', icon: '/connectors/hyperframes.svg', modelText: 'Use enabled plugin "office-hyperframes@echoflow-connectors" for this request.' }
+  const plugin: ComposerMention = { kind: 'plugin', id: 'office-hyperframes@haha-connectors', label: 'HyperFrames', path: '', isDirectory: false, tokenOrdinal: 0, description: 'Create videos', icon: '/connectors/hyperframes.svg', modelText: 'Use enabled plugin "office-hyperframes@haha-connectors" for this request.' }
   it('round-trips mixed legacy files, skills and plugins without treating capabilities as paths', () => {
     const text = '@Poster Design with @HyperFrames and @main.ts'
     const doc = buildComposerDoc(text, [skill, plugin, fileMention])

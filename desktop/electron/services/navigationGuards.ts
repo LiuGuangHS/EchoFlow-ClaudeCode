@@ -1,3 +1,5 @@
+import { createRendererUrlMatcher } from './microphonePermissions'
+
 export type WindowOpenHandlerResult = { action: 'deny' } | { action: 'allow' }
 
 export type NavigationGuardWebContents = {
@@ -6,24 +8,14 @@ export type NavigationGuardWebContents = {
     event: 'will-navigate',
     handler: (event: { preventDefault: () => void }, url: string) => void,
   ): unknown
+  on(
+    event: 'will-redirect',
+    handler: (event: { preventDefault: () => void, url: string, isMainFrame: boolean }) => void,
+  ): unknown
 }
 
 export type NavigationGuardOptions = {
   openExternal: (url: string) => void
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  const normalized = hostname
-    .trim()
-    .replace(/^\[/, '')
-    .replace(/\]$/, '')
-    .toLowerCase()
-
-  if (normalized === 'localhost' || normalized === '::1') return true
-  const parts = normalized.split('.')
-  return parts.length === 4 &&
-    parts[0] === '127' &&
-    parts.every((part) => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255)
 }
 
 export function isHttpUrl(url: string): boolean {
@@ -35,38 +27,31 @@ export function isHttpUrl(url: string): boolean {
   }
 }
 
-export function isAllowedMainWindowNavigationUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url)
-    if (parsed.protocol === 'file:') return true
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      return isLoopbackHostname(parsed.hostname)
-    }
-    return false
-  } catch {
-    return false
-  }
-}
-
 /**
  * Main app window guard. The renderer is a single-page app loaded from a fixed
  * entry; it should never spawn an uncontrolled child window. Any window.open /
  * target=_blank with an http(s) URL is routed to the system browser and the
- * Electron popup is denied. Top-level navigation is restricted to local
- * renderer entries so a remote page cannot inherit the privileged preload.
+ * Electron popup is denied. Top-level navigation stays on the configured dev
+ * origin or packaged renderer file so other pages cannot inherit the preload.
  */
 export function installMainWindowNavigationGuards(
   webContents: NavigationGuardWebContents,
-  { openExternal }: NavigationGuardOptions,
+  { openExternal, rendererEntry }: NavigationGuardOptions & { rendererEntry: string },
 ): void {
+  const isRendererUrl = createRendererUrlMatcher(rendererEntry)
+  const guardNavigation = (event: { preventDefault: () => void }, url: string) => {
+    if (isRendererUrl(url)) return
+    event.preventDefault()
+    if (isHttpUrl(url)) openExternal(url)
+  }
   webContents.setWindowOpenHandler(({ url }) => {
     if (isHttpUrl(url)) openExternal(url)
     return { action: 'deny' }
   })
-  webContents.on('will-navigate', (event, url) => {
-    if (isAllowedMainWindowNavigationUrl(url)) return
-    event.preventDefault()
-    if (isHttpUrl(url)) openExternal(url)
+  webContents.on('will-navigate', guardNavigation)
+  // Redirects also fire for subframes, unlike will-navigate.
+  webContents.on('will-redirect', event => {
+    if (event.isMainFrame) guardNavigation(event, event.url)
   })
 }
 

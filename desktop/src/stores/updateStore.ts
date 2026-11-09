@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { gt, valid } from 'semver'
 import { getDesktopHost } from '../lib/desktopHost'
 import type { DesktopHost, DesktopUpdate } from '../lib/desktopHost'
 import type { UpdateProxySettings } from '../types/settings'
@@ -16,18 +15,13 @@ export type UpdateStatus =
   | 'restarting'
   | 'error'
 
-export type UpdateErrorCode = 'network' | 'metadata' | 'proxy' | 'download' | 'install' | 'restart' | 'unknown'
-
 type CheckOptions = {
   silent?: boolean
   autoDownload?: boolean
-  background?: boolean
 }
 
-const DISMISSED_UPDATE_VERSION_KEY = 'echoflow-code-dismissed-update-version'
+const DISMISSED_UPDATE_VERSION_KEY = 'cc-haha-dismissed-update-version'
 const RELAUNCH_WATCHDOG_MS = 15_000
-const UPDATE_CHECK_INTERVAL_MS = 8 * 60 * 60 * 1_000
-const UPDATE_CHECK_MIN_INTERVAL_MS = 5 * 60 * 1_000
 
 type UpdateStore = {
   status: UpdateStatus
@@ -37,7 +31,6 @@ type UpdateStore = {
   downloadedBytes: number
   totalBytes: number | null
   error: string | null
-  errorCode: UpdateErrorCode | null
   checkedAt: number | null
   shouldPrompt: boolean
   initialize: () => Promise<void>
@@ -53,8 +46,6 @@ let pendingUpdateDownloaded = false
 let downloadPromise: Promise<void> | null = null
 let downloadingProxyKey: string | null = null
 let startupCheckPromise: Promise<void> | null = null
-let periodicCheckTimer: ReturnType<typeof setInterval> | null = null
-let networkRecoveryListener: (() => void) | null = null
 let relaunchWatchdog: ReturnType<typeof setTimeout> | null = null
 
 function clearRelaunchWatchdog() {
@@ -74,8 +65,7 @@ function scheduleRelaunchWatchdog(host: DesktopHost) {
     useUpdateStore.setState((state) => ({
       ...state,
       status: 'downloaded',
-      error: null,
-      errorCode: 'restart',
+      error: 'Restart did not start automatically. Try installing the update again.',
       shouldPrompt: true,
       progressPercent: 100,
     }))
@@ -146,33 +136,34 @@ async function setPendingUpdate(next: DesktopUpdate | null, proxyKey: string | n
 }
 
 function shouldPromptForVersion(version: string | null) {
-  return !!version && readDismissedUpdateVersion() !== version
+  return useSettingsStore.getState().autoUpdateEnabled && !!version && readDismissedUpdateVersion() !== version
 }
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
 
-function classifyUpdateError(error: unknown): UpdateErrorCode {
-  const message = getErrorMessage(error).toLowerCase()
-  if (message.includes('proxy')) return 'proxy'
-  if (message.includes('metadata') || message.includes('latest-') || message.includes('channel')) return 'metadata'
-  if (message.includes('download') || message.includes('checksum') || message.includes('sha')) return 'download'
-  if (message.includes('install')) return 'install'
-  if (message.includes('restart') || message.includes('relaunch')) return 'restart'
-  if (message.includes('network') || message.includes('timeout') || message.includes('enotfound') || message.includes('econn')) return 'network'
-  return 'unknown'
+function parseAppVersion(version: string | null | undefined) {
+  const match = version?.trim().replace(/^v/i, '').match(/^(\d+)\.(\d+)\.(\d+)/)
+  if (!match) return null
+  return match.slice(1).map(Number) as [number, number, number]
 }
 
-function canRunBackgroundCheck(checkedAt: number | null): boolean {
-  return checkedAt === null || Date.now() - checkedAt >= UPDATE_CHECK_MIN_INTERVAL_MS
+function compareAppVersions(left: string | null | undefined, right: string | null | undefined) {
+  const leftParts = parseAppVersion(left)
+  const rightParts = parseAppVersion(right)
+  if (!leftParts || !rightParts) return null
+
+  for (let index = 0; index < leftParts.length; index += 1) {
+    const delta = leftParts[index]! - rightParts[index]!
+    if (delta !== 0) return delta
+  }
+  return 0
 }
 
-function isUpdateNewerThanCurrent(updateVersion: string, currentVersion: string | null): boolean {
-  const update = valid(updateVersion)
-  const current = currentVersion ? valid(currentVersion) : null
-  if (!update || !current) return false
-  return gt(update, current)
+function isUpdateNewerThanCurrent(updateVersion: string, currentVersion: string | null) {
+  const comparison = compareAppVersions(updateVersion, currentVersion)
+  return comparison === null || comparison > 0
 }
 
 async function getCurrentAppVersion(host: DesktopHost) {
@@ -199,56 +190,34 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   downloadedBytes: 0,
   totalBytes: null,
   error: null,
-  errorCode: null,
   checkedAt: null,
   shouldPrompt: false,
 
   initialize: async () => {
-    if (!getUpdateHost()) return
+    if (!getUpdateHost() || !useSettingsStore.getState().autoUpdateEnabled) return
     if (!startupCheckPromise) {
       startupCheckPromise = (async () => {
         await new Promise((resolve) => setTimeout(resolve, 5000))
-        await get().checkForUpdates({ silent: true, background: true })
+        await get().checkForUpdates({ silent: true })
       })().finally(() => {
         startupCheckPromise = null
       })
     }
 
-    if (!periodicCheckTimer && typeof window !== 'undefined') {
-      periodicCheckTimer = setInterval(() => {
-        if (!canRunBackgroundCheck(get().checkedAt)) return
-        void get().checkForUpdates({ silent: true, background: true })
-      }, UPDATE_CHECK_INTERVAL_MS)
-    }
-    if (!networkRecoveryListener && typeof window !== 'undefined') {
-      networkRecoveryListener = () => {
-        if (!canRunBackgroundCheck(get().checkedAt)) return
-        void get().checkForUpdates({ silent: true, background: true })
-      }
-      window.addEventListener('online', networkRecoveryListener)
-    }
-
     await startupCheckPromise
   },
 
-  checkForUpdates: async ({ silent = false, autoDownload = true, background = false } = {}) => {
+  checkForUpdates: async ({ silent = false, autoDownload = true } = {}) => {
     const host = getUpdateHost()
     if (!host) return null
-    const currentStatus = get().status
-    if (downloadPromise && pendingUpdate && (currentStatus === 'downloading' || background)) return pendingUpdate
-    if (background && pendingUpdate && (
-      currentStatus === 'downloading'
-      || currentStatus === 'downloaded'
-      || currentStatus === 'installing'
-      || currentStatus === 'restarting'
-    )) return pendingUpdate
+    if (silent && !useSettingsStore.getState().autoUpdateEnabled) return null
+    if (downloadPromise && get().status === 'downloading' && pendingUpdate) return pendingUpdate
     clearRelaunchWatchdog()
 
     set((state) => ({
       ...state,
       status: 'checking',
       error: null,
-      errorCode: null,
     }))
 
     try {
@@ -271,7 +240,6 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
           totalBytes: null,
           checkedAt,
           error: null,
-          errorCode: null,
           shouldPrompt: false,
         }))
         return null
@@ -293,7 +261,6 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
           totalBytes: null,
           checkedAt,
           error: null,
-          errorCode: null,
           shouldPrompt: false,
         }))
         return null
@@ -315,7 +282,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
         shouldPrompt: false,
       }))
 
-      if (autoDownload && (shouldOffer || !silent)) {
+      if (autoDownload && useSettingsStore.getState().autoUpdateEnabled && (shouldOffer || !silent)) {
         void get().downloadUpdate().catch(() => {
           // The store records the failure and keeps the manual install path retryable.
         })
@@ -326,16 +293,13 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
         set((state) => ({
           ...state,
           status: 'error',
-          error: null,
-          errorCode: classifyUpdateError(error),
+          error: getErrorMessage(error),
           checkedAt: Date.now(),
         }))
       } else {
         set((state) => ({
           ...state,
           status: state.availableVersion ? 'available' : 'idle',
-          error: null,
-          errorCode: classifyUpdateError(error),
           checkedAt: Date.now(),
         }))
       }
@@ -449,8 +413,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
         set((state) => ({
           ...state,
           status: 'available',
-          error: null,
-          errorCode: 'download',
+          error: getErrorMessage(error),
           shouldPrompt: false,
         }))
       }
@@ -513,12 +476,14 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
         } catch {
           // Best effort: keep the update prompt recoverable even if native reset fails.
         }
+        // prepareInstall stopped the local runtime; the app stays open, so
+        // bring it back the same way the relaunch watchdog does.
+        void host.runtime.getServerUrl().catch(() => undefined)
       }
       set((state) => ({
         ...state,
         status: pendingUpdateDownloaded ? 'downloaded' : 'available',
-        error: null,
-        errorCode: pendingUpdateDownloaded ? 'install' : classifyUpdateError(error),
+        error: getErrorMessage(error),
         shouldPrompt: true,
       }))
     }

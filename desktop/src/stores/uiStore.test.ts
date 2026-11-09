@@ -65,7 +65,7 @@ describe('uiStore theme handling', () => {
   })
 
   it('hydrates and applies the pure white theme as a light color scheme', async () => {
-    window.localStorage.setItem('echoflow-code-theme', 'white')
+    window.localStorage.setItem('cc-haha-theme', 'white')
 
     const { initializeTheme, useUIStore } = await import('./uiStore')
 
@@ -154,7 +154,7 @@ describe('uiStore following the system appearance', () => {
   })
 
   it('leaves an existing install on its fixed theme', async () => {
-    window.localStorage.setItem('echoflow-code-theme', 'white')
+    window.localStorage.setItem('cc-haha-theme', 'white')
     stubMatchMedia(true)
 
     const { useUIStore } = await import('./uiStore')
@@ -203,8 +203,8 @@ describe('uiStore following the system appearance', () => {
 
     useUIStore.getState().setFollowSystemTheme(false)
     expect(useUIStore.getState().theme).toBe('dark')
-    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('dark')
-    expect(window.localStorage.getItem('echoflow-code-follow-system-theme')).toBe('0')
+    expect(window.localStorage.getItem('cc-haha-theme')).toBe('dark')
+    expect(window.localStorage.getItem('cc-haha-follow-system-theme')).toBe('0')
     teardownTheme()
   })
 
@@ -220,7 +220,7 @@ describe('uiStore following the system appearance', () => {
     // classic rather than pure white.
     expect(useUIStore.getState().theme).toBe('dark')
     expect(useUIStore.getState().lightTheme).toBe('warm-classic')
-    expect(window.localStorage.getItem('echoflow-code-light-theme')).toBe('warm-classic')
+    expect(window.localStorage.getItem('cc-haha-light-theme')).toBe('warm-classic')
     teardownTheme()
   })
 
@@ -235,7 +235,7 @@ describe('uiStore following the system appearance', () => {
 
     expect(useUIStore.getState().theme).toBe('white')
     expect(useUIStore.getState().darkTheme).toBe('ink-blue')
-    expect(window.localStorage.getItem('echoflow-code-dark-theme')).toBe('ink-blue')
+    expect(window.localStorage.getItem('cc-haha-dark-theme')).toBe('ink-blue')
     teardownTheme()
   })
 
@@ -308,11 +308,11 @@ describe('uiStore following the system appearance', () => {
     expect(useUIStore.getState().followSystemTheme).toBe(true)
 
     // Another window opted out; only storage reflects it.
-    window.localStorage.setItem('echoflow-code-follow-system-theme', '0')
+    window.localStorage.setItem('cc-haha-follow-system-theme', '0')
 
     media.emit(true)
 
-    expect(window.localStorage.getItem('echoflow-code-follow-system-theme')).toBe('0')
+    expect(window.localStorage.getItem('cc-haha-follow-system-theme')).toBe('0')
     expect(useUIStore.getState().theme).toBe('white')
     teardownTheme()
   })
@@ -324,8 +324,8 @@ describe('uiStore following the system appearance', () => {
     initializeTheme()
     expect(useUIStore.getState().theme).toBe('dark')
 
-    window.localStorage.setItem('echoflow-code-light-theme', 'celadon')
-    window.localStorage.setItem('echoflow-code-dark-theme', 'ink-blue')
+    window.localStorage.setItem('cc-haha-light-theme', 'celadon')
+    window.localStorage.setItem('cc-haha-dark-theme', 'ink-blue')
 
     media.emit(false)
     expect(useUIStore.getState().theme).toBe('celadon')
@@ -346,9 +346,9 @@ describe('uiStore following the system appearance', () => {
 
     // A storage event is what the browser delivers to the windows that did
     // not perform the write.
-    window.localStorage.setItem('echoflow-code-theme', 'celadon')
-    window.localStorage.setItem('echoflow-code-light-theme', 'celadon')
-    window.dispatchEvent(new StorageEvent('storage', { key: 'echoflow-code-light-theme' }))
+    window.localStorage.setItem('cc-haha-theme', 'celadon')
+    window.localStorage.setItem('cc-haha-light-theme', 'celadon')
+    window.dispatchEvent(new StorageEvent('storage', { key: 'cc-haha-light-theme' }))
 
     expect(useUIStore.getState().theme).toBe('celadon')
     expect(useUIStore.getState().lightTheme).toBe('celadon')
@@ -365,8 +365,8 @@ describe('uiStore following the system appearance', () => {
     const { initializeTheme, useUIStore, teardownTheme } = await import('./uiStore')
     initializeTheme()
 
-    window.localStorage.setItem('echoflow-code-theme', 'celadon')
-    window.dispatchEvent(new StorageEvent('storage', { key: 'echoflow-code-open-tabs' }))
+    window.localStorage.setItem('cc-haha-theme', 'celadon')
+    window.dispatchEvent(new StorageEvent('storage', { key: 'cc-haha-open-tabs' }))
 
     expect(useUIStore.getState().theme).toBe('white')
     teardownTheme()
@@ -384,7 +384,7 @@ describe('uiStore settings tab persistence', () => {
 
     first.useUIStore.getState().setActiveSettingsTab('general')
 
-    expect(window.localStorage.getItem('echoflow-code-active-settings-tab')).toBe('general')
+    expect(window.localStorage.getItem('cc-haha-active-settings-tab')).toBe('general')
 
     vi.resetModules()
     const recreated = await import('./uiStore')
@@ -397,7 +397,7 @@ describe('uiStore settings tab persistence', () => {
 
     first.useUIStore.getState().setActiveSettingsTab('pets')
 
-    expect(window.localStorage.getItem('echoflow-code-active-settings-tab')).toBe('pets')
+    expect(window.localStorage.getItem('cc-haha-active-settings-tab')).toBe('pets')
 
     vi.resetModules()
     const recreated = await import('./uiStore')
@@ -405,25 +405,78 @@ describe('uiStore settings tab persistence', () => {
     expect(recreated.useUIStore.getState().activeSettingsTab).toBe('pets')
   })
 
-  it('restores every persisted Settings tab id an older build could have written', async () => {
-    for (const tab of ['providers', 'general', 'runtime', 'voice', 'h5Access', 'adapters', 'terminal', 'mcp', 'agents', 'skills', 'memory', 'plugins', 'pets', 'computerUse', 'activity', 'trace', 'diagnostics', 'about']) {
-      window.localStorage.setItem('echoflow-code-active-settings-tab', tab)
-      vi.resetModules()
-      const { useUIStore } = await import('./uiStore')
-      expect(useUIStore.getState().activeSettingsTab).toBe(tab)
-    }
+  it('ignores an invalid persisted Settings tab', async () => {
+    window.localStorage.setItem('cc-haha-active-settings-tab', 'not-a-settings-tab')
 
-    window.localStorage.setItem('echoflow-code-active-settings-tab', 'unknown-tab')
-    vi.resetModules()
     const { useUIStore } = await import('./uiStore')
+
     expect(useUIStore.getState().activeSettingsTab).toBe('providers')
   })
 
-  it('ignores an invalid persisted Settings tab', async () => {
-    window.localStorage.setItem('echoflow-code-active-settings-tab', 'not-a-settings-tab')
+  it('lands a stale persisted Trace entry on General, where the capture toggle moved', async () => {
+    window.localStorage.setItem('cc-haha-active-settings-tab', 'trace')
 
     const { useUIStore } = await import('./uiStore')
 
-    expect(useUIStore.getState().activeSettingsTab).toBe('providers')
+    expect(useUIStore.getState().activeSettingsTab).toBe('general')
+  })
+})
+
+describe('uiStore new-session draft navigation', () => {
+  // An empty draft is only a seed: "New session" in another project has to
+  // land there. It used to keep the first project, which was usually the
+  // project-less draft made at launch before the tabs were restored.
+  it('moves an empty draft to the requested project in place', async () => {
+    vi.resetModules()
+    const { useUIStore } = await import('./uiStore')
+    useUIStore.getState().startNewSessionDraft('/workspace/first')
+    const draft = useUIStore.getState().newSessionDraft!
+    expect(draft).toMatchObject({ workDir: '/workspace/first', hasContent: false })
+
+    useUIStore.getState().startNewSessionDraft('/workspace/other')
+    // Same revision: the composer is moved, not remounted, so its mode and
+    // permission picks survive.
+    expect(useUIStore.getState().newSessionDraft).toEqual({ ...draft, workDir: '/workspace/other' })
+
+    // No target (a page with no chat of its own) returns to the draft as it is.
+    useUIStore.getState().startNewSessionDraft()
+    expect(useUIStore.getState().newSessionDraft?.workDir).toBe('/workspace/other')
+    useUIStore.setState({ newSessionDraft: null })
+  })
+
+  it('keeps the project of a draft holding unsent content', async () => {
+    vi.resetModules()
+    const { useUIStore } = await import('./uiStore')
+    useUIStore.getState().startNewSessionDraft('/workspace/first')
+    const { revision } = useUIStore.getState().newSessionDraft!
+    useUIStore.getState().setNewSessionDraftContent(revision, true)
+    const draft = useUIStore.getState().newSessionDraft
+    expect(draft).toMatchObject({ workDir: '/workspace/first', hasContent: true })
+
+    useUIStore.getState().startNewSessionDraft('/workspace/other')
+    expect(useUIStore.getState().newSessionDraft).toBe(draft)
+
+    // Emptied again, it follows the next request.
+    useUIStore.getState().setNewSessionDraftContent(revision, false)
+    useUIStore.getState().startNewSessionDraft('/workspace/other')
+    expect(useUIStore.getState().newSessionDraft).toMatchObject({ workDir: '/workspace/other', revision })
+    useUIStore.setState({ newSessionDraft: null })
+  })
+
+  it('ignores a content report from a composer of an older draft', async () => {
+    vi.resetModules()
+    const { useUIStore } = await import('./uiStore')
+    useUIStore.getState().startNewSessionDraft('/workspace/first')
+    const first = useUIStore.getState().newSessionDraft!
+    // Successful first send consumes this draft. The next request is a new chat.
+    useUIStore.setState({ newSessionDraft: null })
+    useUIStore.getState().startNewSessionDraft('/workspace/next')
+    const next = useUIStore.getState().newSessionDraft!
+    expect(next.workDir).toBe('/workspace/next')
+    expect(next.revision).not.toBe(first.revision)
+
+    useUIStore.getState().setNewSessionDraftContent(first.revision, true)
+    expect(useUIStore.getState().newSessionDraft).toBe(next)
+    useUIStore.setState({ newSessionDraft: null })
   })
 })

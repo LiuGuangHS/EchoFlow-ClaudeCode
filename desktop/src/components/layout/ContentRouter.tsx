@@ -1,23 +1,29 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { useUIStore } from '@/stores/uiStore'
 import { useTabStore } from '../../stores/tabStore'
 import { EmptySession } from '../../pages/EmptySession'
 import { ActiveSession } from '../../pages/ActiveSession'
 import { ScheduledTasks } from '../../pages/ScheduledTasks'
 import { ExtensionMarket } from '@/pages/ExtensionMarket'
-import { useUIStore } from '../../stores/uiStore'
 import { Settings } from '../../pages/Settings'
 import { TerminalSettings } from '../../pages/TerminalSettings'
-import { TraceList } from '../../pages/TraceList'
-import { TraceSession } from '../../pages/TraceSession'
 import { SubagentRunPage, TeamMemberRunPage } from '../../pages/SubagentRunPage'
 import { AgentTeamsWorkbenchTab } from '../agentTeams/AgentTeamsWorkbenchTab'
-import { returnToTraceList } from '../../lib/traceNavigation'
+import { WorkspaceBrowserGuestLayer } from '../workbench/WorkspaceBrowserGuestLayer'
 
-export function ContentRouter() {
+type ContentRouterProps = {
+  /**
+   * What shows when no tab is active. The desktop shows the new-session page;
+   * the phone shows its session list with the new-task composer under it.
+   */
+  homePage?: ReactNode
+}
+
+export function ContentRouter({ homePage }: ContentRouterProps = {}) {
+  const newSessionDraft = useUIStore(s => s.newSessionDraft)
   const activeTabId = useTabStore((s) => s.activeTabId)
   const tabs = useTabStore((s) => s.tabs)
   const activeTabType = tabs.find((t) => t.sessionId === activeTabId)?.type
-  const setPendingSettingsTab = useUIStore((s) => s.setPendingSettingsTab)
   const terminalTabs = tabs.filter((tab) => tab.type === 'terminal')
   const activeSessionId = activeTabType === 'session' ? activeTabId : null
   const [lastSessionId, setLastSessionId] = useState<string | null>(activeSessionId)
@@ -33,11 +39,6 @@ export function ContentRouter() {
   }, [activeSessionId, lastSessionId, retainedSessionId])
 
   useEffect(() => {
-    if (activeTabType !== 'deepseek-harness') return
-    setPendingSettingsTab('runtime')
-  }, [activeTabType, setPendingSettingsTab])
-
-  useEffect(() => {
     if (activeTabType !== 'workbench') return
     const legacy = tabs.find(tab => tab.sessionId === activeTabId)
     const source = legacy?.workbenchSessionId ?? legacy?.sourceSessionId
@@ -48,25 +49,28 @@ export function ContentRouter() {
     store.closeTab(legacy.sessionId)
   }, [activeTabId, activeTabType, tabs])
 
+  const draftVisible = !activeTabId || !activeTabType
+  // The retained draft is the desktop's new-session page. A shell with a home
+  // of its own (the phone's session list, the tablet's new-task page) starts
+  // tasks its own way, and a desktop draft left over from a wider window must
+  // not cover that home.
+  const retainsDraft = !homePage
+  const draft = retainsDraft ? newSessionDraft : null
+  useEffect(() => {
+    // The initial desktop composer needs the same retained draft as Cmd+N.
+    if (draftVisible && retainsDraft && !newSessionDraft) {
+      useUIStore.getState().startNewSessionDraft()
+    }
+  }, [draftVisible, retainsDraft, newSessionDraft])
   let page: ReactNode = null
   if (!activeTabId || !activeTabType) {
-    page = <EmptySession />
+    page = draft ? null : homePage ?? <EmptySession />
   } else if (activeTabType === 'settings') {
     page = <Settings />
   } else if (activeTabType === 'scheduled') {
     page = <ScheduledTasks />
   } else if (activeTabType === 'connectors' || activeTabType === 'market') {
     page = <ExtensionMarket />
-  } else if (activeTabType === 'deepseek-harness') {
-    page = <Settings />
-  } else if (activeTabType === 'trace') {
-    const traceTabId = activeTabId
-    const traceSessionId = tabs.find((t) => t.sessionId === traceTabId)?.traceSessionId
-    page = traceSessionId
-      ? <TraceSession sessionId={traceSessionId} onBack={() => returnToTraceList(traceTabId)} />
-      : <EmptySession />
-  } else if (activeTabType === 'traces') {
-    page = <TraceList />
   } else if (activeTabType === 'subagent') {
     const subagentTab = tabs.find((t) => t.sessionId === activeTabId)
     page = subagentTab?.sourceSessionId && subagentTab.subagentToolUseId
@@ -106,16 +110,31 @@ export function ContentRouter() {
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden">
-      {retainedSessionId && (
-        <div
-          aria-hidden={!activeSessionId}
-          {...(activeSessionId ? {} : { inert: '' })}
-          data-testid="session-tab-panel"
-          className={`absolute inset-0 flex min-h-0 flex-col overflow-hidden ${
-            activeSessionId ? 'z-10 opacity-100' : 'pointer-events-none z-0 opacity-0'
-          }`}
-        >
+      {/*
+        Always rendered, even with no task to retain: the browser page layer
+        inside it must outlive every task switch, because a page whose element
+        is removed is destroyed and one that is moved reloads.
+      */}
+      <div
+        aria-hidden={!activeSessionId}
+        {...(activeSessionId ? {} : { inert: '' })}
+        data-testid="session-tab-panel"
+        className={`absolute inset-0 flex min-h-0 flex-col overflow-hidden ${
+          activeSessionId ? 'z-10 opacity-100' : 'pointer-events-none z-0 opacity-0'
+        }`}
+      >
+        {retainedSessionId ? (
           <ActiveSession sessionId={retainedSessionId} active={Boolean(activeSessionId)} />
+        ) : null}
+        <WorkspaceBrowserGuestLayer />
+      </div>
+      {draft && (
+        <div hidden={!draftVisible} aria-hidden={!draftVisible} {...(draftVisible ? {} : { inert: '' })}
+          data-testid="new-session-draft-panel"
+          className={draftVisible ? 'absolute inset-0 z-10 flex min-h-0 flex-col overflow-hidden' : 'hidden'}>
+          {/* Keyed by revision only: moving an empty draft to another project
+              changes `initialWorkDir` and the composer follows it in place. */}
+          <EmptySession key={draft.revision} draftRevision={draft.revision} initialWorkDir={draft.workDir} visible={draftVisible} />
         </div>
       )}
       {page && (

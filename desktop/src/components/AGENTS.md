@@ -4,7 +4,7 @@
 
 规则优先级：根 `AGENTS.md` < `desktop/AGENTS.md` < 本文件。冲突时以本文件为准。
 
-全局视觉方向见仓库根目录 [`DESIGN.md`](../../../DESIGN.md)。组件库迁移记录见 [`desktop/docs/component-library-plan.md`](../../docs/component-library-plan.md)，其中包含历史审计快照，不是当前视觉规范。
+配套文档：[`desktop/docs/component-library-plan.md`](../../docs/component-library-plan.md) 记录审计证据与后续计划。
 
 ---
 
@@ -41,14 +41,15 @@
 | 复制按钮 | `CopyButton` | `ui/CopyButton.tsx` |
 | 目录选择 | `DirectoryPicker` | `composite/DirectoryPicker.tsx` |
 | 「用 X 打开」菜单 | `OpenWithMenu` | `composite/OpenWithMenu.tsx` |
-| 品牌标记 echoflow-code | `BrandSeal` | `composite/BrandSeal.tsx` |
+| 品牌标记 cc-haha | `BrandSeal` | `composite/BrandSeal.tsx` |
 
-### 两个 hook
+### 三个 hook
 
 | 需求 | 用这个 |
 |---|---|
 | 点外面 / Esc 关闭浮层 | `hooks/useDismissable.ts` |
 | 浮层贴着触发器定位（含翻转、夹取） | `hooks/useAnchoredPosition.ts` |
+| 向上展开的 `bottom-full` 浮层按上方剩余空间限高 | `hooks/useRoomAbove.ts` |
 
 **不要再手写 `document.addEventListener('mousedown', ...)`。** 触屏上 `mousedown` 不可靠，这是 H5 上「点外面菜单不关」的根因类别。`useDismissable` 默认用 `pointerdown`。
 
@@ -93,7 +94,7 @@ className="bg-[var(--color-surface)] text-[var(--color-text-primary)]"
 className="bg-[#FAF9F5] text-[#1B1C1A]"
 ```
 
-六个主题（`white` / `paper` / `warm-classic` / `celadon` / `dark` / `ink-blue`）靠 `<html data-theme>` 切换；系统外观只决定 light/dark 配对，**不直接决定具体主题**。新增源 token 必须覆盖六个主题，语义映射定义一次；`globals.test.ts` 会检查。
+三个主题（`white` 默认 / `light` / `dark`）靠 `<html data-theme>` 切换，**不跟随操作系统**。新增 token 必须在三个主题块里都定义，`globals.test.ts` 会检查。
 
 `tokenUsage.test.ts` 扫描全部源码，断言每个 `var(--token)` 都能解析 —— 拼错的 token 不会报错，只会静默渲染成透明背景或 `currentColor` 边框。
 
@@ -153,6 +154,18 @@ style={{ zIndex: 'var(--z-dialog)' }}
 > **`2xl`(44px)** — 移动端主要触摸目标的平台下限。`ChatInput` 的输入栏按钮有测试钉死这个尺寸，缩到 40px 是回归。
 >
 > **`SearchField` 的 `clearLabel`** — 组件内部一度用 `` `Clear ${label}` `` 拼英文，导致任何已经翻译过清除按钮的调用方采用它反而是 i18n 退化。**组件库自己不许拼用户可见的英文。**
+
+### 3.8 「素 Porcelain」视觉约束
+
+2026-10 的全量改版把界面收敛到一套可检查的约束，`src/theme/designSystem.test.ts` 逐条守住（违规会列出 文件:行）：
+
+- **字号只用** 11 / 12 / 13 / 14 / 15 / 18 / 22 / 26（`text-xs`、`text-sm`、`text-lg` 可用；`text-base/xl/2xl…` 与小数字号不可用）。
+- **字重最高 semibold**：Inter 只自托管到 600，`font-bold` 会让浏览器合成糊掉的粗体；`font-mono` 不配 semibold（JetBrains Mono 只有 400）。
+- **中文不用斜体、不用宽字距大写标签**；摘要列表用「、」。
+- **图标只用 lucide**（`strokeWidth={1.75}`）；`IconButton` 的 `icon` 只接受元素，不再接受 Material 字符串。
+- **圆角只用 token**：`--radius-xs` 4 / `sm` 6 / `md` 8 / `lg` 12 / `xl` 16 / `3xl` 20 / `full`。
+- **状态色语义固定**：运行中＝info、等你确认＝warning、完成＝success、失败＝error；陶土色只给品牌、发送键与选中指示。
+- 设置页统一用 `components/settings/SettingsSection.tsx` 的骨架（PageHeader → Section → Group → Row）。
 
 ---
 

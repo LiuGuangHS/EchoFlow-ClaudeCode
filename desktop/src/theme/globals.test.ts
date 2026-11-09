@@ -80,6 +80,7 @@ describe('desktop theme tokens', () => {
     '--cc-diff-del', '--cc-diff-del-gutter', '--cc-diff-del-word',
     '--cc-diff-mark', '--cc-diff-mark-gutter', '--cc-code',
     '--cc-heat-0', '--cc-heat-1', '--cc-heat-2', '--cc-heat-3', '--cc-heat-4',
+    '--cc-series-1', '--cc-series-2', '--cc-series-3', '--cc-series-4', '--cc-series-5',
     '--cc-shadow-card', '--cc-shadow-composer', '--cc-shadow-overlay',
     '--cc-bg-rgb', '--cc-s1-rgb', '--cc-t1-rgb', '--cc-t2-rgb',
     '--cc-bd2-rgb', '--cc-ac-rgb', '--cc-er-rgb', '--cc-scrim-rgb',
@@ -92,6 +93,11 @@ describe('desktop theme tokens', () => {
     '--color-activity-heat-2',
     '--color-activity-heat-3',
     '--color-activity-heat-4',
+    '--color-series-1',
+    '--color-series-2',
+    '--color-series-3',
+    '--color-series-4',
+    '--color-series-5',
     '--color-activity-cell-border',
     '--color-activity-cell-border-hover',
     '--color-activity-cell-border-active',
@@ -153,7 +159,7 @@ describe('desktop theme tokens', () => {
   })
 
   it('keeps the startup sidebar width aligned with the compact store default', () => {
-    expect(getThemeBlock(':root')).toContain('--sidebar-width: 320px;')
+    expect(getThemeBlock(':root')).toContain('--sidebar-width: 280px;')
   })
 
   it('gives each theme its own color-scheme so native controls match the ground', () => {
@@ -185,15 +191,40 @@ describe('desktop theme tokens', () => {
     expect(getThemeBlock(':root')).toContain('--color-switch-checked-bg: var(--color-brand);')
   })
 
-  it('uses container queries for the compact activity summary strip', () => {
-    const activitySummaryCss = getCssBetween('.activity-summary-panel {', '.activity-heat-cell {')
+  it('keeps a path in a chat table cell whole instead of breaking it per letter', () => {
+    // In the split workspace the chat column is ~400px; table cells used to wrap
+    // `src/lib/validators.ts` one letter at a time.
+    expect(css).toMatch(/\.md-table-wrap :is\(td, th\) code \{[^}]*white-space: nowrap;[^}]*word-break: normal;/)
+  })
 
-    expect(activitySummaryCss).toContain('container-type: inline-size;')
-    expect(activitySummaryCss).toContain('@container (min-width: 360px)')
-    expect(activitySummaryCss).toContain('@container (min-width: 560px)')
-    expect(activitySummaryCss).toContain('grid-template-columns: repeat(5, minmax(0, 1fr));')
-    expect(activitySummaryCss).toContain('grid-column: auto;')
-    expect(activitySummaryCss).not.toContain('grid-column: span 2;')
+  it('sizes a chat ordered-list gutter in ch so a monospace number stays inside the reply column (#1540)', () => {
+    // Prose's fixed 20px gutter holds "1." in a proportional face; in a monospace
+    // one "10. " is four cells, hung past the column and clipped at the scroll
+    // area's edge in wide / full width.
+    const gutter = (selector: string) => {
+      const match = normalizedCss.match(new RegExp(`${selector.replace(/[.()>*:]/g, '\\$&')} \\{([^}]*)\\}`))
+      return match?.[1] ?? ''
+    }
+    const base = '.markdown-prose.chat-reading-markdown ol'
+    expect(gutter(base)).toMatch(/padding-inline-start: max\(1\.25rem, 3ch\)/)
+    expect(gutter(`${base}:has(> li:nth-child(10))`)).toMatch(/padding-inline-start: max\(1\.25rem, 4ch\)/)
+    expect(gutter(`${base}:has(> li:nth-child(100))`)).toMatch(/padding-inline-start: max\(1\.25rem, 5ch\)/)
+  })
+
+  it('sizes the usage page display numerals from the pane, not the window', () => {
+    const usageCss = getCssBetween('.token-usage-root {', '.activity-heat-swatch {')
+
+    expect(usageCss).toContain('container-type: inline-size;')
+    // cqw ties the figure to the settings pane the user actually has; the
+    // clamp keeps it legible on a narrow pane and from outgrowing a wide one.
+    expect(usageCss).toMatch(/\.token-hero-number \{[^}]*font-size: clamp\(\d+px, \d+cqw, \d+px\);/)
+    // Safari 15 drops a declaration whose value it cannot parse, so each cqw size is preceded by a
+    // plain one for it to fall back to; without that the numeral renders at body size.
+    expect(usageCss).toMatch(/\.token-hero-number \{[^}]*font-size: \d+px;[^}]*font-size: clamp\(\d+px, \d+cqw, \d+px\);/)
+    expect(usageCss).toMatch(/\.token-hero-unit \{[^}]*font-size: \d+px;[^}]*font-size: clamp\(\d+px, \d+cqw, \d+px\);/)
+    // Geist ships only at 500: a heavier request would be synthesized.
+    expect(usageCss).toContain("font-family: 'Geist'")
+    expect(usageCss).toContain('font-synthesis: none;')
   })
 
   it('avoids color-mix in the startup-critical UI zoom shell chrome for Safari 15 WebView support', () => {
@@ -228,6 +259,24 @@ describe('desktop theme tokens', () => {
   it('keeps code viewer line hover and line numbers on theme tokens', () => {
     expect(css).toContain('background: var(--color-surface-hover);')
     expect(css).toContain('--line-numbers-foreground: var(--color-text-tertiary);')
+  })
+
+  // Shiki only runs in a real browser (CodeViewer keeps tests on Prism), so its
+  // markup is pinned here. Block `.line`s joined by "\n" text nodes rendered an
+  // empty line box between every two lines, and its inner <pre> reset
+  // `wrapLongLines` back to `white-space: pre`.
+  it('keeps Shiki code single-spaced and lets wrapLongLines reach its inner pre', () => {
+    expect(getThemeBlock('.code-viewer-area [data-highlight-engine="shiki"] code')).toMatch(/display:\s*flex;[\s\S]*flex-direction:\s*column;/)
+    expect(getThemeBlock('.code-viewer-area [data-highlight-engine="shiki"] .line:empty::before')).toContain("content: '\\200b';")
+    const pre = getThemeBlock('.code-viewer-area [data-highlight-engine="shiki"] pre')
+    expect(pre).toContain('white-space: inherit;')
+    expect(pre).toContain('word-break: inherit;')
+  })
+
+  it('marks a located tool call on its own row or card, and lets it take over from its item', () => {
+    expect(getThemeBlock('.chat-tool-navigation-target[data-tool-call-chrome="row"]')).toContain('animation: chat-tool-row-navigation-target-pulse')
+    expect(getThemeBlock('.chat-tool-navigation-target[data-tool-call-chrome="card"]')).toContain('animation: chat-tool-card-navigation-target-pulse')
+    expect(getThemeBlock('.chat-render-item--navigation-target:has(.chat-tool-navigation-target)')).toContain('animation: none;')
   })
 
   it('keeps xterm helper and accessibility layers from rendering duplicate terminal text', () => {
@@ -375,16 +424,6 @@ describe('overlay opacity contract', () => {
     )
     expect(fallback, 'expected an @supports fallback for .glass-panel').not.toBeNull()
     expect(fallback![1]).toMatch(/background:\s*rgb\(var\(--cc-bg-rgb\)\)/)
-  })
-
-  it('disables glass blur for reduced-transparency and forced-colors users', () => {
-    const fallback = normalizedCss.match(
-      /@media \(prefers-reduced-transparency: reduce\), \(forced-colors: active\)\s*\{\s*\.glass-panel \{([^}]*)\}/,
-    )
-    expect(fallback, 'expected accessibility fallbacks for .glass-panel').not.toBeNull()
-    expect(fallback![1]).toMatch(/background:\s*var\(--color-surface-dialog\)/)
-    expect(fallback![1]).toMatch(/backdrop-filter:\s*none/)
-    expect(fallback![1]).toMatch(/-webkit-backdrop-filter:\s*none/)
   })
 
   it('keeps the dialog panel off backdrop-filter entirely', () => {

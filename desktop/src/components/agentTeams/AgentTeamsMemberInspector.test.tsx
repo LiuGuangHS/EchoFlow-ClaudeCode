@@ -1,8 +1,10 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AgentTeamsMemberInspector } from '@/components/agentTeams/AgentTeamsMemberInspector'
+import { FindInPageModal } from '@/components/search/FindInPageModal'
 import { formatWorkbenchMessageTime } from '@/components/agentTeams/agentTeamsModel'
+import { REVEAL_PAGE_SIZE } from '@/components/agentTeams/useProgressiveReveal'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type {
   TeamMember,
@@ -110,6 +112,122 @@ describe('AgentTeamsMemberInspector', () => {
     expect(onOpenExecution).toHaveBeenCalledOnce()
   })
 
+  describe('long message histories', () => {
+    function history(count: number): TeamWorkbenchMessage[] {
+      const start = Date.parse('2026-08-08T07:00:00.000Z')
+      return Array.from({ length: count }, (_, index) => message({
+        id: `m-${index}`,
+        text: `Update ${index}`,
+        timestamp: new Date(start + index * 1000).toISOString(),
+      }))
+    }
+
+    function mounted(): Array<string | null> {
+      return Array.from(
+        screen.getByTestId('agent-teams-member-messages').querySelectorAll('li'),
+      ).map((row) => row.getAttribute('data-find-row'))
+    }
+
+    function renderFor(member: TeamMember, messages: TeamWorkbenchMessage[]) {
+      const selected = snapshot('2026-08-08T08:00:00.000Z', 'in_progress', messages)
+      return (
+        <AgentTeamsMemberInspector
+          snapshots={[selected]}
+          selectedIndex={0}
+          snapshot={selected}
+          member={member}
+          isLead={false}
+          leadIsStreaming={false}
+          onBack={vi.fn()}
+          onClose={vi.fn()}
+          onOpenExecution={vi.fn()}
+        />
+      )
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it('mounts a page at a time', () => {
+      renderInspector({ snapshots: [snapshot('2026-08-08T08:00:00.000Z', 'in_progress', history(474))] })
+
+      expect(mounted()).toHaveLength(REVEAL_PAGE_SIZE)
+      expect(mounted()[0]).toBe('m-473')
+
+      fireEvent.click(screen.getByRole('button', {
+        name: `Show earlier messages (${474 - REVEAL_PAGE_SIZE} more)`,
+      }))
+      expect(mounted()).toHaveLength(REVEAL_PAGE_SIZE * 2)
+      expect(mounted()[0]).toBe('m-473')
+    })
+
+    it('mounts the next page as the end nears the inspector scroller', () => {
+      const observers: Array<{ callback: IntersectionObserverCallback; root: Element | Document | null | undefined; disconnected: boolean }> = []
+      vi.stubGlobal('IntersectionObserver', class {
+        private readonly record: (typeof observers)[number]
+        constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+          this.record = { callback, root: options?.root, disconnected: false }
+          observers.push(this.record)
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() { this.record.disconnected = true }
+        takeRecords() { return [] }
+      })
+      renderInspector({ snapshots: [snapshot('2026-08-08T08:00:00.000Z', 'in_progress', history(100))] })
+
+      const live = observers.filter((observer) => !observer.disconnected)
+      expect(live).toHaveLength(1)
+      // The drawer's own scroller, so the prefetch margin is measured there.
+      const root = live[0]!.root as HTMLElement
+      expect(root.className).toContain('overflow-y-auto')
+      expect(root.contains(screen.getByTestId('agent-teams-member-messages'))).toBe(true)
+
+      act(() => {
+        live[0]!.callback([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+      })
+      expect(mounted()).toHaveLength(REVEAL_PAGE_SIZE * 2)
+    })
+
+    it('starts another member from their newest page', () => {
+      const messages = history(200)
+      const view = render(renderFor(builder, messages))
+      fireEvent.click(screen.getByRole('button', { name: /Show earlier messages/ }))
+      expect(mounted()).toHaveLength(REVEAL_PAGE_SIZE * 2)
+
+      view.rerender(renderFor(reviewer, messages))
+      expect(mounted()).toHaveLength(REVEAL_PAGE_SIZE)
+    })
+
+    it('finds a message that is not mounted yet', async () => {
+      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() })
+      const highlights = new Map<string, { ranges: Range[] }>()
+      vi.stubGlobal('CSS', { highlights })
+      vi.stubGlobal('Highlight', class {
+        ranges: Range[] = []
+        priority?: number
+        add(range: Range) { this.ranges.push(range) }
+      })
+      const messages = history(REVEAL_PAGE_SIZE + 10)
+      messages[0] = { ...messages[0]!, text: 'Kickoff checklist for the release' }
+      render(<>
+        {renderFor(builder, messages)}
+        <FindInPageModal open onClose={() => {}} />
+      </>)
+      expect(mounted()).not.toContain('m-0')
+
+      fireEvent.change(screen.getByPlaceholderText('Find'), { target: { value: 'kickoff checklist' } })
+
+      await waitFor(() => expect(
+        document.querySelector('[data-find-bar] span.font-mono')?.textContent,
+      ).toBe('1 / 1'))
+      expect(mounted()).toContain('m-0')
+      expect(highlights.get('cc-find-active')?.ranges[0]?.startContainer.parentElement
+        ?.closest('[data-find-row]')?.getAttribute('data-find-row')).toBe('m-0')
+    })
+  })
+
   it('derives the first start and elapsed duration from task state transitions', () => {
     const snapshots = [
       snapshot('2026-08-08T07:00:00.000Z', 'pending'),
@@ -125,7 +243,95 @@ describe('AgentTeamsMemberInspector', () => {
     expect(row.textContent).toContain('Completed')
     expect(row.textContent).toContain(`${expectedStart} +7:00`)
     expect(row.getAttribute('data-task-state')).toBe('completed')
-    expect(screen.getByText('1', { selector: 'dd' })).toBeTruthy()
+    expect(screen.getByText('1/1', { selector: 'dd' })).toBeTruthy()
+  })
+
+  it.each(['pending', 'in_progress'] as const)('does not keep a transferred %s task on its former member', (status) => {
+    const before = snapshot('2026-08-08T07:00:00.000Z', status)
+    const after = snapshot('2026-08-08T07:05:00.000Z', 'in_progress')
+    after.tasks[0]!.owner = 'reviewer'
+    const { rerender } = renderInspector({ snapshots: [before, after] })
+
+    expect(screen.queryByTestId('agent-teams-member-task-7')).toBeNull()
+    expect(screen.queryByText('0/1', { selector: 'dd' })).toBeNull()
+
+    rerender(<AgentTeamsMemberInspector
+      snapshots={[before, after]} selectedIndex={1} snapshot={after} member={reviewer}
+      isLead={false} leadIsStreaming={false} onBack={vi.fn()} onClose={vi.fn()} onOpenExecution={vi.fn()}
+    />)
+    expect(screen.getByTestId('agent-teams-member-task-7').getAttribute('data-task-state')).toBe('running')
+
+    rerender(<AgentTeamsMemberInspector
+      snapshots={[before, after]} selectedIndex={0} snapshot={before} member={builder}
+      isLead={false} leadIsStreaming={false} onBack={vi.fn()} onClose={vi.fn()} onOpenExecution={vi.fn()}
+    />)
+    expect(screen.getByTestId('agent-teams-member-task-7').getAttribute('data-task-state')).toBe(status === 'pending' ? 'open' : 'running')
+  })
+
+  it('does not restore a cleared assignment from the member mailbox', () => {
+    const before = snapshot('2026-08-08T07:00:00.000Z', 'in_progress', [message({
+      id: 'assignment', from: 'team-lead', to: 'builder', recipients: ['builder'],
+      kind: 'system', protocolType: 'task_assignment', taskId: '7',
+    })])
+    const after = structuredClone(before)
+    after.tasks[0]!.owner = ''
+    renderInspector({ snapshots: [before, after] })
+
+    expect(screen.queryByTestId('agent-teams-member-task-7')).toBeNull()
+    expect(screen.getByText('0/0', { selector: 'dd' })).toBeTruthy()
+    expect(screen.getByTestId('agent-teams-member-message-assignment')).toBeTruthy()
+  })
+
+  it('groups what a member is doing, will do next and has done, and says where a stopped member stopped', () => {
+    const memberTask = (id: string, status: TeamWorkbenchTask['status'], blockedBy: string[] = []): TeamWorkbenchTask => ({
+      id, subject: `Task ${id}`, description: '', owner: 'builder', status, blocks: [], blockedBy, taskListId: 'team-a',
+    })
+    const stopped: TeamMember = { ...builder, activity: 'stopped' }
+    const frame = (generatedAt: string, tasks: TeamWorkbenchTask[]): TeamWorkbenchSnapshot => ({
+      version: 'v1',
+      generatedAt,
+      team: { name: 'team-a', leadAgentId: 'lead@team-a', leadSessionId: 'lead-session', members: [stopped, reviewer] },
+      tasks,
+      messages: [],
+    })
+    const snapshots = [
+      frame('2026-08-08T07:00:00.000Z', [memberTask('1', 'pending'), memberTask('2', 'pending'), memberTask('3', 'pending', ['2']), memberTask('4', 'pending')]),
+      // #1 started and finished between two polls: its duration is unknown,
+      // not zero.
+      frame('2026-08-08T07:05:00.000Z', [memberTask('1', 'completed'), memberTask('2', 'in_progress'), memberTask('3', 'pending', ['2']), memberTask('4', 'pending')]),
+    ]
+    render(
+      <AgentTeamsMemberInspector
+        snapshots={snapshots}
+        selectedIndex={1}
+        snapshot={snapshots[1]!}
+        member={stopped}
+        isLead={false}
+        leadIsStreaming={false}
+        onBack={vi.fn()}
+        onClose={vi.fn()}
+        onOpenExecution={vi.fn()}
+      />,
+    )
+
+    const group = (name: string) => screen.getByTestId(`agent-teams-member-task-group-${name}`)
+    const ids = (name: string) => Array.from(group(name).querySelectorAll('[data-task-state]')).map(row => row.getAttribute('data-testid'))
+    expect(screen.getAllByTestId(/^agent-teams-member-task-group-/).map(node => node.getAttribute('data-testid'))).toEqual([
+      'agent-teams-member-task-group-running',
+      'agent-teams-member-task-group-upcoming',
+      'agent-teams-member-task-group-completed',
+    ])
+    expect(ids('running')).toEqual(['agent-teams-member-task-2'])
+    expect(ids('upcoming')).toEqual(['agent-teams-member-task-3', 'agent-teams-member-task-4'])
+    expect(ids('completed')).toEqual(['agent-teams-member-task-1'])
+
+    // The task list still says in progress, but nobody is working on it.
+    expect(screen.getByTestId('agent-teams-member-task-2-state').textContent).toBe('Stopped')
+    expect(screen.getByText('Stopped · at #2')).toBeTruthy()
+    expect(screen.getByTestId('agent-teams-member-task-3').textContent).toContain('Depends on #2')
+    expect(screen.getByTestId('agent-teams-member-task-1').textContent).toContain(formatWorkbenchMessageTime('2026-08-08T07:05:00.000Z'))
+    expect(screen.getByTestId('agent-teams-member-task-1').textContent).not.toContain('+0:00')
+    expect(screen.getByText('1/4', { selector: 'dd' })).toBeTruthy()
   })
 
   it('shows message direction, renders human Markdown, and narrates protocol payloads', () => {
@@ -237,5 +443,160 @@ describe('AgentTeamsMemberInspector', () => {
     const cell = screen.getByTestId('agent-teams-member-model')
     expect(cell.textContent).toBe('Unknown')
     expect(cell.textContent).not.toContain('undefined')
+  })
+
+  describe('recovery states', () => {
+    const now = Date.parse('2026-08-08T07:00:00.000Z')
+
+    function renderMember(member: TeamMember, clock?: number) {
+      const base = snapshot('2026-08-08T07:00:00.000Z', 'in_progress')
+      const frame: TeamWorkbenchSnapshot = {
+        ...base,
+        team: { ...base.team, members: [member, reviewer] },
+      }
+      return render(
+        <AgentTeamsMemberInspector
+          snapshots={[frame]}
+          selectedIndex={0}
+          snapshot={frame}
+          member={member}
+          isLead={false}
+          leadIsStreaming={false}
+          now={clock}
+          onBack={vi.fn()}
+          onClose={vi.fn()}
+          onOpenExecution={vi.fn()}
+        />,
+      )
+    }
+
+    it('says a stopped member resumes from its saved conversation when messaged', () => {
+      const onOpenExecution = vi.fn()
+      const frame = snapshot('2026-08-08T07:00:00.000Z', 'in_progress')
+      const stopped: TeamMember = { ...builder, status: 'idle', activity: 'stopped' }
+      render(
+        <AgentTeamsMemberInspector
+          snapshots={[frame]}
+          selectedIndex={0}
+          snapshot={frame}
+          member={stopped}
+          isLead={false}
+          leadIsStreaming={false}
+          onBack={vi.fn()}
+          onClose={vi.fn()}
+          onOpenExecution={onOpenExecution}
+        />,
+      )
+
+      // Where it stopped, not just that it stopped.
+      expect(screen.getByText('Stopped · at #7')).toBeTruthy()
+      const notice = screen.getByTestId('agent-teams-member-recovery')
+      expect(notice.getAttribute('data-member-state')).toBe('stopped')
+      expect(screen.getByTestId('agent-teams-member-recovery-hint').textContent)
+        .toBe('Send a message to resume it from its saved conversation')
+      expect(screen.queryByTestId('agent-teams-member-last-error')).toBeNull()
+
+      // The way back is the member's own conversation, where the composer lives.
+      const execution = screen.getByRole('button', { name: 'View builder execution' }) as HTMLButtonElement
+      expect(execution.disabled).toBe(false)
+      fireEvent.click(execution)
+      expect(onOpenExecution).toHaveBeenCalledOnce()
+    })
+
+    it('counts down to the next automatic retry and names the failure behind it', () => {
+      const retrying: TeamMember = {
+        ...builder,
+        status: 'idle',
+        activity: 'idle',
+        lastError: 'API Error: 529 overloaded',
+        autoRetry: { attempt: 2, max: 5, nextAt: now + 45_000 },
+      }
+      const view = renderMember(retrying, now)
+
+      expect(screen.getByText('Auto-retry 2/5')).toBeTruthy()
+      expect(screen.getByTestId('agent-teams-member-recovery').getAttribute('data-member-state'))
+        .toBe('retrying')
+      expect(screen.getByTestId('agent-teams-member-last-error').textContent)
+        .toBe('API Error: 529 overloaded')
+      expect(screen.getByTestId('agent-teams-member-recovery-hint').textContent)
+        .toBe('Retrying automatically in 45s')
+
+      view.rerender(
+        <AgentTeamsMemberInspector
+          snapshots={[]}
+          selectedIndex={0}
+          snapshot={snapshot('2026-08-08T07:00:00.000Z', 'in_progress')}
+          member={{ ...retrying, autoRetry: { attempt: 3, max: 5, nextAt: now + 125_000 } }}
+          isLead={false}
+          leadIsStreaming={false}
+          now={now}
+          onBack={vi.fn()}
+          onClose={vi.fn()}
+          onOpenExecution={vi.fn()}
+        />,
+      )
+      expect(screen.getByTestId('agent-teams-member-recovery-hint').textContent)
+        .toBe('Retrying automatically in about 2 min')
+      view.unmount()
+
+      // Past its schedule, the retry is due rather than counting negative.
+      renderMember(retrying, now + 46_000)
+      expect(screen.getByTestId('agent-teams-member-recovery-hint').textContent)
+        .toBe('Retrying automatically now')
+    })
+
+    it('shows no countdown while replaying, where the present clock means nothing', () => {
+      renderMember({
+        ...builder,
+        status: 'idle',
+        activity: 'idle',
+        lastError: 'API Error: 529 overloaded',
+        autoRetry: { attempt: 1, max: 5, nextAt: now + 15_000 },
+      })
+
+      expect(screen.getByText('Auto-retry 1/5')).toBeTruthy()
+      expect(screen.getByTestId('agent-teams-member-last-error').textContent)
+        .toBe('API Error: 529 overloaded')
+      expect(screen.queryByTestId('agent-teams-member-recovery-hint')).toBeNull()
+    })
+
+    it('keeps a long failure reason on one line with the full text on hover', () => {
+      const reason = 'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 215000 tokens > 200000 maximum"}}'
+      renderMember({ ...builder, status: 'error', activity: 'idle', lastError: reason })
+
+      expect(screen.getByText('Error')).toBeTruthy()
+      expect(screen.getByTestId('agent-teams-member-recovery').getAttribute('data-member-state'))
+        .toBe('error')
+      const lastError = screen.getByTestId('agent-teams-member-last-error')
+      expect(lastError.textContent).toBe(reason)
+      expect(lastError.getAttribute('title')).toBe(reason)
+      expect(lastError.className).toContain('truncate')
+      // Resending into a full context fails the same way, so the hint names /compact.
+      expect(screen.getByTestId('agent-teams-member-recovery-hint').textContent)
+        .toBe('Its context is full. Type /compact in its conversation, then send a message to let it continue')
+    })
+
+    it('points a stopped member whose context is full at /compact too', () => {
+      renderMember({ ...builder, status: 'idle', activity: 'stopped', lastError: 'Prompt is too long' })
+
+      expect(screen.getByTestId('agent-teams-member-recovery').getAttribute('data-member-state'))
+        .toBe('stopped')
+      expect(screen.getByTestId('agent-teams-member-recovery-hint').textContent)
+        .toBe('Its context is full. Type /compact in its conversation, then send a message to let it continue')
+    })
+
+    it('keeps the plain recovery hint for any other failure', () => {
+      renderMember({ ...builder, status: 'error', activity: 'idle', lastError: 'Credit balance is too low' })
+
+      expect(screen.getByTestId('agent-teams-member-recovery-hint').textContent)
+        .toBe('Once the problem is fixed, send a message to let it continue')
+    })
+
+    it('drops the failure notice while a failed member works its way back', () => {
+      renderMember({ ...builder, status: 'error', activity: 'active', lastError: 'Credit balance is too low' })
+
+      expect(screen.getByText('Executing #7')).toBeTruthy()
+      expect(screen.queryByTestId('agent-teams-member-recovery')).toBeNull()
+    })
   })
 })

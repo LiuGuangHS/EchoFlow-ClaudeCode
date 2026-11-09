@@ -1,25 +1,22 @@
+import type { ShareableConfig } from '../../types/configShare'
+import type { IdlePowerSettings, IdlePowerState } from '../idlePower'
 import type {
   AppMode as SettingsAppMode,
   AppModeConfig as SettingsAppModeConfig,
 } from '../../types/settings'
 import type { Locale } from '../../i18n/locale'
-import type { ShareableConfig } from '../../types/configShare'
 
-// Version 2 adds remote provider management and selected General settings.
-export const PUBLIC_ACCESS_CONSENT_VERSION = 2
+// Version 4 requires fresh consent for the Cloudflare public connection modes.
+export const PUBLIC_ACCESS_CONSENT_VERSION = 4
 
-export type DesktopHostKind = 'browser' | 'electron'
-
-/** An `echoflowcode://` import link received by the main process. */
 export type DesktopConfigImport =
   | { config: ShareableConfig; apiKey?: string }
   | { invalid: true }
 
-export type EchoFlowLoginEndpoint = 'main' | 'dedicated'
+export type DesktopHostKind = 'browser' | 'electron'
 
 export type DesktopHostCapability =
   | 'appMode'
-  | 'echoFlowAccount'
   | 'clipboard'
   | 'dialogs'
   | 'notifications'
@@ -110,32 +107,13 @@ export type DesktopUpdateDownloadEvent =
 export type DesktopUpdate = {
   version: string
   body?: string | null
-  feedUrl?: string | null
-  feedAttempts?: DesktopUpdateFeedAttempt[]
   download(onEvent?: (event: DesktopUpdateDownloadEvent) => void): Promise<void>
   install(): Promise<void>
   close(): Promise<void>
 }
 
-export type DesktopUpdateFeedAttempt = {
-  feedUrl: string | null
-  result: 'selected' | 'no-update' | 'missing-metadata' | 'mismatched-metadata' | 'error'
-  error?: string
-}
-
 export type DesktopUpdateCheckOptions = {
   proxy?: string
-}
-
-export type DeepSeekHarnessState = 'unavailable' | 'installing' | 'starting' | 'running' | 'stopped' | 'error'
-
-export type DeepSeekHarnessStatus = {
-  state: DeepSeekHarnessState
-  version: string | null
-  url: string | null
-  error: string | null
-  nodeVersion: string | null
-  nodeSource: 'system' | 'managed' | null
 }
 
 export type TerminalSpawnOptions = {
@@ -222,8 +200,6 @@ export type PreviewHostMessage = PreviewCaptureMessage | PreviewPickerMessage | 
  * Multi-page browser host. Every method names its page, so a second page never
  * navigates the first and unmounting a React surface never destroys a page.
  */
-export type WorkspaceBrowserBounds = PreviewBounds
-
 export type WorkspaceBrowserCaptureKind = 'full' | 'viewport'
 
 export type WorkspaceBrowserMenuAction =
@@ -398,69 +374,79 @@ export type AppModeSetInput = {
   portableDir: string | null
 }
 
-export type ClaudeCodeRuntimeId = 'bundled' | 'installed'
-
-export type RuntimeProductId = 'echoflow-agent' | 'claude-code' | 'codex' | 'wsl'
-export type RuntimeSource = 'bundled' | 'current-system' | 'custom-path' | 'wsl'
-export type RuntimeInstallationStatus = 'available' | 'not-found' | 'error' | 'not-applicable'
-export type RuntimeInstallation = {
-  productId: RuntimeProductId
-  source: RuntimeSource
-  status: RuntimeInstallationStatus
-  version?: string
-  path?: string
-  distribution?: string
-  error?: 'probe-failed' | 'probe-timeout' | 'invalid-version'
-  /** Epoch ms of this probe. A version with no timestamp reads as unverified. */
-  probedAt?: number
-}
-export type RuntimeDiscoveryResult = { installations: RuntimeInstallation[] }
-
-
-export type ClaudeCodeRuntimeStatus = {
-  defaultRuntimeId: ClaudeCodeRuntimeId
-  hasInstalledRuntime: boolean
-  /** The executable `installed` runs, when one is configured and usable. */
-  installedPath?: string | null
+export type MigrationPreview = {
+  id: string
+  sourceDir: string
+  targetDir: string
+  files: number
+  bytes: number
+  activeTasks: number
 }
 
-export type DesktopPublicAccessStatus = {
+export type MigrationStatus = {
+  id: string
+  sourceDir: string
+  targetDir: string
+  stage: 'preparing' | 'quiescing' | 'copying' | 'verifying' | 'committing' | 'restarting' | 'completed' | 'cancelled' | 'failed'
+  files: number
+  totalFiles: number
+  bytes: number
+  totalBytes: number
+  error?: string
+  cancellable: boolean
+}
+
+export type DesktopPublicAccessConfiguration = {
+  mode: 'quick' | 'named'
+  customUrl: string
+  localPort: number
+  /** Write-only. Omitted or empty retains the saved named-tunnel token. */
+  tunnelToken?: string
+}
+
+export type DesktopPublicAccessStatus = Omit<DesktopPublicAccessConfiguration, 'tunnelToken'> & {
   state: 'unconfigured' | 'disabled' | 'connecting' | 'online' | 'reconnecting' | 'failed'
-  hasCredential: boolean
   publicUrl: string | null
-  error: 'auth' | 'quota' | 'network' | 'configuration' | null
+  /** `token`: Cloudflare refused the saved credential. `route`: while waiting, the tunnel's pushed routes send no hostname to the local gateway. */
+  error: 'network' | 'configuration' | 'stop' | 'runtime' | 'proxy' | 'token' | 'route' | null
+  tokenSet: boolean
+  /** The tunnel UUID inside the saved token, which is also visible in the Cloudflare dashboard. */
+  tunnelId: string | null
+  /** `routing`: the named tunnel is connected and waits for a Cloudflare route to the local gateway. */
+  phase: 'preparing' | 'connecting' | 'routing' | 'checking' | null
   autoStart: boolean
   consentVersion: number
+  migrationRequired: boolean
+  /** Paired phones may upgrade to a direct (P2P) path. Absent on hosts without P2P. */
+  p2pEnabled?: boolean
+  /**
+   * The desktop's direct-connection endpoint: `off` while it is not wanted,
+   * `starting` until it runs, `ready` once it runs, `failed` while it backs off
+   * after a crash or has given up until the next change. Absent on hosts without P2P.
+   */
+  p2pState?: 'off' | 'starting' | 'ready' | 'failed'
 }
 
 export type DesktopHost = {
+  configImport: {
+    take(): Promise<DesktopConfigImport | null>
+    ack(): Promise<void>
+    onPending(handler: () => void): Promise<DesktopHostUnlisten>
+  }
   publicAccess: {
     getStatus(): Promise<DesktopPublicAccessStatus>
-    saveCredential(token: string): Promise<DesktopPublicAccessStatus>
-    deleteCredential(): Promise<DesktopPublicAccessStatus>
+    configure(configuration: DesktopPublicAccessConfiguration): Promise<DesktopPublicAccessStatus>
     start(consentVersion: number): Promise<DesktopPublicAccessStatus>
     stop(): Promise<DesktopPublicAccessStatus>
     setAutoStart(enabled: boolean): Promise<DesktopPublicAccessStatus>
+    setP2PEnabled(enabled: boolean): Promise<DesktopPublicAccessStatus>
   }
   kind: DesktopHostKind
   isDesktop: boolean
   capabilities: DesktopHostCapabilities
-  echoFlow: {
-    openLogin(endpoint?: EchoFlowLoginEndpoint): Promise<'authenticated' | 'cancelled' | 'failed'>
-    signOut(endpoint?: EchoFlowLoginEndpoint): Promise<void>
-    /** Resolves once the startup restore has settled, reporting whether it signed an account back in. */
-    whenAccountRestored(): Promise<boolean>
-  }
-  runtimeDiscovery: {
-    list(options?: { includeWsl?: boolean }): Promise<RuntimeDiscoveryResult>
-    probePath(path: string): Promise<RuntimeInstallation>
-  }
   runtime: {
     getServerUrl(): Promise<string>
     getLocalAccessToken(): Promise<string | null>
-    getClaudeCode(): Promise<ClaudeCodeRuntimeStatus>
-    chooseClaudeCode(): Promise<ClaudeCodeRuntimeStatus | null>
-    setClaudeCode(runtimeId: ClaudeCodeRuntimeId): Promise<ClaudeCodeRuntimeStatus>
   }
   app: {
     getVersion(): Promise<string>
@@ -469,14 +455,15 @@ export type DesktopHost = {
     getPreferredSystemLanguages(): Promise<string[]>
     onLocaleChanged(handler: (locale: Locale) => void): Promise<DesktopHostUnlisten>
   }
-  configImport: {
-    /** Reads the pending import without clearing it; ack only after the UI handles it. */
-    take(): Promise<DesktopConfigImport | null>
-    ack(): Promise<void>
-    onPending(handler: () => void): Promise<DesktopHostUnlisten>
-  }
   commands: {
     invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>
+  }
+  power: {
+    setPreventSleepWhileRunning(enabled: boolean): Promise<void>
+    getIdleActionState(): Promise<IdlePowerState>
+    configureIdleAction(settings: IdlePowerSettings): Promise<IdlePowerState>
+    cancelIdleAction(): Promise<void>
+    onIdleActionState(handler: (state: IdlePowerState) => void): Promise<DesktopHostUnlisten>
   }
   clipboard: {
     readText(): Promise<string>
@@ -494,11 +481,6 @@ export type DesktopHost = {
   shell: {
     open(target: string): Promise<void>
     openPath(path: string): Promise<void>
-    /** Reveal a file in its folder without opening it. */
-    showItemInFolder(path: string): Promise<void>
-  }
-  trace?: {
-    openWindow(sessionId: string): Promise<void>
   }
   pets: {
     list(): Promise<DesktopPetListResult>
@@ -577,23 +559,21 @@ export type DesktopHost = {
   }
   browser: {
     showMenu(tabId: string, options: WorkspaceBrowserMenuOptions): Promise<WorkspaceBrowserMenuAction | null>
+    /** Registers the page's `<webview>` guest with the host and starts `url`. */
     create(
       tabId: string,
-      options: { storageId: string; url?: string; bounds?: WorkspaceBrowserBounds; visible?: boolean },
+      options: { storageId: string; url?: string; webContentsId: number },
     ): Promise<void>
     navigate(tabId: string, url: string): Promise<void>
     goBack(tabId: string): Promise<void>
     goForward(tabId: string): Promise<void>
     reload(tabId: string, options?: { ignoreCache?: boolean }): Promise<void>
     stop(tabId: string): Promise<void>
-    setBounds(tabId: string, bounds: WorkspaceBrowserBounds): Promise<void>
     setVisible(tabId: string, visible: boolean): Promise<void>
     setZoom(tabId: string, factor: number): Promise<void>
     find(tabId: string, text: string, options?: WorkspaceBrowserFindOptions): Promise<void>
     stopFind(tabId: string): Promise<void>
     capture(tabId: string, kind: WorkspaceBrowserCaptureKind): Promise<void>
-    /** Read-only presentation backdrop, with no screenshot or composer event. */
-    snapshot(tabId: string): Promise<string | null>
     message(tabId: string, payload: PreviewHostMessage): Promise<void>
     printToPdf(tabId: string): Promise<void>
     close(tabId: string): Promise<void>
@@ -604,17 +584,16 @@ export type DesktopHost = {
     set(config: AppModeSetInput): Promise<void>
     prepareRestart(): Promise<void>
     restart(): Promise<void>
+    migration: {
+      prepare(targetDir: string): Promise<MigrationPreview>
+      start(id: string): Promise<void>
+      status(): Promise<MigrationStatus | null>
+      cancel(id: string): Promise<void>
+      onProgress(handler: (status: MigrationStatus) => void): Promise<DesktopHostUnlisten>
+    }
   }
   adapters: {
     restartSidecar(): Promise<void>
-  }
-  deepSeekHarness: {
-    getStatus(): Promise<DeepSeekHarnessStatus>
-    start(): Promise<DeepSeekHarnessStatus>
-    stop(): Promise<DeepSeekHarnessStatus>
-    restart(): Promise<DeepSeekHarnessStatus>
-    update(): Promise<DeepSeekHarnessStatus>
-    open(): Promise<void>
   }
   zoom: {
     set(level: number): Promise<void>

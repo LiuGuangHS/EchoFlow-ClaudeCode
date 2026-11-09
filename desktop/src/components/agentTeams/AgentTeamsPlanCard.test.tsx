@@ -12,10 +12,18 @@ import type { TeamPlanRecord } from '../../../../src/shared/teamPlan'
 
 vi.mock('@/api/teamPlans', () => ({ teamPlansApi: { get: vi.fn(), save: vi.fn(), act: vi.fn() } }))
 vi.mock('@/components/controls/ModelSelector', () => ({
-  ModelSelector: (props: { ariaLabel: string; runtimeSelection: { providerId: string | null; modelId: string }; onRuntimeSelectionChange: (value: { providerId: string | null; modelId: string }) => void; disabled?: boolean; runtimeKey?: string }) => (
-    <button aria-label={props.ariaLabel} disabled={props.disabled} data-runtime-key={props.runtimeKey} onClick={() => props.onRuntimeSelectionChange({ providerId: 'economy', modelId: 'cheap' })}>
-      {props.runtimeSelection.providerId ?? 'official'} / {props.runtimeSelection.modelId}
-    </button>
+  ModelSelector: (props: { ariaLabel: string; runtimeSelection: { providerId: string | null; modelId: string; effortLevel?: string }; onRuntimeSelectionChange: (value: { providerId: string | null; modelId: string; effortLevel?: string }) => void; onEffortChange?: (level: string) => void; disabled?: boolean; runtimeKey?: string; effortEditable?: boolean }) => (
+    <>
+      <button aria-label={props.ariaLabel} disabled={props.disabled} data-runtime-key={props.runtimeKey} onClick={() => props.onRuntimeSelectionChange({ providerId: 'economy', modelId: 'cheap' })}>
+        {props.runtimeSelection.providerId ?? 'official'} / {props.runtimeSelection.modelId}
+      </button>
+      {/* The real selector's effort pill: same runtime, new effort. */}
+      {props.effortEditable && (
+        <button aria-label={`${props.ariaLabel} effort`} disabled={props.disabled} onClick={() => props.onEffortChange ? props.onEffortChange('low') : props.onRuntimeSelectionChange({ ...props.runtimeSelection, effortLevel: 'low' })}>
+          {props.runtimeSelection.effortLevel ?? 'default'}
+        </button>
+      )}
+    </>
   ),
 }))
 
@@ -48,6 +56,32 @@ async function open() {
 }
 
 describe('AgentTeamsPlanCard', () => {
+  it('keeps a long team name inside the inherited conversation width', async () => {
+    const plan = fixture()
+    plan.teamName = 'repository-validation-'.repeat(20)
+    vi.mocked(teamPlansApi.get).mockResolvedValue({ plan })
+    render(<AgentTeamsPlanCard sessionId="session" />)
+    const name = await screen.findByRole('heading', { name: plan.teamName })
+    expect(name).toHaveClass('truncate')
+    expect(name).toHaveAttribute('title', plan.teamName)
+    expect(name.closest('section')).toHaveClass('min-w-0', 'max-w-full')
+    expect(screen.getByTestId('team-plan-open').parentElement).toHaveClass('flex-wrap')
+  })
+
+  it('uses the modal content width for its roster and detail columns', async () => {
+    await open()
+    const editor = screen.getByRole('dialog').querySelector('.team-plan-editor')!
+    expect(editor).toHaveClass('@container')
+    const roster = screen.getByRole('navigation')
+    const layout = roster.closest('aside')!.parentElement!
+    expect(layout).toHaveClass('@min-[760px]:grid-cols-[244px_minmax(0,1fr)]')
+    // Detail fields must respond to the remaining column, not the modal width.
+    expect(layout.lastElementChild).toHaveClass('@container')
+    expect(editor.innerHTML).not.toMatch(/(?:sm|md):grid-cols/)
+    const model = screen.getByRole('button', { name: 'Builder · Provider and model' })
+    expect(model.parentElement!.parentElement).toHaveClass('@min-[560px]:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]')
+  })
+
   it('focuses one member at a time and preserves edits when navigating the roster', async () => {
     await open()
     fireEvent.click(screen.getByRole('button', { name: 'Builder · Provider and model' }))
@@ -151,6 +185,32 @@ describe('AgentTeamsPlanCard', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  it('sets one effort for the selected members without copying a provider or model onto them', async () => {
+    await open()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all members' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Set model for selected members effort' }))
+    const draft = useTeamPlanStore.getState().bySession.session!.draft!
+    expect(draft.members.map(member => member.runtime)).toEqual([
+      { providerId: 'fast', modelId: 'small', effortLevel: 'low' },
+      { providerId: 'strong', modelId: 'large', effortLevel: 'low' },
+    ])
+  })
+
+  it('lets the reviewer set a member effort and saves it with the provider and model before approval', async () => {
+    await open()
+    expect(screen.getByRole('button', { name: 'Builder · Provider and model effort' })).toHaveTextContent('default')
+    fireEvent.click(screen.getByRole('button', { name: 'Builder · Provider and model effort' }))
+    expect(screen.getByRole('button', { name: 'Builder · Provider and model effort' })).toHaveTextContent('low')
+    vi.mocked(teamPlansApi.save).mockResolvedValue({ plan: { ...fixture(), revision: 2 } })
+    vi.mocked(teamPlansApi.act).mockResolvedValue({ plan: { ...fixture(), revision: 3, state: 'launching' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Approve and launch' }))
+
+    await waitFor(() => expect(teamPlansApi.act).toHaveBeenCalledOnce())
+    const [, edits] = vi.mocked(teamPlansApi.save).mock.calls[0]!
+    expect(edits.members[0]!.runtime).toEqual({ providerId: 'fast', modelId: 'small', effortLevel: 'low' })
+    expect(edits.members[1]!.runtime).toEqual({ providerId: 'strong', modelId: 'large' })
+  })
+
   it('keeps local choices after background revision change and blocks stale approval', async () => {
     await open()
     fireEvent.click(screen.getByRole('button', { name: 'Builder · Provider and model' }))
@@ -204,6 +264,36 @@ describe('AgentTeamsPlanCard', () => {
     await waitFor(() => expect(useTeamPlanStore.getState().bySession.session?.plan?.state).toBe(state))
     expect(container).toBeEmptyDOMElement()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('lets a failed launch be cancelled, after which the card goes away', async () => {
+    vi.mocked(teamPlansApi.get).mockResolvedValue({ plan: { ...fixture(), state: 'launch_failed', launch: { status: 'failed', error: 'CLI session exited before the control request completed' } } })
+    const { container } = render(<AgentTeamsPlanCard sessionId="session" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Review configuration' }))
+    expect(screen.getByRole('button', { name: 'Review again' })).toBeEnabled()
+    vi.mocked(teamPlansApi.act).mockResolvedValue({ plan: { ...fixture(), revision: 2, state: 'cancelled' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel team' }))
+    await waitFor(() => expect(container).toBeEmptyDOMElement())
+    expect(vi.mocked(teamPlansApi.act).mock.calls[0]!.slice(1)).toEqual(['cancel', expect.any(String), undefined])
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('lets an interrupted team be ended', async () => {
+    vi.mocked(teamPlansApi.get).mockResolvedValue({ plan: { ...fixture(), state: 'interrupted', launch: { status: 'failed', error: 'The worker runtime was interrupted.' } } })
+    const { container } = render(<AgentTeamsPlanCard sessionId="session" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Review configuration' }))
+    expect(screen.queryByRole('button', { name: 'Cancel team' })).not.toBeInTheDocument()
+    vi.mocked(teamPlansApi.act).mockResolvedValue({ plan: { ...fixture(), revision: 2, state: 'cancelled' } })
+    fireEvent.click(screen.getByRole('button', { name: 'End team' }))
+    await waitFor(() => expect(container).toBeEmptyDOMElement())
+    expect(vi.mocked(teamPlansApi.act).mock.calls[0]!.slice(1)).toEqual(['end', expect.any(String), undefined])
+  })
+
+  it('shows nothing for a cancelled team plan', async () => {
+    vi.mocked(teamPlansApi.get).mockResolvedValue({ plan: { ...fixture(), state: 'cancelled' } })
+    const { container } = render(<AgentTeamsPlanCard sessionId="session" />)
+    await waitFor(() => expect(useTeamPlanStore.getState().bySession.session?.plan?.state).toBe('cancelled'))
+    expect(container).toBeEmptyDOMElement()
   })
 
   it('restores review access after a launch failure or new review without reopening the approved dialog', async () => {

@@ -1,5 +1,21 @@
-import { useEffect, type ReactNode, type Ref } from 'react'
+import { useEffect, useRef, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
+import { X } from 'lucide-react'
+import { isTouchH5Document } from '@/lib/touchH5'
+
+const NON_TEXT_INPUT_TYPES = new Set(['button', 'checkbox', 'color', 'file', 'image', 'radio', 'range', 'reset', 'submit'])
+
+/**
+ * On a touch device, focusing a field raises the soft keyboard, so focus is not
+ * handed back to one unasked. A keyboard user on a narrow desktop window has no
+ * soft keyboard and wants to land back in the field they left.
+ */
+function wouldRaiseSoftKeyboard(element: Element): boolean {
+  if (!isTouchH5Document()) return false
+  if (element instanceof HTMLTextAreaElement) return true
+  if (element instanceof HTMLInputElement) return !NON_TEXT_INPUT_TYPES.has(element.type)
+  return element.closest('[contenteditable]:not([contenteditable="false"])') !== null
+}
 
 type Props = {
   open: boolean
@@ -16,6 +32,12 @@ type Props = {
   panelClassName?: string
   panelRef?: Ref<HTMLDivElement>
   testId?: string
+  /**
+   * Nearly the full screen, for content read in full before acting on it (a
+   * plan to approve, a set of questions). The default stops at 78% so the page
+   * it was opened from stays in view above it.
+   */
+  tall?: boolean
 }
 
 export function MobileBottomSheet({
@@ -33,7 +55,10 @@ export function MobileBottomSheet({
   panelClassName = '',
   panelRef,
   testId,
+  tall = false,
 }: Props) {
+  const scrimRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     if (!open) return
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -43,10 +68,23 @@ export function MobileBottomSheet({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [open, onClose])
 
+  // A modal dialog takes focus when it opens (so a keyboard or screen reader
+  // user lands in it, not on the page it covers) and gives it back when it
+  // closes. A child that already took focus keeps it.
+  useEffect(() => {
+    if (!open) return
+    const opener = document.activeElement
+    const panel = scrimRef.current?.firstElementChild
+    if (panel instanceof HTMLElement && !panel.contains(document.activeElement)) panel.focus({ preventScroll: true })
+    return () => {
+      if (opener instanceof HTMLElement && opener.isConnected && !wouldRaiseSoftKeyboard(opener)) opener.focus({ preventScroll: true })
+    }
+  }, [open])
+
   if (!open) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-[var(--z-sheet)] bg-black/25" onClick={onClose}>
+    <div ref={scrimRef} className="fixed inset-0 z-[var(--z-sheet)] bg-[var(--color-overlay-scrim)]" onClick={onClose}>
       <div
         ref={panelRef}
         id={id}
@@ -54,12 +92,13 @@ export function MobileBottomSheet({
         aria-modal={role === 'dialog' ? true : undefined}
         aria-label={ariaLabel ?? (typeof title === 'string' ? title : undefined)}
         data-testid={testId}
-        className={`absolute inset-x-0 bottom-0 flex max-h-[min(78dvh,640px)] min-h-0 flex-col overflow-hidden rounded-t-2xl border-x-0 border-y border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[0_-18px_48px_rgba(54,35,28,0.22)] ${panelClassName}`}
+        tabIndex={-1}
+        className={`absolute inset-x-0 bottom-0 flex ${tall ? 'max-h-[92dvh]' : 'max-h-[min(78dvh,640px)]'} min-h-0 flex-col overflow-hidden rounded-t-[var(--radius-xl)] border-x-0 border-y border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-overlay)] focus:outline-none ${panelClassName}`}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="shrink-0 border-b border-[var(--color-border)] px-4 py-3">
           <div className="flex min-h-10 items-center justify-between gap-3">
-            <div className="min-w-0 text-[11px] font-bold uppercase tracking-widest text-[var(--color-outline)]">
+            <div className="min-w-0 text-[13px] font-semibold text-[var(--color-text-primary)]">
               {title}
             </div>
             <button
@@ -68,7 +107,7 @@ export function MobileBottomSheet({
               onClick={onClose}
               className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
             >
-              <span className="material-symbols-outlined text-[20px]">close</span>
+              <X size={18} strokeWidth={1.75} aria-hidden="true" />
             </button>
           </div>
           {headerExtra && (

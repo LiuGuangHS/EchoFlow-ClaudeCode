@@ -51,7 +51,7 @@ export function isDarkThemeMode(value: unknown): value is DarkThemeMode {
   return typeof value === 'string' && (DARK_THEME_MODES as readonly string[]).includes(value)
 }
 
-export type WebSearchMode = 'auto' | 'anthropic' | 'tavily' | 'brave' | 'disabled'
+export type WebSearchMode = 'auto' | 'anthropic' | 'tavily' | 'brave' | 'deepseek' | 'disabled'
 
 export type ChatSendBehavior = 'enter' | 'modifierEnter'
 
@@ -81,6 +81,7 @@ export type WebSearchSettings = {
   mode?: WebSearchMode
   tavilyApiKey?: string
   braveApiKey?: string
+  deepseekApiKey?: string
 }
 
 export type UpdateProxyMode = 'system' | 'manual'
@@ -136,6 +137,9 @@ export type DesktopTerminalStartupShell =
 export type DesktopTerminalSettings = {
   startupShell: DesktopTerminalStartupShell
   customShellPath: string
+  /** An installed font family name; empty keeps the built-in monospace stack. */
+  fontFamily: string
+  fontSize: number
 }
 
 export type ModelInfo = {
@@ -147,16 +151,25 @@ export type ModelInfo = {
   supportedReasoningEfforts?: ReasoningEffortLevel[]
 }
 
+/** 缺省或 null 表示不限；配置上限时必须使用正安全整数。 */
+export function isMaxConcurrentSubagents(value: unknown): value is number | null {
+  return value === null || (typeof value === 'number' && Number.isSafeInteger(value) && value > 0)
+}
+
 export type UserSettings = {
   model?: string
   modelContext?: string
   effort?: EffortLevel
   alwaysThinkingEnabled?: boolean
   workflowKeywordTriggerEnabled?: boolean
+  /** Desktop composer next-prompt suggestions; absent means off (opt-in, costs tokens). */
+  nextPromptSuggestionsEnabled?: boolean
+  leanModeEnabled?: boolean
   agentTeamsEnabled?: boolean
+  /** 同一会话的普通前台/后台 SubAgent 并发上限，缺省或 null 表示不限。 */
+  maxConcurrentSubagents?: number | null
   autoDreamEnabled?: boolean
   autoQuestion?: import('../../../src/shared/autoQuestionSettings').AutoQuestionSettings
-  localRedaction?: import('../../../src/shared/localRedactionSettings').LocalRedactionSettings
   skipAutoPermissionPrompt?: boolean
   permissionMode?: PermissionMode
   theme?: ThemeMode
@@ -164,6 +177,7 @@ export type UserSettings = {
   outputStyle?: string
   skipWebFetchPreflight?: boolean
   desktopNotificationsEnabled?: boolean
+  autoUpdateEnabled?: boolean
   webSearch?: WebSearchSettings
   updateProxy?: Partial<UpdateProxySettings>
   network?: {

@@ -2,13 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { render } from '@testing-library/react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { CODE_LINK_CLASS, FILE_LINK_CLASS } from '@/lib/markdownAutolink'
+import type { PreviewLinkTarget } from '@/lib/previewLinkRouter'
 
 // Most surfaces get a handler; the cases that deliberately have none say so.
 const noop = () => true
 
 function renderMarkdown(
   content: string,
-  props: { streaming?: boolean; onLinkClick?: ((href: string) => boolean) | null } = {},
+  props: { streaming?: boolean; onLinkClick?: ((href: PreviewLinkTarget) => boolean) | null } = {},
 ) {
   const handler = props.onLinkClick === null ? undefined : props.onLinkClick ?? noop
   const { container } = render(
@@ -98,7 +99,7 @@ describe('MarkdownRenderer file references', () => {
   })
 
   it('never re-links a path that is already inside a URL', () => {
-    const container = renderMarkdown('见 https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/src/app.ts')
+    const container = renderMarkdown('见 https://github.com/NanmiCoder/cc-haha/blob/main/src/app.ts')
     expect(fileLinks(container)).toHaveLength(0)
     expect(container.querySelector('a[href^="https://"]')).not.toBeNull()
   })
@@ -109,20 +110,23 @@ describe('MarkdownRenderer file references', () => {
   })
 
   it('leaves prose that only looks like a path as text', () => {
-    expect(fileLinks(renderMarkdown('用 console.log 打印，版本 v0.5.0，域名 code.echoflow.cn'))).toHaveLength(0)
+    expect(fileLinks(renderMarkdown('用 console.log 打印，版本 v0.5.0，域名 cchaha.ai'))).toHaveLength(0)
   })
 
   it('hands the click a reference classifyPreviewLink can parse', () => {
     const onLinkClick = vi.fn().mockReturnValue(true)
     const container = renderMarkdown('见 src/app.ts:42:8', { onLinkClick })
     fileLinks(container)[0]!.click()
-    expect(onLinkClick).toHaveBeenCalledWith('src/app.ts:42:8')
+    expect(onLinkClick).toHaveBeenCalledWith({ path: 'src/app.ts', line: 42, column: 8 })
   })
 
   it.each([
-    ['file:///tmp/echoflow-code-qa-checklist.html', '/tmp/echoflow-code-qa-checklist.html'],
-    ['file:///tmp/%E6%B8%85%E5%8D%95.html', '/tmp/清单.html'],
-    ['/tmp/app.ts:42', '/tmp/app.ts:42'],
+    ['file:///tmp/cc-haha-qa-checklist-v0.6.6.html', { path: '/tmp/cc-haha-qa-checklist-v0.6.6.html' }],
+    ['file:///tmp/%E6%B8%85%E5%8D%95.html', { path: '/tmp/清单.html' }],
+    ['/tmp/app.ts:42', { path: '/tmp/app.ts', line: 42 }],
+    // #1556: CommonMark's two spellings of a space reach the opener as the file on disk.
+    ['docs/My%20Notes.md', { path: 'docs/My Notes.md' }],
+    ['<D:/cchaha/cchaha d/记忆.md>', { path: 'D:/cchaha/cchaha d/记忆.md' }],
   ])('preserves explicit local Markdown destination %s through sanitization', (href, expected) => {
     const onLinkClick = vi.fn().mockReturnValue(true)
     const container = renderMarkdown(`[打开文件](${href})`, { onLinkClick })
@@ -149,10 +153,10 @@ describe('MarkdownRenderer file references', () => {
   it('links owner/repo#123 to GitHub', () => {
     // The second half of the prompt contract (prompts.ts:438), which also had no
     // implementation. Unlike a file link this is a real URL, so it keeps its href.
-    const container = renderMarkdown('见 LiuGuangHS/EchoFlow-ClaudeCode#1146')
+    const container = renderMarkdown('见 NanmiCoder/cc-haha#1146')
     const link = container.querySelector<HTMLAnchorElement>('a[href^="https://github.com"]')
-    expect(link?.getAttribute('href')).toBe('https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues/1146')
-    expect(link?.textContent).toBe('LiuGuangHS/EchoFlow-ClaudeCode#1146')
+    expect(link?.getAttribute('href')).toBe('https://github.com/NanmiCoder/cc-haha/issues/1146')
+    expect(link?.textContent).toBe('NanmiCoder/cc-haha#1146')
     expect(fileLinks(container)).toHaveLength(0)
   })
 
@@ -160,6 +164,6 @@ describe('MarkdownRenderer file references', () => {
     const onLinkClick = vi.fn().mockReturnValue(true)
     const container = renderMarkdown('见 [构建步骤](.github/workflows/release-desktop.yml:386)', { onLinkClick })
     container.querySelector<HTMLAnchorElement>('a')!.click()
-    expect(onLinkClick).toHaveBeenCalledWith('.github/workflows/release-desktop.yml:386')
+    expect(onLinkClick).toHaveBeenCalledWith({ path: '.github/workflows/release-desktop.yml', line: 386 })
   })
 })

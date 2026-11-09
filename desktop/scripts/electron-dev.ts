@@ -26,20 +26,13 @@ export function createElectronDevEnv(env: NodeJS.ProcessEnv = process.env) {
     env: { ELECTRON_RENDERER_URL: env.ELECTRON_RENDERER_URL?.trim() || DEFAULT_RENDERER_URL },
   })
   const noProxy = mergeNoProxy(env.NO_PROXY ?? env.no_proxy)
-  const childEnv = { ...env }
-  delete childEnv.ELECTRON_RUN_AS_NODE
-
   return {
-    ...childEnv,
+    ...env,
     ELECTRON_RENDERER_URL: rendererUrl,
-    ECHOFLOW_TRUSTED_RENDERER_ORIGIN: new URL(rendererUrl).origin,
+    CC_HAHA_TRUSTED_RENDERER_ORIGIN: new URL(rendererUrl).origin,
     NO_PROXY: noProxy,
     no_proxy: noProxy,
   }
-}
-
-export function resolveElectronAppArgs(desktopRoot: string) {
-  return [desktopRoot]
 }
 
 export function resolveElectronExecutable(desktopRoot: string, platform = process.platform) {
@@ -105,7 +98,7 @@ async function main() {
 
   await waitForRenderer(rendererUrl)
 
-  const electron = spawn(resolveElectronExecutable(desktopRoot), resolveElectronAppArgs(desktopRoot), {
+  const electron = spawn(resolveElectronExecutable(desktopRoot), ['./electron-dist/main.cjs'], {
     cwd: desktopRoot,
     env: childEnv,
     stdio: 'inherit',

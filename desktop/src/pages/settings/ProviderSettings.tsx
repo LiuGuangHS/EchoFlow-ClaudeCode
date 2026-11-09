@@ -1,44 +1,107 @@
-import { useState, useEffect, useMemo, useRef, useId, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useState, useEffect, useMemo, useRef, useId, type CSSProperties, type ReactNode } from 'react'
 import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { GripVertical } from 'lucide-react'
+import {
+  ArrowLeftRight,
+  ArrowRight,
+  ArrowUpRight,
+  ChevronDown,
+  ChevronUp,
+  CircleAlert,
+  CircleCheck,
+  CloudDownload,
+  Download,
+  Eye,
+  EyeOff,
+  Globe,
+  GripVertical,
+  Info,
+  Key,
+  KeyRound,
+  KeySquare,
+  Link,
+  MapPin,
+  MessagesSquare,
+  Network,
+  Plus,
+  Route,
+  Search,
+  SearchX,
+  Shrink,
+  Star,
+  Wrench,
+} from 'lucide-react'
+import aruhubLogo from '../../../../docs/images/sponsors/aruhub-logo.png'
+import modelflareLogo from '../../../../docs/images/sponsors/modelflare-logo.png'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useProviderStore } from '../../stores/providerStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useTranslation, type TranslationKey } from '../../i18n'
 import { Modal } from '@/components/ui/Modal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { Input } from '@/components/ui/Input'
+import { FIELD_BASE_CLASSES, FIELD_SIZE_CLASSES, fieldStateClasses, Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
+import { Checkbox } from '@/components/ui/Checkbox'
 import { IconButton } from '@/components/ui/IconButton'
-import { Badge, StatusDot } from '@/components/ui/Badge'
+import { Badge } from '@/components/ui/Badge'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { SearchField } from '@/components/ui/SearchField'
 import { Spinner } from '@/components/ui/Spinner'
 import { SettingsPageHeader, SettingsPill } from '@/components/settings/SettingsSection'
 import { Dropdown } from '@/components/ui/Dropdown'
+import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import { Tooltip } from '@/components/ui/Tooltip'
-import type { SavedProvider, UpdateProviderInput, ProviderTestResult, ModelMapping, Model1mSupport, ApiFormat, ProviderAuthStrategy, ProviderModelInfo, ProviderModelsErrorCode } from '../../types/provider'
+import type { SavedProvider, UpdateProviderInput, ProviderTestResult, ModelMapping, Model1mSupport, ApiFormat, ModelApiFormat, ProviderAuthStrategy, ProviderModelInfo, ProviderModelsErrorCode, ProviderProxyMode } from '../../types/provider'
 import { groupProviderModels, providerModelsErrorKey } from '../../lib/providerModels'
+import { resolveModelApiFormat } from '../../../../src/shared/modelApiFormats'
 import { apply1mSupportToContextInput, apply1mSupportToContextInputs, getAutoCompactWindowErrorKey, getModelContextWindowErrorKey, MODEL_SLOTS, parseAutoCompactWindowInput, parseModelContextWindowsInput, type ModelContextInputs, type ModelSlot } from '../../lib/providerModelContext'
 import type { ProviderPreset } from '../../types/providerPreset'
 import { normalizeProviderBaseUrl, presetMatchesBaseUrl, selectableProviderPresets } from '../../config/providerPresets'
+import { isValidHttpProxyUrl } from './shared'
+import {
+  highlightSegments,
+  initialProviderTab,
+  matchProviderFields,
+  PROVIDER_SEARCH_MIN_ITEMS,
+  providerTabOf,
+  searchTerms,
+  type ProviderListTab,
+  type ProviderSearchField,
+  type ProviderSearchMatch,
+} from './providerListSearch'
 import { ClaudeOfficialLogin } from '../../components/settings/ClaudeOfficialLogin'
-import { EchoFlowAPIOfficialLogin } from '../../components/settings/EchoFlowAPIOfficialLogin'
-import { ECHOFLOW_BASE_URLS, echoflowApi, type EchoFlowTokenSource } from '../../api/echoflow'
 import { ChatGPTOfficialLogin } from '../../components/settings/ChatGPTOfficialLogin'
 import { GrokOfficialLogin } from '../../components/settings/GrokOfficialLogin'
+import { DeepSeekAccountLogin } from '../../components/settings/DeepSeekAccountLogin'
 import { OfficialProviderModelSettings } from '../../components/settings/OfficialProviderModelSettings'
 import { CcSwitchImportModal } from '../../components/settings/CcSwitchImportModal'
+import { MagpieProviderDialog } from '../../components/settings/MagpieProviderDialog'
+import { MagpieConnectBanner, MagpieModelChips, MagpieStatusLine } from '../../components/settings/MagpieProviderParts'
+import { MAGPIE_PRESET_ID, isMagpieProvider, useMagpieStore } from '../../stores/magpieStore'
 import { ModelIdCombobox } from '../../components/settings/ModelIdCombobox'
 import { ProviderRequestCompatibilityFields } from '@/components/settings/ProviderRequestCompatibilityFields'
 import { compatibilityForm, invalidCompatibilityNumber, parseCompatibilityForm, parseAnthropicBudgetForm, pickOutputBudget, readCompatibilityEditorJson, writeCompatibilityJson, type RequestCompatibilityForm } from '../../lib/providerRequestCompatibility'
 import { ProviderImageGenerationFields, type ImageGenerationFormValue } from '../../components/settings/ProviderImageGenerationFields'
 import { BUILT_IN_PROVIDER_IDS, CLAUDE_OFFICIAL_PROVIDER_ID, OPENAI_OFFICIAL_PROVIDER_ID } from '../../constants/openaiOfficialProvider'
 import { GROK_OFFICIAL_PROVIDER_ID } from '../../constants/grokOfficialProvider'
+import { DEEPSEEK_ACCOUNT_PROVIDER_ID } from '../../constants/deepseekAccountProvider'
 import { ApiError, getBaseUrl } from '../../api/client'
 import { getDesktopHost } from '../../lib/desktopHost'
 import { API_KEY_JSON_PLACEHOLDER, maskSettingsJsonSecrets, restoreSettingsJsonSecrets, stripProviderSettingsJsonEnv } from '../../lib/providerSettingsJson'
-import { SETTINGS_CHECKBOX_INPUT_CLASS, SettingsCheckboxMark } from '../settings/shared'
+import { cx } from '@/lib/cx'
+
+const SPONSOR_LOGOS: Record<string, string> = {
+  aruhub: aruhubLogo,
+  modelflare: modelflareLogo,
+}
+
+/** Section label inside the provider dialog — the same 13px label as a settings section. */
+const FORM_SECTION_LABEL = 'block text-[13px] font-semibold text-[var(--color-text-secondary)]'
+/** Field label matching `Input`'s own, for the fields that cannot use `Input` directly. */
+const FORM_FIELD_LABEL = 'text-sm font-medium text-[var(--color-text-primary)]'
+/** 11px helper line under a field. */
+const FORM_HINT = 'text-[11px] leading-[1.5] text-[var(--color-text-tertiary)]'
 
 /**
  * The Provider panel and the add/edit provider modal.
@@ -58,6 +121,7 @@ type ProviderListItem =
   | { id: typeof CLAUDE_OFFICIAL_PROVIDER_ID; kind: 'claude-official' }
   | { id: typeof OPENAI_OFFICIAL_PROVIDER_ID; kind: 'openai-official' }
   | { id: typeof GROK_OFFICIAL_PROVIDER_ID; kind: 'grok-official' }
+  | { id: typeof DEEPSEEK_ACCOUNT_PROVIDER_ID; kind: 'deepseek-account' }
   | { id: string; kind: 'saved'; provider: SavedProvider }
 
 /** Row labels for the model-mapping form, in `MODEL_SLOTS` order. */
@@ -105,16 +169,16 @@ function buildProviderListItems(
   providerOrder: string[] | undefined,
 ): ProviderListItem[] {
   const savedItems = new Map(
-    providers
-      .map((provider) => [
-        provider.id,
-        { id: provider.id, kind: 'saved', provider } satisfies ProviderListItem,
-      ]),
+    providers.map((provider) => [
+      provider.id,
+      { id: provider.id, kind: 'saved', provider } satisfies ProviderListItem,
+    ]),
   )
   const items = new Map<string, ProviderListItem>([
     [CLAUDE_OFFICIAL_PROVIDER_ID, { id: CLAUDE_OFFICIAL_PROVIDER_ID, kind: 'claude-official' }],
     [OPENAI_OFFICIAL_PROVIDER_ID, { id: OPENAI_OFFICIAL_PROVIDER_ID, kind: 'openai-official' }],
     [GROK_OFFICIAL_PROVIDER_ID, { id: GROK_OFFICIAL_PROVIDER_ID, kind: 'grok-official' }],
+    [DEEPSEEK_ACCOUNT_PROVIDER_ID, { id: DEEPSEEK_ACCOUNT_PROVIDER_ID, kind: 'deepseek-account' }],
     ...savedItems,
   ])
 
@@ -131,9 +195,81 @@ function providerItemTestId(item: ProviderListItem): string {
       return 'openai-official-provider'
     case 'grok-official':
       return 'grok-official-provider'
+    case 'deepseek-account':
+      return 'deepseek-account-provider'
     case 'saved':
       return `provider-${item.provider.id}`
   }
+}
+
+type OfficialProviderKind = Exclude<ProviderListItem['kind'], 'saved'>
+
+/** The built-in sign-in providers: their card copy and the login shown once one is the default. */
+const OFFICIAL_PROVIDERS: Record<OfficialProviderKind, { title: TranslationKey; subtitle: TranslationKey; Login: () => ReactNode }> = {
+  'claude-official': { title: 'settings.providers.officialName', subtitle: 'settings.providers.officialDesc', Login: ClaudeOfficialLogin },
+  'openai-official': { title: 'settings.providers.openaiOfficialName', subtitle: 'settings.providers.openaiOfficialDesc', Login: ChatGPTOfficialLogin },
+  'grok-official': { title: 'settings.providers.grokOfficialName', subtitle: 'settings.providers.grokOfficialDesc', Login: GrokOfficialLogin },
+  'deepseek-account': { title: 'settings.providers.deepseekAccountName', subtitle: 'settings.providers.deepseekAccountDesc', Login: DeepSeekAccountLogin },
+}
+
+type Translate = ReturnType<typeof useTranslation>
+
+function providerSubtitle(provider: SavedProvider): string {
+  return `${provider.baseUrl} · ${provider.models.main}`
+}
+
+/** The protocol badge: a path-bound gateway routes per model, so it gets "multi-protocol" rather than one format. */
+function providerFormatBadge(provider: SavedProvider, preset: ProviderPreset | undefined, t: Translate): string | null {
+  if (preset?.modelApiFormats?.length) return t('settings.providers.multiProtocolBadge')
+  if (!provider.apiFormat || provider.apiFormat === 'anthropic') return null
+  return provider.apiFormat === 'openai_chat' ? 'OpenAI Chat' : 'OpenAI Responses'
+}
+
+/** What a saved provider is searched by. The API key never is. */
+function savedProviderSearchFields(
+  provider: SavedProvider,
+  preset: ProviderPreset | undefined,
+  isActive: boolean,
+  slotLabels: Record<ModelSlot, string>,
+  t: Translate,
+): ProviderSearchField[] {
+  return [
+    { value: provider.name, visible: true },
+    { value: preset && preset.id !== 'custom' ? preset.name : '', visible: true },
+    { value: providerFormatBadge(provider, preset, t) ?? '', visible: true },
+    { value: providerSubtitle(provider), visible: true },
+    // The default card lists its role mappings as chips; the others show only the main model.
+    ...MODEL_SLOTS.filter((slot) => slot !== 'main').map((slot) => ({
+      value: provider.models[slot] ?? '',
+      visible: isActive,
+      label: slotLabels[slot],
+    })),
+    { value: provider.notes ?? '', visible: false, label: t('settings.providers.notes') },
+  ]
+}
+
+function HighlightedText({ text, terms }: { text: string; terms: string[] }) {
+  if (terms.length === 0) return <>{text}</>
+  return (
+    <>
+      {highlightSegments(text, terms).map((segment, index) => segment.match ? (
+        <mark key={index} className="rounded-[var(--radius-xs)] bg-[var(--color-warning-container)] text-inherit">{segment.text}</mark>
+      ) : (
+        <Fragment key={index}>{segment.text}</Fragment>
+      ))}
+    </>
+  )
+}
+
+function ProviderTabLabel({ label, count, holdsDefault, defaultLabel }: { label: string; count: number; holdsDefault: boolean; defaultLabel: string }) {
+  return (
+    <>
+      {holdsDefault && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-[var(--color-success)]" />}
+      <span>{label}</span>
+      <span className="text-xs font-normal tabular-nums text-[var(--color-text-tertiary)]">{count}</span>
+      {holdsDefault && <span className="sr-only">{defaultLabel}</span>}
+    </>
+  )
 }
 
 export function ProviderSettings({ browserMode = false }: { browserMode?: boolean }) {
@@ -155,10 +291,17 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
   const t = useTranslation()
   const [editingProvider, setEditingProvider] = useState<SavedProvider | null>(null)
-  const [echoFlowDraft, setEchoFlowDraft] = useState<EchoFlowTokenSource | null>(null)
-  const [echoFlowHasAccount, setEchoFlowHasAccount] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [createPresetId, setCreatePresetId] = useState<string | undefined>(undefined)
+  /** Connecting Magpie (no provider) or editing the saved one. */
+  const [magpieDialog, setMagpieDialog] = useState<{ provider?: SavedProvider } | null>(null)
+  const magpieState = useMagpieStore((store) => store.state)
+  const magpieBannerDismissed = useMagpieStore((store) => store.bannerDismissed)
+  const refreshMagpie = useMagpieStore((store) => store.refresh)
   const [showCcSwitchImport, setShowCcSwitchImport] = useState(false)
+  /** Null until this visit's provider list arrives or the user picks a tab. */
+  const [selectedTab, setSelectedTab] = useState<ProviderListTab | null>(null)
+  const [query, setQuery] = useState('')
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<SavedProvider | null>(null)
   const [isDeletingProvider, setIsDeletingProvider] = useState(false)
   const [actionFailed, setActionFailed] = useState(false)
@@ -172,19 +315,37 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
     }),
   )
 
+  /** This visit's provider list has arrived (the store may still have held an older one). */
+  const [listArrived, setListArrived] = useState(false)
   useEffect(() => {
-    void fetchProviders()
+    let cancelled = false
+    void fetchProviders().then(() => {
+      if (!cancelled) setListArrived(true)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [fetchProviders])
+
+  // Pin the opening tab once, from the list that just arrived. Deriving it on
+  // every render would flip the view away from a card someone just made default.
+  useEffect(() => {
+    if (listArrived && selectedTab === null) setSelectedTab(initialProviderTab(activeId))
+  }, [activeId, listArrived, selectedTab])
+
+  useEffect(() => {
+    if (browserMode) return
+    // While Magpie answers, the server moves saved Magpie providers to its
+    // current port and catalog limits; reload the list to show them.
+    void refreshMagpie().then((state) => {
+      if (state?.status.running) void fetchProviders()
+    })
+  }, [browserMode, fetchProviders, refreshMagpie])
 
   const presetMap = useMemo(
     () => new Map(presets.map((preset) => [preset.id, preset])),
     [presets],
   )
-
-  const openEchoFlowProviderModal = (draft: EchoFlowTokenSource) => {
-    setEchoFlowDraft(draft)
-    setShowCreateModal(true)
-  }
 
   const handleDelete = async (provider: SavedProvider) => {
     if (activeId === provider.id) return
@@ -236,31 +397,169 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
     const { active, over } = event
     if (!over || active.id === over.id) return
 
-    const visibleIds = providerItems.map((item) => item.id)
-    const oldIndex = visibleIds.indexOf(String(active.id))
-    const newIndex = visibleIds.indexOf(String(over.id))
+    const ids = providerItems.map((item) => item.id)
+    const oldIndex = ids.indexOf(String(active.id))
+    const newIndex = ids.indexOf(String(over.id))
     if (oldIndex === -1 || newIndex === -1) return
 
-    const reorderedVisibleIds = arrayMove(visibleIds, oldIndex, newIndex)
-    const visibleIdSet = new Set(visibleIds)
-    let reorderedIndex = 0
-    const fullOrder = normalizeProviderOrder(providerOrder, providers).flatMap((id) => {
-      if (!visibleIdSet.has(id)) return [id]
-      const reorderedId = reorderedVisibleIds[reorderedIndex++]
-      return reorderedId ? [reorderedId] : []
-    })
-    void reorderProviders(fullOrder)
+    void reorderProviders(arrayMove(ids, oldIndex, newIndex))
   }
 
-  const isClaudeOfficialActive = hasLoadedProviders && activeId === null
-  const isOpenAIOfficialActive = hasLoadedProviders && activeId === OPENAI_OFFICIAL_PROVIDER_ID
-  const isGrokOfficialActive = hasLoadedProviders && activeId === GROK_OFFICIAL_PROVIDER_ID
+  const terms = useMemo(() => searchTerms(query), [query])
+  const searching = terms.length > 0
+  const modelSlotLabels = useMemo(
+    () => MODEL_SLOTS.reduce((labels, slot) => {
+      labels[slot] = t(MODEL_SLOT_LABEL_KEYS[slot])
+      return labels
+    }, {} as Record<ModelSlot, string>),
+    [t],
+  )
+  const providerEntries = useMemo(() => providerItems.map((item) => {
+    const tab: ProviderListTab = item.kind === 'saved' ? 'api' : 'official'
+    const fields: ProviderSearchField[] = item.kind === 'saved'
+      ? savedProviderSearchFields(item.provider, presetMap.get(item.provider.presetId), activeId === item.provider.id, modelSlotLabels, t)
+      : [
+        { value: t(OFFICIAL_PROVIDERS[item.kind].title), visible: true },
+        { value: t(OFFICIAL_PROVIDERS[item.kind].subtitle), visible: true },
+      ]
+    return { item, tab, match: matchProviderFields(fields, terms) }
+  }), [activeId, modelSlotLabels, presetMap, providerItems, t, terms])
+  const starterPresets = useMemo(
+    () => selectableProviderPresets(presets.filter((preset) => preset.id !== 'official')).filter((preset) => !preset.featured),
+    [presets],
+  )
+
+  const tab = selectedTab ?? (hasLoadedProviders ? initialProviderTab(activeId) : 'api')
+  const otherTab: ProviderListTab = tab === 'api' ? 'official' : 'api'
+  const defaultTab = hasLoadedProviders ? providerTabOf(activeId) : null
+  // With no query every entry matches, so the counts are the tab sizes.
+  const matchedEntries = providerEntries.filter((entry) => entry.match !== null)
+  const countIn = (target: ProviderListTab) => matchedEntries.filter((entry) => entry.tab === target).length
+  const visibleEntries = matchedEntries.filter((entry) => entry.tab === tab)
+  const otherMatchCount = searching ? countIn(otherTab) : 0
+  const tabLabels: Record<ProviderListTab, string> = {
+    api: t('settings.providers.tabs.apiKey'),
+    official: t('settings.providers.tabs.official'),
+  }
+  const showSearch = providerItems.length >= PROVIDER_SEARCH_MIN_ITEMS || query !== ''
+
+  const openCreateModal = (presetId?: string) => {
+    if (presetId === MAGPIE_PRESET_ID) {
+      setMagpieDialog({})
+      return
+    }
+    setCreatePresetId(presetId)
+    setShowCreateModal(true)
+  }
+  const showMagpieBanner = !browserMode && !searching && tab === 'api'
+    && magpieState?.status.running === true && !magpieBannerDismissed
+    && !providers.some(isMagpieProvider)
+
+  const renderProviderEntry = (item: ProviderListItem, match: ProviderSearchMatch | null) => {
+    if (item.kind !== 'saved') {
+      const official = OFFICIAL_PROVIDERS[item.kind]
+      const isActive = hasLoadedProviders && (item.kind === 'claude-official' ? activeId === null : activeId === item.id)
+      const activate = item.kind === 'claude-official' ? handleActivateOfficial : () => handleActivate(item.id)
+      return (
+        <SortableProviderCard
+          browserMode={browserMode}
+          key={item.id}
+          item={item}
+          isActive={isActive}
+          dragLabel={t('settings.providers.dragToReorder')}
+          dragDisabled={searching}
+          onActivate={!isActive ? activate : undefined}
+          title={<HighlightedText text={t(official.title)} terms={terms} />}
+          subtitle={<HighlightedText text={t(official.subtitle)} terms={terms} />}
+          badges={isActive ? (
+            <Badge tone="brand">{t('settings.providers.default')}</Badge>
+          ) : null}
+          details={!browserMode && isActive ? (
+            <div className="flex flex-col">
+              <official.Login />
+              <OfficialProviderModelSettings providerId={item.id} />
+            </div>
+          ) : null}
+        />
+      )
+    }
+
+    const provider = item.provider
+    const isActive = activeId === provider.id
+    const test = testResults[provider.id]
+    const preset = presetMap.get(provider.presetId)
+    const formatBadge = providerFormatBadge(provider, preset, t)
+    const isMagpie = isMagpieProvider(provider)
+
+    return (
+      <SortableProviderCard
+        browserMode={browserMode}
+        key={item.id}
+        item={item}
+        isActive={isActive}
+        dragLabel={t('settings.providers.dragToReorder')}
+        dragDisabled={searching}
+        onActivate={!isActive ? () => handleActivate(provider.id) : undefined}
+        title={<HighlightedText text={provider.name} terms={terms} />}
+        subtitle={<span className="font-mono text-[11px]"><HighlightedText text={providerSubtitle(provider)} terms={terms} /></span>}
+        matchNote={match?.hiddenField ? (
+          <p className="truncate text-xs text-[var(--color-text-tertiary)]">
+            {t('settings.providers.search.matchedField', { field: match.hiddenField.label })}
+            {' · '}
+            <span className="font-mono text-[11px] text-[var(--color-text-secondary)]">
+              <HighlightedText text={match.hiddenField.value} terms={terms} />
+            </span>
+          </p>
+        ) : null}
+        statusLine={isMagpie && !browserMode ? <MagpieStatusLine /> : null}
+        modelChips={isActive ? (
+          isMagpie
+            ? <MagpieModelChips provider={provider} />
+            : <ProviderModelChips models={provider.models} labels={modelSlotLabels} />
+        ) : null}
+        badges={(
+          <>
+            {isMagpie ? (
+              // The preset is named like the provider; what tells it apart is where it runs.
+              <Badge tone="neutral">{t('settings.providers.magpie.localGateway')}</Badge>
+            ) : preset && preset.id !== 'custom' && (
+              <Badge tone="neutral">{preset.name}</Badge>
+            )}
+            {formatBadge && <Badge tone="warning">{formatBadge}</Badge>}
+            {isActive && (
+              <Badge tone="brand">{t('settings.providers.default')}</Badge>
+            )}
+          </>
+        )}
+        result={test && !test.loading && test.result ? (
+          <ProviderTestResultLines result={test.result} />
+        ) : null}
+        secondaryActions={!isActive ? (
+          <>
+            <Button variant="ghost" size="sm" onClick={() => handleActivate(provider.id)}>{t('settings.providers.setDefault')}</Button>
+            <Button variant="danger-ghost" size="sm" onClick={() => handleDelete(provider)}>{t('common.delete')}</Button>
+          </>
+        ) : null}
+        actions={(
+          <>
+            {!browserMode && <Button variant="ghost" size="sm" onClick={() => handleTest(provider)} loading={test?.loading}>{t('settings.providers.test')}</Button>}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => (isMagpie ? setMagpieDialog({ provider }) : setEditingProvider(provider))}
+            >
+              {t('settings.providers.edit')}
+            </Button>
+          </>
+        )}
+      />
+    )
+  }
 
   return (
-    <div className="min-w-0 max-w-2xl">
+    <div className="min-w-0">
       <SettingsPageHeader
-        className={browserMode ? 'flex-col' : undefined}
-        title={t('settings.providers.title')}
+        title={t('settings.tab.providers')}
         description={t('settings.providers.description')}
         action={(
           <>
@@ -268,14 +567,14 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
               variant="secondary"
               size="base"
               onClick={() => setShowCcSwitchImport(true)}
-              icon={<span className="material-symbols-outlined text-[16px]">download</span>}
+              icon={<Download size={14} strokeWidth={1.75} aria-hidden="true" />}
             >
               {t('settings.providers.ccSwitch.importButton')}
             </Button>}
             <Button
               size="base"
-              onClick={() => setShowCreateModal(true)}
-              icon={<span className="material-symbols-outlined text-[16px]">add</span>}
+              onClick={() => openCreateModal()}
+              icon={<Plus size={14} strokeWidth={1.75} aria-hidden="true" />}
             >
               {t('settings.providers.addProvider')}
             </Button>
@@ -283,182 +582,108 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
         )}
       />
 
-      {(actionFailed || (browserMode && providerLoadError)) && <p role="alert" className="mb-3 text-sm text-[var(--color-error)]">{t('publicAccess.genericError')}</p>}
-
-      {/* The one card that owns the account. A raised surface plus the card
-          shadow separates it from the provider rows below, which are all
-          border-only — without the shadow the two read as the same weight. */}
-      <div
-        data-testid="echoflow-api-official-provider"
-        className="relative mb-4 flex flex-col rounded-[var(--radius-xl)] border border-[var(--color-primary-fixed-dim)] bg-[var(--color-surface-container-low)] shadow-[var(--shadow-card)]"
-      >
-        <div className="flex items-center gap-4 px-4 py-3.5">
-          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${echoFlowHasAccount ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.providers.echoflowAPIOfficialName')}</div>
-            <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">{t('settings.providers.echoflowAPIOfficialDesc')}</div>
-          </div>
-        </div>
-        <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">
-            <EchoFlowAPIOfficialLogin
-              onAddFromToken={openEchoFlowProviderModal}
-              onBindingChange={setEchoFlowHasAccount}
-            />
-            {/* Legal text reads last: it is a condition, not a step. */}
-            <p className="mt-3 border-t border-[var(--color-border-separator)] pt-2 text-[11px] leading-relaxed text-[var(--color-text-tertiary)]">
-              {t('settings.providers.echoflowAPIOfficialDisclaimer')}
-            </p>
-        </div>
+      {(actionFailed || (browserMode && providerLoadError)) && <p role="alert" className="mt-4 text-[13px] text-[var(--color-error)]">{t('publicAccess.genericError')}</p>}
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+        <SegmentedControl
+          as="tablist"
+          label={t('settings.providers.tabs.label')}
+          value={tab}
+          onChange={setSelectedTab}
+          items={(['api', 'official'] as const).map((value) => ({
+            value,
+            label: (
+              <ProviderTabLabel
+                label={tabLabels[value]}
+                count={countIn(value)}
+                holdsDefault={defaultTab === value}
+                defaultLabel={t('settings.providers.tabs.containsDefault')}
+              />
+            ),
+          }))}
+        />
+        {showSearch && (
+          <SearchField
+            value={query}
+            onChange={setQuery}
+            label={t('settings.providers.search.label')}
+            clearLabel={t('settings.providers.search.clear')}
+            placeholder={t('settings.providers.search.placeholder')}
+            onKeyDown={(event) => {
+              if (event.key !== 'Escape' || !query) return
+              event.preventDefault()
+              setQuery('')
+            }}
+            containerClassName={browserMode ? 'w-full' : 'w-[280px] max-w-full'}
+          />
+        )}
       </div>
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragEnd={handleProviderDragEnd}
-      >
-        <SortableContext
-          items={providerItems.map((item) => item.id)}
-          strategy={verticalListSortingStrategy}
+      {showMagpieBanner && (
+        <MagpieConnectBanner
+          modelCount={magpieState?.models?.length ?? 0}
+          onConnect={() => setMagpieDialog({})}
+        />
+      )}
+
+      {visibleEntries.length > 0 && (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleProviderDragEnd}
         >
-          <div className="flex flex-col gap-2">
-            {providerItems.map((item) => {
-              if (item.kind === 'claude-official') {
-                return (
-                  <SortableProviderCard
-                    browserMode={browserMode}
-                    key={item.id}
-                    item={item}
-                    isActive={isClaudeOfficialActive}
-                    dragLabel={t('settings.providers.dragToReorder')}
-                    onActivate={!isClaudeOfficialActive ? handleActivateOfficial : undefined}
-                    title={t('settings.providers.officialName')}
-                    subtitle={t('settings.providers.officialDesc')}
-                    badges={isClaudeOfficialActive ? (
-                      <Badge tone="brand" bordered>{t('settings.providers.default')}</Badge>
-                    ) : null}
-                    details={!browserMode && isClaudeOfficialActive ? (
-                      <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">
-                        <ClaudeOfficialLogin />
-                        <OfficialProviderModelSettings providerId={CLAUDE_OFFICIAL_PROVIDER_ID} />
-                      </div>
-                    ) : null}
-                  />
-                )
-              }
+          {/* Only this tab's cards are sortable; the drop is applied to the full stored order. */}
+          <SortableContext
+            items={visibleEntries.map((entry) => entry.item.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <div role="tabpanel" aria-label={tabLabels[tab]} className="mt-4 flex flex-col gap-2">
+              {visibleEntries.map((entry) => renderProviderEntry(entry.item, entry.match))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      )}
 
-              if (item.kind === 'openai-official') {
-                return (
-                  <SortableProviderCard
-                    browserMode={browserMode}
-                    key={item.id}
-                    item={item}
-                    isActive={isOpenAIOfficialActive}
-                    dragLabel={t('settings.providers.dragToReorder')}
-                    onActivate={!isOpenAIOfficialActive ? () => handleActivate(OPENAI_OFFICIAL_PROVIDER_ID) : undefined}
-                    title={t('settings.providers.openaiOfficialName')}
-                    subtitle={t('settings.providers.openaiOfficialDesc')}
-                    badges={isOpenAIOfficialActive ? (
-                      <Badge tone="brand" bordered>{t('settings.providers.default')}</Badge>
-                    ) : null}
-                    details={!browserMode && isOpenAIOfficialActive ? (
-                      <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">
-                        <ChatGPTOfficialLogin />
-                        <OfficialProviderModelSettings providerId={OPENAI_OFFICIAL_PROVIDER_ID} />
-                      </div>
-                    ) : null}
-                  />
-                )
-              }
+      {searching && visibleEntries.length > 0 && otherMatchCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setSelectedTab(otherTab)}
+          className="mt-2 flex h-10 w-full items-center gap-2 rounded-[var(--radius-lg)] border border-dashed border-[var(--color-outline)] px-3.5 text-left text-[13px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
+        >
+          <Search size={14} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />
+          <span className="min-w-0 flex-1 truncate">
+            {t('settings.providers.search.otherTabMatches', { tab: tabLabels[otherTab], count: otherMatchCount })}
+          </span>
+          <span className="shrink-0 font-medium text-[var(--color-text-primary)]">{t('settings.providers.search.switchTab')}</span>
+          <ArrowRight size={14} strokeWidth={1.75} aria-hidden="true" className="shrink-0" />
+        </button>
+      )}
 
-              if (item.kind === 'grok-official') {
-                return (
-                  <SortableProviderCard
-                    browserMode={browserMode}
-                    key={item.id}
-                    item={item}
-                    isActive={isGrokOfficialActive}
-                    dragLabel={t('settings.providers.dragToReorder')}
-                    onActivate={!isGrokOfficialActive ? () => handleActivate(GROK_OFFICIAL_PROVIDER_ID) : undefined}
-                    title={t('settings.providers.grokOfficialName')}
-                    subtitle={t('settings.providers.grokOfficialDesc')}
-                    badges={isGrokOfficialActive ? (
-                      <Badge tone="brand" bordered>{t('settings.providers.default')}</Badge>
-                    ) : null}
-                    details={!browserMode && isGrokOfficialActive ? (
-                      <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">
-                        <GrokOfficialLogin />
-                        <OfficialProviderModelSettings providerId={GROK_OFFICIAL_PROVIDER_ID} />
-                      </div>
-                    ) : null}
-                  />
-                )
-              }
+      {searching && visibleEntries.length === 0 && (
+        <EmptyState
+          className="mt-4"
+          icon={<SearchX size={18} strokeWidth={1.75} />}
+          title={t('settings.providers.search.noResults', { tab: tabLabels[tab], query: query.trim() })}
+          description={otherMatchCount === 0 ? t('settings.providers.search.noResultsHint') : undefined}
+          action={otherMatchCount > 0 ? {
+            label: t('settings.providers.search.viewOtherTab', { tab: tabLabels[otherTab], count: otherMatchCount }),
+            onClick: () => setSelectedTab(otherTab),
+          } : undefined}
+        />
+      )}
 
-              const provider = item.provider
-              const isActive = activeId === provider.id
-              const test = testResults[provider.id]
-              const preset = presetMap.get(provider.presetId)
-
-              const displayKey = provider.keyPreview || (provider.hasApiKey ? t('settings.providers.credentialConfigured') : t('settings.providers.credentialMissing'))
-
-              return (
-                <SortableProviderCard
-                    browserMode={browserMode}
-                  key={item.id}
-                  item={item}
-                  isActive={isActive}
-                  dragLabel={t('settings.providers.dragToReorder')}
-                  onActivate={!isActive ? () => handleActivate(provider.id) : undefined}
-                  title={provider.name}
-                  subtitle={<span className="font-mono text-[11.5px]">{displayKey}</span>}
-                  badges={(
-                    <>
-                      {preset && preset.id !== 'custom' && (
-                        <Badge tone="neutral">{preset.name}</Badge>
-                      )}
-                      {provider.apiFormat && provider.apiFormat !== 'anthropic' && (
-                        <Badge tone="warning">
-                          {provider.apiFormat === 'openai_chat' ? 'OpenAI Chat' : 'OpenAI Responses'}
-                        </Badge>
-                      )}
-                      {isActive && (
-                        <Badge tone="brand" bordered>{t('settings.providers.default')}</Badge>
-                      )}
-                    </>
-                  )}
-                  result={test && !test.loading && test.result ? (
-                    <div className="mt-1 flex flex-col gap-0.5 text-xs">
-                      <span className={test.result.connectivity.success ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}>
-                        {test.result.connectivity.success
-                          ? t('settings.providers.connectivityOk', { latency: String(test.result.connectivity.latencyMs) })
-                          : t('settings.providers.connectivityFailed', { error: test.result.connectivity.error || '' })}
-                      </span>
-                      {test.result.proxy && (
-                        <span className={test.result.proxy.success ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}>
-                          {test.result.proxy.success
-                            ? t('settings.providers.proxyOk', { latency: String(test.result.proxy.latencyMs) })
-                            : t('settings.providers.proxyFailed', { error: test.result.proxy.error || '' })}
-                        </span>
-                      )}
-                    </div>
-                  ) : null}
-                  actions={(
-                    <>
-                      {!isActive && (
-                        <Button variant="ghost" size="sm" onClick={() => handleActivate(provider.id)}>{t('settings.providers.setDefault')}</Button>
-                      )}
-                      {!browserMode && <Button variant="ghost" size="sm" onClick={() => handleTest(provider)} loading={test?.loading}>{t('settings.providers.test')}</Button>}
-                      <Button variant="ghost" size="sm" onClick={() => setEditingProvider(provider)}>{t('settings.providers.edit')}</Button>
-                      {!isActive && (
-                        <Button variant="ghost" size="sm" onClick={() => handleDelete(provider)} className="text-[var(--color-error)] hover:text-[var(--color-error)]">{t('common.delete')}</Button>
-                      )}
-                    </>
-                  )}
-                />
-              )
-            })}
-          </div>
-        </SortableContext>
-      </DndContext>
+      {hasLoadedProviders && !searching && tab === 'api' && providers.length === 0 && (
+        <EmptyState
+          className="mt-4"
+          icon={<KeyRound size={18} strokeWidth={1.75} />}
+          title={t('settings.providers.apiKeyEmpty.title')}
+          description={t('settings.providers.apiKeyEmpty.description')}
+        >
+          {starterPresets.map((preset) => (
+            <Button key={preset.id} variant="secondary" size="sm" onClick={() => openCreateModal(preset.id)}>
+              {preset.id === 'custom' ? t('settings.providers.customPreset') : preset.name}
+            </Button>
+          ))}
+        </EmptyState>
+      )}
 
       {isLoading && providers.length === 0 ? (
         <div className="flex justify-center py-8">
@@ -471,14 +696,19 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
         <ProviderFormModal
           browserMode={browserMode}
           open={true}
-          onClose={() => {
-            setShowCreateModal(false)
-            setEchoFlowDraft(null)
-          }}
+          onClose={() => setShowCreateModal(false)}
           mode="create"
           presets={presets}
-          echoFlowDraft={echoFlowDraft}
+          initialPresetId={createPresetId}
+          onPickMagpie={browserMode ? undefined : () => {
+            setShowCreateModal(false)
+            setMagpieDialog({})
+          }}
         />
+      )}
+
+      {magpieDialog && (
+        <MagpieProviderDialog open={true} onClose={() => setMagpieDialog(null)} provider={magpieDialog.provider} />
       )}
 
       {/* Edit Modal */}
@@ -514,25 +744,48 @@ type SortableProviderCardProps = {
   item: ProviderListItem
   isActive: boolean
   dragLabel: string
+  /** While searching the list is a filtered view, so it is not reorderable. */
+  dragDisabled?: boolean
   title: ReactNode
   subtitle: ReactNode
   badges?: ReactNode
   result?: ReactNode
+  /** Always-visible actions (Test, Edit). */
   actions?: ReactNode
+  /** Rarely-wanted actions (Set default, Delete), revealed on hover or keyboard focus. */
+  secondaryActions?: ReactNode
+  /** The default provider's model mapping, as a full-width chip row. */
+  modelChips?: ReactNode
+  /** Why a search matched, when the match is in a field the card does not show. */
+  matchNote?: ReactNode
+  /** A live state of the provider's endpoint (Magpie: running or not). */
+  statusLine?: ReactNode
   details?: ReactNode
   onActivate?: () => void
 }
+
+/**
+ * Indent of everything under the title line: 6px card padding + 20px grip +
+ * 10px gap + 8px dot + 10px gap, so chips, results and details start in the
+ * name's column.
+ */
+const CARD_TEXT_INDENT = 'pl-12'
 
 function SortableProviderCard({
   browserMode = false,
   item,
   isActive,
   dragLabel,
+  dragDisabled = false,
   title,
   subtitle,
   badges,
   result,
   actions,
+  secondaryActions,
+  modelChips,
+  matchNote,
+  statusLine,
   details,
   onActivate,
 }: SortableProviderCardProps) {
@@ -543,11 +796,11 @@ function SortableProviderCard({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: item.id })
+  } = useSortable({ id: item.id, disabled: dragDisabled })
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    zIndex: isDragging ? 20 : undefined,
+    zIndex: isDragging ? 'var(--z-raised)' : undefined,
   }
 
   return (
@@ -555,53 +808,152 @@ function SortableProviderCard({
       ref={setNodeRef}
       style={style}
       data-testid={providerItemTestId(item)}
-      className={`group relative flex flex-col rounded-[var(--radius-lg)] transition-[background-color,border-color,box-shadow] duration-150 ease-out ${
+      className={cx(
+        'group relative flex flex-wrap items-start gap-x-2.5 gap-y-2 rounded-[var(--radius-lg)] border bg-[var(--color-surface-container-lowest)] p-[14px] pl-1.5',
+        'transition-[border-color,box-shadow] duration-150 ease-out',
+        // The default provider: a terracotta-mixed hairline plus a soft brand
+        // halo. Not the focus color, which would collide with the real focus ring.
         isActive
-          ? 'border-[1.5px] border-[var(--color-primary-fixed-dim)] bg-[var(--color-surface-container-low)]'
-          : 'border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] hover:border-[var(--color-outline)] hover:bg-[var(--color-surface-hover)]'
-      } ${isDragging ? 'shadow-[var(--shadow-overlay)] opacity-90' : ''}`}
+          ? 'border-[var(--color-primary-fixed-dim)] shadow-[0_0_0_3px_var(--color-brand-soft)]'
+          : 'border-[var(--color-border)] hover:border-[var(--color-outline)]',
+        isDragging && 'opacity-90 shadow-[var(--shadow-dropdown)]',
+      )}
     >
-      <div className={browserMode ? "flex flex-wrap items-center gap-2 px-3.5 py-2.5" : "flex items-center gap-2 px-3.5 py-2.5"}>
-        {/* The handle stays hidden until the row is hovered or focused, the
-            same reveal rule as the action buttons below. Five always-visible
-            grips out-shouted the provider names they belong to. Touch/H5 keeps
-            it visible — there is no hover to reveal it. */}
-        <button
-          type="button"
-          {...attributes}
-          {...listeners}
-          aria-label={dragLabel}
-          title={dragLabel}
-          className="flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-container-high)] hover:text-[var(--color-text-secondary)] focus:outline-none focus-visible:shadow-[var(--shadow-focus-ring)] active:cursor-grabbing [html[data-touch-h5]_&]:opacity-100 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
-          style={{ touchAction: 'none' }}
-        >
-          <GripVertical className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={onActivate}
-          aria-disabled={!onActivate}
-          className={`flex min-w-0 flex-1 items-center gap-3 rounded-[var(--radius-sm)] text-left focus:outline-none focus-visible:shadow-[var(--shadow-focus-ring)] ${
-            onActivate ? 'cursor-pointer' : 'cursor-default'
-          }`}
-        >
-          <StatusDot tone={isActive ? 'success' : 'neutral'} size="lg" />
-          <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-sm font-semibold text-[var(--color-text-primary)]">{title}</span>
-              {badges}
-            </span>
-            <span className="mt-1 block truncate text-[12px] text-[var(--color-text-tertiary)]">{subtitle}</span>
-            {result}
-          </span>
-        </button>
-        {actions && (
-          <div className={browserMode ? "flex w-full flex-wrap items-center justify-end gap-1 [&_button]:min-h-11" : "flex shrink-0 items-center gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"}>
-            {actions}
-          </div>
+      {dragDisabled ? (
+        // Keeps the dot and name in the same column as when the handle is there.
+        <span aria-hidden="true" className="h-5 w-5 shrink-0" />
+      ) : <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        aria-label={dragLabel}
+        title={dragLabel}
+        className={cx(
+          'flex h-5 w-5 shrink-0 cursor-grab items-center justify-center rounded-[var(--radius-xs)] text-[var(--color-text-tertiary)] transition-[opacity,color] duration-150',
+          'hover:text-[var(--color-text-secondary)] focus:outline-none focus-visible:opacity-100 focus-visible:shadow-[var(--shadow-focus-ring)] active:cursor-grabbing',
+          // Touch has no hover, so the handle stays visible on the phone.
+          !browserMode && 'opacity-0 group-hover:opacity-100',
         )}
-      </div>
-      {details}
+        style={{ touchAction: 'none' }}
+      >
+        <GripVertical size={14} strokeWidth={1.75} aria-hidden="true" />
+      </button>}
+      <button
+        type="button"
+        onClick={onActivate}
+        aria-disabled={!onActivate}
+        className={cx(
+          'flex min-w-0 flex-1 items-start gap-2.5 rounded-[var(--radius-sm)] text-left focus:outline-none focus-visible:shadow-[var(--shadow-focus-ring)]',
+          onActivate ? 'cursor-pointer' : 'cursor-default',
+        )}
+      >
+        <span
+          aria-hidden="true"
+          className={cx(
+            'mt-[6px] size-2 shrink-0 rounded-full',
+            isActive
+              ? 'bg-[var(--color-success)] shadow-[0_0_0_3px_var(--color-success-container)]'
+              : 'bg-[var(--color-outline)]',
+          )}
+        />
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="min-w-0 truncate text-sm font-semibold leading-5 text-[var(--color-text-primary)]">{title}</span>
+            {badges}
+          </span>
+          <span className="mt-[3px] block truncate text-xs text-[var(--color-text-tertiary)]">{subtitle}</span>
+        </span>
+      </button>
+      {(actions || secondaryActions) && (
+        <div
+          className={cx(
+            'flex items-center gap-0.5',
+            browserMode ? 'w-full flex-wrap justify-end [&_button]:min-h-11' : 'shrink-0',
+          )}
+        >
+          {secondaryActions && (
+            <span
+              className={cx(
+                'flex items-center gap-0.5',
+                !browserMode && 'opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100',
+              )}
+            >
+              {secondaryActions}
+            </span>
+          )}
+          {actions}
+        </div>
+      )}
+      {matchNote && <div className={cx('min-w-0 basis-full', CARD_TEXT_INDENT)}>{matchNote}</div>}
+      {statusLine && <div className={cx('min-w-0 basis-full', CARD_TEXT_INDENT)}>{statusLine}</div>}
+      {result && <div className={cx('basis-full', CARD_TEXT_INDENT)}>{result}</div>}
+      {modelChips && <div className={cx('basis-full', CARD_TEXT_INDENT)}>{modelChips}</div>}
+      {details && <div className={cx('basis-full pt-1', CARD_TEXT_INDENT)}>{details}</div>}
+    </div>
+  )
+}
+
+/** The default provider's role mappings — main always, the rest only where they differ. */
+function ProviderModelChips({ models, labels }: { models: ModelMapping; labels: Record<ModelSlot, string> }) {
+  const main = models.main.trim()
+  const slots = MODEL_SLOTS.filter((slot) => {
+    const value = models[slot]?.trim()
+    return slot === 'main' ? Boolean(value) : Boolean(value) && value !== main
+  })
+  if (slots.length === 0) return null
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {slots.map((slot) => (
+        <span
+          key={slot}
+          className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-container)] px-2 text-[11px] text-[var(--color-text-tertiary)]"
+        >
+          <span className="shrink-0">{labels[slot]}</span>
+          <span className="min-w-0 truncate font-mono text-[var(--color-text-primary)]">{models[slot]}</span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/** The two-step connection test result: direct connectivity, then the proxy pipeline. */
+function ProviderTestResultLines({ result }: { result: ProviderTestResult }) {
+  const t = useTranslation()
+  const lines = [
+    {
+      key: 'connectivity',
+      success: result.connectivity.success,
+      text: result.connectivity.success
+        ? t('settings.providers.connectivityOk', { latency: String(result.connectivity.latencyMs) })
+        : t('settings.providers.connectivityFailed', { error: result.connectivity.error || '' }),
+    },
+    ...(result.proxy
+      ? [{
+          key: 'proxy',
+          success: result.proxy.success,
+          text: result.proxy.success
+            ? t('settings.providers.proxyOk', { latency: String(result.proxy.latencyMs) })
+            : t('settings.providers.proxyFailed', { error: result.proxy.error || '' }),
+        }]
+      : []),
+  ]
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5 break-words text-xs">
+      {lines.map((line) => {
+        const Icon = line.success ? CircleCheck : CircleAlert
+        return (
+          <span
+            key={line.key}
+            className={cx(
+              'inline-flex items-start gap-1',
+              line.success ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]',
+            )}
+          >
+            <Icon size={12} strokeWidth={2} aria-hidden="true" className="mt-[3px] shrink-0" />
+            <span className="min-w-0">{line.text}</span>
+          </span>
+        )
+      })}
     </div>
   )
 }
@@ -615,7 +967,10 @@ type ProviderFormProps = {
   mode: 'create' | 'edit'
   provider?: SavedProvider
   presets: ProviderPreset[]
-  echoFlowDraft?: EchoFlowTokenSource | null
+  /** Preset picked before the dialog opened, e.g. from the empty API key list. */
+  initialPresetId?: string
+  /** Magpie is connected through its own dialog (catalog, no key). */
+  onPickMagpie?: () => void
 }
 
 function requirePreset(preset: ProviderPreset | undefined): ProviderPreset {
@@ -762,47 +1117,16 @@ function stripModel1mMarkers(models: ModelMapping): ModelMapping {
   }
 }
 
-function isModel1mCapable(
-  model: string | undefined,
-  provider: SavedProvider | undefined,
-  preset: ProviderPreset | undefined,
-): boolean {
-  const raw = model?.trim() ?? ''
-  if (!raw) return false
-  if (hasModel1mMarker(raw)) return true
-  const stripped = stripModel1mMarker(raw)
-  const known = provider?.modelContextWindows?.[stripped] ?? preset?.modelContextWindows?.[stripped]
-  // Only a reported 1M window ticks the box. An unknown model stays opt-in:
-  // ticking it appends `[1m]` to the id, and that silently breaks whatever the
-  // endpoint actually allows.
-  return known !== undefined && known >= 1_000_000
-}
-
-export function getInitialModel1mSupport(
+function getInitialModel1mSupport(
   models: ModelMapping,
   provider?: SavedProvider,
-  preset?: ProviderPreset,
 ): Model1mSupport {
-  // The box describes the model's real window, not the slot it sits in. A 1M
-  // model starts ticked so the user only clears what they do not want; a model
-  // the provider reports as smaller stays unticked, because ticking it is what
-  // makes auto-compaction fail silently.
-  const tick = (slot: keyof Model1mSupport, model: string | undefined): boolean => {
-    const saved = provider?.model1mSupport?.[slot]
-    if (saved === false) return false
-    if (saved === true && model && !hasModel1mMarker(model)) {
-      const stripped = stripModel1mMarker(model)
-      const known = provider?.modelContextWindows?.[stripped] ?? preset?.modelContextWindows?.[stripped]
-      if (known !== undefined && known < 1_000_000) return false
-    }
-    return saved === true || isModel1mCapable(model, provider, preset)
-  }
   return {
-    main: tick('main', models.main),
-    fable: tick('fable', models.fable),
-    haiku: tick('haiku', models.haiku),
-    sonnet: tick('sonnet', models.sonnet),
-    opus: tick('opus', models.opus),
+    main: provider?.model1mSupport?.main === true || hasModel1mMarker(models.main),
+    fable: provider?.model1mSupport?.fable === true || (models.fable ? hasModel1mMarker(models.fable) : false),
+    haiku: provider?.model1mSupport?.haiku === true || hasModel1mMarker(models.haiku),
+    sonnet: provider?.model1mSupport?.sonnet === true || hasModel1mMarker(models.sonnet),
+    opus: provider?.model1mSupport?.opus === true || hasModel1mMarker(models.opus),
   }
 }
 
@@ -822,6 +1146,10 @@ function applyModel1mSupportMapping(
     sonnet: applyModel1mSupport(models.sonnet, model1mSupport.sonnet),
     opus: applyModel1mSupport(models.opus, model1mSupport.opus),
   }
+}
+
+function hasAnyModel1mSupport(model1mSupport: Model1mSupport): boolean {
+  return MODEL_SLOTS.some((slot) => model1mSupport[slot])
 }
 
 function normalizeModelMapping(models: ModelMapping): ModelMapping {
@@ -1091,12 +1419,13 @@ function openExternalUrl(url: string) {
     .catch(() => window.open(url, '_blank', 'noopener,noreferrer'))
 }
 
-function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDraft, browserMode = false }: ProviderFormProps) {
-  const { createProvider, updateProvider, fetchProviders, testConfig, fetchModels } = useProviderStore()
+function ProviderFormModal({ open, onClose, mode, provider, presets, initialPresetId, onPickMagpie, browserMode = false }: ProviderFormProps) {
+  const { createProvider, updateProvider, testConfig, fetchModels } = useProviderStore()
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
   const addToast = useUIStore((s) => s.addToast)
   const t = useTranslation()
   const baseUrlInputId = useId()
+  const proxyUrlInputId = useId()
 
   const fallbackPreset = buildFallbackPreset(provider)
   const loadedPresets = presets.filter((p) => p.id !== 'official')
@@ -1111,13 +1440,13 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
     () => presets.flatMap((preset) => Object.keys(preset.defaultEnv ?? {})),
     [presets],
   )
-  const echoFlowPreset = availablePresets.find((preset) => preset.id === 'echoflowai')
   const initialPreset = provider
     ? availablePresets.find((p) => p.id === provider.presetId) ?? fallbackPreset
-    : (echoFlowDraft && echoFlowPreset) ?? selectablePresets[0] ?? fallbackPreset
-  const echoFlowBaseUrl = echoFlowDraft
-    ? ECHOFLOW_BASE_URLS[echoFlowDraft.endpoint]
-    : initialPreset.baseUrl
+    : selectablePresets.find((p) => p.id === initialPresetId) ?? selectablePresets[0] ?? fallbackPreset
+  // The custom preset's catalog name is a bare English "Custom"; show a localized
+  // label that says what it is for.
+  const presetLabel = (preset: ProviderPreset) =>
+    preset.id === 'custom' ? t('settings.providers.customPreset') : preset.name
   const initialModels = stripModel1mMarkers(provider?.models ?? initialPreset.defaultModels)
   const initialImageGeneration = provider
     ? provider.imageGeneration
@@ -1125,7 +1454,6 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
   const initialModel1mSupport = getInitialModel1mSupport(
     provider?.models ?? initialPreset.defaultModels,
     provider,
-    initialPreset,
   )
   const initialModelContextInputs = apply1mSupportToContextInputs(
     getModelContextInputs(initialModels, initialPreset, provider),
@@ -1133,24 +1461,27 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
   )
 
   const [selectedPreset, setSelectedPreset] = useState<ProviderPreset>(initialPreset)
+  const [name, setName] = useState(provider?.name ?? presetLabel(initialPreset))
+  const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? initialPreset.baseUrl)
+  // A preset that decides the protocol per model owns this field: the picked value
+  // is only the fallback for models no rule matches, so a record carrying a stale
+  // one (cc-switch import, a paste, an older save) must not override it.
   const presetDrivesApiFormat = Boolean(selectedPreset.modelApiFormats?.length)
-  const [name, setName] = useState(
-    provider?.name ??
-    (echoFlowDraft
-      ? `${echoFlowDraft.endpoint === 'main' ? t('echoflowApiOfficialLogin.endpointMain') : t('echoflowApiOfficialLogin.endpointDedicated')} · ${echoFlowDraft.tokenName}`
-      : initialPreset.name)
+  const [apiFormat, setApiFormat] = useState<ApiFormat>(
+    presetDrivesApiFormat
+      ? selectedPreset.apiFormat
+      : provider?.apiFormat ?? initialPreset.apiFormat ?? 'anthropic',
   )
-
-  const defaultNotes = provider?.notes ?? ''
-  const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? echoFlowBaseUrl)
-  const [apiFormat, setApiFormat] = useState<ApiFormat>(provider?.apiFormat ?? initialPreset.apiFormat ?? 'anthropic')
   const [authStrategy, setAuthStrategy] = useState<ProviderAuthStrategy>(provider?.authStrategy ?? getPresetAuthStrategy(initialPreset))
   const [apiKey, setApiKey] = useState(provider?.apiKey ?? '')
   const [showApiKey, setShowApiKey] = useState(false)
-  const [echoFlowKey, setEchoFlowKey] = useState<string | null>(null)
-  const echoFlowKeyRequestRef = useRef(0)
-  const [echoFlowKeyError, setEchoFlowKeyError] = useState(false)
-  const [notes, setNotes] = useState(defaultNotes)
+  const [proxyMode, setProxyMode] = useState<ProviderProxyMode>(provider?.proxy?.mode ?? 'follow_global')
+  const [proxyUrl, setProxyUrl] = useState(provider?.proxy?.url ?? '')
+  // The phone receives only the saved mode: proxy URLs can contain credentials.
+  const keepRemoteProxy = browserMode && mode === 'edit' &&
+    proxyMode === (provider?.proxy?.mode ?? 'follow_global') && proxyUrl === (provider?.proxy?.url ?? '')
+  const proxyUrlInvalid = proxyMode === 'manual' && proxyUrl.trim() !== '' && !isValidHttpProxyUrl(proxyUrl.trim())
+  const [notes, setNotes] = useState(provider?.notes ?? '')
   const [compatibility, setCompatibility] = useState(() => compatibilityForm(provider?.requestCompatibility))
   const [models, setModels] = useState<ModelMapping>(initialModels)
   const [model1mSupport, setModel1mSupport] = useState<Model1mSupport>(initialModel1mSupport)
@@ -1167,6 +1498,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
   const [imageGeneration, setImageGeneration] = useState<ImageGenerationFormValue>({
     enabled: Boolean(initialImageGeneration),
     model: initialImageGeneration?.model ?? '',
+    protocol: initialImageGeneration?.protocol ?? 'openai_images',
     baseUrl: provider?.imageGeneration?.baseUrl ?? '',
     apiKey: provider?.imageGeneration?.apiKey ?? '',
   })
@@ -1295,21 +1627,26 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
   }, [baseUrl, apiKey])
 
   const handlePresetChange = (preset: ProviderPreset) => {
+    if (preset.id === MAGPIE_PRESET_ID && onPickMagpie) {
+      onPickMagpie()
+      return
+    }
     settingsJsonUserEditedRef.current = false
     setSelectedPreset(preset)
     setCompatibility(compatibilityForm())
-    setName(preset.name)
+    setName(presetLabel(preset))
     setBaseUrl(preset.baseUrl)
     setImageGeneration({
       enabled: Boolean(preset.defaultImageGeneration),
       model: preset.defaultImageGeneration?.model ?? '',
+      protocol: preset.defaultImageGeneration?.protocol ?? 'openai_images',
       baseUrl: '',
       apiKey: '',
     })
     setApiFormat(preset.apiFormat ?? 'anthropic')
     setAuthStrategy(getPresetAuthStrategy(preset))
     const nextModels = stripModel1mMarkers(preset.defaultModels)
-    const nextModel1mSupport = getInitialModel1mSupport(preset.defaultModels, undefined, preset)
+    const nextModel1mSupport = getInitialModel1mSupport(preset.defaultModels)
     const nextModelContextInputs = apply1mSupportToContextInputs(
       getModelContextInputs(nextModels, preset),
       nextModel1mSupport,
@@ -1331,7 +1668,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
   const modelContextWindowErrorSlots = MODEL_SLOTS.filter((slot) => getModelContextWindowErrorKey(modelContextInputs[slot]))
   const compatibilityInvalid = invalidCompatibilityNumber(compatibility.maxOutputTokens)
     || (apiFormat !== 'anthropic' && invalidCompatibilityNumber(compatibility.outputTokenLimit))
-  const canSubmit = !compatibilityInvalid && name.trim() && baseUrl.trim() && (mode === 'edit' || echoFlowDraft || !requiresApiKey || apiKey.trim()) && models.main.trim() && (!imageGeneration.enabled || imageGeneration.model.trim()) && !settingsJsonError && !autoCompactWindowErrorKey && modelContextWindowErrorSlots.length === 0
+  const canSubmit = !compatibilityInvalid && !(!keepRemoteProxy && proxyMode === 'manual' && !isValidHttpProxyUrl(proxyUrl.trim())) && name.trim() && baseUrl.trim() && (mode === 'edit' || !requiresApiKey || apiKey.trim()) && models.main.trim() && (!imageGeneration.enabled || imageGeneration.model.trim()) && !settingsJsonError && !autoCompactWindowErrorKey && modelContextWindowErrorSlots.length === 0
   const normalizedBaseUrl = normalizeProviderBaseUrl(baseUrl)
   const isPresetDefaultEndpoint = normalizedBaseUrl === normalizeProviderBaseUrl(selectedPreset.baseUrl)
   const apiKeyUrl = isPresetDefaultEndpoint ? selectedPreset.apiKeyUrl?.trim() : undefined
@@ -1347,11 +1684,11 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
         ? t('settings.providers.regionGlobal')
         : endpoint.region,
     description: endpoint.baseUrl,
-    icon: (
-      <span className="material-symbols-outlined text-[17px]">
-        {endpoint.region === 'cn_zh' ? 'location_on' : endpoint.region === 'global_en' ? 'public' : 'link'}
-      </span>
-    ),
+    icon: endpoint.region === 'cn_zh'
+      ? <MapPin size={16} strokeWidth={1.75} aria-hidden="true" />
+      : endpoint.region === 'global_en'
+        ? <Globe size={16} strokeWidth={1.75} aria-hidden="true" />
+        : <Link size={16} strokeWidth={1.75} aria-hidden="true" />,
   }))
   const selectedRegionalEndpointUrl = regionalEndpointItems.find(
     (option) => normalizeProviderBaseUrl(option.value) === normalizedBaseUrl,
@@ -1365,17 +1702,17 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
     {
       value: 'anthropic' as const,
       label: t('settings.providers.apiFormatAnthropic'),
-      icon: <span className="material-symbols-outlined text-[17px]">hub</span>,
+      icon: <Network size={16} strokeWidth={1.75} aria-hidden="true" />,
     },
     {
       value: 'openai_chat' as const,
       label: t('settings.providers.apiFormatOpenaiChat'),
-      icon: <span className="material-symbols-outlined text-[17px]">forum</span>,
+      icon: <MessagesSquare size={16} strokeWidth={1.75} aria-hidden="true" />,
     },
     {
       value: 'openai_responses' as const,
       label: t('settings.providers.apiFormatOpenaiResponses'),
-      icon: <span className="material-symbols-outlined text-[17px]">route</span>,
+      icon: <Route size={16} strokeWidth={1.75} aria-hidden="true" />,
     },
   ]
   const selectedApiFormatLabel = apiFormatItems.find((item) => item.value === apiFormat)?.label ?? t('settings.providers.apiFormatAnthropic')
@@ -1384,31 +1721,31 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
       value: 'auth_token' as const,
       label: t('settings.providers.authStrategyAuthToken'),
       description: t('settings.providers.authStrategyAuthTokenDesc'),
-      icon: <span className="material-symbols-outlined text-[17px]">key</span>,
+      icon: <KeyRound size={16} strokeWidth={1.75} aria-hidden="true" />,
     },
     {
       value: 'auth_token_empty_api_key' as const,
       label: t('settings.providers.authStrategyAuthTokenEmptyApiKey'),
       description: t('settings.providers.authStrategyAuthTokenEmptyApiKeyDesc'),
-      icon: <span className="material-symbols-outlined text-[17px]">key_off</span>,
+      icon: <KeySquare size={16} strokeWidth={1.75} aria-hidden="true" />,
     },
     {
       value: 'api_key' as const,
       label: t('settings.providers.authStrategyApiKey'),
       description: t('settings.providers.authStrategyApiKeyDesc'),
-      icon: <span className="material-symbols-outlined text-[17px]">vpn_key</span>,
+      icon: <Key size={16} strokeWidth={1.75} aria-hidden="true" />,
     },
     {
       value: 'dual_same_token' as const,
       label: t('settings.providers.authStrategyDualSameToken'),
       description: t('settings.providers.authStrategyDualSameTokenDesc'),
-      icon: <span className="material-symbols-outlined text-[17px]">sync_alt</span>,
+      icon: <ArrowLeftRight size={16} strokeWidth={1.75} aria-hidden="true" />,
     },
     {
       value: 'dual_dummy' as const,
       label: t('settings.providers.authStrategyDualDummy'),
       description: t('settings.providers.authStrategyDualDummyDesc'),
-      icon: <span className="material-symbols-outlined text-[17px]">construction</span>,
+      icon: <Wrench size={16} strokeWidth={1.75} aria-hidden="true" />,
     },
   ] satisfies Array<{ value: ProviderAuthStrategy; label: string; description: string; icon: ReactNode }>
   const selectedAuthStrategyLabel = authStrategyItems.find((item) => item.value === authStrategy)?.label ?? t('settings.providers.authStrategyAuthToken')
@@ -1562,7 +1899,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
   }
   const hasModelsBaseUrl = Boolean(baseUrl.trim())
   const hasModelsApiKey = Boolean(apiKey.trim())
-  const canFetchModels = Boolean(echoFlowDraft?.tokenId) || (hasModelsBaseUrl && hasModelsApiKey)
+  const canFetchModels = hasModelsBaseUrl && hasModelsApiKey
   const handleFetchModels = async () => {
     if (!canFetchModels || isFetchingModels) return
     const requestId = modelsRequestRef.current + 1
@@ -1573,12 +1910,13 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
     try {
       // Upstream failures arrive as a resolved `ok: false`, so the catch below
       // only covers our own server being unreachable.
-      const result = echoFlowDraft
-        ? await echoflowApi.fetchModelsFromToken({
-          endpoint: echoFlowDraft.endpoint,
-          tokenId: echoFlowDraft.tokenId,
-        })
-        : await fetchModels({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim() })
+      // Probe through the proxy this provider will actually use for chat.
+      const probeProxy = proxyMode === 'direct'
+        ? { mode: proxyMode }
+        : proxyMode === 'manual' && isValidHttpProxyUrl(proxyUrl.trim())
+          ? { mode: proxyMode, url: proxyUrl.trim() }
+          : undefined
+      const result = await fetchModels({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), ...(probeProxy && { proxy: probeProxy }) })
       // The form moved on while we were probing — this answer describes a base
       // URL or key the user no longer has typed in.
       if (modelsRequestRef.current !== requestId) return
@@ -1608,31 +1946,6 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
       if (modelsRequestRef.current === requestId) setIsFetchingModels(false)
     }
   }
-  const toggleEchoFlowKeyVisibility = async () => {
-    if (showApiKey) {
-      echoFlowKeyRequestRef.current += 1
-      setShowApiKey(false)
-      setEchoFlowKey(null)
-      setEchoFlowKeyError(false)
-      return
-    }
-    if (echoFlowKey !== null) {
-      setShowApiKey(true)
-      return
-    }
-    if (!echoFlowDraft) return
-
-    const requestId = ++echoFlowKeyRequestRef.current
-    setEchoFlowKeyError(false)
-    try {
-      const { token } = await echoflowApi.getTokenKey(echoFlowDraft.endpoint, echoFlowDraft.tokenId)
-      if (echoFlowKeyRequestRef.current !== requestId) return
-      setEchoFlowKey(token.key)
-      setShowApiKey(true)
-    } catch {
-      if (echoFlowKeyRequestRef.current === requestId) setEchoFlowKeyError(true)
-    }
-  }
   const modelsErrorText = modelsErrorCode ? t(providerModelsErrorKey(modelsErrorCode)) : null
   // The server keeps the upstream's own wording, which is the only thing that
   // separates a 200-cloaked auth failure (智谱 answers `{"msg":"身份验证失败。"}`
@@ -1641,21 +1954,46 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
   const modelsErrorUpstream = modelsErrorMessage && modelsErrorMessage !== modelsErrorText
     ? modelsErrorMessage
     : null
-  const modelPickerGroups = useMemo(
-    () => groupProviderModels(
-      fetchedModels ?? [],
-      t('settings.providers.fetchModelsGroupOther'),
-    ),
-    [fetchedModels, t],
-  )
+  // A path-bound gateway reports every model under one owner, so grouping by owner
+  // collapses the whole list into a single bucket. Group by the endpoint each model
+  // actually routes to instead: it is what distinguishes them, and it surfaces the
+  // otherwise invisible per-model routing where the user picks a model.
+  const modelPickerGroups = useMemo(() => {
+    const fallbackGroup = t('settings.providers.fetchModelsGroupOther')
+    const models = fetchedModels ?? []
+    const rules = selectedPreset.modelApiFormats
+    if (!rules?.length) return groupProviderModels(models, fallbackGroup)
+    const endpointByFormat: Record<ModelApiFormat, string> = {
+      anthropic: '/messages',
+      openai_chat: '/chat/completions',
+      openai_responses: '/responses',
+      gemini: ':generateContent',
+    }
+    return groupProviderModels(
+      models.map((model) => ({
+        ...model,
+        ownedBy: endpointByFormat[resolveModelApiFormat(rules, model.id) ?? selectedPreset.apiFormat],
+      })),
+      fallbackGroup,
+    )
+  }, [fetchedModels, selectedPreset, t])
   const renderPresetButton = (preset: ProviderPreset) => (
     <SettingsPill
       key={preset.id}
+      aria-label={presetLabel(preset)}
+      className="relative"
       tone="terracotta"
       selected={selectedPreset.id === preset.id}
       onClick={() => handlePresetChange(preset)}
     >
-      {preset.name}
+      {SPONSOR_LOGOS[preset.id] && <img src={SPONSOR_LOGOS[preset.id]} alt="" className="size-4 rounded-[var(--radius-sm)] object-contain" />}
+      {presetLabel(preset)}
+      {SPONSOR_LOGOS[preset.id] && <Star size={12} className="fill-[var(--color-warning)] text-[var(--color-warning)]" aria-label={t('settings.providers.sponsor')} />}
+      {preset.isNew && (
+        <Badge tone="warning" size="xs" className="absolute -right-1 -top-2">
+          {t('settings.providers.new')}
+        </Badge>
+      )}
     </SettingsPill>
   )
 
@@ -1665,21 +2003,29 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
     const normalizedModels = normalizeModelMapping(models)
     const parsedAutoCompactWindow = parseAutoCompactWindowInput(autoCompactWindow)
     const parsedModelContextWindows = buildModelContextWindows(models, modelContextInputs)
-    const storedModel1mSupport = model1mSupport
+    const storedModel1mSupport = hasAnyModel1mSupport(model1mSupport)
+      ? model1mSupport
+      : undefined
     const storedImageGeneration = imageGeneration.enabled
       ? {
           model: imageGeneration.model.trim(),
+          protocol: imageGeneration.protocol,
           ...(imageGeneration.baseUrl.trim() ? { baseUrl: imageGeneration.baseUrl.trim() } : {}),
           ...(imageGeneration.apiKey.trim() ? { apiKey: imageGeneration.apiKey.trim() } : {}),
         }
       : undefined
+    const storedProxy = proxyMode === 'manual'
+      ? { mode: proxyMode, url: proxyUrl.trim() }
+      : proxyMode === 'follow_global'
+        ? null
+        : { mode: proxyMode }
     setIsSubmitting(true)
     setSaveFailed(false)
     setCredentialRequired(false)
     try {
-      // Write the edited echoflow-code settings.json first so provider-specific model
+      // Write the edited cc-haha settings.json first so provider-specific model
       // settings never conflict with the user's global ~/.claude/settings.json.
-      if (!browserMode && !echoFlowDraft && settingsJson.trim()) {
+      if (!browserMode && settingsJson.trim()) {
         try {
           const parsed = restoreSettingsJsonSecrets(JSON.parse(settingsJson), settingsJson, apiKey)
           const { providersApi } = await import('../../api/providers')
@@ -1697,52 +2043,25 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
       }
 
       if (mode === 'create') {
-        if (echoFlowDraft) {
-          await echoflowApi.createProviderFromToken({
-            endpoint: echoFlowDraft.endpoint,
-            tokenId: echoFlowDraft.tokenId,
-            tokenName: echoFlowDraft.tokenName,
-            keyPreview: echoFlowDraft.keyPreview,
-            remainQuota: echoFlowDraft.remainQuota,
-            unlimitedQuota: echoFlowDraft.unlimitedQuota,
-            name: name.trim(),
-            authStrategy,
-            baseUrl: baseUrl.trim(),
-            apiFormat,
-            ...(storedCompatibility ? { requestCompatibility: storedCompatibility } : {}),
-            models: normalizedModels,
-            ...(storedModel1mSupport !== undefined && { model1mSupport: storedModel1mSupport }),
-            ...(parsedAutoCompactWindow !== undefined && { autoCompactWindow: parsedAutoCompactWindow }),
-            ...(Object.keys(parsedModelContextWindows).length > 0 && { modelContextWindows: parsedModelContextWindows }),
-            toolSearchEnabled,
-            ...(disableExperimentalBetas && { disableExperimentalBetas }),
-            supportsNestedToolResultMedia,
-            ...(storedImageGeneration !== undefined && { imageGeneration: storedImageGeneration }),
-            notes: notes.trim() || undefined,
-            ...(fetchedModels ? { availableModels: fetchedModels } : {}),
-          })
-          await fetchProviders()
-        } else {
-          await createProvider({
-            presetId: selectedPreset.id,
-            name: name.trim(),
-            apiKey: apiKey.trim(),
-            authStrategy,
-            baseUrl: baseUrl.trim(),
-            apiFormat,
-            ...(storedCompatibility ? { requestCompatibility: storedCompatibility } : {}),
-            models: normalizedModels,
-            ...(storedModel1mSupport !== undefined && { model1mSupport: storedModel1mSupport }),
-            ...(parsedAutoCompactWindow !== undefined && { autoCompactWindow: parsedAutoCompactWindow }),
-            ...(Object.keys(parsedModelContextWindows).length > 0 && { modelContextWindows: parsedModelContextWindows }),
-            toolSearchEnabled,
-            ...(disableExperimentalBetas && { disableExperimentalBetas }),
-            supportsNestedToolResultMedia,
-            ...(storedImageGeneration !== undefined && { imageGeneration: storedImageGeneration }),
-            notes: notes.trim() || undefined,
-            ...(fetchedModels ? { availableModels: fetchedModels } : {}),
-          })
-        }
+        await createProvider({
+          presetId: selectedPreset.id,
+          name: name.trim(),
+          apiKey: apiKey.trim(),
+          authStrategy,
+          baseUrl: baseUrl.trim(),
+          apiFormat,
+          ...(storedCompatibility ? { requestCompatibility: storedCompatibility } : {}),
+          models: normalizedModels,
+          ...(storedModel1mSupport !== undefined && { model1mSupport: storedModel1mSupport }),
+          ...(parsedAutoCompactWindow !== undefined && { autoCompactWindow: parsedAutoCompactWindow }),
+          ...(Object.keys(parsedModelContextWindows).length > 0 && { modelContextWindows: parsedModelContextWindows }),
+          toolSearchEnabled,
+          ...(disableExperimentalBetas && { disableExperimentalBetas }),
+          supportsNestedToolResultMedia,
+          ...(storedImageGeneration !== undefined && { imageGeneration: storedImageGeneration }),
+          ...(storedProxy && { proxy: storedProxy }),
+          notes: notes.trim() || undefined,
+        })
       } else if (provider) {
         const input: UpdateProviderInput = {
           name: name.trim(),
@@ -1760,8 +2079,8 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
           disableExperimentalBetas,
           supportsNestedToolResultMedia,
           imageGeneration: storedImageGeneration ?? null,
+          ...(!keepRemoteProxy && { proxy: storedProxy }),
           notes: notes.trim() || undefined,
-          ...(fetchedModels ? { availableModels: fetchedModels } : {}),
         }
         if (apiKey.trim()) input.apiKey = apiKey.trim()
         await updateProvider(provider.id, input)
@@ -1790,40 +2109,35 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
     setTestResult(null)
     try {
       let result: ProviderTestResult
+      const proxyFormValue = proxyMode === 'manual'
+        ? { mode: proxyMode, url: proxyUrl.trim() }
+        : proxyMode === 'follow_global'
+          ? null
+          : { mode: proxyMode }
       const savedConfigUnchanged = mode === 'edit' && provider && !apiKey.trim() &&
         baseUrl.trim() === provider.baseUrl.trim() &&
         apiFormat === provider.apiFormat &&
         authStrategy === provider.authStrategy &&
         supportsNestedToolResultMedia === (provider.supportsNestedToolResultMedia ?? true) &&
-        JSON.stringify(formCompatibility) === JSON.stringify(provider.requestCompatibility)
+        JSON.stringify(formCompatibility) === JSON.stringify(provider.requestCompatibility) &&
+        JSON.stringify(proxyFormValue ?? null) === JSON.stringify(provider.proxy ?? null)
       if (savedConfigUnchanged && provider) {
         result = await useProviderStore.getState().testProvider(provider.id, {
           modelId: models.main.trim(),
         })
       } else {
-        if (requiresApiKey && !apiKey.trim() && !echoFlowDraft) return
-        result = echoFlowDraft
-          ? await echoflowApi.testProviderFromToken({
-            endpoint: echoFlowDraft.endpoint,
-            tokenId: echoFlowDraft.tokenId,
-            baseUrl: baseUrl.trim(),
-            modelId: models.main.trim(),
-            authStrategy,
-            apiFormat,
-            supportsNestedToolResultMedia,
-            presetId: selectedPreset.id,
-            ...(apiFormat !== 'anthropic' ? { requestCompatibility: parseCompatibilityForm(compatibility) } : {}),
-          }).then(({ result: testResult }) => testResult)
-          : await testConfig({
-            baseUrl: baseUrl.trim(),
-            apiKey: apiKey.trim() || selectedPreset.defaultEnv?.ANTHROPIC_AUTH_TOKEN || 'local',
-            modelId: models.main.trim(),
-            authStrategy,
-            apiFormat,
-            supportsNestedToolResultMedia,
-            presetId: selectedPreset.id,
-            ...(apiFormat !== 'anthropic' ? { requestCompatibility: parseCompatibilityForm(compatibility) } : {}),
-          })
+        if (requiresApiKey && !apiKey.trim()) return
+        result = await testConfig({
+          baseUrl: baseUrl.trim(),
+          apiKey: apiKey.trim() || selectedPreset.defaultEnv?.ANTHROPIC_AUTH_TOKEN || 'local',
+          modelId: models.main.trim(),
+          authStrategy,
+          apiFormat,
+          supportsNestedToolResultMedia,
+          presetId: selectedPreset.id,
+          ...(proxyFormValue ? { proxy: proxyFormValue } : {}),
+          ...(formCompatibility ? { requestCompatibility: formCompatibility } : {}),
+        })
       }
       setTestResult(result)
     } catch {
@@ -1851,17 +2165,17 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
     >
       <div className="flex min-w-0 flex-col gap-4">
         {browserMode && <p className="text-xs leading-5 text-[var(--color-text-secondary)]">{t('h5Settings.providerPrivacy')}</p>}
-        {saveFailed && <p role="alert" className="text-sm text-[var(--color-error)]">{t(credentialRequired ? 'h5Settings.credentialRequired' : 'publicAccess.genericError')}</p>}
+        {saveFailed && <p role="alert" className="text-[13px] text-[var(--color-error)]">{t(credentialRequired ? 'h5Settings.credentialRequired' : 'publicAccess.genericError')}</p>}
         {/* Preset chips */}
         {mode === 'create' && (
           <div>
-            <label className="text-sm font-medium text-[var(--color-text-primary)] mb-2 block">{t('settings.providers.preset')}</label>
+            <span className={cx(FORM_SECTION_LABEL, 'mb-2')}>{t('settings.providers.preset')}</span>
             <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-1.5">
                 {regularPresets.map(renderPresetButton)}
               </div>
               {featuredPresets.length > 0 && (
-                <div className="flex flex-wrap gap-2 border-t border-[var(--color-border-separator)] pt-2">
+                <div className="flex flex-wrap gap-1.5 border-t border-[var(--color-border)] pt-2">
                   {featuredPresets.map(renderPresetButton)}
                 </div>
               )}
@@ -1871,11 +2185,9 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
 
         <Input label={t('settings.providers.name')} required value={name} onChange={(e) => setName(e.target.value)} placeholder={t('settings.providers.namePlaceholder')} />
 
-        <Input label={t('settings.providers.notes')} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t('settings.providers.notesPlaceholder')} />
-
         {regionalEndpointItems.length > 1 && (
-          <div>
-            <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">{t('settings.providers.endpointRegion')}</label>
+          <div className="flex flex-col gap-1">
+            <span className={FORM_FIELD_LABEL}>{t('settings.providers.endpointRegion')}</span>
             <Dropdown<string>
               items={regionalEndpointItems}
               value={selectedRegionalEndpointUrl}
@@ -1886,7 +2198,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
               trigger={
                 <Button variant="secondary" size="md" block className="h-10 gap-3">
                   <span className="min-w-0 flex-1 truncate text-left">{selectedRegionalEndpointLabel}</span>
-                  <span className="material-symbols-outlined flex-shrink-0 text-[18px] text-[var(--color-text-secondary)]">expand_more</span>
+                  <ChevronDown size={16} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />
                 </Button>
               }
             />
@@ -1895,13 +2207,13 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
 
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-1">
-            <label htmlFor={baseUrlInputId} className="text-sm font-medium text-[var(--color-text-primary)]">
+            <label htmlFor={baseUrlInputId} className={FORM_FIELD_LABEL}>
               {t('settings.providers.baseUrl')}
               <span className="ml-0.5 text-[var(--color-error)]">*</span>
             </label>
             <Tooltip content={t('settings.providers.baseUrlTooltip')} placement="bottom-start">
               <IconButton
-                icon="info"
+                icon={<Info size={12} strokeWidth={2} aria-hidden="true" />}
                 label={t('settings.providers.baseUrlHelp')}
                 showTooltip={false}
                 size="2xs"
@@ -1913,181 +2225,85 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
           <Input id={baseUrlInputId} required value={baseUrl} onChange={(e) => handleBaseUrlChange(e.target.value)} placeholder={t('settings.providers.baseUrlPlaceholder')} className="font-mono text-[13px]" />
         </div>
 
-        <label
-          className={`relative flex items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 py-3 transition-colors ${
-            toolSearchUnsupported
-              ? 'cursor-not-allowed opacity-70'
-              : 'cursor-pointer hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]'
-          }`}
-        >
-          <input
-            type="checkbox"
-            aria-label={t('settings.providers.toolSearchEnabled')}
-            checked={toolSearchEnabled && !toolSearchUnsupported}
-            disabled={toolSearchUnsupported}
-            onChange={(e) => handleToolSearchToggle(e.target.checked)}
-            className={SETTINGS_CHECKBOX_INPUT_CLASS}
-          />
-          <SettingsCheckboxMark checked={toolSearchEnabled && !toolSearchUnsupported} disabled={toolSearchUnsupported} />
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text-primary)]">
-              {t('settings.providers.toolSearchEnabled')}
-            </div>
-            <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
-              {toolSearchDescription}
-            </div>
-          </div>
-        </label>
-
-        <label className="relative flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 py-3 transition-colors hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]">
-          <input
-            type="checkbox"
-            aria-label={t('settings.providers.disableExperimentalBetas')}
-            checked={disableExperimentalBetas}
-            onChange={(e) => handleDisableExperimentalBetasToggle(e.target.checked)}
-            className={SETTINGS_CHECKBOX_INPUT_CLASS}
-          />
-          <SettingsCheckboxMark checked={disableExperimentalBetas} />
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text-primary)]">
-              {t('settings.providers.disableExperimentalBetas')}
-            </div>
-            <div className={`mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]${browserMode ? ' [overflow-wrap:anywhere]' : ''}`}>
-              {t('settings.providers.disableExperimentalBetasDesc')}
-            </div>
-          </div>
-        </label>
-
-        <label className="relative flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 py-3 transition-colors hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]">
-          <input
-            type="checkbox"
-            aria-label={t('settings.providers.supportsNestedToolResultMedia')}
-            checked={supportsNestedToolResultMedia}
-            disabled={nestedToolResultMediaUnsupported}
-            onChange={(e) => handleNestedToolResultMediaToggle(e.target.checked)}
-            className={SETTINGS_CHECKBOX_INPUT_CLASS}
-          />
-          <SettingsCheckboxMark checked={supportsNestedToolResultMedia} disabled={nestedToolResultMediaUnsupported} />
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text-primary)]">
-              {t('settings.providers.supportsNestedToolResultMedia')}
-            </div>
-            <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
-              {nestedToolResultMediaDescription}
-            </div>
-          </div>
-        </label>
-
         <div className="flex flex-col gap-1">
-          <label htmlFor="provider-api-key" className="text-sm font-medium text-[var(--color-text-primary)]">
-            {mode === 'edit' && !browserMode ? t('settings.providers.apiKeyKeep') : t('settings.providers.apiKey')}
+          <label htmlFor="provider-api-key" className={FORM_FIELD_LABEL}>
+            {t('settings.providers.apiKey')}
             {mode === 'create' && requiresApiKey && <span className="text-[var(--color-error)] ml-0.5">*</span>}
           </label>
-          {echoFlowDraft ? (
-            <div className="relative">
-              <input
-                id="provider-api-key"
-                autoComplete="off"
-                spellCheck={false}
-                readOnly
-                type={showApiKey ? 'text' : 'password'}
-                value={echoFlowKey ?? ''}
-                placeholder={echoFlowDraft.keyPreview}
-                className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 pr-10 font-mono text-sm text-[var(--color-text-secondary)] outline-none"
-              />
-              <IconButton
-                icon={showApiKey ? 'visibility_off' : 'visibility'}
-                label={t(showApiKey ? 'settings.providers.hideApiKey' : 'settings.providers.showApiKey')}
-                showTooltip={false}
-                size="sm"
-                tone="muted"
-                onClick={() => void toggleEchoFlowKeyVisibility()}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2"
-              />
-              {echoFlowKeyError && <p role="alert" className="mt-1 text-xs text-[var(--color-error)]">{t('settings.providers.fetchModelsErrorUnknown')}</p>}
-            </div>
-          ) : (
-            <div className="relative">
-              <input
-                id="provider-api-key"
-                autoComplete="off"
-                spellCheck={false}
-                type={showApiKey ? 'text' : 'password'}
-                value={apiKey}
-                onChange={(e) => handleApiKeyChange(e.target.value)}
-                placeholder={provider?.keyPreview || 'sk-...'}
-                className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 pr-10 text-sm text-[var(--color-text-primary)] outline-none transition-colors duration-150 placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-border-focus)] focus:shadow-[var(--shadow-focus-ring)]"
-              />
-              {apiKey.length > 0 && (
-                <IconButton
-                  icon={showApiKey ? 'visibility_off' : 'visibility'}
-                  label={t(showApiKey ? 'settings.providers.hideApiKey' : 'settings.providers.showApiKey')}
-                  showTooltip={false}
-                  size="sm"
-                  tone="muted"
-                  onClick={() => setShowApiKey((visible) => !visible)}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2"
-                />
-              )}
-            </div>
-          )}
-          {echoFlowDraft && !echoFlowKeyError && <p className="text-xs text-[var(--color-text-tertiary)]">{t('settings.providers.tokenKeyManaged')}</p>}
+          <div className="relative">
+            <input
+              id="provider-api-key"
+              autoComplete="off"
+              spellCheck={false}
+              type={showApiKey ? 'text' : 'password'}
+              value={apiKey}
+              onChange={(e) => handleApiKeyChange(e.target.value)}
+              placeholder="sk-..."
+              className={cx(FIELD_BASE_CLASSES, FIELD_SIZE_CLASSES.lg, fieldStateClasses(false), 'pr-10')}
+            />
+            <IconButton
+              icon={showApiKey
+                ? <EyeOff size={14} strokeWidth={1.75} aria-hidden="true" />
+                : <Eye size={14} strokeWidth={1.75} aria-hidden="true" />}
+              label={t(showApiKey ? 'settings.providers.hideApiKey' : 'settings.providers.showApiKey')}
+              showTooltip={false}
+              size="sm"
+              tone="muted"
+              onClick={() => setShowApiKey((visible) => !visible)}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2"
+            />
+          </div>
         </div>
 
         {(apiKeyUrl || promoText) && (
-          <div className="-mt-2 flex flex-col gap-1.5">
+          <div className="-mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
             {apiKeyUrl && (
               <button
                 type="button"
                 onClick={() => openExternalUrl(apiKeyUrl)}
-                className="group inline-flex h-6 w-fit cursor-pointer items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-1.5 text-[11px] font-medium leading-none text-[var(--color-brand)] transition-colors hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)] focus:outline-none focus:shadow-[var(--shadow-focus-ring)]"
+                className="group inline-flex h-6 w-fit cursor-pointer items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--color-surface-container)] px-2 text-[11px] font-medium leading-none text-[var(--color-text-accent)] transition-colors hover:bg-[var(--color-surface-hover)] focus:outline-none focus:shadow-[var(--shadow-focus-ring)]"
               >
-                <span className="material-symbols-outlined text-[13px]">key</span>
+                <KeyRound size={12} strokeWidth={2} aria-hidden="true" />
                 {t('settings.providers.getApiKey')}
-                <span className="material-symbols-outlined text-[9px] opacity-60 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5">arrow_outward</span>
+                <ArrowUpRight size={11} strokeWidth={2} aria-hidden="true" className="opacity-60 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
               </button>
             )}
             {promoText && (
-              <button
-                type="button"
-                onClick={() => apiKeyUrl && openExternalUrl(apiKeyUrl)}
-                disabled={!apiKeyUrl}
-                className="group flex w-full cursor-pointer items-start gap-1.5 rounded-[var(--radius-sm)] border border-[var(--color-primary-fixed-dim)] bg-[var(--color-brand-soft)] px-2.5 py-1.5 text-left text-[11px] leading-5 text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-brand)] hover:bg-[var(--color-brand-soft-hover)] focus:outline-none focus:shadow-[var(--shadow-focus-ring)] disabled:cursor-default disabled:hover:border-[var(--color-primary-fixed-dim)] disabled:hover:bg-[var(--color-brand-soft)]"
-              >
-                <span className="material-symbols-outlined mt-0.5 text-[13px] text-[var(--color-brand)]">tips_and_updates</span>
-                <span>{promoText}</span>
-                {apiKeyUrl && (
-                  <span className="material-symbols-outlined ml-auto mt-1 text-[10px] text-[var(--color-brand)] opacity-45 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5">arrow_outward</span>
-                )}
-              </button>
+              apiKeyUrl ? (
+                <button
+                  type="button"
+                  onClick={() => openExternalUrl(apiKeyUrl)}
+                  className="group inline-flex min-w-0 cursor-pointer items-start gap-1 text-left text-[11px] leading-5 text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-accent)] focus:outline-none focus:shadow-[var(--shadow-focus-ring)]"
+                >
+                  <span>{promoText}</span>
+                  <ArrowUpRight size={11} strokeWidth={2} aria-hidden="true" className="mt-1 shrink-0 opacity-50 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+                </button>
+              ) : (
+                <span className="text-[11px] leading-5 text-[var(--color-text-tertiary)]">{promoText}</span>
+              )
             )}
           </div>
         )}
 
-        <ProviderImageGenerationFields
-          value={imageGeneration}
-          onChange={setImageGeneration}
-        />
-
         {/* Model Mapping */}
         <div>
           <div className="mb-2 flex items-center justify-between gap-2">
-            <label className="text-sm font-medium text-[var(--color-text-primary)]">{t('settings.providers.modelMapping')}</label>
+            <span className={FORM_SECTION_LABEL}>{t('settings.providers.modelMapping')}</span>
             {!browserMode && <Button
               variant="secondary"
               size="base"
               onClick={handleFetchModels}
               disabled={!canFetchModels}
               loading={isFetchingModels}
-              icon={<span className="material-symbols-outlined text-[15px]">cloud_download</span>}
+              icon={<CloudDownload size={14} strokeWidth={1.75} aria-hidden="true" />}
             >
               {t('settings.providers.fetchModels')}
             </Button>}
           </div>
-          {browserMode ? null : !echoFlowDraft && !hasModelsApiKey ? (
-            <p className="mb-2 text-[11px] text-[var(--color-text-tertiary)]">{t('settings.providers.fetchModelsApiKeyHint')}</p>
+          {browserMode ? null : !hasModelsApiKey ? (
+            <p className={cx(FORM_HINT, 'mb-2')}>{t('settings.providers.fetchModelsApiKeyHint')}</p>
           ) : !hasModelsBaseUrl ? (
-            <p className="mb-2 text-[11px] text-[var(--color-text-tertiary)]">{t('settings.providers.fetchModelsHint')}</p>
+            <p className={cx(FORM_HINT, 'mb-2')}>{t('settings.providers.fetchModelsHint')}</p>
           ) : modelsErrorCode ? (
             <div role="alert" className="mb-2 flex flex-col gap-0.5">
               <p className="text-[11px] text-[var(--color-error)]">{modelsErrorText}</p>
@@ -2098,13 +2314,13 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
               )}
             </div>
           ) : fetchedModels && fetchedModels.length === 0 ? (
-            <p className="mb-2 text-[11px] text-[var(--color-text-tertiary)]">{t('settings.providers.fetchModelsEmpty')}</p>
+            <p className={cx(FORM_HINT, 'mb-2')}>{t('settings.providers.fetchModelsEmpty')}</p>
           ) : fetchedModels ? (
             <p className="mb-2 text-[11px] text-[var(--color-text-secondary)]">
               {t('settings.providers.fetchModelsLoaded', { count: fetchedModels.length })}
             </p>
           ) : (
-            <p className="mb-2 text-[11px] text-[var(--color-text-tertiary)]">{t('settings.providers.fetchModelsSupportHint')}</p>
+            <p className={cx(FORM_HINT, 'mb-2')}>{t('settings.providers.fetchModelsSupportHint')}</p>
           )}
           <div className={browserMode ? "grid grid-cols-1 sm:grid-cols-2 gap-2" : "grid grid-cols-2 gap-2"}>
             {MODEL_SLOTS.map((slot) => {
@@ -2135,12 +2351,13 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
                   />
                   <Tooltip content={t('settings.providers.model1mSupportTooltip')} placement="bottom-start">
                     <label className="mt-1 inline-flex h-6 w-fit cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-1 text-xs text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]">
+                      {/* Named per slot rather than by the shared visible "1M" text. */}
                       <input
                         type="checkbox"
                         checked={model1mSupport[slot]}
                         onChange={(e) => handleModel1mSupportChange(slot, e.target.checked)}
-                        aria-label={`1M support: ${slot}`}
-                        className="h-3.5 w-3.5 rounded border-[var(--color-border)] text-[var(--color-brand)] accent-[var(--color-brand)] focus:ring-[var(--color-brand)]"
+                        aria-label={t('settings.providers.model1mSupportAria', { slot })}
+                        className="h-3.5 w-3.5 shrink-0 rounded-[var(--radius-xs)] border-[var(--color-border-strong)] accent-[var(--color-brand)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
                       />
                       <span>{t('settings.providers.model1mSupportShort')}</span>
                     </label>
@@ -2149,7 +2366,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
               )
             })}
           </div>
-          <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-tertiary)]">
+          <p className={cx(FORM_HINT, 'mt-2')}>
             {t('settings.providers.model1mSupportHint')}
           </p>
         </div>
@@ -2159,8 +2376,8 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
         {/* API Format — a preset only owns this field when it routes per model;
             every other preset starts on its own format but stays switchable. */}
         {!presetDrivesApiFormat ? (
-          <div>
-            <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">{t('settings.providers.apiFormat')}</label>
+          <div className="flex flex-col gap-1">
+            <span className={FORM_FIELD_LABEL}>{t('settings.providers.apiFormat')}</span>
             <Dropdown<ApiFormat>
               items={apiFormatItems}
               value={apiFormat}
@@ -2170,34 +2387,34 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
               trigger={
                 <Button variant="secondary" size="md" block className="h-10 gap-3">
                   <span className="min-w-0 flex-1 truncate text-left">{selectedApiFormatLabel}</span>
-                  <span className="material-symbols-outlined flex-shrink-0 text-[18px] text-[var(--color-text-secondary)]">expand_more</span>
+                  <ChevronDown size={16} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />
                 </Button>
               }
             />
             {apiFormat !== 'anthropic' && (
-              <p className="text-[11px] text-[var(--color-text-tertiary)] mt-1">{t('settings.providers.proxyHint')}</p>
+              <p className={FORM_HINT}>{t('settings.providers.proxyHint')}</p>
             )}
             {/* The preset's own endpoint is still in the field above; a custom
                 preset brings none, so there is nothing to warn about. */}
             {apiFormat !== selectedPreset.apiFormat && Boolean(selectedPreset.baseUrl) && (
-              <p className="text-[11px] text-[var(--color-text-tertiary)] mt-1">{t('settings.providers.apiFormatOverrideHint')}</p>
+              <p className={FORM_HINT}>{t('settings.providers.apiFormatOverrideHint')}</p>
             )}
           </div>
         ) : (
-          <div>
-            <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">{t('settings.providers.apiFormat')}</label>
-            <div className="text-xs text-[var(--color-text-tertiary)] px-3 py-2 rounded-[var(--radius-md)] bg-[var(--color-surface-container-low)] border border-[var(--color-border)]">
+          <div className="flex flex-col gap-1">
+            <span className={FORM_FIELD_LABEL}>{t('settings.providers.apiFormat')}</span>
+            <div className="rounded-[var(--radius-md)] bg-[var(--color-surface-container)] px-3 py-2 text-xs text-[var(--color-text-secondary)]">
               {selectedApiFormatLabel}
             </div>
-            <p className="text-[11px] text-[var(--color-text-tertiary)] mt-1">{t('settings.providers.apiFormatPerModelHint')}</p>
+            <p className={FORM_HINT}>{t('settings.providers.apiFormatPerModelHint')}</p>
           </div>
         )}
 
         <ProviderRequestCompatibilityFields value={compatibility} apiFormat={apiFormat} onChange={handleCompatibilityChange} />
 
         {apiFormat === 'anthropic' && (
-          <div>
-            <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">{t('settings.providers.authStrategy')}</label>
+          <div className="flex flex-col gap-1">
+            <span className={FORM_FIELD_LABEL}>{t('settings.providers.authStrategy')}</span>
             <Dropdown<ProviderAuthStrategy>
               items={authStrategyItems}
               value={authStrategy}
@@ -2207,7 +2424,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
               trigger={
                 <Button variant="secondary" size="md" block className="h-auto min-h-10 gap-3 py-2">
                   <span className="min-w-0 flex-1 truncate text-left">{selectedAuthStrategyLabel}</span>
-                  <span className="material-symbols-outlined flex-shrink-0 text-[18px] text-[var(--color-text-secondary)]">expand_more</span>
+                  <ChevronDown size={16} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />
                 </Button>
               }
             />
@@ -2221,58 +2438,60 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
             { key: 'supportsNestedToolResultMedia' as const, checked: supportsNestedToolResultMedia, disabled: nestedToolResultMediaUnsupported, onChange: handleNestedToolResultMediaToggle, description: nestedToolResultMediaDescription },
           ].map((option) => (
             <div key={option.key} className="inline-flex items-center gap-1">
-              <label className={`relative inline-flex items-center gap-2 py-1 text-xs text-[var(--color-text-primary)] ${option.disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
-                <input
-                  type="checkbox"
-                  aria-label={t(`settings.providers.${option.key}`)}
-                  checked={option.checked}
-                  disabled={option.disabled}
-                  onChange={(e) => option.onChange(e.target.checked)}
-                  className={SETTINGS_CHECKBOX_INPUT_CLASS}
-                />
-                <SettingsCheckboxMark checked={option.checked} disabled={option.disabled} />
-                {t(`settings.providers.${option.key}`)}
-              </label>
+              <Checkbox
+                size="sm"
+                label={t(`settings.providers.${option.key}`)}
+                checked={option.checked}
+                disabled={option.disabled}
+                onChange={(e) => option.onChange(e.target.checked)}
+                containerClassName="py-1"
+              />
               <Tooltip content={option.description} placement="top-start" className="[overflow-wrap:anywhere]">
-                <IconButton icon="info" label={t(`settings.providers.${option.key}`)} showTooltip={false} size="2xs" tone="muted" />
+                <IconButton
+                  icon={<Info size={12} strokeWidth={2} aria-hidden="true" />}
+                  label={t(`settings.providers.${option.key}`)}
+                  showTooltip={false}
+                  size="2xs"
+                  tone="muted"
+                />
               </Tooltip>
             </div>
           ))}
         </div>
 
-        <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)]">
+        <div className="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)]">
           <button
             type="button"
             onClick={() => setShowContextSettings((visible) => !visible)}
-            className="flex w-full items-start gap-3 px-3 py-3 text-left outline-none transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:shadow-[var(--shadow-focus-ring)]"
+            className="flex w-full items-start gap-3 px-4 py-3 text-left outline-none transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:shadow-[var(--shadow-focus-ring)]"
             aria-expanded={shouldShowContextFields}
           >
-            <span className="material-symbols-outlined mt-0.5 text-[18px] text-[var(--color-brand)]">compress</span>
+            <Shrink size={16} strokeWidth={1.75} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--color-text-tertiary)]" />
             <span className="min-w-0 flex-1">
-              <span className="block text-sm font-medium text-[var(--color-text-primary)]">
+              <span className="block text-[13px] font-medium text-[var(--color-text-primary)]">
                 {t('settings.providers.contextSettingsTitle')}
               </span>
-              <span className="mt-1 block truncate text-xs text-[var(--color-text-secondary)]">
+              <span className="mt-0.5 block truncate text-xs text-[var(--color-text-secondary)]">
                 {contextSummary}
               </span>
-              <span className="mt-1 block text-[11px] leading-5 text-[var(--color-text-tertiary)]">
+              <span className="mt-1 block text-xs leading-[1.5] text-[var(--color-text-tertiary)]">
                 {t('settings.providers.contextSettingsDesc')}
               </span>
             </span>
-            <span className="mt-0.5 inline-flex items-center gap-1 text-xs font-medium text-[var(--color-brand)]">
+            <span className="mt-0.5 inline-flex shrink-0 items-center gap-1 text-xs font-medium text-[var(--color-text-secondary)]">
               {shouldShowContextFields
                 ? t('settings.providers.contextSettingsHide')
                 : t('settings.providers.contextSettingsEdit')}
-              <span className="material-symbols-outlined text-[16px]">
-                {shouldShowContextFields ? 'expand_less' : 'expand_more'}
-              </span>
+              {shouldShowContextFields
+                ? <ChevronUp size={14} strokeWidth={1.75} aria-hidden="true" />
+                : <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" />}
             </span>
           </button>
 
           {shouldShowContextFields && (
-            <div className="border-t border-[var(--color-border)] px-3 pb-3 pt-3">
+            <div className="border-t border-[var(--color-border)] px-4 pb-4 pt-3">
               <div>
-                <label className="text-sm font-medium text-[var(--color-text-primary)] mb-2 block">{t('settings.providers.modelContextWindows')}</label>
+                <span className={cx(FORM_SECTION_LABEL, 'mb-2')}>{t('settings.providers.modelContextWindows')}</span>
                 <div className={browserMode ? "grid grid-cols-1 sm:grid-cols-2 gap-2" : "grid grid-cols-2 gap-2"}>
                   {MODEL_SLOTS.map((slot) => {
                     const errorKey = getModelContextWindowErrorKey(modelContextInputs[slot])
@@ -2332,30 +2551,19 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
 
         {/* Test connection */}
         {!browserMode && <div className="flex items-center gap-3">
-          <Button variant="secondary" size="sm" className="shrink-0 whitespace-nowrap" onClick={handleTest} loading={isTesting} disabled={!baseUrl.trim() || !models.main.trim() || compatibilityInvalid}>
+          <Button variant="secondary" size="base" className="shrink-0 whitespace-nowrap" onClick={handleTest} loading={isTesting} disabled={!baseUrl.trim() || !models.main.trim() || compatibilityInvalid}>
             {t('settings.providers.testConnection')}
           </Button>
           {testResult && (
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5 break-words">
-              <span className={`text-xs ${testResult.connectivity.success ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}`}>
-                {testResult.connectivity.success
-                  ? t('settings.providers.connectivityOk', { latency: String(testResult.connectivity.latencyMs) })
-                  : t('settings.providers.connectivityFailed', { error: testResult.connectivity.error || '' })}
-              </span>
-              {testResult.proxy && (
-                <span className={`text-xs ${testResult.proxy.success ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}`}>
-                  {testResult.proxy.success
-                    ? t('settings.providers.proxyOk', { latency: String(testResult.proxy.latencyMs) })
-                    : t('settings.providers.proxyFailed', { error: testResult.proxy.error || '' })}
-                </span>
-              )}
+            <div className="min-w-0 flex-1">
+              <ProviderTestResultLines result={testResult} />
             </div>
           )}
         </div>}
 
         {/* Settings JSON stays on the trusted desktop. */}
         {!browserMode && <div>
-          <label className="text-sm font-medium text-[var(--color-text-primary)] mb-2 block">{t('settings.providers.settingsJson')}</label>
+          <span className={cx(FORM_SECTION_LABEL, 'mb-2')}>{t('settings.providers.settingsJson')}</span>
           <textarea
             aria-label={t('settings.providers.settingsJson')}
             value={displayedSettingsJson}
@@ -2464,6 +2672,56 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
           <p className="text-[11px] text-[var(--color-text-tertiary)] mt-1">{t('settings.providers.settingsJsonDesc')}</p>
           {apiFormat !== 'anthropic' && <p className="text-[11px] text-[var(--color-text-tertiary)] mt-1">{t('settings.providers.compatibilityJsonHint')}</p>}
         </div>}
+
+        <ProviderImageGenerationFields
+          value={imageGeneration}
+          onChange={setImageGeneration}
+        />
+
+        <div className="flex flex-col gap-2 border-t border-[var(--color-border)] pt-4">
+          <div className="flex items-center gap-1">
+            <span className={FORM_FIELD_LABEL}>{t('settings.providers.proxyMode')}</span>
+            <Tooltip content={t('settings.providers.proxyModeTooltip')} placement="bottom-start">
+              <IconButton
+                icon={<Info size={12} strokeWidth={2} aria-hidden="true" />}
+                label={t('settings.providers.proxyModeHelp')}
+                showTooltip={false}
+                size="2xs"
+                tone="muted"
+                shape="circle"
+              />
+            </Tooltip>
+          </div>
+          <SegmentedControl<ProviderProxyMode>
+            label={t('settings.providers.proxyMode')}
+            layout="fill"
+            size="sm"
+            value={proxyMode}
+            onChange={setProxyMode}
+            items={[
+              { value: 'follow_global', label: t('settings.providers.proxyModeFollowGlobal') },
+              { value: 'direct', label: t('settings.providers.proxyModeDirect') },
+              { value: 'manual', label: t('settings.providers.proxyModeManual') },
+            ]}
+          />
+          <p className="text-xs leading-[1.5] text-[var(--color-text-tertiary)]">{t('settings.providers.proxyModeHint')}</p>
+          {proxyMode === 'manual' && (
+            <div className="flex flex-col gap-1">
+              <label htmlFor={proxyUrlInputId} className={FORM_FIELD_LABEL}>{t('settings.providers.proxyUrl')}</label>
+              <Input
+                id={proxyUrlInputId}
+                required={!keepRemoteProxy}
+                value={proxyUrl}
+                onChange={(e) => setProxyUrl(e.target.value)}
+                placeholder={t(keepRemoteProxy ? 'settings.providers.proxyUrlSaved' : 'settings.providers.proxyUrlPlaceholder')}
+                className="font-mono text-[13px]"
+              />
+              {proxyUrlInvalid && (
+                <p role="alert" className="text-xs leading-[1.5] text-[var(--color-error)]">{t('settings.providers.proxyUrlInvalid')}</p>
+              )}
+            </div>
+          )}
+        </div>
       </div>
       </Modal>
       <ConfirmDialog

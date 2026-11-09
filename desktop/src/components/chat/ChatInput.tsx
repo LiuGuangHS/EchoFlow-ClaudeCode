@@ -1,15 +1,21 @@
+import { AgentProfileControl, type AgentProfileControlHandle } from '@/components/chat/AgentProfileControl'
+import { isLeanSlashCommand, isUnsupportedLeanSlashInput } from '@/lib/agentProfile'
 import { useSideChatStore } from '@/stores/sideChatStore'
 import { openSideChat } from '@/lib/workspace/openSideChat'
 import { parseSideQuestionCommand } from './composerUtils'
 import { getSessionReferences } from '@/lib/composerMentions'
+import { normalizeSessionReferences } from '@/lib/sessionReferences'
 import { isComposerReferenceVisible, isComposerSlashCommandVisible } from '@/lib/composerCapabilityVisibility'
 import { useState, useRef, useEffect, useCallback, useMemo, useId } from 'react'
+import { useShallow } from 'zustand/react/shallow'
+import { ArrowUp, CornerDownRight, Cpu, Feather, Gauge, Pencil, Plus, ShieldCheck, Square, Trash2 } from 'lucide-react'
 import { useDismissable } from '@/hooks/useDismissable'
 import { Button } from '@/components/ui/Button'
 import { IconButton } from '@/components/ui/IconButton'
 import { useTranslation } from '../../i18n'
 import {
   hasPendingAskUserQuestion,
+  listPendingPermissions,
   useChatStore,
   type RepositoryLaunchDraftState,
 } from '../../stores/chatStore'
@@ -18,8 +24,8 @@ import { useUIStore } from '../../stores/uiStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useSessionRuntimeStore } from '../../stores/sessionRuntimeStore'
 import { useTeamStore } from '../../stores/teamStore'
-import { useTeamPlanStore } from '@/stores/teamPlanStore'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { isTouchH5Document } from '../../lib/touchH5'
 import {
   formatWorkspaceReferencePrompt,
   useWorkspaceChatContextStore,
@@ -27,22 +33,36 @@ import {
 } from '../../stores/workspaceChatContextStore'
 import { sessionsApi, type SessionGitInfo } from '../../api/sessions'
 import { agentsApi } from '../../api/agents'
-import { PermissionModeSelector } from '../controls/PermissionModeSelector'
+import { PermissionModeSelector, type PermissionModeSelectorHandle } from '../controls/PermissionModeSelector'
+import { PERMISSION_MODE_LABEL_KEYS, useResolvedPermissionMode } from '../controls/permissionModeState'
 import { ModelSelector, type ModelSelectorHandle } from '../controls/ModelSelector'
 import type { AttachmentRef } from '../../types/chat'
+import type { RuntimeSelection } from '../../types/runtime'
+import type { SlashCommandOption } from '../../types/slashCommand'
+import { CLAUDE_OFFICIAL_PROVIDER_ID } from '@/constants/openaiOfficialProvider'
+import { memberHitContextLimit } from '@/components/agentTeams/agentTeamsModel'
 import { AttachmentGallery } from './AttachmentGallery'
 import { ComposerDropOverlay } from './ComposerDropOverlay'
 import { ProjectContextChip } from '@/components/chat/ProjectContextChip'
-import { RepositoryLaunchControls } from '@/components/chat/RepositoryLaunchControls'
+import { RepositoryLaunchControls, type RepositoryLaunchControlsHandle } from '@/components/chat/RepositoryLaunchControls'
 import { ComposerReferenceMenu, type ComposerReferenceMenuHandle } from './ComposerReferenceMenu'
 import { ComposerReferenceDetail } from './ComposerReferenceDetail'
 import { ComposerCapabilityMenu } from './ComposerCapabilityMenu'
+import { MobileComposerSheet, type MobileComposerSetting } from './MobileComposerSheet'
+import { MobileApprovalDock } from './MobileApprovalDock'
 import { useCapabilityMenu } from './useCapabilityMenu'
+import { AgentProfileChip } from './AgentProfileChip'
+import { AgentTeamChip } from './AgentTeamChip'
+import { ComputerUseEnableDialog } from '@/components/computer-use/ComputerUseEnableDialog'
+import { AgentTeamsCostDialog } from '@/components/agentTeams/AgentTeamsCostDialog'
+import { withAgentTeamRequest } from '@/lib/agentTeamRequest'
+import { recordRecentSkills } from '@/lib/recentSkills'
 import { composerReferencesApi, mentionProviderId } from '@/api/composerReferences'
+import { useCapabilityCatalogStore } from '@/stores/capabilityCatalogStore'
 import type { ComposerReferenceCandidate } from '@/types/composerReference'
 import { LocalSlashCommandPanel, type LocalSlashCommandName } from './LocalSlashCommandPanel'
 import { getSlashCommandOptionId, SlashCommandMenu } from './SlashCommandMenu'
-import { ContextUsageIndicator } from './ContextUsageIndicator'
+import { ContextUsageIndicator, type ContextUsageIndicatorHandle } from './ContextUsageIndicator'
 import {
   appendAgentSlashCommands,
   buildAgentSlashCommands,
@@ -50,6 +70,8 @@ import {
   filterSlashCommands,
   findSlashTrigger,
   groupSlashCommands,
+  isRefusedTeamMemberCommand,
+  isTeamMemberSlashCommand,
   mergeSlashCommands,
   replaceSlashToken,
   resolveSlashUiAction,
@@ -71,12 +93,14 @@ import {
   findMentionRanges,
   insertMentionIntoText,
   type ComposerMention,
+  type NewComposerMention,
 } from '../../lib/composerMentions'
 import type { PermissionMode } from '../../types/settings'
 import { getSessionWorkspaceState, getSessionSeedWorkDir } from '../../lib/sessionWorkspace'
-import { hasRunningSubagentTasks } from '../../lib/backgroundTasks'
+import { useSessionStopOffer } from '../../hooks/useSessionStopOffer'
 import { useComposerDictation } from '@/features/voiceInput/useComposerDictation'
 import { VoiceInputButton } from '@/features/voiceInput/VoiceInputButton'
+import { VoiceRecordingBar } from '@/features/voiceInput/VoiceRecordingBar'
 
 type GitInfo = SessionGitInfo
 
@@ -92,6 +116,12 @@ type ChatInputProps = {
 const EMPTY_COMPOSER_REFERENCES: ComposerReferenceCandidate[] = []
 
 const EMPTY_WORKSPACE_REFERENCES: WorkspaceChatReference[] = []
+
+const RUNTIME_EFFORT_LEVELS: ReadonlyArray<NonNullable<RuntimeSelection['effortLevel']>> = ['low', 'medium', 'high', 'xhigh', 'max']
+
+function isRuntimeEffortLevel(value: string | undefined): value is NonNullable<RuntimeSelection['effortLevel']> {
+  return RUNTIME_EFFORT_LEVELS.some((level) => level === value)
+}
 
 /**
  * Both thresholds are the composer column's own width, never "is the workspace
@@ -154,6 +184,8 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
   const [shellRef, shellWidth] = useElementWidth<HTMLDivElement>()
   const [input, setInput] = useState('')
   const [mentions, setMentions] = useState<ComposerMention[]>([])
+  // Bumped when the + menu installs a skill, so the mention list reloads.
+  const [referencesVersion, setReferencesVersion] = useState(0)
   const [referenceDetail, setReferenceDetail] = useState<ComposerMention | null>(null)
   const [referenceOptionId, setReferenceOptionId] = useState<string | undefined>()
   const [referenceState, setReferenceState] = useState<{ context: string, items: ComposerReferenceCandidate[], loading: boolean, error: boolean } | null>(null)
@@ -167,6 +199,8 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
   const [slashFilter, setSlashFilter] = useState('')
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0)
   const [agentSlashCommands, setAgentSlashCommands] = useState<ReturnType<typeof buildAgentSlashCommands>>([])
+  const [memberSlashCommands, setMemberSlashCommands] = useState<{ sessionId: string, commands: SlashCommandOption[] } | null>(null)
+  const [memberRuntimeSaving, setMemberRuntimeSaving] = useState(false)
   const [launchReady, setLaunchReady] = useState(true)
   const [launchTransitioning, setLaunchTransitioning] = useState(false)
   const [editingQueuedMessageId, setEditingQueuedMessageId] = useState<string | null>(null)
@@ -177,6 +211,10 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
   const panelRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const modelSelectorRef = useRef<ModelSelectorHandle>(null)
+  const launchControlsRef = useRef<RepositoryLaunchControlsHandle>(null)
+  const permissionSelectorRef = useRef<PermissionModeSelectorHandle>(null)
+  const contextUsageRef = useRef<ContextUsageIndicatorHandle>(null)
+  const agentProfileRef = useRef<AgentProfileControlHandle>(null)
   const plusMenuRef = useRef<HTMLDivElement>(null)
   const slashMenuRef = useRef<HTMLDivElement>(null)
   const fileSearchRef = useRef<ComposerReferenceMenuHandle>(null)
@@ -185,6 +223,8 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
   const referenceMenuId = useId()
   const capabilityMenuId = useId()
   const previousActiveTabIdRef = useRef<string | null>(null)
+  // The chat on screen right now, for work that outlasts the click that began it.
+  const currentChatRef = useRef<string | null>(null)
   const inputRef = useRef(input)
   const mentionsRef = useRef(mentions)
   const attachmentsRef = useRef(attachments)
@@ -214,9 +254,22 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
     removeQueuedUserMessage,
     sendQueuedUserMessage,
     setPreparingTurn,
-  } = useChatStore()
+    dismissPromptSuggestion,
+  } = useChatStore(useShallow((s) => ({
+    sendMessage: s.sendMessage,
+    stopGeneration: s.stopGeneration,
+    clearComposerPrefill: s.clearComposerPrefill,
+    clearComposerInsertion: s.clearComposerInsertion,
+    queueUserMessage: s.queueUserMessage,
+    updateQueuedUserMessage: s.updateQueuedUserMessage,
+    removeQueuedUserMessage: s.removeQueuedUserMessage,
+    sendQueuedUserMessage: s.sendQueuedUserMessage,
+    setPreparingTurn: s.setPreparingTurn,
+    dismissPromptSuggestion: s.dismissPromptSuggestion,
+  })))
   const selectedTabId = useTabStore((s) => s.activeTabId)
   const activeTabId = sessionId ?? selectedTabId
+  currentChatRef.current = activeTabId
   const activeTabType = useTabStore((s) =>
     s.tabs.find((tab) => tab.sessionId === (sessionId ?? s.activeTabId))?.type,
   )
@@ -224,6 +277,7 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
   const repositoryLaunchDraft = sessionState?.repositoryLaunchDraft
   const launchWorkDir = repositoryLaunchDraft?.workDir ?? ''
   const launchBranch = repositoryLaunchDraft?.branch ?? null
+  const launchBranchAutomatic = repositoryLaunchDraft?.branchAutomatic ?? false
   const launchUseWorktree = repositoryLaunchDraft?.useWorktree ?? false
   const chatState = sessionState?.chatState ?? 'idle'
   // While a question is waiting, the card is the only way to reach the model: it
@@ -237,6 +291,8 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
   const composerPrefill = sessionState?.composerPrefill ?? null
   const composerInsertion = sessionState?.composerInsertion ?? null
   const queuedUserMessages = sessionState?.queuedUserMessages ?? []
+  const promptSuggestion = sessionState?.promptSuggestion ?? null
+  const nextPromptSuggestionsEnabled = useSettingsStore((state) => state.nextPromptSuggestionsEnabled)
   const runtimeSelection = useSessionRuntimeStore((state) =>
     activeTabId ? state.selections[activeTabId] : undefined,
   )
@@ -249,6 +305,7 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
   const sideChat = useSideChatStore(state => activeTabId ? state.entries[activeTabId] : undefined)
   const listedSession = useSessionStore((state) => activeTabId ? state.sessions.find((session) => session.id === activeTabId) ?? null : null)
   const activeSession = listedSession ?? (sideChat ? { ...sideChat, id: sideChat.sessionId, workDirExists: true, workspaceState: 'available' as const, messageCount: 1, projectRoot: sideChat.workDir } : null)
+  const isLean = listedSession?.agentProfile === 'lean'
   const loadedMessageCount = sessionState?.messages?.length ?? 0
   const messageCount = Math.max(loadedMessageCount, activeSession?.messageCount ?? 0)
   const memberInfo = useTeamStore((s) => activeTabId ? s.getMemberBySessionId(activeTabId) : null)
@@ -274,6 +331,14 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
   const setLaunchBranch = useCallback((branch: string | null) => {
     updateRepositoryLaunchDraft((current) => ({ ...current, branch }))
   }, [updateRepositoryLaunchDraft])
+  // The controls are mounted again whenever the user comes back to this chat;
+  // keeping whether they chose the branch lets them keep following the checkout.
+  const setLaunchBranchAutomatic = useCallback((branchAutomatic: boolean) => {
+    if (!activeTabId) return
+    const current = useChatStore.getState().sessions[activeTabId]?.repositoryLaunchDraft
+    if ((current?.branchAutomatic ?? false) === branchAutomatic) return
+    updateRepositoryLaunchDraft((draft) => ({ ...draft, branchAutomatic }))
+  }, [activeTabId, updateRepositoryLaunchDraft])
   const setLaunchUseWorktree = useCallback((useWorktree: boolean) => {
     updateRepositoryLaunchDraft((current) => ({ ...current, useWorktree }))
   }, [updateRepositoryLaunchDraft])
@@ -295,14 +360,28 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
   }, [])
 
   const isMemberSession = !!memberInfo || activeTabType === 'subagent'
+  // A desktop team member runs in its own CLI. That CLI's session, not this
+  // page's tab id, answers for the member's commands, context and model. A
+  // SubAgent run, or a member without a CLI of its own, has none of them.
+  const memberCliSessionId = memberInfo?.sessionId ?? null
+  const memberModel = memberInfo?.model
+  const memberProviderId = memberInfo?.providerId
+  const memberEffortLevel = memberInfo?.effortLevel
+  const memberRuntimeSelection = useMemo((): RuntimeSelection | null => {
+    if (!memberCliSessionId || !memberModel) return null
+    return {
+      providerId: !memberProviderId || memberProviderId === CLAUDE_OFFICIAL_PROVIDER_ID ? null : memberProviderId,
+      modelId: memberModel,
+      ...(isRuntimeEffortLevel(memberEffortLevel) ? { effortLevel: memberEffortLevel } : {}),
+    }
+  }, [memberCliSessionId, memberEffortLevel, memberModel, memberProviderId])
+  const memberRuntimeKey = memberRuntimeSelection
+    ? `${memberRuntimeSelection.providerId ?? 'official'}:${memberRuntimeSelection.modelId}:${memberRuntimeSelection.effortLevel ?? 'auto'}`
+    : undefined
+  const memberContextFull = memberInfo?.status === 'error' && memberHitContextLimit(memberInfo)
   const isActive = chatState !== 'idle'
-  const hasRunningSubagents = hasRunningSubagentTasks(sessionState?.backgroundAgentTasks)
-  // Approved team processes are tracked by their plan, not background-agent
-  // notifications. Keep Stop available after the review card is dismissed.
-  const hasRunningTeam = useTeamPlanStore(state => {
-    const plan = activeTabId ? state.bySession[activeTabId]?.plan : undefined
-    return plan?.state === 'launching' || plan?.state === 'running'
-  })
+  const resolvedPermissionMode = useResolvedPermissionMode(activeTabId ?? undefined)
+  const stopOffer = useSessionStopOffer(activeTabId)
   const workspaceState = getSessionWorkspaceState(activeSession)
   const isWorkspaceMissing = workspaceState !== 'available'
   // Both composer branches (hero and inline) and the drop handler share this:
@@ -316,41 +395,43 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
     draft: input,
     blocked: composerDisabled,
     contextKey: visible ? activeTabId : null,
+    // Called from an effect, after this render has declared `handleSubmit`;
+    // it is the same path Enter takes, queueing behind a running turn.
+    onSubmit: () => { void handleSubmit() },
   })
+  // While dictating, the toolbar's controls stay mounted but hidden, and the
+  // recording bar takes their row.
+  const dictationLive = dictation.phase !== 'idle'
   const hasWorkspaceReferences = !isMemberSession && workspaceReferences.length > 0
   const isHeroComposer = variant === 'hero' && !isMemberSession && !compact
   const resolvedWorkDir = activeSession?.workDir || gitInfo?.workDir || undefined
   const showLaunchControls = !isMemberSession && !sideChat && messageCount === 0
-  // Two different questions, and they used to share one answer.
-  //
-  // `useCompactChrome` is about context: the shell's padding, its top divider
-  // and the toolbar's edge-to-edge band belong to the panel-beside-the-composer
-  // and mobile layouts regardless of how much room those layouts got.
-  //
-  // `useCompactControls` is about room, so it asks the column how wide it is.
-  // Until a measurement lands (jsdom, first paint) it defers to the caller's
-  // `compact`, which keeps the pre-measurement frame from flashing the wrong
-  // layout.
-  const useCompactChrome = compact || isMobileComposer
+  const sideChatAvailable = !isLean && (Boolean(sideChat) || messageCount > 0)
+  // `useCompactControls` is about room, so it asks the column how wide it is —
+  // never "is a side panel open". Until a measurement lands (jsdom, first
+  // paint) it defers to the caller's `compact`, which keeps the
+  // pre-measurement frame from flashing the wrong layout. (The card itself has
+  // one geometry everywhere; only the shell's outer padding follows `compact`.)
   const fitsAtLeast = (minWidth: number) => shellWidth === null ? !compact : shellWidth >= minWidth
   const useCompactControls = isMobileComposer || !fitsAtLeast(TOOLBAR_LOCATION_MIN_WIDTH)
   const activeLaunchWorkDir = showLaunchControls ? (launchWorkDir || resolvedWorkDir || '') : (resolvedWorkDir || '')
   const referenceCwd = activeLaunchWorkDir || resolvedWorkDir || ''
   const referenceProviderId = mentionProviderId(runtimeSelection)
-  const referenceContext = `${activeTabId ?? ''}\0${referenceCwd}\0${referenceProviderId ?? ''}`
+  const referenceContext = `${activeTabId ?? ''}\0${referenceCwd}\0${referenceProviderId ?? ''}\0${isLean ? 'lean' : 'standard'}`
   const referenceCurrent = referenceState?.context === referenceContext ? referenceState : null
-  const composerReferences = useMemo(() => (referenceCurrent?.items ?? EMPTY_COMPOSER_REFERENCES).filter(isComposerReferenceVisible), [referenceCurrent?.items])
+  const composerReferences = useMemo(() => (referenceCurrent?.items ?? EMPTY_COMPOSER_REFERENCES).filter(reference => isComposerReferenceVisible(reference) && (!isLean || reference.kind === 'skill')), [referenceCurrent?.items, isLean])
   useEffect(() => {
     let active = true
     if (isMemberSession) return
     setReferenceState({ context: referenceContext, items: [], loading: true, error: false })
-    void composerReferencesApi.list(referenceCwd || undefined, referenceProviderId).then(data => {
+    void composerReferencesApi.list(referenceCwd || undefined, referenceProviderId, isLean ? 'lean' : undefined).then(data => {
+      useCapabilityCatalogStore.getState().remember([...data.plugins, ...data.skills])
       if (active) setReferenceState({ context: referenceContext, items: [...data.plugins, ...data.skills], loading: false, error: false })
     }).catch(() => {
       if (active) setReferenceState({ context: referenceContext, items: [], loading: false, error: true })
     })
     return () => { active = false }
-  }, [referenceContext, referenceCwd, referenceProviderId, isMemberSession, slashMenuOpen, fileSearchOpen, plusMenuOpen])
+  }, [referenceContext, referenceCwd, referenceProviderId, isLean, isMemberSession, slashMenuOpen, fileSearchOpen, plusMenuOpen, referencesVersion])
   useEffect(() => {
     setReferenceDetail(null)
     setReferenceOptionId(undefined)
@@ -448,21 +529,55 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
     if (!composerPrefill || !activeTabId) return
 
     const nextAttachments = (composerPrefill.attachments ?? [])
-      .filter((attachment) => attachment.type === 'image' || attachment.data)
+      .filter((attachment) => attachment.path || attachment.data)
       .map((attachment, index) => ({
         id: `composer-prefill-${composerPrefill.nonce}-${index}`,
         name: attachment.name,
         type: attachment.type,
         mimeType: attachment.mimeType,
+        path: attachment.path,
         previewUrl: attachment.type === 'image' ? attachment.data : undefined,
         data: attachment.data,
+        isDirectory: attachment.isDirectory,
+        lineStart: attachment.lineStart,
+        lineEnd: attachment.lineEnd,
+        diffSide: attachment.diffSide,
+        hunkId: attachment.hunkId,
+        note: attachment.note,
+        quote: attachment.quote,
       }))
+    const contextAttachments = nextAttachments.filter((attachment) => attachment.type === 'file' && attachment.path && (
+      attachment.lineStart || attachment.note?.trim() || attachment.quote?.trim() || attachment.diffSide || attachment.hunkId
+    ))
+    const uploads = nextAttachments.filter((attachment) => !contextAttachments.includes(attachment))
 
     if (composerPrefill.mode === 'append') {
-      setComposerAttachments((previous) => [...previous, ...nextAttachments])
+      setComposerAttachments((previous) => [...previous, ...uploads])
     } else {
-      setComposerInput(composerPrefill.text, [])
-      setComposerAttachments(nextAttachments)
+      // The draft's structured pills travel with its projected text; restoring
+      // both keeps @-file references as pills instead of demoting them to
+      // literal `@"path"` text.
+      let restored: { text: string, mentions: ComposerMention[] } = {
+        text: composerPrefill.text,
+        mentions: composerPrefill.mentions ?? [],
+      }
+      for (const reference of normalizeSessionReferences(composerPrefill.sessionReferences)) {
+        const title = useSessionStore.getState().sessions.find((session) => session.id === reference.sessionId)?.title
+        restored = insertMentionIntoText(restored.text, restored.mentions, restored.text.length, restored.text.length, {
+          kind: 'session', id: reference.sessionId, label: title || reference.sessionId,
+          path: '', isDirectory: false,
+        })
+      }
+      setComposerInput(restored.text, restored.mentions)
+      setComposerAttachments(uploads)
+      clearWorkspaceReferences(activeTabId)
+    }
+    for (const attachment of contextAttachments) {
+      addWorkspaceReference(activeTabId, {
+        ...attachment,
+        path: attachment.path!,
+        kind: attachment.diffSide || attachment.hunkId ? 'code-comment' : attachment.lineStart ? 'code-selection' : 'file',
+      })
     }
     setPlusMenuOpen(false)
     setSlashMenuOpen(false)
@@ -480,7 +595,9 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
     clearComposerPrefill(activeTabId, composerPrefill.nonce)
   }, [
     activeTabId,
+    addWorkspaceReference,
     clearComposerPrefill,
+    clearWorkspaceReferences,
     composerPrefill,
     setComposerAttachments,
     setComposerInput,
@@ -551,6 +668,21 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
   }, [isMemberSession, activeTabId])
 
   useEffect(() => {
+    if (!memberCliSessionId) return
+    let cancelled = false
+    sessionsApi.getSlashCommands(memberCliSessionId)
+      .then(({ commands }) => {
+        if (!cancelled) setMemberSlashCommands({ sessionId: memberCliSessionId, commands })
+      })
+      .catch(() => {
+        if (!cancelled) setMemberSlashCommands({ sessionId: memberCliSessionId, commands: [] })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [memberCliSessionId])
+
+  useEffect(() => {
     if (isMemberSession) {
       setAgentSlashCommands([])
       return
@@ -586,7 +718,9 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
   }, [activeSession?.workDir, activeSession?.projectRoot, activeSession?.workspaceState, activeTabId, gitInfo?.workDir, showLaunchControls])
 
   useDismissable({
-    open: plusMenuOpen,
+    // The phone's + opens a sheet in a portal, which closes itself; an outside
+    // press listener here would read every tap inside it as "outside".
+    open: plusMenuOpen && !isMobileComposer,
     refs: [plusMenuRef],
     onDismiss: () => setPlusMenuOpen(false),
   })
@@ -617,7 +751,17 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
     },
   })
 
+  // A lean session's own list already passed the lean runtime rule.
+  const listedSlashCommandNames = useMemo(() => new Set(slashCommands.map(command => command.name)), [slashCommands])
   const allSlashCommands = useMemo(() => {
+    if (isMemberSession) {
+      if (!memberCliSessionId) return []
+      // The member's CLI reports its own commands and skills; the fallback keeps
+      // `/compact` on offer before that list arrives.
+      const listed = memberSlashCommands?.sessionId === memberCliSessionId ? memberSlashCommands.commands : []
+      return mergeSlashCommands(listed, getLocalizedFallbackCommands(t))
+        .filter(command => isComposerSlashCommandVisible(command) && isTeamMemberSlashCommand(command.name))
+    }
     const commands = appendAgentSlashCommands(mergeSlashCommands(slashCommands, getLocalizedFallbackCommands(t)), agentSlashCommands)
     const names = new Set(commands.map(command => command.name.toLowerCase()))
     for (const reference of composerReferences) {
@@ -626,16 +770,27 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
       names.add(name.toLowerCase())
       commands.push({ name, description: reference.description, kind: reference.kind })
     }
-    return commands.filter(isComposerSlashCommandVisible)
-  }, [agentSlashCommands, slashCommands, composerReferences, t])
+    // `/btw` forks the conversation so far; a blank session has none to fork.
+    return commands.filter(command => isComposerSlashCommandVisible(command) && (!isLean || isLeanSlashCommand(command, listedSlashCommandNames)) && (sideChatAvailable || command.name !== 'btw'))
+  }, [agentSlashCommands, slashCommands, listedSlashCommandNames, composerReferences, sideChatAvailable, isLean, isMemberSession, memberCliSessionId, memberSlashCommands, t])
 
   const filteredCommandGroups = useMemo(() => {
     return groupSlashCommands(filterSlashCommands(allSlashCommands, slashFilter))
   }, [allSlashCommands, slashFilter])
 
   const filteredCommands = filteredCommandGroups.ordered
-  const isSlashMenuVisible = !isMemberSession && slashMenuOpen && filteredCommands.length > 0
+  // A member page lists only what its CLI can run, and nothing without one.
+  const isSlashMenuVisible = slashMenuOpen && filteredCommands.length > 0
   const isReferenceMenuVisible = !isMemberSession && fileSearchOpen
+  // The predicted next prompt only shows on an idle desktop composer with
+  // nothing else claiming the empty draft. The touch composer has no Tab key.
+  const promptSuggestionGhost =
+    nextPromptSuggestionsEnabled && promptSuggestion && chatState === 'idle' && !dictationLive &&
+    !isTouchH5Document() && !isMemberSession && !composerDisabled &&
+    !isSlashMenuVisible && !isReferenceMenuVisible && !localSlashPanel && !plusMenuOpen &&
+    composerAttachments.length === 0 && queuedUserMessages.length === 0
+      ? promptSuggestion
+      : null
 
   const exactSlashCommand = useMemo(() => {
     const normalized = slashFilter.trim().toLowerCase()
@@ -707,10 +862,13 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
 
   const handleComposerChange = (text: string, nextMentions: ComposerMention[]) => {
     setComposerInput(text, nextMentions)
+    const cursorPos = composerRef.current?.getSelectionOffsets().start ?? text.length
     if (isMemberSession) {
+      // A command typed here goes to the member's own CLI as is; files and
+      // references stay out of member messages.
+      if (memberCliSessionId) detectSlashTrigger(text, cursorPos)
       return
     }
-    const cursorPos = composerRef.current?.getSelectionOffsets().start ?? text.length
     detectSlashTrigger(text, cursorPos)
     detectAtTrigger(text, cursorPos, nextMentions)
   }
@@ -767,7 +925,7 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
       : undefined
     const newId = await createSession(
       workDir || undefined,
-      createOptions,
+      isLean ? { ...createOptions, agentProfile: 'lean' } : createOptions,
     )
     if (inputRef.current.length > 0 || attachmentsRef.current.length > 0) {
       setComposerDraft(newId, {
@@ -784,7 +942,7 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
     connectToSession(newId)
     deleteSession(oldId).catch(() => {})
     return newId
-  }, [activeTabId])
+  }, [activeTabId, isLean])
 
   const handleLaunchWorkDirChange = useCallback(async (newWorkDir: string) => {
     updateRepositoryLaunchDraft(() => ({
@@ -813,7 +971,24 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
     // slash-Enter, programmatic) funnels through here.
     if (questionPending) return
     const text = input.trim()
+    if (isLean && resolvedPermissionMode === 'plan') {
+      useUIStore.getState().addToast({ type: 'info', message: t('agentProfile.planUnavailable') })
+      return
+    }
+    // `/btw` becomes a side chat here, before any runtime sees it, and lean
+    // offers none — so no listed command of that name can make it available.
+    if (isLean && (parseSideQuestionCommand(text) !== null || isUnsupportedLeanSlashInput(text, slashCommands.concat(allSlashCommands), listedSlashCommandNames))) {
+      useUIStore.getState().addToast({ type: 'info', message: t('agentProfile.commandUnavailable') })
+      return
+    }
     if ((!text && ((!attachments.length && !hasWorkspaceReferences) || isMemberSession)) || isWorkspaceMissing) return
+    // The server would refuse these for a member; a refused send would sit in
+    // the conversation as a message that never goes out. Say why and keep the
+    // draft instead.
+    if (isMemberSession && isRefusedTeamMemberCommand(text)) {
+      useUIStore.getState().addToast({ type: 'info', message: t('teams.memberCommandUnsupported') })
+      return
+    }
 
     // Immediate local command: never enter the main turn, launch flow or queue.
     const sideQuestion = !isMemberSession ? parseSideQuestionCommand(text) : null
@@ -864,7 +1039,11 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
     // `@label` is a pill and which is literal text the user typed.
     const sessionReferences = getSessionReferences(input, mentions)
     const serializedText = (composerRef.current?.getModelContent() ?? input).trim()
-    const contentForModel = [workspaceReferencePrompt, serializedText].filter(Boolean).join('\n\n')
+    const joinedContent = [workspaceReferencePrompt, serializedText].filter(Boolean).join('\n\n')
+    // Agent Team armed in the + menu: the model gets the team instruction, the
+    // bubble keeps what the user typed.
+    const sendAsTeam = capabilityMenu.agentTeamArmed && !isMemberSession
+    const contentForModel = sendAsTeam ? withAgentTeamRequest(joinedContent) : joinedContent
     const displayContent = text || (
       workspaceReferences.length > 0
         ? t('chat.contextReferencesOnly', { count: workspaceReferences.length })
@@ -911,17 +1090,30 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
     ]
 
     let targetSessionId = activeTabId!
-    if (showLaunchControls && activeLaunchWorkDir && launchBranch) {
+    // A chat can wait a long time for its first message, and the server switches
+    // the checkout to any launch branch that is not the current one. A branch the
+    // controls chose on their own is decided again now, against the checkout as it
+    // is, so a stale choice cannot put the repository back where it was.
+    let resolvedLaunchBranch = launchBranch
+    if (showLaunchControls && activeLaunchWorkDir && launchBranch && launchControlsRef.current) {
+      setLaunchTransitioning(true)
+      try {
+        resolvedLaunchBranch = await launchControlsRef.current.resolveLaunchBranch()
+      } finally {
+        setLaunchTransitioning(false)
+      }
+    }
+    if (showLaunchControls && activeLaunchWorkDir && resolvedLaunchBranch) {
       const shouldReplaceForRepositoryLaunch =
         launchUseWorktree ||
-        (gitInfo?.branch ? launchBranch !== gitInfo.branch : true)
+        (gitInfo?.branch ? resolvedLaunchBranch !== gitInfo.branch : true)
       if (shouldReplaceForRepositoryLaunch) {
         setLaunchTransitioning(true)
         const placeholderSessionId = targetSessionId
         setPreparingTurn(placeholderSessionId, true)
         try {
           const newSessionId = await replaceEmptySession(activeLaunchWorkDir, {
-            branch: launchBranch,
+            branch: resolvedLaunchBranch,
             worktree: launchUseWorktree,
           })
           if (!newSessionId) {
@@ -961,9 +1153,16 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
         displayAttachments: visibleAttachmentPayload,
       })
     }
-    invalidatePendingPastes()
-    setComposerInput('', [])
-    setComposerAttachments([])
+    recordRecentSkills(mentions.flatMap(mention => mention.kind === 'skill' && mention.id ? [mention.id] : []))
+    if (sendAsTeam) capabilityMenu.disarmAgentTeam()
+    // The send can wait for the launch branch to be read again. If the user moved
+    // to another chat meanwhile, the editor holds that chat's draft now, not what
+    // was just sent: leave it alone. (The sent chat's saved draft is cleared below.)
+    if (currentChatRef.current === activeTabId || currentChatRef.current === targetSessionId) {
+      invalidatePendingPastes()
+      setComposerInput('', [])
+      setComposerAttachments([])
+    }
     const chatStore = useChatStore.getState()
     chatStore.clearComposerDraft(activeTabId!)
     chatStore.clearRepositoryLaunchDraft(activeTabId!)
@@ -1048,6 +1247,26 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
       if (event.key === 'Escape') {
         event.preventDefault()
         setSlashMenuOpen(false)
+        return true
+      }
+    }
+
+    // Tab or → copies the predicted prompt into the empty draft for editing;
+    // it is never sent on the user's behalf. Esc hides it until the next turn.
+    if (
+      promptSuggestionGhost &&
+      inputRef.current.length === 0 &&
+      mentionsRef.current.length === 0 &&
+      !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
+    ) {
+      if (event.key === 'Tab' || event.key === 'ArrowRight') {
+        event.preventDefault()
+        composerRef.current?.insertTextAtOffsets(0, 0, promptSuggestionGhost)
+        return true
+      }
+      if (event.key === 'Escape' && activeTabId) {
+        event.preventDefault()
+        dismissPromptSuggestion(activeTabId)
         return true
       }
     }
@@ -1179,10 +1398,113 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
   // The "+" capability menu. The hook owns data loading and navigation
   // actions; these handlers are only the composer-local edits (mention badge,
   // slash text, prompt seed) plus the surfaces this composer already opens.
+  const insertSelectedFileMention = (mention: NewComposerMention) => {
+    const cursorPos = composerRef.current?.getSelectionOffsets().start ?? inputRef.current.length
+    const inserted = insertMentionIntoText(inputRef.current, mentionsRef.current, cursorPos, cursorPos, mention)
+    setComposerInput(inserted.text, inserted.mentions)
+    requestAnimationFrame(() => {
+      composerRef.current?.focus()
+      composerRef.current?.setSelectionOffsets(inserted.cursorPos)
+    })
+  }
+
+  // The phone's + sheet carries the controls that left its toolbar. A row
+  // closes the sheet first and opens the control's own sheet a frame later,
+  // so the two never stack.
+  const openFromComposerSheet = (open: () => void) => {
+    setPlusMenuOpen(false)
+    requestAnimationFrame(open)
+  }
+  const mobileComposerSettings: MobileComposerSetting[] = isMobileComposer && !isMemberSession
+    ? [
+      {
+        key: 'permission',
+        icon: <ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />,
+        label: t('permMode.executionPermissions'),
+        value: t(PERMISSION_MODE_LABEL_KEYS[resolvedPermissionMode]),
+        onSelect: () => openFromComposerSheet(() => permissionSelectorRef.current?.open()),
+      },
+      ...(activeTabId ? [
+        {
+          key: 'model',
+          icon: <Cpu size={16} strokeWidth={1.75} aria-hidden="true" />,
+          label: t('chat.mobileSheet.model'),
+          value: runtimeModelLabel,
+          disabled: isActive,
+          onSelect: () => openFromComposerSheet(() => modelSelectorRef.current?.open()),
+        },
+        {
+          key: 'context',
+          icon: <Gauge size={16} strokeWidth={1.75} aria-hidden="true" />,
+          label: t('contextIndicator.title'),
+          onSelect: () => openFromComposerSheet(() => contextUsageRef.current?.open()),
+        },
+      ] : []),
+      // A lean session's badge and info button left the toolbar: beside the
+      // model they squeezed its name to one letter. The mode is locked, so
+      // this row only opens what it includes.
+      ...(isLean ? [{
+        key: 'agentProfile',
+        icon: <Feather size={16} strokeWidth={1.75} aria-hidden="true" />,
+        label: t('agentProfile.label'),
+        value: t('agentProfile.lean'),
+        onSelect: () => openFromComposerSheet(() => agentProfileRef.current?.open()),
+      }] : []),
+    ]
+    : []
+
+  // Desktop: the quiet glyph (or, once writes run unattended, the named chip)
+  // sits first in the trailing group. A phone keeps it after the chips, where
+  // it only appears when some writes run unattended.
+  const permissionSelector = isMemberSession ? null : (
+    <PermissionModeSelector
+      lean={isLean}
+      ref={permissionSelectorRef}
+      sessionId={activeTabId ?? undefined}
+      workDir={resolvedWorkDir}
+      compact={useCompactControls}
+      trigger={isMobileComposer ? 'elevatedOnly' : 'quiet'}
+      // On the desktop the trigger sits at the right of the card: a menu that
+      // opened rightwards from it ran past the card and the window edge.
+      menuAlign={isMobileComposer ? 'left' : 'right'}
+    />
+  )
+
+  // A member's model belongs to the team runtime, which restarts its CLI as the
+  // same member. The session runtime path (`setSessionRuntime`) would restart
+  // it as an ordinary chat and lose who it is, so the picker never takes it.
+  const handleMemberRuntimeChange = (picked: RuntimeSelection) => {
+    if (!activeTabId || !memberRuntimeSelection) return
+    const sameModel = picked.providerId === memberRuntimeSelection.providerId &&
+      picked.modelId === memberRuntimeSelection.modelId
+    if (sameModel && picked.effortLevel === memberRuntimeSelection.effortLevel) return
+    // A member without an effort runs on its model's default. Picking another
+    // model fills in the composer-wide effort, which it never chose; only an
+    // edit of the effort itself sets one.
+    const selection = !sameModel && !memberRuntimeSelection.effortLevel
+      ? { ...picked, effortLevel: undefined }
+      : picked
+    setMemberRuntimeSaving(true)
+    void useTeamStore.getState().updateMemberRuntime(activeTabId, selection)
+      .catch((error) => {
+        useUIStore.getState().addToast({
+          type: 'error',
+          message: t('teams.memberModelUpdateFailed', {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        })
+      })
+      .finally(() => setMemberRuntimeSaving(false))
+  }
+
   const capabilityMenu = useCapabilityMenu({
     open: plusMenuOpen && !isMemberSession,
     cwd: referenceCwd,
     references: composerReferences,
+    lean: isLean,
+    // A lean conversation's mode is fixed; its row only says so. A phone's "+"
+    // sheet opens its own sheet from a settings row instead.
+    agentProfile: isLean && !isMobileComposer ? { value: 'lean' } : undefined,
     handlers: {
       onInsertMention: (reference) => {
         const cursorPos = composerRef.current?.getSelectionOffsets().start ?? inputRef.current.length
@@ -1203,23 +1525,18 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
           composerRef.current?.setSelectionOffsets(replacement.cursorPos)
         })
       },
-      onInsertPromptSeed: (text) => {
-        const next = inputRef.current.trim() ? `${inputRef.current}\n${text}` : text
-        setComposerInput(next)
-        requestAnimationFrame(() => {
-          composerRef.current?.focus()
-          composerRef.current?.setSelectionOffsets(next.length)
-        })
-      },
       onAttachment: openAttachmentPicker,
       onSlashTrigger: insertSlashCommand,
       onSaveWorkflow: () => setLocalSlashPanel('save-workflow'),
+      onReferencesChanged: () => setReferencesVersion(version => version + 1),
       onClose: () => setPlusMenuOpen(false),
     },
   })
 
   const composerPlaceholder =
-    isHeroComposer
+    capabilityMenu.agentTeamArmed && !isWorkspaceMissing && !questionPending && !isMemberSession
+      ? t('chat.capabilities.teamPlaceholder')
+      : isHeroComposer
       ? t('empty.placeholder')
       : isWorkspaceMissing
         ? workspaceState === 'worktree_removed'
@@ -1228,20 +1545,46 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
         : questionPending
           ? t('chat.placeholderQuestionPending')
           : isMemberSession
-            ? t('teams.memberPlaceholder')
+            ? memberContextFull
+              ? t('teams.memberContextLimitPlaceholder')
+              : t('teams.memberPlaceholder')
             : t('chat.placeholder')
+
+  // On a phone a waiting request takes the composer's place (MessageList shows
+  // a marker where the card was). Not for a member's page or a side chat:
+  // neither hosts its list with `decisionsInComposer`, so the card stays there.
+  const approvalInComposer = isMobileComposer && !isMemberSession && !sideChat && !!activeTabId &&
+    listPendingPermissions(sessionState).length > 0
+  if (approvalInComposer) {
+    return (
+      <div
+        ref={shellRef}
+        data-testid="chat-input-shell"
+        data-session-id={activeTabId}
+        className="composer-fade bg-[var(--color-surface)] px-3 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-1"
+      >
+        <MobileApprovalDock sessionId={activeTabId} />
+      </div>
+    )
+  }
 
   return (
     <div
       ref={shellRef}
       data-testid="chat-input-shell"
       data-session-id={activeTabId ?? undefined}
+      // The docked composer floats over the end of the transcript: no top
+      // divider, and `composer-fade` dissolves the last 28px of the thread into
+      // the page ground above the card instead of cutting it off. The hero
+      // composer sits in open space, so it needs neither.
       className={
         isHeroComposer
           ? `bg-[var(--color-surface)] ${isMobileComposer ? 'px-4 pb-3' : 'px-8 pb-4'}`
-          : compact
-            ? `border-t border-[var(--color-border)] bg-[var(--color-surface)] ${isMobileComposer ? 'px-3 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-2' : 'px-3 py-3'}`
-            : `bg-[var(--color-surface)] ${isMobileComposer ? 'px-3 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-2' : 'px-4 py-4'}`
+          : `composer-fade bg-[var(--color-surface)] ${
+            isMobileComposer
+              ? 'px-3 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-1'
+              : compact ? 'px-4 pb-4 pt-1' : 'px-6 pb-5 pt-1'
+          }`
       }
     >
       <div
@@ -1255,19 +1598,12 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
         <div
           ref={panelRef}
           data-testid="chat-input-panel"
-          // `glass-panel--composer` is the middle step of the shadow scale, the
-          // one the handoff gives the composer; `--radius-2xl` (20px) is the
-          // composer corner. Both match EmptySession's shell so the same
-          // control does not render two different panels.
-          className={isHeroComposer
-            // Always fully rounded now: the launch controls used to be a bar
-            // welded to the panel's bottom edge, which is what squared it off.
-            // They are a single pill today — in the toolbar, or on their own
-            // line below — so nothing butts against the panel any more.
-            ? `glass-panel glass-panel--composer relative flex flex-col gap-3 overflow-visible rounded-[var(--radius-2xl)] p-4 transition-colors ${isDragActive ? 'composer-drop-target-active' : ''}`
-            : compact
-              ? `glass-panel glass-panel--composer relative overflow-visible rounded-[var(--radius-2xl)] p-3 transition-colors ${isDragActive ? 'composer-drop-target-active' : ''}`
-              : `glass-panel glass-panel--composer relative overflow-visible rounded-[var(--radius-2xl)] transition-colors ${isMobileComposer ? 'p-3' : 'p-4'} ${isDragActive ? 'composer-drop-target-active' : ''}`}
+          // The floating card (「素」): `glass-panel--composer` supplies the
+          // opaque lifted fill, the hairline and the composer step of the shadow
+          // scale; `--radius-xl` is the composer corner. One geometry for every
+          // variant — the editor and the toolbar carry their own insets, so a
+          // draft turning into a live session moves nothing.
+          className={`glass-panel glass-panel--composer relative flex flex-col overflow-visible rounded-[var(--radius-xl)] p-2 ${isDragActive ? 'composer-drop-target-active' : ''}`}
           {...dragHandlers}
         >
           {isDragActive && (
@@ -1352,7 +1688,7 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
             // rather than as messages waiting their turn.
             <div
               data-testid="pending-user-message-list"
-              className={`flex flex-col gap-1.5 ${isHeroComposer ? '' : 'mb-2'}`}
+              className="flex flex-col gap-1.5 px-1 pb-1 pt-1"
             >
               {queuedUserMessages.map((message) => {
                 const isEditing = editingQueuedMessageId === message.id
@@ -1361,11 +1697,11 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
                     key={message.id}
                     data-testid="pending-user-message"
                     className={[
-                      'flex min-w-0 items-center gap-2.5 rounded-[var(--radius-lg)] px-3.5 py-2',
+                      'flex min-h-9 min-w-0 items-center gap-2.5 rounded-[var(--radius-md)] py-1 pl-3 pr-1',
                       // `--color-outline` rather than `--color-border`: a dashed
                       // line at the lighter weight all but disappears.
                       'border border-dashed border-[var(--color-outline)]',
-                      'text-[13.5px] text-[var(--color-text-secondary)]',
+                      'text-[13px] text-[var(--color-text-secondary)]',
                     ].join(' ')}
                   >
                     {/* The handoff labels the row in words rather than with a
@@ -1394,11 +1730,11 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
                           autoFocus
                         />
                         <Button
-                          variant="tonal"
+                          variant="primary"
                           size="sm"
                           onClick={saveQueuedMessageEdit}
                           disabled={!editingQueuedMessageText.trim()}
-                          className="shrink-0 font-semibold"
+                          className="shrink-0"
                         >
                           {t('common.save')}
                         </Button>
@@ -1420,26 +1756,26 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
                             while a question is waiting: sending now would race the
                             prompt the model is blocked on. */}
                         <Button
-                          variant="link"
+                          variant="ghost"
                           size="sm"
                           disabled={questionPending}
                           onClick={() => sendQueuedUserMessage(activeTabId, message.id)}
                           aria-label={t('chat.pendingMessageGuideNow')}
                           title={t('chat.pendingMessageGuideNow')}
-                          className="shrink-0 font-semibold"
-                          icon={<span className="material-symbols-outlined text-[15px]" aria-hidden="true">subdirectory_arrow_right</span>}
+                          className="shrink-0"
+                          icon={<CornerDownRight size={14} strokeWidth={1.75} aria-hidden="true" />}
                         >
                           {t('chat.pendingMessageGuide')}
                         </Button>
                         <IconButton
-                          icon="edit"
+                          icon={<Pencil size={14} strokeWidth={1.75} aria-hidden="true" />}
                           label={t('chat.pendingMessageEdit')}
                           size="sm"
                           tone="muted"
                           onClick={() => startEditingQueuedMessage(message.id, message.displayContent)}
                         />
                         <IconButton
-                          icon="delete"
+                          icon={<Trash2 size={14} strokeWidth={1.75} aria-hidden="true" />}
                           label={t('chat.pendingMessageDelete')}
                           size="sm"
                           tone="muted"
@@ -1455,17 +1791,13 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
           )}
 
           {composerAttachments.length > 0 && (
-            isHeroComposer ? (
+            <div className="px-2 pt-2">
               <AttachmentGallery attachments={composerAttachments} variant="composer" onRemove={removeAttachment} />
-            ) : (
-              <div className="px-3 pt-3">
-                <AttachmentGallery attachments={composerAttachments} variant="composer" onRemove={removeAttachment} />
-              </div>
-            )
+            </div>
           )}
 
           {isHeroComposer ? (
-            <div className="flex items-start gap-3">
+            <div className="flex items-start">
               <MentionComposer
                 ref={composerRef}
                 rootRef={composerContainerRef}
@@ -1481,13 +1813,16 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
                 onCompositionStart={() => { composingRef.current = true; dictation.compositionHandlers.onCompositionStart() }}
                 onCompositionEnd={() => { composingRef.current = false; dictation.compositionHandlers.onCompositionEnd() }}
                 placeholder={composerPlaceholder}
+                ghostText={promptSuggestionGhost}
                 disabled={composerDisabled}
                 // `min-w-0`: a paragraph holding an unbreakable run (a long URL,
                 // a hash) has a huge min-content size, and `overflow-wrap:
                 // break-word` does not shrink it. Without this the flex item
                 // refuses to shrink and the whole editor paints past the panel.
                 className="flex-1 min-w-0"
-                editorClassName="chat-reading-text max-h-[200px] overflow-y-auto py-2 leading-relaxed text-[var(--color-text-primary)]"
+                // The new-session card gives the prompt room to start: a taller
+                // resting editor than the docked composer, same type.
+                editorClassName="chat-reading-text min-h-[72px] max-h-[200px] overflow-y-auto px-2.5 pb-1 pt-2 text-[var(--color-text-primary)]"
                 aria={{
                   role: isSlashMenuVisible || isReferenceMenuVisible ? 'combobox' : 'textbox',
                   'aria-autocomplete': isSlashMenuVisible || isReferenceMenuVisible ? 'list' : undefined,
@@ -1515,10 +1850,11 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
               onCompositionStart={() => { composingRef.current = true; dictation.compositionHandlers.onCompositionStart() }}
               onCompositionEnd={() => { composingRef.current = false; dictation.compositionHandlers.onCompositionEnd() }}
               placeholder={composerPlaceholder}
+              ghostText={promptSuggestionGhost}
               disabled={composerDisabled}
-              editorClassName={`chat-reading-text max-h-[200px] overflow-y-auto text-sm leading-relaxed text-[var(--color-text-primary)] ${
-                useCompactChrome ? 'py-1.5' : 'py-2'
-              }`}
+              // Type follows the reader's chat size (`chat-reading-text`); the
+              // insets put the first line 14px/16px in from the card edge.
+              editorClassName="chat-reading-text min-h-[36px] max-h-[200px] overflow-y-auto px-2 pb-1 pt-1.5 text-[var(--color-text-primary)]"
               aria={{
                 role: isSlashMenuVisible || isReferenceMenuVisible ? 'combobox' : 'textbox',
                 'aria-autocomplete': isSlashMenuVisible || isReferenceMenuVisible ? 'list' : undefined,
@@ -1532,30 +1868,31 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
           )}
 
           {/*
-            The wide composer keeps one geometry for the whole session. The
-            draft and the live session used to render two different rows — the
-            draft's divider was inset inside the panel's padding, the live one
-            ran edge to edge over a `-mx-4 -mb-4` band — so the first message
-            shifted every control left by 4px and widened the divider by 34px.
-            The hero spacing wins because EmptySession renders the same row.
-            Its top gap comes from the panel's own `flex-col gap-3`, which the
-            live panel does not have, so that one repeats here as `mt-3`.
-            The narrow layouts keep the band: `p-3` leaves too little room to
-            spend on inset, and they never swap variants mid-session anyway.
-            The band is keyed to the chrome, not to the control layout — its
-            `-mx-3` has to cancel the panel's `p-3` exactly, and the panel is
-            padded by the same chrome rule.
+            One toolbar geometry for every variant. The draft and the live
+            session used to render two different rows (an inset divider versus
+            an edge-to-edge band), so the first message shifted every control.
+            The card has no divider now — the editor's own bottom inset and this
+            row's top inset separate the two — so the narrow layouts no longer
+            need a band of their own either.
           */}
-          <div data-testid="chat-input-toolbar" className={`flex min-w-0 items-center justify-between gap-2 ${
-            isHeroComposer
-              ? 'pt-3'
-              : useCompactChrome
-                ? `mt-2 -mx-3 -mb-3 px-2.5 py-2 ${isMobileComposer ? 'gap-1' : 'gap-2'}`
-                : 'mt-3 pt-3'
-          }`}>
+          {/*
+            One row that never wraps. The leading group (the "+", the armed
+            chips, the run location) gives up width first and truncates the
+            location; the trailing group (permission, usage, model, voice, send)
+            keeps its own width. The row used to let the trailing group wrap
+            onto a second line when a lean badge and its info button were on it,
+            which left the first line's right half empty. The lean mode is now a
+            row of the "+" menu and, once chosen, a chip on the leading group.
+          */}
+          <div
+            data-testid="chat-input-toolbar"
+            className={`flex min-w-0 items-center justify-between pt-1.5 ${isMobileComposer ? 'gap-1' : 'gap-2'}`}
+          >
+            {dictationLive && <VoiceRecordingBar dictation={dictation} mobile={isMobileComposer} />}
             <div
               data-testid="chat-input-toolbar-leading"
-              className={`flex min-w-0 shrink-0 items-center ${showLocationInToolbar ? 'max-w-[55%]' : ''} ${isMobileComposer ? 'gap-1' : 'gap-2'}`}
+              hidden={dictationLive}
+              className={`flex min-w-0 items-center gap-1 ${isMobileComposer ? 'shrink-0' : 'shrink'}`}
             >
               {!isMemberSession && (
                 <>
@@ -1572,49 +1909,70 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
                       aria-label={t('chat.composerTools')}
                       aria-haspopup="menu"
                       aria-expanded={plusMenuOpen}
-                      // Bordered on desktop so the tools affordance reads as a
-                      // control at rest, not only on hover — it sits next to
-                      // the permission chip, which is bordered too.
-                      className={`inline-flex items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] ${isMobileComposer ? 'h-11 w-11' : 'h-8 w-8 border border-[var(--color-border)]'}`}
+                      // A quiet 28px square like every other toolbar control;
+                      // the open state keeps the hover fill so the menu reads as
+                      // anchored to it.
+                      className={`inline-flex items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] ${
+                        plusMenuOpen ? 'bg-[var(--color-surface-hover)] text-[var(--color-text-primary)]' : ''
+                      } ${isMobileComposer ? 'h-11 w-11' : 'h-7 w-7'}`}
                     >
-                      <span className="material-symbols-outlined text-[18px]">add</span>
+                      <Plus size={isMobileComposer ? 18 : 16} strokeWidth={1.75} aria-hidden="true" />
                     </button>
 
-                    {plusMenuOpen && (
+                    {plusMenuOpen && !isMobileComposer && (
                       <ComposerCapabilityMenu
                         cwd={referenceCwd}
                         referencesLoading={referenceCurrent?.loading ?? true}
                         referencesError={referenceCurrent?.error}
-                        onSelectFile={mention => {
-                          const cursorPos = composerRef.current?.getSelectionOffsets().start ?? inputRef.current.length
-                          const inserted = insertMentionIntoText(inputRef.current, mentionsRef.current, cursorPos, cursorPos, mention)
-                          setComposerInput(inserted.text, inserted.mentions)
-                          requestAnimationFrame(() => {
-                            composerRef.current?.focus()
-                            composerRef.current?.setSelectionOffsets(inserted.cursorPos)
-                          })
-                        }}
+                        onSelectFile={insertSelectedFileMention}
                         id={capabilityMenuId}
                         sections={capabilityMenu.sections}
                         onAction={capabilityMenu.onAction}
                         onClose={() => setPlusMenuOpen(false)}
-                        mobile={isMobileComposer}
                       />
                     )}
+                    {isMobileComposer && (
+                      <MobileComposerSheet
+                        open={plusMenuOpen}
+                        onClose={() => setPlusMenuOpen(false)}
+                        menuId={capabilityMenuId}
+                        settings={mobileComposerSettings}
+                        sections={capabilityMenu.sections}
+                        cwd={referenceCwd}
+                        referencesLoading={referenceCurrent?.loading ?? true}
+                        referencesError={referenceCurrent?.error}
+                        onSelectFile={insertSelectedFileMention}
+                        onAction={capabilityMenu.onAction}
+                      />
+                    )}
+                    <ComputerUseEnableDialog {...capabilityMenu.computerUseConsent} />
+                    <AgentTeamsCostDialog allowDismiss {...capabilityMenu.agentTeamsNotice} />
                   </div>
 
-                  <div className="shrink-0">
-                    <PermissionModeSelector sessionId={activeTabId ?? undefined} workDir={resolvedWorkDir} compact={useCompactControls} />
-                  </div>
+                  {capabilityMenu.agentTeamArmed && !isMemberSession ? (
+                    <AgentTeamChip touch={isMobileComposer} onRemove={capabilityMenu.disarmAgentTeam} />
+                  ) : null}
+
+                  {isLean && !isMobileComposer ? <AgentProfileChip /> : null}
+
+                  {isMobileComposer ? <div className="shrink-0">{permissionSelector}</div> : null}
 
                   {showLocationInToolbar && (
                     <div data-testid="chat-input-toolbar-location" className="min-w-0 flex-1">
                       {embedLaunchControlsInToolbar ? (
                         <RepositoryLaunchControls
+                          // One instance per chat: what it holds (which branch it chose
+                          // itself, the context it read) belongs to this chat, and
+                          // ChatInput is reused as the user moves between empty chats.
+                          key={activeTabId}
+                          ref={launchControlsRef}
+                          visible={visible}
                           workDir={activeLaunchWorkDir}
                           onWorkDirChange={handleLaunchWorkDirChange}
                           branch={launchBranch}
                           onBranchChange={setLaunchBranch}
+                          branchAutomatic={launchBranchAutomatic}
+                          onBranchAutomaticChange={setLaunchBranchAutomatic}
                           useWorktree={launchUseWorktree}
                           onUseWorktreeChange={setLaunchUseWorktree}
                           onLaunchReadyChange={setLaunchReady}
@@ -1642,20 +2000,34 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
 
             <div
               data-testid="chat-input-toolbar-trailing"
-              className={`flex min-w-0 flex-1 items-center justify-end ${isMobileComposer ? 'gap-1' : 'gap-2'}`}
+              hidden={dictationLive}
+              className={isMobileComposer
+                ? 'flex min-w-0 flex-1 items-center justify-end gap-1'
+                : 'flex shrink-0 items-center justify-end gap-1'}
             >
-              {!isMemberSession && activeTabId && (
+              {!isMobileComposer ? permissionSelector : null}
+              {activeTabId && (!isMemberSession || memberCliSessionId) && (
                 <ContextUsageIndicator
-                  sessionId={activeTabId}
+                  ref={contextUsageRef}
+                  // A member page has no "+" sheet to open the breakdown from.
+                  hideTrigger={isMobileComposer && !isMemberSession}
+                  sessionId={memberCliSessionId ?? activeTabId}
                   chatState={chatState}
                   messageCount={messageCount}
-                  runtimeSelectionKey={runtimeSelectionKey}
-                  fallbackModelLabel={runtimeModelLabel}
+                  contentRevision={sessionState?.historyMutationEpoch ?? 0}
+                  runtimeSelectionKey={isMemberSession ? memberRuntimeKey : runtimeSelectionKey}
+                  fallbackModelLabel={isMemberSession ? memberModel : runtimeModelLabel}
                   compact={useCompactControls}
                   refreshNonce={
                     (sessionState?.compactCount ?? 0) +
                     (sessionState?.runtimeConfigReadyCount ?? 0)
                   }
+                />
+              )}
+              {isMobileComposer && (
+                <AgentProfileControl
+                  ref={agentProfileRef}
+                  value={isLean ? 'lean' : 'standard'}
                 />
               )}
               {!isMemberSession && activeTabId && (
@@ -1665,24 +2037,32 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
                   lockedProviderId={sideChat ? runtimeSelection?.providerId ?? null : undefined}
                   disabled={isActive}
                   compact={useCompactControls}
-                  fluid
+                  fluid={isMobileComposer}
+                />
+              )}
+              {memberRuntimeSelection && (
+                <ModelSelector
+                  runtimeSelection={memberRuntimeSelection}
+                  onRuntimeSelectionChange={handleMemberRuntimeChange}
+                  effortEditable
+                  disabled={isActive || memberRuntimeSaving}
+                  compact={useCompactControls}
+                  fluid={isMobileComposer}
                 />
               )}
               <VoiceInputButton dictation={dictation} blocked={composerDisabled} mobile={isMobileComposer} />
-              {!isMemberSession && !isActive && (hasRunningSubagents || hasRunningTeam) ? (
+              {stopOffer === 'background' ? (
+                // Stopping background work while the composer can still send:
+                // the same ink stop circle as a running turn, beside the send key.
                 <Button
-                  variant="danger"
+                  variant="primary"
                   size="base"
                   shape="circle"
                   onClick={() => stopGeneration(activeTabId!)}
                   aria-label={t('common.stop')}
                   title={t('chat.stopTitle')}
                   className={`shrink-0 ${isMobileComposer ? 'h-11 w-11' : ''}`}
-                  icon={(
-                    <span className="material-symbols-outlined text-[18px]">
-                      stop
-                    </span>
-                  )}
+                  icon={<Square size={isMobileComposer ? 12 : 10} strokeWidth={2} fill="currentColor" aria-hidden="true" />}
                 />
               ) : null}
               {/* Same component, shape and icon as EmptySession's send button.
@@ -1697,16 +2077,20 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
                   location chip. The arrow points *up* — into the transcript the
                   message is being sent to — which is also what makes it read as
                   send without a word next to it. Dropping the label is why the
-                  name now lives only in `aria-label`, on both breakpoints. */}
+                  name now lives only in `aria-label`, on both breakpoints.
+
+                  Terracotta (`accent`) is the send key's alone; mid-turn the
+                  same circle turns ink (`primary`) with a filled square, so a
+                  running turn does not read as an error. */}
               <Button
-                variant={!isMemberSession && isActive ? 'danger' : 'accent'}
+                variant={stopOffer === 'turn' ? 'primary' : 'accent'}
                 size="base"
                 shape="circle"
-                onClick={!isMemberSession && isActive ? () => stopGeneration(activeTabId!) : handleSubmit}
-                disabled={!isMemberSession && isActive ? false : !canSubmit}
-                aria-label={!isMemberSession && isActive ? t('common.stop') : isMemberSession ? t('common.send') : t('common.run')}
+                onClick={stopOffer === 'turn' ? () => stopGeneration(activeTabId!) : handleSubmit}
+                disabled={stopOffer === 'turn' ? false : !canSubmit}
+                aria-label={stopOffer === 'turn' ? t('common.stop') : isMemberSession ? t('common.send') : t('common.run')}
                 title={
-                  !isMemberSession && isActive
+                  stopOffer === 'turn'
                     ? t('chat.stopTitle')
                     : isMemberSession
                       ? t('common.send')
@@ -1715,11 +2099,9 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
                 // 44px on touch is the platform minimum for a primary target;
                 // the desktop circle stays at the size's own 32px.
                 className={`shrink-0 ${isMobileComposer ? 'h-11 w-11' : ''}`}
-                icon={(
-                  <span className="material-symbols-outlined text-[18px]">
-                    {!isMemberSession && isActive ? 'stop' : 'arrow_upward'}
-                  </span>
-                )}
+                icon={stopOffer === 'turn'
+                  ? <Square data-icon="stop" size={isMobileComposer ? 12 : 10} strokeWidth={2} fill="currentColor" aria-hidden="true" />
+                  : <ArrowUp data-icon="send" size={isMobileComposer ? 18 : 16} strokeWidth={2} aria-hidden="true" />}
               />
             </div>
           </div>
@@ -1728,7 +2110,9 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
 
         <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
 
-        {!isMemberSession && !showLocationInToolbar && (
+        {/* On a phone, a session under way names its project in the top bar;
+            only a session still choosing where to run needs the picker here. */}
+        {!isMemberSession && !showLocationInToolbar && !(isMobileComposer && messageCount > 0) && (
           <div className={useCompactControls ? 'mt-2 flex min-w-0 px-1' : 'mt-3 px-1'}>
             {messageCount > 0 ? (
               <ProjectContextChip
@@ -1744,10 +2128,15 @@ export function ChatInput({ variant = 'default', compact = false, sessionId, vis
               />
             ) : (
               <RepositoryLaunchControls
+                key={activeTabId}
+                ref={launchControlsRef}
+                visible={visible}
                 workDir={activeLaunchWorkDir}
                 onWorkDirChange={handleLaunchWorkDirChange}
                 branch={launchBranch}
                 onBranchChange={setLaunchBranch}
+                branchAutomatic={launchBranchAutomatic}
+                onBranchAutomaticChange={setLaunchBranchAutomatic}
                 useWorktree={launchUseWorktree}
                 onUseWorktreeChange={setLaunchUseWorktree}
                 onLaunchReadyChange={setLaunchReady}

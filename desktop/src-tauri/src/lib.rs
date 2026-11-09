@@ -39,22 +39,22 @@ mod macos_notifications {
     const ERROR_BUFFER_LEN: usize = 1024;
 
     unsafe extern "C" {
-        fn eflow_notification_authorization_status(
+        fn cchh_notification_authorization_status(
             error_buffer: *mut c_char,
             error_buffer_len: usize,
         ) -> c_int;
-        fn eflow_request_notification_authorization(
+        fn cchh_request_notification_authorization(
             error_buffer: *mut c_char,
             error_buffer_len: usize,
         ) -> bool;
-        fn eflow_send_user_notification(
+        fn cchh_send_user_notification(
             title: *const c_char,
             body: *const c_char,
             target: *const c_char,
             error_buffer: *mut c_char,
             error_buffer_len: usize,
         ) -> bool;
-        fn eflow_set_notification_response_callback(callback: Option<extern "C" fn(*const c_char)>);
+        fn cchh_set_notification_response_callback(callback: Option<extern "C" fn(*const c_char)>);
     }
 
     #[derive(Clone, Serialize)]
@@ -92,7 +92,7 @@ mod macos_notifications {
     pub fn permission_state() -> Result<String, String> {
         let mut error_buffer = new_error_buffer();
         let status = unsafe {
-            eflow_notification_authorization_status(error_buffer.as_mut_ptr(), ERROR_BUFFER_LEN)
+            cchh_notification_authorization_status(error_buffer.as_mut_ptr(), ERROR_BUFFER_LEN)
         };
 
         if status < 0 {
@@ -106,7 +106,7 @@ mod macos_notifications {
     pub fn request_permission() -> Result<String, String> {
         let mut error_buffer = new_error_buffer();
         let granted = unsafe {
-            eflow_request_notification_authorization(error_buffer.as_mut_ptr(), ERROR_BUFFER_LEN)
+            cchh_request_notification_authorization(error_buffer.as_mut_ptr(), ERROR_BUFFER_LEN)
         };
 
         if granted {
@@ -150,7 +150,7 @@ mod macos_notifications {
         if let Ok(mut guard) = handle.lock() {
             *guard = Some(app);
         }
-        unsafe { eflow_set_notification_response_callback(Some(handle_notification_response)) };
+        unsafe { cchh_set_notification_response_callback(Some(handle_notification_response)) };
     }
 
     pub fn send_notification(
@@ -171,7 +171,7 @@ mod macos_notifications {
 
         let mut error_buffer = new_error_buffer();
         let sent = unsafe {
-            eflow_send_user_notification(
+            cchh_send_user_notification(
                 title.as_ptr(),
                 body.as_ref()
                     .map_or(std::ptr::null(), |value| value.as_ptr()),
@@ -229,11 +229,6 @@ const TRAY_QUIT_ID: &str = "tray_quit";
 const WINDOW_STATE_FILE: &str = "window-state.json";
 const TERMINAL_CONFIG_FILE: &str = "terminal-config.json";
 const APP_MODE_FILE: &str = "app-mode.json";
-const ECHOFLOW_DEFAULT_CONFIG_ENV: &str = "ECHOFLOW_CODE_DEFAULT_CONFIG_DIR";
-const DESKTOP_APP_IDENTIFIER: &str = "com.echoflow.code.desktop";
-const LEGACY_DESKTOP_APP_IDENTIFIER: &str = "com.echoflowai-claude-code.desktop";
-const ECHOFLOW_PORTABLE_ENV: &str = "ECHOFLOW_CODE_APP_PORTABLE_DIR";
-const LEGACY_PORTABLE_ENV: &str = "ECHOFLOW_APP_PORTABLE_DIR";
 const SERVER_STATE_FILE: &str = "desktop-server-state.json";
 const MAX_PORT_RESERVATION_ATTEMPTS: usize = 128;
 const MIN_WINDOW_WIDTH: u32 = 960;
@@ -314,8 +309,7 @@ fn dir_has_portable_data(dir: &Path) -> bool {
         || dir.join("skills").is_dir()
         || dir.join("plugins").is_dir()
         || dir.join("cowork_plugins").is_dir()
-        || dir.join("echoflow-code").is_dir()
-        || dir.join("echoflow").is_dir()
+        || dir.join("cc-haha").is_dir()
 }
 
 /// Resolve the default portable config directory: exe_dir/CLAUDE_CONFIG_DIR.
@@ -334,7 +328,7 @@ struct TerminalConfig {
 
 impl TerminalConfig {
     fn load(app: &AppHandle) -> Self {
-        let path = match migrated_app_config_file_path(app, TERMINAL_CONFIG_FILE) {
+        let path = match terminal_config_path(app) {
             Some(p) => p,
             None => return Self::default(),
         };
@@ -367,6 +361,7 @@ impl TerminalConfig {
 }
 
 fn terminal_config_path(app: &AppHandle) -> Option<PathBuf> {
+    // honour CLAUDE_CONFIG_DIR for portable installs
     std::env::var("CLAUDE_CONFIG_DIR")
         .ok()
         .map(|dir| PathBuf::from(&dir).join(TERMINAL_CONFIG_FILE))
@@ -377,81 +372,6 @@ fn terminal_config_path(app: &AppHandle) -> Option<PathBuf> {
                 None
             }
         })
-}
-
-fn migrated_app_config_file_path(app: &AppHandle, filename: &str) -> Option<PathBuf> {
-    let current_path = std::env::var("CLAUDE_CONFIG_DIR")
-        .ok()
-        .map(|dir| PathBuf::from(dir).join(filename))
-        .or_else(|| app.path().app_config_dir().ok().map(|dir| dir.join(filename)))?;
-
-    if std::env::var_os("CLAUDE_CONFIG_DIR").is_some() {
-        return Some(current_path);
-    }
-
-    Some(migrate_legacy_app_config_file(current_path))
-}
-
-fn migrate_legacy_app_config_file(current_path: PathBuf) -> PathBuf {
-    if current_path.exists() {
-        return current_path;
-    }
-
-    let Some(current_dir) = current_path.parent() else {
-        return current_path;
-    };
-    if current_dir.file_name().and_then(|name| name.to_str()) != Some(DESKTOP_APP_IDENTIFIER) {
-        return current_path;
-    }
-
-    let Some(parent_dir) = current_dir.parent() else {
-        return current_path;
-    };
-    let Some(filename) = current_path.file_name() else {
-        return current_path;
-    };
-    let legacy_path = parent_dir.join(LEGACY_DESKTOP_APP_IDENTIFIER).join(filename);
-    if !legacy_path.is_file() {
-        return current_path;
-    }
-
-    if fs::create_dir_all(current_dir).is_err() {
-        return legacy_path;
-    }
-
-    let filename = filename.to_string_lossy();
-    let temporary_path = current_dir.join(format!(
-        ".{filename}.migration-{}",
-        std::process::id()
-    ));
-    let mut temporary_file = match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary_path)
-    {
-        Ok(file) => file,
-        Err(_) => return legacy_path,
-    };
-
-    let result = fs::read(&legacy_path)
-        .and_then(|data| temporary_file.write_all(&data))
-        .and_then(|()| temporary_file.sync_all())
-        .and_then(|()| fs::hard_link(&temporary_path, &current_path));
-
-    match result {
-        Ok(()) => {
-            let _ = fs::remove_file(&temporary_path);
-            current_path
-        }
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => {
-            let _ = fs::remove_file(&temporary_path);
-            current_path
-        }
-        Err(_) => {
-            let _ = fs::remove_file(&temporary_path);
-            legacy_path
-        }
-    }
 }
 
 impl Default for TerminalConfig {
@@ -635,13 +555,8 @@ fn get_app_mode(app: AppHandle) -> serde_json::Value {
     let active_config_dir = env_config_dir
         .clone()
         .or_else(|| app.path().app_config_dir().ok());
-    let is_echoflow_default_config_dir = std::env::var_os(ECHOFLOW_DEFAULT_CONFIG_ENV).is_some();
-    let is_portable_config_dir = std::env::var_os(ECHOFLOW_PORTABLE_ENV).is_some()
-        || std::env::var_os(LEGACY_PORTABLE_ENV).is_some();
     let config_dir_source = if env_config_dir.is_some() {
-        if is_echoflow_default_config_dir {
-            "system"
-        } else if is_portable_config_dir {
+        if std::env::var_os("CC_HAHA_APP_PORTABLE_DIR").is_some() {
             "portable"
         } else {
             "environment"
@@ -649,18 +564,11 @@ fn get_app_mode(app: AppHandle) -> serde_json::Value {
     } else {
         "system"
     };
-    let portable_dir = if env_config_dir.is_some()
-        && !is_echoflow_default_config_dir
-        && is_portable_config_dir
-    {
-        env_config_dir.clone()
-    } else {
-        get_default_portable_dir()
-    };
+    let config_dir = env_config_dir.clone().or_else(get_default_portable_dir);
 
     serde_json::json!({
-        "mode": if is_portable_config_dir { "portable" } else { "default" },
-        "portableDir": portable_dir.as_ref().and_then(|p| p.to_str()),
+        "mode": if env_config_dir.is_some() { "portable" } else { "default" },
+        "portableDir": config_dir.as_ref().and_then(|p| p.to_str()),
         "defaultPortableDir": get_default_portable_dir().as_ref().and_then(|p| p.to_str()),
         "activeConfigDir": active_config_dir.as_ref().and_then(|p| p.to_str()),
         "configDirSource": config_dir_source,
@@ -828,7 +736,7 @@ fn is_window_state_visible_on_any_monitor(
 fn window_state_path(app: &AppHandle) -> Option<PathBuf> {
     // honour CLAUDE_CONFIG_DIR so portable installs keep window-state.json
     // and terminal-config.json alongside the config dir instead of
-    // the Tauri app config directory.
+    // %APPDATA%\com.claude-code-haha.desktop\.
     resolve_portable_state_path().or_else(|| match app.path().app_config_dir() {
         Ok(dir) => Some(dir.join(WINDOW_STATE_FILE)),
         Err(err) => {
@@ -845,7 +753,7 @@ fn resolve_portable_state_path() -> Option<PathBuf> {
 }
 
 fn server_state_path() -> Option<PathBuf> {
-    // Lives next to echoflow-code/settings.json (CLAUDE_CONFIG_DIR or ~/.claude) so
+    // Lives next to cc-haha/settings.json (CLAUDE_CONFIG_DIR or ~/.claude) so
     // the Tauri and Electron shells share the same sticky port across builds.
     claude_config_dir().map(|dir| dir.join(SERVER_STATE_FILE))
 }
@@ -908,7 +816,7 @@ fn write_stored_server_state(state: &StoredServerState) {
 }
 
 fn read_stored_window_state(app: &AppHandle) -> Option<StoredWindowState> {
-    let path = migrated_app_config_file_path(app, WINDOW_STATE_FILE)?;
+    let path = window_state_path(app)?;
     let data = match fs::read_to_string(&path) {
         Ok(data) => data,
         Err(err) if err.kind() == ErrorKind::NotFound => return None,
@@ -1042,13 +950,13 @@ fn show_main_window(app: &AppHandle) {
 
 fn setup_system_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let menu = MenuBuilder::new(app)
-        .text(TRAY_SHOW_ID, "Show EchoFlow Code")
+        .text(TRAY_SHOW_ID, "Show Claude Code Haha")
         .separator()
-        .text(TRAY_QUIT_ID, "Quit EchoFlow Code")
+        .text(TRAY_QUIT_ID, "Quit Claude Code Haha")
         .build()?;
 
     let mut tray = TrayIconBuilder::with_id("main-tray")
-        .tooltip("EchoFlow Code")
+        .tooltip("Claude Code Haha")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -1536,7 +1444,7 @@ fn desktop_terminal_settings_path() -> Option<PathBuf> {
     claude_config_dir().map(|path| path.join("settings.json"))
 }
 
-/// 解析 echoflow-code/settings.json 里的 h5Access.fixedPort。范围必须与
+/// 解析 cc-haha/settings.json 里的 h5Access.fixedPort。范围必须与
 /// 服务端 h5AccessService 的 MIN/MAX_FIXED_PORT 一致（1024..=65535）。
 fn parse_h5_fixed_port(contents: &str) -> Option<u16> {
     let value: serde_json::Value = serde_json::from_str(contents).ok()?;
@@ -1551,7 +1459,7 @@ fn parse_h5_fixed_port(contents: &str) -> Option<u16> {
 }
 
 fn read_h5_fixed_port() -> Option<u16> {
-    let path = claude_config_dir()?.join("echoflow-code").join("settings.json");
+    let path = claude_config_dir()?.join("cc-haha").join("settings.json");
     let contents = fs::read_to_string(path).ok()?;
     parse_h5_fixed_port(&contents)
 }
@@ -2221,85 +2129,14 @@ mod tests {
     use super::{
         decode_terminal_output, default_utf8_locale, dir_has_portable_data, ensure_utf8_locale,
         has_meaningful_intersection, is_browser_safe_port, is_persistable_window_state,
-        migrate_legacy_app_config_file, normalize_terminal_bash_path, parse_env_block,
-        parse_h5_fixed_port, reserve_browser_safe_port, reserve_local_port_with_preference,
+        normalize_terminal_bash_path, parse_env_block, parse_h5_fixed_port,
+        reserve_browser_safe_port, reserve_local_port_with_preference,
         resolve_agent_powershell_path_override, resolve_desktop_terminal_shell,
         resolve_terminal_cwd, run_notification_bridge, select_h5_dist_dir, DesktopTerminalConfig,
         StoredServerState, StoredWindowState, TerminalHostPlatform, SERVER_BIND_HOST,
         SERVER_CONTROL_HOST,
     };
     use std::{collections::HashMap, fs, net::TcpListener};
-
-    #[test]
-    fn migrates_legacy_desktop_state_file_without_overwriting_the_source() {
-        let root = std::env::temp_dir().join(format!(
-            "echoflow-package-id-migration-{}",
-            std::process::id()
-        ));
-        let legacy_path = root
-            .join("com.echoflowai-claude-code.desktop")
-            .join("window-state.json");
-        let current_path = root
-            .join("com.echoflow.code.desktop")
-            .join("window-state.json");
-        fs::create_dir_all(legacy_path.parent().expect("legacy parent"))
-            .expect("create legacy directory");
-        fs::write(&legacy_path, "{\"width\":1200}").expect("write legacy state");
-
-        let resolved = migrate_legacy_app_config_file(current_path.clone());
-
-        assert_eq!(resolved, current_path);
-        assert_eq!(fs::read_to_string(&current_path).expect("read migrated state"), "{\"width\":1200}");
-        assert_eq!(fs::read_to_string(&legacy_path).expect("read legacy state"), "{\"width\":1200}");
-        fs::remove_dir_all(root).expect("remove migration fixture");
-    }
-
-    #[test]
-    fn keeps_current_desktop_state_file_when_legacy_state_also_exists() {
-        let root = std::env::temp_dir().join(format!(
-            "echoflow-package-id-current-{}",
-            std::process::id()
-        ));
-        let legacy_path = root
-            .join("com.echoflowai-claude-code.desktop")
-            .join("window-state.json");
-        let current_path = root
-            .join("com.echoflow.code.desktop")
-            .join("window-state.json");
-        fs::create_dir_all(legacy_path.parent().expect("legacy parent"))
-            .expect("create legacy directory");
-        fs::create_dir_all(current_path.parent().expect("current parent"))
-            .expect("create current directory");
-        fs::write(&legacy_path, "legacy").expect("write legacy state");
-        fs::write(&current_path, "current").expect("write current state");
-
-        let resolved = migrate_legacy_app_config_file(current_path.clone());
-
-        assert_eq!(resolved, current_path);
-        assert_eq!(fs::read_to_string(&current_path).expect("read current state"), "current");
-        fs::remove_dir_all(root).expect("remove migration fixture");
-    }
-
-    #[test]
-    fn does_not_migrate_into_nonstandard_config_directories() {
-        let root = std::env::temp_dir().join(format!(
-            "echoflow-package-id-nonstandard-{}",
-            std::process::id()
-        ));
-        let legacy_path = root
-            .join("com.echoflowai-claude-code.desktop")
-            .join("window-state.json");
-        let current_path = root.join("custom-config").join("window-state.json");
-        fs::create_dir_all(legacy_path.parent().expect("legacy parent"))
-            .expect("create legacy directory");
-        fs::write(&legacy_path, "legacy").expect("write legacy state");
-
-        let resolved = migrate_legacy_app_config_file(current_path.clone());
-
-        assert_eq!(resolved, current_path);
-        assert!(!current_path.exists());
-        fs::remove_dir_all(root).expect("remove migration fixture");
-    }
 
     #[test]
     fn window_state_rejects_too_small_sizes() {
@@ -2412,7 +2249,7 @@ mod tests {
     #[test]
     fn terminal_bash_path_normalizer_rejects_missing_files() {
         let missing =
-            std::env::temp_dir().join(format!("eflow-missing-bash-{}", std::process::id()));
+            std::env::temp_dir().join(format!("cchh-missing-bash-{}", std::process::id()));
 
         let error = normalize_terminal_bash_path(Some(missing.to_string_lossy().to_string()))
             .expect_err("missing path should be rejected");
@@ -2422,7 +2259,7 @@ mod tests {
 
     #[test]
     fn terminal_bash_path_normalizer_accepts_existing_files() {
-        let path = std::env::temp_dir().join(format!("eflow-bash-path-test-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("cchh-bash-path-test-{}", std::process::id()));
         fs::write(&path, "").expect("write bash path fixture");
 
         assert_eq!(
@@ -2477,7 +2314,7 @@ mod tests {
     fn terminal_cwd_defaults_to_portable_config_dir_when_present() {
         let original = std::env::var_os("CLAUDE_CONFIG_DIR");
         let dir = std::env::temp_dir().join(format!(
-            "eflow-terminal-portable-cwd-{}",
+            "cchh-terminal-portable-cwd-{}",
             std::process::id()
         ));
         fs::create_dir_all(&dir).expect("create portable config dir");
@@ -2498,7 +2335,7 @@ mod tests {
     #[test]
     fn portable_data_detection_includes_cli_state_dirs() {
         let root = std::env::temp_dir().join(format!(
-            "eflow-portable-data-detect-{}",
+            "cchh-portable-data-detect-{}",
             std::process::id()
         ));
         let skills = root.join("skills");
@@ -2725,7 +2562,7 @@ mod tests {
 
     #[test]
     fn h5_dist_dir_prefers_tauri_parent_resource_mapping() {
-        let root = std::env::temp_dir().join(format!("eflow-h5-dist-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("cchh-h5-dist-test-{}", std::process::id()));
         let resource_dir = root.join("Contents").join("Resources");
         let app_root = root.join("Contents").join("MacOS");
         let mapped_dist = resource_dir.join("_up_").join("dist");
@@ -2805,12 +2642,12 @@ pub fn run() {
     let builder = builder
         .menu(|app| {
             let about_item =
-                MenuItemBuilder::with_id("nav_about", "关于 EchoFlow Code").build(app)?;
+                MenuItemBuilder::with_id("nav_about", "关于 Claude Code Haha").build(app)?;
             let settings_item = MenuItemBuilder::with_id("nav_settings", "设置...")
                 .accelerator("CmdOrCtrl+,")
                 .build(app)?;
 
-            let app_submenu = SubmenuBuilder::new(app, "EchoFlow Code")
+            let app_submenu = SubmenuBuilder::new(app, "Claude Code Haha")
                 .item(&about_item)
                 .separator()
                 .item(&settings_item)

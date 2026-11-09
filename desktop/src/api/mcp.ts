@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { McpServerRecord, McpToggleResult, McpUpsertPayload } from '../types/mcp'
+import type { McpServerRecord, McpReconnectResult, McpToggleResult, McpUpsertPayload, McpProjectSharingSnapshot, McpProjectSharingPayload, McpProjectSharingResult } from '../types/mcp'
 
 export const mcpApi = {
   list: (cwd?: string) => {
@@ -9,6 +9,18 @@ export const mcpApi = {
 
   projectPaths: () => {
     return api.get<{ projectPaths: string[] }>('/api/mcp/project-paths')
+  },
+
+  projectSharing: (name: string, projectPaths: string[], sourceCwd?: string, configHashes?: string[]) => {
+    const query = new URLSearchParams()
+    for (const path of projectPaths) query.append('projectPath', path)
+    if (sourceCwd) query.set('sourceCwd', sourceCwd)
+    for (const hash of configHashes ?? []) query.append('configHash', hash)
+    return api.get<McpProjectSharingSnapshot>(`/api/mcp/${encodeURIComponent(name)}/projects?${query}`)
+  },
+
+  saveProjectSharing: (name: string, payload: McpProjectSharingPayload) => {
+    return api.put<McpProjectSharingResult>(`/api/mcp/${encodeURIComponent(name)}/projects`, payload)
   },
 
   status: (name: string, cwd?: string) => {
@@ -48,7 +60,10 @@ export const mcpApi = {
     )
   },
 
-  reconnect: (name: string, cwd?: string) => {
-    return api.post<{ server: McpServerRecord }>(`/api/mcp/${encodeURIComponent(name)}/reconnect`, cwd ? { cwd } : {})
+  reconnect: (name: string, cwd?: string, sessionId?: string) => {
+    return api.post<McpReconnectResult>(`/api/mcp/${encodeURIComponent(name)}/reconnect`, {
+      ...(cwd ? { cwd } : {}),
+      ...(sessionId ? { sessionId } : {}),
+    })
   },
 }

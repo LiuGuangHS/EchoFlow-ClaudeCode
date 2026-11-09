@@ -5,12 +5,10 @@ import type {
   DesktopHostUnlisten,
   NotificationPermissionState,
 } from './types'
-import { buildTraceWindowUrl } from '../traceLaunch'
 import { readBrowserLanguages } from '../../i18n/locale'
 
 const browserCapabilities: DesktopHostCapabilities = {
   appMode: false,
-  echoFlowAccount: false,
   clipboard: false,
   dialogs: false,
   notifications: false,
@@ -39,41 +37,28 @@ const defaultAppMode: AppModeConfig = {
 const defaultPermissionState: NotificationPermissionState = 'default'
 
 export const browserHost: DesktopHost = {
+  configImport: {
+    async take() { return null },
+    async ack() {},
+    async onPending() { return noopUnlisten },
+  },
   publicAccess: {
     async getStatus() { return unsupported('Public access management') },
-    async saveCredential() { return unsupported('Public access management') },
-    async deleteCredential() { return unsupported('Public access management') },
+    async configure() { return unsupported('Public access management') },
     async start() { return unsupported('Public access management') },
     async stop() { return unsupported('Public access management') },
     async setAutoStart() { return unsupported('Public access management') },
+    async setP2PEnabled() { return unsupported('Public access management') },
   },
   kind: 'browser',
   isDesktop: false,
   capabilities: browserCapabilities,
-  echoFlow: {
-    async openLogin() { return unsupported('EchoFlow site account login') },
-    async signOut() { return unsupported('EchoFlow site account login') },
-    async whenAccountRestored() { return false },
-  },
-  runtimeDiscovery: {
-    async list() { return unsupported('Runtime discovery') },
-    async probePath() { return unsupported('Runtime discovery') },
-  },
   runtime: {
     async getServerUrl() {
       unsupported('Resolving the bundled server URL')
     },
     async getLocalAccessToken() {
       unsupported('Resolving the bundled server access token')
-    },
-    async getClaudeCode() {
-      unsupported('Claude Code runtime settings')
-    },
-    async chooseClaudeCode() {
-      unsupported('Claude Code runtime settings')
-    },
-    async setClaudeCode() {
-      unsupported('Claude Code runtime settings')
     },
   },
   app: {
@@ -93,18 +78,18 @@ export const browserHost: DesktopHost = {
       return noopUnlisten
     },
   },
-  configImport: {
-    async take() {
-      return null
-    },
-    async ack() {},
-    async onPending() {
-      return noopUnlisten
-    },
-  },
   commands: {
     async invoke() {
       unsupported('Native commands')
+    },
+  },
+  power: {
+    async getIdleActionState() { return unsupported('Power actions') },
+    async configureIdleAction() { return unsupported('Power actions') },
+    async cancelIdleAction() { return unsupported('Power actions') },
+    async onIdleActionState() { return noopUnlisten },
+    async setPreventSleepWhileRunning() {
+      unsupported('Preventing system sleep')
     },
   },
   clipboard: {
@@ -148,18 +133,6 @@ export const browserHost: DesktopHost = {
     },
     async openPath() {
       unsupported('Opening system file paths')
-    },
-    async showItemInFolder() {
-      unsupported('Showing a file in its folder')
-    },
-  },
-  trace: {
-    async openWindow(sessionId) {
-      if (typeof window !== 'undefined') {
-        window.open(buildTraceWindowUrl(sessionId), '_blank', 'noopener,noreferrer')
-        return
-      }
-      unsupported('Opening trace windows')
     },
   },
   pets: {
@@ -358,13 +331,11 @@ export const browserHost: DesktopHost = {
     async goForward() {},
     async reload() {},
     async stop() {},
-    async setBounds() {},
     async setVisible() {},
     async setZoom() {},
     async find() {},
     async stopFind() {},
     async capture() {},
-    async snapshot() { return null },
     async message() {},
     async printToPdf() {},
     async showMenu() { return null },
@@ -386,30 +357,17 @@ export const browserHost: DesktopHost = {
     async restart() {
       unsupported('Desktop app restart')
     },
+    migration: {
+      async prepare() { return unsupported('Data migration') },
+      async start() { unsupported('Data migration') },
+      async status() { return null },
+      async cancel() { unsupported('Data migration') },
+      async onProgress() { return noopUnlisten },
+    },
   },
   adapters: {
     async restartSidecar() {
       unsupported('Adapter sidecar restart')
-    },
-  },
-  deepSeekHarness: {
-    async getStatus() {
-      unsupported('DeepSeek Harness')
-    },
-    async start() {
-      unsupported('DeepSeek Harness')
-    },
-    async stop() {
-      unsupported('DeepSeek Harness')
-    },
-    async restart() {
-      unsupported('DeepSeek Harness')
-    },
-    async update() {
-      unsupported('DeepSeek Harness')
-    },
-    async open() {
-      unsupported('DeepSeek Harness')
     },
   },
   zoom: {

@@ -4,7 +4,9 @@ import { settingsApi } from '../api/settings'
 import { modelsApi } from '../api/models'
 import { h5AccessApi } from '../api/h5Access'
 import { tracesApi } from '../api/traces'
+import { DEFAULT_TERMINAL_FONT_SIZE, normalizeTerminalFontSize } from '../lib/terminalTheme'
 import {
+  isMaxConcurrentSubagents,
   type AppMode,
   type AppModeConfig,
   type ChatSendBehavior,
@@ -42,8 +44,6 @@ import {
   normalizeAutoQuestionSettings,
   type AutoQuestionSettings,
 } from '../../../src/shared/autoQuestionSettings'
-import { normalizeLocalRedactionSettings, type LocalRedactionSettings } from '../../../src/shared/localRedactionSettings'
-import { ECHOFLOW_AGENT_NAME } from '../constants/brand'
 import {
   applyDocumentLocale,
   getInitialLocale,
@@ -68,10 +68,12 @@ type SettingsStore = {
   effortLevel: EffortLevel
   thinkingEnabled: boolean
   workflowKeywordTriggerEnabled: boolean
+  nextPromptSuggestionsEnabled: boolean
+  leanModeEnabled: boolean
   agentTeamsEnabled: boolean
+  maxConcurrentSubagents: number | null
   autoDreamEnabled: boolean
   autoQuestion: AutoQuestionSettings
-  localRedaction: LocalRedactionSettings
   autoModeOptInAccepted: boolean
   availableModels: ModelInfo[]
   activeProviderName: string | null
@@ -92,6 +94,7 @@ type SettingsStore = {
   desktopTerminal: DesktopTerminalSettings
   webSearch: WebSearchSettings
   updateProxy: UpdateProxySettings
+  autoUpdateEnabled: boolean
   network: NetworkSettings
   /** null = never configured; the UI falls back to DEFAULT_CLEANUP_PERIOD_DAYS. */
   cleanupPeriodDays: number | null
@@ -115,10 +118,12 @@ type SettingsStore = {
   setEffort: (level: EffortLevel) => Promise<void>
   setThinkingEnabled: (enabled: boolean) => Promise<void>
   setWorkflowKeywordTriggerEnabled: (enabled: boolean) => Promise<void>
+  setNextPromptSuggestionsEnabled: (enabled: boolean) => Promise<void>
+  setLeanModeEnabled: (enabled: boolean) => Promise<void>
   setAgentTeamsEnabled: (enabled: boolean) => Promise<void>
+  setMaxConcurrentSubagents: (value: number | null) => Promise<void>
   setAutoDreamEnabled: (enabled: boolean) => Promise<void>
   setAutoQuestion: (settings: AutoQuestionSettings) => Promise<void>
-  setLocalRedaction: (settings: LocalRedactionSettings) => Promise<void>
   acceptAutoModeOptIn: () => Promise<void>
   setLocale: (locale: Locale) => void
   setTheme: (theme: ThemeMode) => Promise<void>
@@ -127,9 +132,10 @@ type SettingsStore = {
   setOutputStyle: (outputStyle: string, workDir?: string | null) => Promise<void>
   setSkipWebFetchPreflight: (enabled: boolean) => Promise<void>
   setDesktopNotificationsEnabled: (enabled: boolean) => Promise<void>
-  setDesktopTerminal: (settings: DesktopTerminalSettings) => Promise<void>
+  setDesktopTerminal: (settings: Partial<DesktopTerminalSettings>) => Promise<void>
   setWebSearch: (settings: WebSearchSettings) => Promise<void>
   setUpdateProxy: (settings: UpdateProxySettings) => Promise<void>
+  setAutoUpdateEnabled: (enabled: boolean) => Promise<void>
   setNetwork: (settings: NetworkSettings) => Promise<void>
   setCleanupPeriodDays: (days: number) => Promise<void>
   setTraceCaptureEnabled: (enabled: boolean) => Promise<void>
@@ -165,18 +171,21 @@ const DEFAULT_H5_ACCESS_SETTINGS: H5AccessSettings = {
 const DEFAULT_DESKTOP_TERMINAL_SETTINGS: DesktopTerminalSettings = {
   startupShell: 'system',
   customShellPath: '',
+  fontFamily: '',
+  fontSize: DEFAULT_TERMINAL_FONT_SIZE,
 }
 let desktopTerminalSaveQueue: Promise<void> = Promise.resolve()
 let desktopTerminalSaveVersion = 0
 let lastPersistedDesktopTerminal = DEFAULT_DESKTOP_TERMINAL_SETTINGS
-let localRedactionSaveQueue: Promise<void> = Promise.resolve()
-let localRedactionSaveVersion = 0
-let lastPersistedLocalRedaction = normalizeLocalRedactionSettings(null)
 
 const DEFAULT_UPDATE_PROXY_SETTINGS: UpdateProxySettings = {
   mode: 'system',
   url: '',
 }
+let autoUpdateSaveQueue: Promise<void> = Promise.resolve()
+let autoUpdateSaveVersion = 0
+let autoUpdatePendingSaves = 0
+let lastPersistedAutoUpdateEnabled = true
 
 // Keep milliseconds within the signed 32-bit timer limit, matching the server.
 export const NETWORK_TIMEOUT_MAX_SECONDS = Math.floor(2_147_483_647 / 1000)
@@ -194,7 +203,7 @@ const DEFAULT_OUTPUT_STYLE_OPTIONS: OutputStyleOption[] = [
   {
     value: DEFAULT_OUTPUT_STYLE,
     label: 'Default',
-    description: `${ECHOFLOW_AGENT_NAME} completes coding tasks efficiently and provides concise responses`,
+    description: 'Claude completes coding tasks efficiently and provides concise responses',
     source: 'built-in',
   },
 ]
@@ -206,18 +215,23 @@ const DEFAULT_TRACE_CAPTURE_SETTINGS: TraceCaptureSettings = {
 
 const initialLocale = getInitialLocale()
 applyDocumentLocale(initialLocale)
+let leanModeSaveVersion = 0
+let leanModePendingSaves = 0
+let leanModeSaveQueue: Promise<void> = Promise.resolve()
 let autoQuestionUpdateQueue: Promise<unknown> = Promise.resolve()
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   permissionMode: 'default',
   currentModel: null,
-  effortLevel: 'medium',
+  effortLevel: 'low',
   thinkingEnabled: true,
   workflowKeywordTriggerEnabled: true,
+  nextPromptSuggestionsEnabled: false,
+  leanModeEnabled: false,
   agentTeamsEnabled: true,
+  maxConcurrentSubagents: null,
   autoDreamEnabled: false,
   autoQuestion: DEFAULT_AUTO_QUESTION_SETTINGS,
-  localRedaction: normalizeLocalRedactionSettings(null),
   autoModeOptInAccepted: false,
   availableModels: [],
   activeProviderName: null,
@@ -232,8 +246,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   skipWebFetchPreflight: true,
   desktopNotificationsEnabled: false,
   desktopTerminal: DEFAULT_DESKTOP_TERMINAL_SETTINGS,
-  webSearch: { mode: 'auto', tavilyApiKey: '', braveApiKey: '' },
+  webSearch: { mode: 'auto', tavilyApiKey: '', braveApiKey: '', deepseekApiKey: '' },
   updateProxy: DEFAULT_UPDATE_PROXY_SETTINGS,
+  autoUpdateEnabled: true,
   network: DEFAULT_NETWORK_SETTINGS,
   cleanupPeriodDays: null,
   traceCapture: DEFAULT_TRACE_CAPTURE_SETTINGS,
@@ -260,6 +275,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   fetchAll: async () => {
+    const leanModeVersionAtStart = leanModeSaveVersion
+    const leanModePendingAtStart = leanModePendingSaves > 0
+    const autoUpdateVersionAtStart = autoUpdateSaveVersion
+    const autoUpdateSavePendingAtStart = autoUpdatePendingSaves > 0
     set({ isLoading: true, error: null })
     try {
       const previousH5Access = get().h5Access
@@ -281,9 +300,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         loadTraceCaptureSettings(),
       ])
       const desktopTerminal = normalizeDesktopTerminalSettings(userSettings.desktopTerminal)
-      const localRedaction = normalizeLocalRedactionSettings(userSettings.localRedaction)
       lastPersistedDesktopTerminal = desktopTerminal
-      lastPersistedLocalRedaction = localRedaction
+      // Read-time upgrade: existing settings keep automatic checks enabled
+      // until the user explicitly saves the new preference.
+      const hydrateAutoUpdate = !autoUpdateSavePendingAtStart && autoUpdatePendingSaves === 0 &&
+        autoUpdateVersionAtStart === autoUpdateSaveVersion
+      if (hydrateAutoUpdate) lastPersistedAutoUpdateEnabled = userSettings.autoUpdateEnabled !== false
       // Nothing to do for the theme here: uiStore already applied it at
       // startup, and re-applying would re-persist and re-report it on every
       // provider switch.
@@ -296,10 +318,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         effortLevel: level,
         thinkingEnabled: userSettings.alwaysThinkingEnabled !== false,
         workflowKeywordTriggerEnabled: userSettings.workflowKeywordTriggerEnabled !== false,
+        // Opt-in: every suggestion is an extra model request.
+        nextPromptSuggestionsEnabled: userSettings.nextPromptSuggestionsEnabled === true,
+        // Forward read migration: older settings leave the experiment disabled.
+        leanModeEnabled: !leanModePendingAtStart && leanModePendingSaves === 0 && leanModeVersionAtStart === leanModeSaveVersion
+          ? userSettings.leanModeEnabled === true : get().leanModeEnabled,
         agentTeamsEnabled: userSettings.agentTeamsEnabled !== false,
+        // 读取时升级：旧设置或非法值归一为不限，不改写用户 JSON。
+        maxConcurrentSubagents: isMaxConcurrentSubagents(userSettings.maxConcurrentSubagents)
+          ? userSettings.maxConcurrentSubagents
+          : null,
         autoDreamEnabled: userSettings.autoDreamEnabled === true,
         autoQuestion: normalizeAutoQuestionSettings(userSettings.autoQuestion),
-        localRedaction,
         autoModeOptInAccepted: userSettings.skipAutoPermissionPrompt === true,
         chatSendBehavior: normalizeChatSendBehavior(userSettings.chatSendBehavior),
         outputStyle: normalizeOutputStyle(userSettings.outputStyle),
@@ -308,6 +338,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         desktopTerminal,
         webSearch: normalizeWebSearchSettings(userSettings.webSearch),
         updateProxy: normalizeUpdateProxySettings(userSettings.updateProxy),
+        autoUpdateEnabled: hydrateAutoUpdate ? lastPersistedAutoUpdateEnabled : get().autoUpdateEnabled,
         network: normalizeNetworkSettings(userSettings.network),
         cleanupPeriodDays: normalizeCleanupPeriodDays(userSettings.cleanupPeriodDays),
         traceCapture,
@@ -383,6 +414,32 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
+  setNextPromptSuggestionsEnabled: async (enabled) => {
+    const prev = get().nextPromptSuggestionsEnabled
+    set({ nextPromptSuggestionsEnabled: enabled })
+    try {
+      await settingsApi.updateUser({ nextPromptSuggestionsEnabled: enabled })
+    } catch (error) {
+      set({ nextPromptSuggestionsEnabled: prev })
+      throw error
+    }
+  },
+
+  setLeanModeEnabled: async (enabled) => {
+    leanModeSaveVersion += 1
+    leanModePendingSaves += 1
+    const save = leanModeSaveQueue.then(async () => {
+      await settingsApi.updateUser({ leanModeEnabled: enabled })
+      set({ leanModeEnabled: enabled })
+    })
+    leanModeSaveQueue = save.catch(() => {})
+    try {
+      await save
+    } finally {
+      leanModePendingSaves -= 1
+    }
+  },
+
   setAgentTeamsEnabled: async (enabled) => {
     const prev = get().agentTeamsEnabled
     set({ agentTeamsEnabled: enabled })
@@ -390,6 +447,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       await settingsApi.updateUser({ agentTeamsEnabled: enabled })
     } catch (error) {
       set({ agentTeamsEnabled: prev })
+      throw error
+    }
+  },
+
+  setMaxConcurrentSubagents: async (value) => {
+    if (!isMaxConcurrentSubagents(value)) {
+      throw new Error('SubAgent concurrency limit must be a positive safe integer or null')
+    }
+    const previous = get().maxConcurrentSubagents
+    set({ maxConcurrentSubagents: value })
+    try {
+      await settingsApi.updateUser({ maxConcurrentSubagents: value })
+    } catch (error) {
+      set({ maxConcurrentSubagents: previous })
       throw error
     }
   },
@@ -539,7 +610,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   setDesktopTerminal: async (settings) => {
-    const next = normalizeDesktopTerminalSettings(settings)
+    const next = normalizeDesktopTerminalSettings({ ...get().desktopTerminal, ...settings })
     const saveVersion = ++desktopTerminalSaveVersion
     set({ desktopTerminal: next })
     const save = desktopTerminalSaveQueue
@@ -583,26 +654,29 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
-  setLocalRedaction: async (settings) => {
-    const next = normalizeLocalRedactionSettings(settings)
-    const saveVersion = ++localRedactionSaveVersion
-    set({ localRedaction: next })
-    const save = localRedactionSaveQueue
+  setAutoUpdateEnabled: async (enabled) => {
+    const saveVersion = ++autoUpdateSaveVersion
+    autoUpdatePendingSaves += 1
+    set({ autoUpdateEnabled: enabled })
+    const save = autoUpdateSaveQueue
       .catch(() => undefined)
       .then(async () => {
         try {
-          await settingsApi.updateUser({ localRedaction: next })
-          lastPersistedLocalRedaction = next
+          await settingsApi.updateUser({ autoUpdateEnabled: enabled })
+          lastPersistedAutoUpdateEnabled = enabled
         } catch (error) {
-          if (saveVersion === localRedactionSaveVersion) {
-            set({ localRedaction: lastPersistedLocalRedaction })
+          if (saveVersion === autoUpdateSaveVersion) {
+            set({ autoUpdateEnabled: lastPersistedAutoUpdateEnabled })
           }
           throw error
         }
       })
-
-    localRedactionSaveQueue = save
-    await save
+    autoUpdateSaveQueue = save
+    try {
+      await save
+    } finally {
+      autoUpdatePendingSaves -= 1
+    }
   },
 
   setNetwork: async (settings) => {
@@ -769,10 +843,13 @@ subscribeLocaleChanges((locale) => {
 })
 
 function normalizeWebSearchSettings(settings: WebSearchSettings | undefined): WebSearchSettings {
+  // Forward read migration: older settings keep their mode and keys; the new key defaults empty.
   return {
+    ...settings,
     mode: settings?.mode ?? 'auto',
     tavilyApiKey: settings?.tavilyApiKey ?? '',
     braveApiKey: settings?.braveApiKey ?? '',
+    deepseekApiKey: settings?.deepseekApiKey ?? '',
   }
 }
 
@@ -881,6 +958,10 @@ function normalizeDesktopTerminalSettings(
     customShellPath: typeof settings?.customShellPath === 'string'
       ? settings.customShellPath
       : DEFAULT_DESKTOP_TERMINAL_SETTINGS.customShellPath,
+    // Forward read migration for shell-only settings. Do not rewrite the
+    // user-owned JSON until a preference is explicitly saved.
+    fontFamily: typeof settings?.fontFamily === 'string' ? settings.fontFamily.trim() : '',
+    fontSize: normalizeTerminalFontSize(settings?.fontSize),
   }
 }
 

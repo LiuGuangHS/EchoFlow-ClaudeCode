@@ -13,10 +13,11 @@ import {
 } from '../../lib/backgroundTasks'
 import { toAgentIdRef } from '../../api/subagents'
 import type { WorkflowAgentEvent, WorkflowRun } from '../../types/workflow'
+import type { DelegatedSessionRow } from '../sessionDelegation/sessionDelegationModel'
 
 export type ActivityStatus = TaskStatus | BackgroundAgentTask['status'] | TeamMember['status']
 
-export type ActivitySectionId = 'output' | 'tasks' | 'team' | 'workflow' | 'backgroundTasks' | 'subagents' | 'sources'
+export type ActivitySectionId = 'output' | 'tasks' | 'team' | 'workflow' | 'backgroundTasks' | 'subagents' | 'sessions' | 'sources'
 
 export type ActivityRow = {
   id: string
@@ -50,6 +51,8 @@ export type ActivityRow = {
   usage?: BackgroundAgentTaskUsage
   updatedAt?: number | string
   member?: TeamMember
+  /** A session this run delegated through CreateSessions. */
+  delegatedSession?: DelegatedSessionRow
   taskHistory?: {
     completed: number
     total: number
@@ -106,6 +109,8 @@ export type BuildSessionActivityModelInput = {
   includeTeamActivity?: boolean
   /** Live workflow runs for this session, newest first. */
   workflowRuns?: WorkflowRun[]
+  /** Sessions this run delegated, from the collaboration snapshot. */
+  delegatedSessions?: DelegatedSessionRow[]
 }
 
 export type BuildMainSessionActivityModelInput = Omit<
@@ -124,6 +129,9 @@ export const VISIBLE_ACTIVITY_SECTION_ORDER = [
   // individual agents it spawned rather than among them.
   'workflow',
   'subagents',
+  // Delegated sessions are agents this turn handed work to, like SubAgents,
+  // but each runs as its own session with its own model.
+  'sessions',
   'team',
   'backgroundTasks',
   'sources',
@@ -138,6 +146,7 @@ const SECTION_META: Record<ActivitySectionId, Pick<ActivitySection, 'title' | 'e
   workflow: { title: 'Workflow', emptyLabel: 'No workflow running' },
   backgroundTasks: { title: 'Background Tasks', emptyLabel: 'No background tasks' },
   subagents: { title: 'SubAgents', emptyLabel: 'No SubAgents' },
+  sessions: { title: 'Delegated sessions', emptyLabel: 'No delegated sessions' },
   sources: { title: 'Sources', emptyLabel: 'No sources' },
 }
 
@@ -149,6 +158,7 @@ function createEmptySections(): Record<ActivitySectionId, ActivitySection> {
     workflow: createSection('workflow'),
     backgroundTasks: createSection('backgroundTasks'),
     subagents: createSection('subagents'),
+    sessions: createSection('sessions'),
     sources: createSection('sources'),
   }
 }
@@ -811,8 +821,11 @@ function buildTaskRowsFromTaskTools(
     if (message.type !== 'tool_use') continue
 
     if (message.toolName === 'TaskCreate') {
+      const toolResult = resultsByToolUseId.get(message.toolUseId)
+      // 被中断取消或被 TaskCreated hook 拦下的 TaskCreate 没有建出任务，不能按调用序号补一行
+      if (toolResult?.isError) continue
       const input = isRecordValue(message.input) ? message.input : {}
-      const result = parseCreatedTaskResult(resultsByToolUseId.get(message.toolUseId)?.content)
+      const result = parseCreatedTaskResult(toolResult?.content)
       const taskId = result?.id || stringField(input, 'taskId') || stringField(input, 'id') || `${createIndex + 1}`
       const row = buildTaskToolRow(taskId, input, createIndex, result)
       rowsByTaskId.set(taskId, row)
@@ -1153,6 +1166,37 @@ function buildOutputRow(key: string, outputFile: string): ActivityRow {
   }
 }
 
+function delegatedSessionActivityStatus(row: DelegatedSessionRow): ActivityStatus {
+  switch (row.status) {
+    case 'running':
+      return 'running'
+    case 'idle':
+      return 'idle'
+    case 'completed':
+      return 'completed'
+    case 'failed':
+      return 'failed'
+    // Not started, queued, waiting on input or paused: each waits on something.
+    case 'review':
+    case 'launching':
+    case 'queued':
+    case 'blocked':
+    case 'paused':
+      return 'pending'
+  }
+}
+
+function buildDelegatedSessionRow(session: DelegatedSessionRow): ActivityRow {
+  return {
+    id: `session:${session.key}`,
+    section: 'sessions',
+    label: session.title,
+    status: delegatedSessionActivityStatus(session),
+    delegatedSession: session,
+    openable: Boolean(session.sessionId),
+  }
+}
+
 export function buildSessionActivityModel(input: BuildSessionActivityModelInput): SessionActivityModel {
   const sections = createEmptySections()
   let badgeCount = 0
@@ -1185,11 +1229,6 @@ export function buildSessionActivityModel(input: BuildSessionActivityModelInput)
       badgeCount += 1
     }
   }
-  const workflowTaskIds = new Set(
-    (input.workflowRuns ?? [])
-      .filter((run) => buildWorkflowRows(run).length > 0)
-      .map((run) => run.taskId),
-  )
 
   if (includeTeamActivity) {
     for (const member of input.teamMembers ?? []) {
@@ -1232,9 +1271,6 @@ export function buildSessionActivityModel(input: BuildSessionActivityModelInput)
   }
 
   for (const task of input.backgroundTasks) {
-    if (task.taskType === 'local_workflow' && workflowTaskIds.has(task.taskId)) {
-      continue
-    }
     if (!isVisibleSessionBackgroundTask(task)) {
       hiddenChildTaskIds.add(task.taskId)
       continue
@@ -1318,6 +1354,13 @@ export function buildSessionActivityModel(input: BuildSessionActivityModelInput)
     }
   }
 
+  sections.sessions.rows = (input.delegatedSessions ?? []).map(buildDelegatedSessionRow)
+  for (const row of sections.sessions.rows) {
+    if (isBadgeStatus(row.status)) {
+      badgeCount += 1
+    }
+  }
+
   return {
     sessionId: input.sessionId,
     badgeCount,
@@ -1339,4 +1382,84 @@ export function buildMainSessionActivityModel(
     taskScope: 'team-session',
     includeTeamActivity: false,
   })
+}
+
+function sameItems<T>(a: readonly T[] | undefined, b: readonly T[] | undefined): boolean {
+  if (a === b) return true
+  if (!a || !b || a.length !== b.length) return false
+  return a.every((item, index) => item === b[index])
+}
+
+function sameKeys(a: ReadonlySet<string> | undefined, b: ReadonlySet<string> | undefined): boolean {
+  if (a === b) return true
+  if (!a || !b || a.size !== b.size) return false
+  for (const key of a) if (!b.has(key)) return false
+  return true
+}
+
+function sameWindows(
+  a: BuildMainSessionActivityModelInput['teamTaskWindows'],
+  b: BuildMainSessionActivityModelInput['teamTaskWindows'],
+): boolean {
+  if (a === b) return true
+  if (!a || !b || a.length !== b.length) return false
+  return a.every((window, index) => (
+    window.startedAt === b[index]!.startedAt && window.endedAt === b[index]!.endedAt
+  ))
+}
+
+// Every input field must be compared below; a new field fails to type-check
+// here until it is, instead of being silently served from a stale model.
+const COMPARED_MAIN_SESSION_ACTIVITY_INPUTS = {
+  sessionId: true,
+  messages: true,
+  completedAndDismissed: true,
+  isForegroundTurnActive: true,
+  tasks: true,
+  backgroundTasks: true,
+  agentNotifications: true,
+  workflowRuns: true,
+  dismissedBackgroundTaskKeys: true,
+  teamTaskWindows: true,
+  delegatedSessions: true,
+} as const satisfies Record<keyof BuildMainSessionActivityModelInput, true>
+void COMPARED_MAIN_SESSION_ACTIVITY_INPUTS
+
+function sameMainSessionActivityInput(
+  a: BuildMainSessionActivityModelInput,
+  b: BuildMainSessionActivityModelInput,
+): boolean {
+  return a.sessionId === b.sessionId &&
+    a.messages === b.messages &&
+    a.completedAndDismissed === b.completedAndDismissed &&
+    Boolean(a.isForegroundTurnActive) === Boolean(b.isForegroundTurnActive) &&
+    sameItems(a.tasks, b.tasks) &&
+    sameItems(a.backgroundTasks, b.backgroundTasks) &&
+    sameItems(a.agentNotifications, b.agentNotifications) &&
+    sameItems(a.workflowRuns, b.workflowRuns) &&
+    sameKeys(a.dismissedBackgroundTaskKeys, b.dismissedBackgroundTaskKeys) &&
+    sameWindows(a.teamTaskWindows, b.teamTaskWindows) &&
+    sameItems(a.delegatedSessions, b.delegatedSessions)
+}
+
+let lastMainSessionActivity: {
+  input: BuildMainSessionActivityModelInput
+  model: SessionActivityModel
+} | null = null
+
+/**
+ * `buildMainSessionActivityModel` for the session on screen, shared by the tab
+ * bar and the session page. The model walks the whole transcript, and both of
+ * them derive it for the same session from the same store state, so the second
+ * caller reuses the first one's result. Inputs are compared by identity, item
+ * by item, because each caller rebuilds its arrays and sets from that state.
+ */
+export function getMainSessionActivityModel(
+  input: BuildMainSessionActivityModelInput,
+): SessionActivityModel {
+  const last = lastMainSessionActivity
+  if (last && sameMainSessionActivityInput(last.input, input)) return last.model
+  const model = buildMainSessionActivityModel(input)
+  lastMainSessionActivity = { input, model }
+  return model
 }

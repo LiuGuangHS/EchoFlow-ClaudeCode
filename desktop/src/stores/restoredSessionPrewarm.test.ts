@@ -66,7 +66,7 @@ describe('restored session prewarm', () => {
   })
 
   it('does not prewarm an existing transcript after the real tab restore sequence', async () => {
-    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
+    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
       openTabs: [{ sessionId: SESSION_ID, title: 'Existing transcript', type: 'session' }],
       activeTabId: SESSION_ID,
     }))
@@ -88,7 +88,9 @@ describe('restored session prewarm', () => {
     const restoredSessionId = useTabStore.getState().activeTabId
 
     expect(restoredSessionId).toBe(SESSION_ID)
-    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(useSessionStore.getState().sessions).toEqual([
+      expect.objectContaining({ id: SESSION_ID, title: 'Existing transcript', messageCount: 4 }),
+    ])
 
     useChatStore.getState().connectToSession(restoredSessionId!)
 

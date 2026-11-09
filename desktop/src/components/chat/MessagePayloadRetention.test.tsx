@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AttachmentGallery } from '@/components/chat/AttachmentGallery'
 import { MessageActionBar } from '@/components/chat/MessageActionBar'
@@ -53,13 +53,15 @@ describe('complete message payloads', () => {
     await act(async () => {
       render(<ToolCallBlock toolName="Edit" input={message.input} result={{ content: 'Successfully edited file', isError: false }} defaultExpanded />)
     })
-    expect(screen.getByText('+1')).toBeInTheDocument()
-    expect(screen.getByText('-130')).toBeInTheDocument()
+    // Counted over the whole payload, in the diff block's own head.
+    const diffHead = within(document.querySelector<HTMLElement>('[data-diff-block]')!)
+    expect(diffHead.getByText('+1')).toBeInTheDocument()
+    expect(diffHead.getByText('−130')).toBeInTheDocument()
     expect(screen.getByText('HEAD_SENTINEL')).toBeInTheDocument()
     expect(screen.getAllByText(oldLine)).toHaveLength(128)
     expect(screen.getByText('TAIL_SENTINEL')).toBeInTheDocument()
     expect(screen.getByText('fixed')).toBeInTheDocument()
-  }, 15_000)
+  })
 
   it('copies the entire retained reply including its beginning and end', async () => {
     const content = 'HEAD_SENTINEL' + 'm'.repeat(70_000) + 'TAIL_SENTINEL'

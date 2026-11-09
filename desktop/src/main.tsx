@@ -12,8 +12,8 @@ import { initializeChatAppearance } from './stores/chatAppearanceStore'
 
 declare global {
   interface Window {
-    __ECHOFLOW_BOOTSTRAPPED__?: boolean
-    __ECHOFLOW_SHOW_STARTUP_ERROR__?: (reason: unknown) => void
+    __CC_HAHA_BOOTSTRAPPED__?: boolean
+    __CC_HAHA_SHOW_STARTUP_ERROR__?: (reason: unknown) => void
   }
 }
 
@@ -31,14 +31,14 @@ export function isPetWindowLocation(search = window.location.search): boolean {
 /**
  * Whether this renderer is the one that owns workspace state.
  *
- * Every window — main, pet, and each detached trace window — loads this same
- * entry. They share one `localStorage` origin, and the workspace document is
- * written whole rather than merged per session, so a second writer would
- * overwrite the main window's state with whatever it hydrated at open time.
+ * Every window — main and pet — loads this same entry. They share one
+ * `localStorage` origin, and the workspace document is written whole rather
+ * than merged per session, so a second writer would overwrite the main
+ * window's state with whatever it hydrated at open time.
  */
 export function isPrimaryWorkspaceWindow(search = window.location.search): boolean {
   const params = new URLSearchParams(search)
-  return params.get('petWindow') !== '1' && params.get('traceWindow') !== '1'
+  return params.get('petWindow') !== '1'
 }
 
 function loadDesktopBootstrapModules() {
@@ -78,12 +78,12 @@ export async function bootstrapDesktopApp(
         </ErrorBoundary>
       </React.StrictMode>,
     )
-    window.__ECHOFLOW_BOOTSTRAPPED__ = true
+    window.__CC_HAHA_BOOTSTRAPPED__ = true
   } catch (error) {
     console.error('[desktop] Failed to bootstrap app', error)
     if (root) {
-      if (window.__ECHOFLOW_SHOW_STARTUP_ERROR__) {
-        window.__ECHOFLOW_SHOW_STARTUP_ERROR__(error)
+      if (window.__CC_HAHA_SHOW_STARTUP_ERROR__) {
+        window.__CC_HAHA_SHOW_STARTUP_ERROR__(error)
       } else {
         root.textContent = error instanceof Error ? error.message : String(error)
       }

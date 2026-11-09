@@ -1,5 +1,6 @@
 import { spawn, spawnSync, type ChildProcessByStdio } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { areStorageWritesFrozen } from './storageMaintenance'
 import {
   constants as fsConstants,
   closeSync,
@@ -17,12 +18,14 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import type { Readable } from 'node:stream'
+import type { Readable, Writable } from 'node:stream'
 import http from 'node:http'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { isBrowserSafePort } from '../../src/lib/browserSafePort'
+import { formatSidecarStartupTimeout } from '../../src/lib/sidecarStartupError'
+import { redactDiagnosticText } from '../../../src/server/services/diagnosticRedaction'
 
 export const SERVER_BIND_HOST = '0.0.0.0'
 export const SERVER_CONTROL_HOST = '127.0.0.1'
@@ -30,8 +33,8 @@ export const SERVER_STARTUP_TIMEOUT_MS = 30_000
 export const SERVER_STARTUP_LOG_LIMIT = 80
 export const HOST_DIAGNOSTICS_LINE_LIMIT = 80
 export const HOST_DIAGNOSTICS_BYTE_LIMIT = 256 * 1024
-export const ELECTRON_DIAGNOSTICS_FILE_ENV = 'ECHOFLOW_ELECTRON_DIAGNOSTICS_FILE'
-export const RIPGREP_PATH_ENV = 'ECHOFLOW_RIPGREP_PATH'
+export const ELECTRON_DIAGNOSTICS_FILE_ENV = 'CC_HAHA_ELECTRON_DIAGNOSTICS_FILE'
+export const RIPGREP_PATH_ENV = 'CC_HAHA_RIPGREP_PATH'
 const HOST_DIAGNOSTICS_LINE_BYTE_LIMIT = 4096
 // Shared with the Tauri shell (src-tauri/src/lib.rs) so both desktop builds
 // reuse the same sticky port across restarts (issue #767).
@@ -41,7 +44,7 @@ const MIN_FIXED_PORT = 1024
 const MAX_FIXED_PORT = 65535
 const MAX_PORT_RESERVATION_ATTEMPTS = 128
 
-export type SidecarChild = ChildProcessByStdio<null, Readable, Readable>
+export type SidecarChild = ChildProcessByStdio<Writable | null, Readable, Readable>
 
 export type SidecarPlan = {
   command: string
@@ -62,8 +65,8 @@ const PROXY_ENV_KEYS = [
   'ALL_PROXY',
   'all_proxy',
 ] as const
-export const SYSTEM_PROXY_BRIDGE_ENV = 'ECHOFLOW_SYSTEM_PROXY_URL'
-export const SYSTEM_PROXY_ERROR_ENV = 'ECHOFLOW_SYSTEM_PROXY_ERROR'
+export const SYSTEM_PROXY_BRIDGE_ENV = 'CC_HAHA_SYSTEM_PROXY_URL'
+export const SYSTEM_PROXY_ERROR_ENV = 'CC_HAHA_SYSTEM_PROXY_ERROR'
 const LOOPBACK_NO_PROXY_ENTRIES = ['localhost', '127.0.0.1', '::1'] as const
 
 export function resolveHostTriple(platform = process.platform, arch = process.arch): string {
@@ -194,26 +197,19 @@ export async function reserveServerPort(
 
 export function claudeConfigDir(
   env: NodeJS.ProcessEnv = process.env,
-  homeDir: string = os.homedir(),
-): string {
-  return env.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDir, '.claude')
-}
-
-function echoFlowInternalDir(
-  env: NodeJS.ProcessEnv = process.env,
   homeDir = os.homedir(),
 ): string {
-  return path.join(claudeConfigDir(env, homeDir), 'echoflow-code')
+  return env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude')
 }
 
 export function electronHostDiagnosticsFile(
   env: NodeJS.ProcessEnv = process.env,
   homeDir = os.homedir(),
 ): string {
-  return path.join(echoFlowInternalDir(env, homeDir), 'diagnostics', 'electron-host.log')
+  return path.join(claudeConfigDir(env, homeDir), 'cc-haha', 'diagnostics', 'electron-host.log')
 }
 
-/** Parse h5Access.fixedPort out of echoflow-code/settings.json contents. */
+/** Parse h5Access.fixedPort out of cc-haha/settings.json contents. */
 export function parseH5FixedPort(contents: string): number | null {
   let value: unknown
   try {
@@ -231,7 +227,7 @@ export function parseH5FixedPort(contents: string): number | null {
 
 export function readH5FixedPort(env: NodeJS.ProcessEnv = process.env): number | null {
   try {
-    const settingsPath = path.join(echoFlowInternalDir(env), 'settings.json')
+    const settingsPath = path.join(claudeConfigDir(env), 'cc-haha', 'settings.json')
     return parseH5FixedPort(readFileSync(settingsPath, 'utf-8'))
   } catch {
     return null
@@ -286,8 +282,34 @@ export async function waitForServer(host: string, port: number, timeoutMs = SERV
     await sleep(150)
   }
 
-  const reason = lastError ? `: ${lastError.message}` : ''
-  throw new Error(`desktop server did not report healthy at ${healthUrl} within ${Math.round(timeoutMs / 1000)} seconds${reason}`)
+  // Which failure this is decides what the user can do about it: a port that
+  // never opened means the sidecar is still before its bind, while an open port
+  // with a silent /health means the event loop is busy (typically a local index
+  // rebuild). Collapsing both into one message sent every reader of #1746 down
+  // the wrong path.
+  throw new Error(formatSidecarStartupTimeout({
+    listening: await isPortListening(host, port),
+    host,
+    port,
+    healthUrl,
+    timeoutMs,
+    lastProbeError: lastError?.message,
+  }))
+}
+
+/** Best-effort TCP connect probe: distinguishes "not bound yet" from "busy". */
+async function isPortListening(host: string, port: number): Promise<boolean> {
+  return await new Promise<boolean>(resolve => {
+    const socket = net.connect({ host, port })
+    const settle = (listening: boolean) => {
+      socket.removeAllListeners()
+      socket.destroy()
+      resolve(listening)
+    }
+    socket.setTimeout(500, () => settle(false))
+    socket.once('connect', () => settle(true))
+    socket.once('error', () => settle(false))
+  })
 }
 
 async function assertServerHealth(healthUrl: string, timeoutMs: number): Promise<void> {
@@ -349,7 +371,7 @@ export function appendHostDiagnostic(
   line: string,
   { homeDir = os.homedir() }: { homeDir?: string } = {},
 ): void {
-  if (!filePath) return
+  if (areStorageWritesFrozen() || !filePath) return
   const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`
   let tempDescriptor: number | undefined
   try {
@@ -407,7 +429,7 @@ export function appendHostDiagnostic(
 function ensurePrivateHostDiagnosticsDirectory(directory: string): void {
   const parent = path.dirname(directory)
   const rootBoundary = path.basename(directory) === 'diagnostics' &&
-      path.basename(parent) === 'echoflow-code'
+      path.basename(parent) === 'cc-haha'
     ? path.dirname(parent)
     : parent
   mkdirSync(rootBoundary, { recursive: true, mode: 0o700 })
@@ -511,7 +533,7 @@ function readHostDiagnosticsTail(filePath: string): string {
 }
 
 export function sanitizeHostDiagnostic(line: string, homeDir = os.homedir()): string {
-  let sanitized = line
+  let sanitized = redactDiagnosticText(line)
     .replace(/[\r\n]+/g, ' ')
     .replace(/https?:\/\/[^\s<>"')\]}]+/gi, candidate => sanitizeUrlUserinfo(candidate))
     .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
@@ -544,7 +566,7 @@ function sanitizeUrlUserinfo(candidate: string): string {
 export function formatStartupError(message: string, logs: string[]): string {
   const logText = logs.length > 0
     ? logs.join('\n')
-    : 'No server stdout/stderr was captured before the timeout.'
+    : 'No server stdout/stderr was captured before startup failed.'
   return `${message}\n\nRecent server logs:\n${logText}`
 }
 
@@ -709,16 +731,31 @@ export function createAdapterPlan({
   }
 }
 
+// Synchronous spawn errors that mean the sidecar file exists but the OS refused
+// to run it (Node reports EACCES/ENOENT asynchronously instead). On Windows
+// EFTYPE is ERROR_BAD_EXE_FORMAT: a truncated or replaced binary, typically
+// left by an interrupted install or a security tool (#1486).
+const UNEXECUTABLE_SIDECAR_ERROR_CODES = new Set(['EFTYPE', 'ENOEXEC', 'EPERM', 'EBUSY', 'UNKNOWN'])
+
 export function spawnSidecar(plan: SidecarPlan, deps: SpawnSidecarDeps = {}): SidecarChild {
   const exists = deps.existsSyncFn ?? existsSync
   if (!exists(plan.command)) {
     throw new Error(`Electron sidecar binary not found: ${plan.command}. Run "cd desktop && bun run build:sidecars" first.`)
   }
-  return (deps.spawnFn ?? spawn)(plan.command, plan.args, {
-    env: plan.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  })
+  try {
+    return (deps.spawnFn ?? spawn)(plan.command, plan.args, {
+      env: plan.env,
+      stdio: [plan.env.CC_HAHA_MIGRATION_CONTROL === '1' && plan.args[0] === 'adapters' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    }) as SidecarChild
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code
+    if (typeof code !== 'string' || !UNEXECUTABLE_SIDECAR_ERROR_CODES.has(code)) throw error
+    throw new Error(
+      `Electron sidecar could not be executed (${code}): ${plan.command}. The file may be damaged, incomplete, or blocked by security software. Reinstall Claude Code Haha with the full installer, and allow its install directory in your security software if this keeps happening.`,
+      { cause: error },
+    )
+  }
 }
 
 export type KillSidecarDeps = {

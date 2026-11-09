@@ -1,4 +1,6 @@
+import { isIdlePowerSettings } from '../../src/lib/idlePower'
 import { PUBLIC_ACCESS_CONSENT_VERSION } from '../../src/lib/desktopHost/types'
+import { isPublicAccessConfiguration } from '../../src/lib/desktopHost/publicAccessConfiguration'
 import { ELECTRON_IPC_CHANNELS, type ElectronIpcChannel } from './channels'
 
 type Validator = (payload: unknown) => boolean
@@ -7,26 +9,27 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const noPayload: Validator = value => value === undefined
-const echoFlowLoginEndpoint: Validator = value =>
-  value === undefined
-  || (isRecord(value)
-    && hasOnlyKeys(value, ['endpoint'])
-    && (value.endpoint === 'main' || value.endpoint === 'dedicated'))
 const optionalRecord: Validator = value => value === undefined || isRecord(value)
 const stringPayload: Validator = value => typeof value === 'string'
 const booleanPayload: Validator = value => typeof value === 'boolean'
-const claudeCodeRuntimeId: Validator = value => value === 'bundled' || value === 'installed'
-const runtimeDiscoveryOptions: Validator = value => {
-  if (value === undefined) return true
-  return isRecord(value) && hasOnlyKeys(value, ['includeWsl']) && typeof value.includeWsl === 'boolean'
-}
-const runtimeDiscoveryPath: Validator = value => typeof value === 'string'
-  && value.length > 0
-  && value.length <= 4096
-  && (value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value))
-  && !/[\u0000-\u001f\u007f]/.test(value)
 const hasOnlyKeys = (value: Record<string, unknown>, allowedKeys: string[]) =>
   Object.keys(value).every(key => allowedKeys.includes(key))
+
+const migrationPrepare: Validator = value =>
+  isRecord(value)
+  && hasOnlyKeys(value, ['targetDir'])
+  && typeof value.targetDir === 'string'
+  && value.targetDir.trim().length > 0
+  && value.targetDir.length <= 32_768
+  && !/[\u0000-\u001f\u007f]/.test(value.targetDir)
+
+const migrationIdentity: Validator = value =>
+  isRecord(value)
+  && hasOnlyKeys(value, ['id'])
+  && typeof value.id === 'string'
+  && value.id.length > 0
+  && value.id.length <= 200
+  && /^[A-Za-z0-9._:-]+$/.test(value.id)
 
 const MAX_TERMINAL_DIMENSION = 1_000
 const MAX_TERMINAL_CWD_LENGTH = 4_096
@@ -214,14 +217,17 @@ const workspaceBrowserTab: Validator = value =>
   && hasOnlyKeys(value, ['tabId'])
   && isWorkspaceBrowserId(value.tabId)
 
+// `webContentsId` names the renderer's `<webview>` guest. It is only a claim:
+// the main process adopts it solely if it is a browser guest of the main window.
 const workspaceBrowserCreate: Validator = value =>
   isRecord(value)
-  && hasOnlyKeys(value, ['tabId', 'storageId', 'url', 'bounds', 'visible'])
+  && hasOnlyKeys(value, ['tabId', 'storageId', 'url', 'webContentsId'])
   && isWorkspaceBrowserId(value.tabId)
   && isWorkspaceBrowserId(value.storageId)
   && (value.url === undefined || (typeof value.url === 'string' && value.url.length <= 8_192))
-  && (value.bounds === undefined || boundsPayload(value.bounds))
-  && (value.visible === undefined || typeof value.visible === 'boolean')
+  && typeof value.webContentsId === 'number'
+  && Number.isSafeInteger(value.webContentsId)
+  && value.webContentsId > 0
 
 const workspaceBrowserMenuLabelKeys = ['find', 'print', 'zoom', 'zoomIn', 'zoomOut', 'zoomReset', 'capture', 'pickElement', 'downloads', 'history', 'openExternal']
 
@@ -254,12 +260,6 @@ const workspaceBrowserReload: Validator = value =>
   && hasOnlyKeys(value, ['tabId', 'ignoreCache'])
   && isWorkspaceBrowserId(value.tabId)
   && (value.ignoreCache === undefined || typeof value.ignoreCache === 'boolean')
-
-const workspaceBrowserSetBounds: Validator = value =>
-  isRecord(value)
-  && hasOnlyKeys(value, ['tabId', 'bounds'])
-  && isWorkspaceBrowserId(value.tabId)
-  && boundsPayload(value.bounds)
 
 const workspaceBrowserSetVisible: Validator = value =>
   isRecord(value)
@@ -313,30 +313,10 @@ const appliedAppearance: Validator = value =>
   && typeof value.lightBackground === 'string'
   && HEX_COLOR.test(value.lightBackground)
 
-const MAX_UPDATE_PROXY_URL_LENGTH = 2_048
-
-function isValidUpdateProxyUrl(value: unknown): value is string {
-  if (typeof value !== 'string') return false
-  const trimmed = value.trim()
-  if (!trimmed || trimmed.length > MAX_UPDATE_PROXY_URL_LENGTH) return false
-  if (/[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) return false
-
-  try {
-    const url = new URL(trimmed)
-    return (url.protocol === 'http:' || url.protocol === 'https:')
-      && !!url.hostname
-      && !url.username
-      && !url.password
-      && (url.port === '' || Number(url.port) >= 1 && Number(url.port) <= 65_535)
-  } catch {
-    return false
-  }
-}
-
 const updateCheckOptions: Validator = value => {
   if (value === undefined) return true
   if (!isRecord(value) || !hasOnlyKeys(value, ['proxy'])) return false
-  return value.proxy === undefined || isValidUpdateProxyUrl(value.proxy)
+  return value.proxy === undefined || (typeof value.proxy === 'string' && value.proxy.trim().length > 0)
 }
 
 const localePreference: Validator = value =>
@@ -347,38 +327,32 @@ const localePreference: Validator = value =>
   || value === 'kr'
 
 export const ELECTRON_IPC_VALIDATORS = {
-  [ELECTRON_IPC_CHANNELS.echoFlowLoginOpen]: echoFlowLoginEndpoint,
-  [ELECTRON_IPC_CHANNELS.echoFlowSignOut]: echoFlowLoginEndpoint,
-  [ELECTRON_IPC_CHANNELS.echoFlowWhenRestored]: noPayload,
   [ELECTRON_IPC_CHANNELS.configImportTake]: noPayload,
   [ELECTRON_IPC_CHANNELS.configImportAck]: noPayload,
   [ELECTRON_IPC_CHANNELS.appGetVersion]: noPayload,
+  [ELECTRON_IPC_CHANNELS.powerSetPreventSleepWhileRunning]: booleanPayload,
+  [ELECTRON_IPC_CHANNELS.powerGetIdleActionState]: noPayload,
+  [ELECTRON_IPC_CHANNELS.powerConfigureIdleAction]: isIdlePowerSettings,
+  [ELECTRON_IPC_CHANNELS.powerCancelIdleAction]: noPayload,
   [ELECTRON_IPC_CHANNELS.appGetLocalePreference]: noPayload,
   [ELECTRON_IPC_CHANNELS.appSetLocalePreference]: localePreference,
   [ELECTRON_IPC_CHANNELS.appGetPreferredSystemLanguages]: noPayload,
   [ELECTRON_IPC_CHANNELS.publicAccessGetStatus]: noPayload,
-  [ELECTRON_IPC_CHANNELS.publicAccessSaveCredential]: value => typeof value === 'string' && value.trim().length > 0 && value.length <= 4096 && !/\s/.test(value.trim()),
-  [ELECTRON_IPC_CHANNELS.publicAccessDeleteCredential]: noPayload,
+  [ELECTRON_IPC_CHANNELS.publicAccessConfigure]: isPublicAccessConfiguration,
   // Tracks the shared consent constant so a version bump cannot silently
   // invalidate the payload the renderer actually sends.
   [ELECTRON_IPC_CHANNELS.publicAccessStart]: value => value === PUBLIC_ACCESS_CONSENT_VERSION,
   [ELECTRON_IPC_CHANNELS.publicAccessStop]: noPayload,
   [ELECTRON_IPC_CHANNELS.publicAccessSetAutoStart]: booleanPayload,
+  [ELECTRON_IPC_CHANNELS.publicAccessSetP2PEnabled]: booleanPayload,
   [ELECTRON_IPC_CHANNELS.runtimeGetServerUrl]: noPayload,
   [ELECTRON_IPC_CHANNELS.runtimeGetLocalAccessToken]: noPayload,
   [ELECTRON_IPC_CHANNELS.runtimeGetPetAccessToken]: noPayload,
-  [ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode]: noPayload,
-  [ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode]: noPayload,
-  [ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode]: claudeCodeRuntimeId,
-  [ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet]: runtimeDiscoveryOptions,
-  [ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath]: runtimeDiscoveryPath,
   [ELECTRON_IPC_CHANNELS.commandInvoke]: commandInvoke,
   [ELECTRON_IPC_CHANNELS.clipboardReadText]: noPayload,
   [ELECTRON_IPC_CHANNELS.clipboardWriteText]: stringPayload,
   [ELECTRON_IPC_CHANNELS.shellOpen]: stringPayload,
   [ELECTRON_IPC_CHANNELS.shellOpenPath]: stringPayload,
-  [ELECTRON_IPC_CHANNELS.shellShowItemInFolder]: stringPayload,
-  [ELECTRON_IPC_CHANNELS.traceOpenWindow]: sessionIdPayload,
   [ELECTRON_IPC_CHANNELS.petsList]: noPayload,
   [ELECTRON_IPC_CHANNELS.petsCreateFromImage]: petCreateFromAtlas,
   [ELECTRON_IPC_CHANNELS.petsCreateFromAtlas]: petCreateFromAtlas,
@@ -432,13 +406,11 @@ export const ELECTRON_IPC_VALIDATORS = {
   [ELECTRON_IPC_CHANNELS.workspaceBrowserGoForward]: workspaceBrowserTab,
   [ELECTRON_IPC_CHANNELS.workspaceBrowserReload]: workspaceBrowserReload,
   [ELECTRON_IPC_CHANNELS.workspaceBrowserStop]: workspaceBrowserTab,
-  [ELECTRON_IPC_CHANNELS.workspaceBrowserSetBounds]: workspaceBrowserSetBounds,
   [ELECTRON_IPC_CHANNELS.workspaceBrowserSetVisible]: workspaceBrowserSetVisible,
   [ELECTRON_IPC_CHANNELS.workspaceBrowserSetZoom]: workspaceBrowserSetZoom,
   [ELECTRON_IPC_CHANNELS.workspaceBrowserFind]: workspaceBrowserFind,
   [ELECTRON_IPC_CHANNELS.workspaceBrowserStopFind]: workspaceBrowserTab,
   [ELECTRON_IPC_CHANNELS.workspaceBrowserCapture]: workspaceBrowserCapture,
-  [ELECTRON_IPC_CHANNELS.workspaceBrowserSnapshot]: workspaceBrowserTab,
   [ELECTRON_IPC_CHANNELS.workspaceBrowserMessage]: workspaceBrowserMessage,
   [ELECTRON_IPC_CHANNELS.workspaceBrowserPrintToPdf]: workspaceBrowserTab,
   [ELECTRON_IPC_CHANNELS.workspaceBrowserClose]: workspaceBrowserTab,
@@ -446,13 +418,11 @@ export const ELECTRON_IPC_VALIDATORS = {
   [ELECTRON_IPC_CHANNELS.appModeSet]: optionalRecord,
   [ELECTRON_IPC_CHANNELS.appModePrepareRestart]: noPayload,
   [ELECTRON_IPC_CHANNELS.appModeRestart]: noPayload,
+  [ELECTRON_IPC_CHANNELS.migrationPrepare]: migrationPrepare,
+  [ELECTRON_IPC_CHANNELS.migrationStart]: migrationIdentity,
+  [ELECTRON_IPC_CHANNELS.migrationStatus]: noPayload,
+  [ELECTRON_IPC_CHANNELS.migrationCancel]: migrationIdentity,
   [ELECTRON_IPC_CHANNELS.adaptersRestartSidecar]: noPayload,
-  [ELECTRON_IPC_CHANNELS.deepSeekHarnessGetStatus]: noPayload,
-  [ELECTRON_IPC_CHANNELS.deepSeekHarnessStart]: noPayload,
-  [ELECTRON_IPC_CHANNELS.deepSeekHarnessStop]: noPayload,
-  [ELECTRON_IPC_CHANNELS.deepSeekHarnessRestart]: noPayload,
-  [ELECTRON_IPC_CHANNELS.deepSeekHarnessUpdate]: noPayload,
-  [ELECTRON_IPC_CHANNELS.deepSeekHarnessOpen]: noPayload,
   [ELECTRON_IPC_CHANNELS.zoomSet]: zoomPayload,
   [ELECTRON_IPC_CHANNELS.appearanceSetApplied]: appliedAppearance,
 } satisfies Record<ElectronIpcChannel, Validator>

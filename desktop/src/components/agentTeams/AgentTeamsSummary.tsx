@@ -5,6 +5,7 @@ import { useTranslation, type TranslationKey } from '../../i18n'
 import type { TeamMember, TeamWorkbenchSnapshot } from '../../types/team'
 import { MEMBER_AVATARS } from './agentTeamsAvatars'
 import {
+  endedBeforeAnyMemberJoined,
   getMemberAvatarKey,
   getWorkbenchPhase,
   getWorkbenchProgress,
@@ -14,11 +15,15 @@ import {
 /** Faces beyond this collapse into a `+N`, so the strip never wraps. */
 const MAX_STACKED_AVATARS = 5
 
+/**
+ * The app-wide status vocabulary: work under way is `info`, done is `success`.
+ * Forming, running and finishing are all a team still at work; a team that
+ * ended before its work was done is neither.
+ */
 function phaseTone(phase: WorkbenchPhase): Tone {
-  if (phase === 'forming') return 'warning'
-  if (phase === 'running') return 'brand'
-  if (phase === 'finishing') return 'info'
-  return 'success'
+  if (phase === 'completed') return 'success'
+  if (phase === 'interrupted') return 'warning'
+  return phase === 'ended' ? 'neutral' : 'info'
 }
 
 function AvatarStack({
@@ -56,7 +61,7 @@ function AvatarStack({
       ))}
       {overflow > 0 ? (
         <span
-          className="inline-flex items-center justify-center rounded-full bg-[var(--color-surface-container)] font-mono text-[9px] font-extrabold text-[var(--color-text-secondary)] ring-1 ring-[var(--color-surface)]"
+          className="inline-flex items-center justify-center rounded-full bg-[var(--color-surface-container)] text-[11px] font-medium tabular-nums text-[var(--color-text-secondary)] ring-1 ring-[var(--color-surface)]"
           style={{ width: size, height: size, marginLeft: -Math.round(size * 0.32) }}
         >
           +{overflow}
@@ -75,13 +80,16 @@ export function AgentTeamsStrip({
   snapshot,
   onOpen,
   compact,
+  phaseOverride,
 }: {
   snapshot: TeamWorkbenchSnapshot
   onOpen: () => void
   compact: boolean
+  /** What the team's plan knows and its tasks cannot show (an interrupted launch). */
+  phaseOverride?: WorkbenchPhase
 }) {
   const t = useTranslation()
-  const phase = getWorkbenchPhase(snapshot)
+  const phase = phaseOverride ?? getWorkbenchPhase(snapshot)
   const progress = getWorkbenchProgress(snapshot)
   const members = snapshot.team.members
 
@@ -92,14 +100,14 @@ export function AgentTeamsStrip({
       onClick={onOpen}
       title={snapshot.team.name}
       className={[
-        'mt-2 flex w-full max-w-full items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-2.5 py-1.5 text-left transition-colors',
-        'hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-hover)]',
+        'mt-2 flex min-w-0 w-full max-w-full flex-wrap items-center gap-x-2 gap-y-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-2.5 py-1.5 text-left transition-colors',
+        'hover:border-[var(--color-outline)]',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]',
-        compact ? 'text-[11px]' : 'text-[12px]',
+        compact ? 'text-[11px]' : 'text-xs',
       ].join(' ')}
     >
-      <UsersRound size={compact ? 13 : 14} strokeWidth={2.25} aria-hidden="true" className="shrink-0 text-[var(--color-brand)]" />
-      <span className="shrink-0 font-semibold text-[var(--color-text-primary)]">
+      <UsersRound size={compact ? 12 : 14} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />
+      <span className="shrink-0 font-medium text-[var(--color-text-primary)]">
         {t('agentTeams.strip.label')}
       </span>
       <AvatarStack members={members} leadAgentId={snapshot.team.leadAgentId} size={compact ? 18 : 20} />
@@ -112,9 +120,9 @@ export function AgentTeamsStrip({
           {t('agentTeams.inline.tasks', { completed: progress.completed, total: progress.total })}
         </span>
       ) : null}
-      <span className="ml-auto flex shrink-0 items-center gap-0.5 font-medium text-[var(--color-brand)]">
+      <span className="ml-auto flex shrink-0 items-center gap-0.5 text-[var(--color-text-secondary)]">
         {t('agentTeams.inline.open')}
-        <ChevronRight size={12} strokeWidth={2.4} aria-hidden="true" />
+        <ChevronRight size={12} strokeWidth={2} aria-hidden="true" />
       </span>
     </button>
   )
@@ -144,35 +152,38 @@ export function AgentTeamsInlineCard({
   const phase = phaseOverride ?? (snapshot ? getWorkbenchPhase(snapshot) : fallbackPhase)
   const progress = snapshot ? getWorkbenchProgress(snapshot) : { completed: 0, total: 0 }
   const members = snapshot?.team.members ?? []
-  const canOpen = Boolean(snapshot && onOpen)
+  // A team cancelled before any member joined never ran: it is neither done
+  // nor has a run report to open.
+  const notStarted = snapshot !== undefined && endedBeforeAnyMemberJoined(snapshot)
+  const canOpen = Boolean(snapshot && onOpen && !notStarted)
 
   return (
-    <div className="mb-5 px-1">
+    <div className="@container mb-5 min-w-0 max-w-full">
       <button
         type="button"
         data-testid="agent-teams-inline-card"
         onClick={onOpen}
         disabled={!canOpen}
-        className="flex w-full items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-3.5 py-2.5 text-left shadow-[var(--shadow-card)] transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
+        className="flex min-w-0 w-full max-w-full flex-wrap items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-3 py-2.5 text-left transition-colors enabled:hover:border-[var(--color-outline)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
       >
         {members.length > 0 ? (
           <AvatarStack members={members} leadAgentId={snapshot?.team.leadAgentId} size={30} />
         ) : (
-          <span className="inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-container)] text-[var(--color-brand)] ring-1 ring-[var(--color-border)]">
-            <UsersRound size={16} strokeWidth={2.2} aria-hidden="true" />
+          <span className="inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-container)] text-[var(--color-text-secondary)]">
+            <UsersRound size={16} strokeWidth={1.75} aria-hidden="true" />
           </span>
         )}
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="min-w-0 truncate font-mono text-[12px] font-extrabold text-[var(--color-text-primary)]">
+        <span className="min-w-0 flex-1 basis-36">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span className="min-w-0 truncate text-[13px] font-medium text-[var(--color-text-primary)]">
               {teamName}
             </span>
-            <Badge tone={phaseTone(phase)} size="xs" bordered>
-              {t(`agentTeams.phase.${phase}` as TranslationKey)}
+            <Badge tone={notStarted ? 'neutral' : phaseTone(phase)} size="xs">
+              {notStarted ? t('agentTeams.inline.notStarted') : t(`agentTeams.phase.${phase}` as TranslationKey)}
             </Badge>
           </span>
           {snapshot ? (
-            <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+            <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-[var(--color-text-tertiary)]">
               <span>{t('agentTeams.inline.created', { count: members.length })}</span>
               {progress.total > 0 ? (
                 <>
@@ -186,9 +197,9 @@ export function AgentTeamsInlineCard({
           ) : null}
         </span>
         {canOpen ? (
-          <span className="flex shrink-0 items-center gap-0.5 text-[11.5px] font-medium text-[var(--color-brand)]">
+          <span className="flex shrink-0 items-center gap-0.5 text-xs text-[var(--color-text-secondary)]">
             {t('agentTeams.inline.open')}
-            <ChevronRight size={13} strokeWidth={2.4} aria-hidden="true" />
+            <ChevronRight size={14} strokeWidth={1.75} aria-hidden="true" />
           </span>
         ) : null}
       </button>

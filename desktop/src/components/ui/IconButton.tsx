@@ -1,4 +1,4 @@
-import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { forwardRef, type ButtonHTMLAttributes, type ReactElement } from 'react'
 
 import { cx } from '@/lib/cx'
 import { Spinner } from './Spinner'
@@ -7,12 +7,16 @@ import { Spinner } from './Spinner'
 export type IconButtonSize = '2xs' | 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl'
 export type IconButtonTone = 'default' | 'secondary' | 'muted' | 'brand' | 'danger'
 /** Which surface this button sits on — decides its hover fill. */
-export type IconButtonSurface = 'default' | 'sidebar' | 'terminal' | 'media'
+export type IconButtonSurface = 'default' | 'sidebar' | 'terminal' | 'media' | 'lightbox'
 
 export type IconButtonProps =
   Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'aria-label' | 'title'> & {
-    /** A lucide component, a material-symbols name, or any node. */
-    icon: ReactNode | string
+    /**
+     * A lucide icon element. Strings are rejected at the type level: this prop
+     * used to accept a Material Symbols ligature name, and a string slipping
+     * through now would render as raw text ("chevron_left") instead of a glyph.
+     */
+    icon: ReactElement
     /**
      * Required. An icon-only control has no visible text, so without this it is
      * unreachable by screen readers and unlabeled in the accessibility tree.
@@ -40,6 +44,13 @@ export type IconButtonProps =
      * washes out against a photo.
      */
     solid?: boolean
+    /**
+     * A neutral resting disc with no border, for controls that share a strip
+     * with something busy and need their own ground: the composer's recording
+     * bar sets cancel and stop beside a live waveform. `filled` is a bordered
+     * card face, which reads as a separate object instead.
+     */
+    soft?: boolean
     /** Hairline border on a transparent background. */
     bordered?: boolean
     /**
@@ -75,23 +86,13 @@ export type IconButtonProps =
   }
 
 const SIZE_CLASSES: Record<IconButtonSize, string> = {
-  '2xs': 'h-5 w-5',
-  xs: 'h-6 w-6',
-  sm: 'h-7 w-7',
-  md: 'h-8 w-8',
-  lg: 'h-9 w-9',
-  xl: 'h-10 w-10',
-  '2xl': 'h-11 w-11',
-}
-
-const SIZE_RADII: Record<IconButtonSize, string> = {
-  '2xs': 'rounded-[var(--radius-sm)]',
-  xs: 'rounded-[var(--radius-sm)]',
-  sm: 'rounded-[var(--radius-md)]',
-  md: 'rounded-[var(--radius-md)]',
-  lg: 'rounded-[var(--radius-lg)]',
-  xl: 'rounded-[var(--radius-lg)]',
-  '2xl': 'rounded-[var(--radius-lg)]',
+  '2xs': 'h-5 w-5 rounded-[var(--radius-sm)]',
+  xs: 'h-6 w-6 rounded-[var(--radius-sm)]',
+  sm: 'h-7 w-7 rounded-[var(--radius-md)]',
+  md: 'h-8 w-8 rounded-[var(--radius-md)]',
+  lg: 'h-9 w-9 rounded-[var(--radius-lg)]',
+  xl: 'h-10 w-10 rounded-[var(--radius-lg)]',
+  '2xl': 'h-11 w-11 rounded-[var(--radius-lg)]',
 }
 
 const ICON_PX: Record<IconButtonSize, number> = {
@@ -117,6 +118,13 @@ const REST_TEXT: Record<IconButtonTone, string> = {
  * so their output is unchanged.
  */
 const SURFACE_REST_TEXT: Partial<Record<IconButtonSurface, Record<IconButtonTone, string>>> = {
+  lightbox: {
+    default: 'text-[var(--color-lightbox-control-fg)]',
+    secondary: 'text-[var(--color-lightbox-control-fg)]',
+    muted: 'text-[var(--color-lightbox-control-fg)]',
+    brand: 'text-[var(--color-lightbox-control-fg)]',
+    danger: 'text-[var(--color-lightbox-control-fg)]',
+  },
   terminal: {
     default: 'text-[var(--color-terminal-fg)]',
     secondary: 'text-[var(--color-terminal-muted)]',
@@ -144,6 +152,13 @@ const SURFACE_REST_TEXT: Partial<Record<IconButtonSurface, Record<IconButtonTone
  * Only one hover text color may ever be emitted.
  */
 const HOVER_BG: Record<IconButtonSurface, Record<IconButtonTone, string>> = {
+  lightbox: {
+    default: 'hover:bg-[var(--color-lightbox-control-hover)]',
+    secondary: 'hover:bg-[var(--color-lightbox-control-hover)]',
+    muted: 'hover:bg-[var(--color-lightbox-control-hover)]',
+    brand: 'hover:bg-[var(--color-lightbox-control-hover)]',
+    danger: 'hover:bg-[var(--color-lightbox-control-hover)]',
+  },
   default: {
     default: 'hover:bg-[var(--color-surface-hover)]',
     secondary: 'hover:bg-[var(--color-surface-hover)]',
@@ -185,6 +200,7 @@ const HOVER_TEXT: Record<IconButtonTone, string> = {
 
 /** See `SURFACE_REST_TEXT`. Only one hover text color may ever be emitted. */
 const SURFACE_HOVER_TEXT: Partial<Record<IconButtonSurface, Record<IconButtonTone, string>>> = {
+  lightbox: { default: '', secondary: '', muted: '', brand: '', danger: '' },
   terminal: {
     default: '',
     secondary: 'hover:text-[var(--color-terminal-fg)]',
@@ -218,9 +234,16 @@ const SOLID_CLASSES: Record<IconButtonTone, string> = {
   danger: 'bg-[var(--color-error)] text-[var(--color-on-error)]',
 }
 
+/** `soft`: its own resting fill and the hover that steps past it. */
+const SOFT_CLASSES = 'bg-[var(--color-btn-soft-bg)] hover:bg-[var(--color-btn-soft-hover)]'
+
 const PRESSED_CLASSES: Record<IconButtonSurface, string> = {
+  lightbox: 'bg-[var(--color-lightbox-control-hover)] text-[var(--color-lightbox-control-fg)]',
   default: 'bg-[var(--color-surface-selected)] text-[var(--color-text-primary)]',
-  sidebar: 'bg-[var(--color-sidebar-item-hover)] text-[var(--color-text-primary)]',
+  // The sidebar's hover fill is the faintest step on its ground; a toggle that
+  // is on must not look like one the pointer is merely over, so it takes the
+  // theme accent.
+  sidebar: 'bg-[var(--color-brand-soft)] text-[var(--color-brand)]',
   terminal: 'bg-[var(--color-terminal-selection)] text-[var(--color-terminal-fg)]',
   media: 'bg-[var(--color-media-selection)] text-[var(--color-media-fg)]',
 }
@@ -257,6 +280,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   shape = 'square',
   filled = false,
   solid = false,
+  soft = false,
   bordered = false,
   hoverTone,
   pressed,
@@ -283,14 +307,15 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
         BASE_CLASSES,
         DISABLED_OPACITY[disabledStyle],
         SIZE_CLASSES[size],
-        shape === 'circle' ? 'rounded-full' : SIZE_RADII[size],
-        // `solid` supplies both fill and foreground, so the tone's resting text
-        // color and hover fill are skipped rather than left to compete.
-        solid ? SOLID_CLASSES[tone] : (SURFACE_REST_TEXT[surface] ?? REST_TEXT)[tone],
+        surface === 'lightbox' && !pressed && 'bg-[var(--color-lightbox-control-bg)]',
+        // `solid` and `pressed` supply both fill and foreground, so the tone's
+        // resting text color is skipped rather than left to compete: two
+        // `text-[…]` values resolve by alphabetical order, not by intent.
+        solid ? SOLID_CLASSES[tone] : !pressed && (SURFACE_REST_TEXT[surface] ?? REST_TEXT)[tone],
         solid && 'hover:brightness-110',
-        // A pressed button carries its own fill and hover; skipping the tone's
-        // hover here keeps two `hover:bg-[…]` values from competing.
-        !solid && (pressed ? PRESSED_CLASSES[surface] : HOVER_BG[surface][tone]),
+        // A pressed or soft button carries its own fill and hover; skipping the
+        // tone's hover here keeps two `hover:bg-[…]` values from competing.
+        !solid && (pressed ? PRESSED_CLASSES[surface] : soft ? SOFT_CLASSES : HOVER_BG[surface][tone]),
         // Exactly one hover text color — `hoverTone` replaces the tone's own
         // rather than stacking on top of it, which Tailwind would silently
         // resolve the wrong way.
@@ -299,21 +324,14 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
             ? 'hover:text-[var(--color-error)]'
             : (SURFACE_HOVER_TEXT[surface] ?? HOVER_TEXT)[tone]
         ),
-        filled && !pressed && !solid && FILLED_CLASSES[tone],
+        filled && !pressed && !solid && !soft && FILLED_CLASSES[tone],
         bordered && !filled && 'border border-[var(--color-border)]',
+        shape === 'circle' && 'rounded-full',
         className,
       )}
       {...props}
     >
-      {loading
-        ? <Spinner size={iconSize} />
-        : typeof icon === 'string'
-          ? (
-            <span className="material-symbols-outlined" style={{ fontSize: iconSize }} aria-hidden="true">
-              {icon}
-            </span>
-          )
-          : icon}
+      {loading ? <Spinner size={iconSize} /> : icon}
     </button>
   )
 })

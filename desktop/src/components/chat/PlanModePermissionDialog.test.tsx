@@ -24,7 +24,7 @@ import { useSettingsStore } from '../../stores/settingsStore'
 import { useTabStore } from '../../stores/tabStore'
 import { useProviderStore } from '../../stores/providerStore'
 import { useSessionRuntimeStore } from '../../stores/sessionRuntimeStore'
-import { useEchoFlowOAuthStore } from '../../stores/echoFlowOAuthStore'
+import { useHahaOAuthStore } from '../../stores/hahaOAuthStore'
 import { PermissionDialog } from './PermissionDialog'
 import { ToolCallBlock } from './ToolCallBlock'
 
@@ -109,7 +109,7 @@ describe('plan mode permission UI', () => {
       fetchProviders: async () => {},
     })
     useSessionRuntimeStore.setState({ selections: {} })
-    useEchoFlowOAuthStore.setState({
+    useHahaOAuthStore.setState({
       status: {
         loggedIn: true,
         expiresAt: null,
@@ -171,7 +171,7 @@ describe('plan mode permission UI', () => {
       />,
     )
 
-    fireEvent.change(screen.getByPlaceholderText('Tell EchoFlow what to change'), {
+    fireEvent.change(screen.getByPlaceholderText('Tell Claude what to change'), {
       target: { value: 'Add a rollback step before implementation.' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Keep planning' }))
@@ -235,38 +235,6 @@ describe('plan mode permission UI', () => {
       allowed: true,
       permissionUpdates: [
         { type: 'setMode', mode: 'bypassPermissions', destination: 'session' },
-      ],
-    })
-  })
-
-  it('approves with auto mode and keeps the requested prompt rules', () => {
-    useSettingsStore.setState({ autoModeOptInAccepted: true } as never)
-    render(
-      <PermissionDialog
-        sessionId="session-1"
-        requestId="perm-plan"
-        toolName="ExitPlanMode"
-        input={{
-          plan: PLAN,
-          allowedPrompts: [{ tool: 'Bash', prompt: 'run tests' }],
-        }}
-      />,
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: 'Approve & use auto mode' }))
-
-    expect(sendMock).toHaveBeenCalledWith('session-1', {
-      type: 'permission_response',
-      requestId: 'perm-plan',
-      allowed: true,
-      permissionUpdates: [
-        { type: 'setMode', mode: 'auto', destination: 'session' },
-        {
-          type: 'addRules',
-          rules: [{ toolName: 'Bash', ruleContent: 'prompt: run tests' }],
-          behavior: 'allow',
-          destination: 'session',
-        },
       ],
     })
   })

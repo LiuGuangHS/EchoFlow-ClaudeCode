@@ -1,9 +1,14 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useChatAppearanceStore } from '@/stores/chatAppearanceStore'
 import { CHAT_APPEARANCE_STORAGE_KEY, DEFAULT_CHAT_APPEARANCE } from '@/lib/chatAppearance'
+import {
+  DEFAULT_SELECTION_MENU_PLACEMENT,
+  SELECTION_MENU_PLACEMENT_STORAGE_KEY,
+  useSelectionMenuPlacementStore,
+} from '@/stores/selectionMenuPlacementStore'
 import { ChatAppearanceSettings } from './ChatAppearanceSettings'
 
 describe('Chat appearance settings', () => {
@@ -11,12 +16,14 @@ describe('Chat appearance settings', () => {
     localStorage.clear()
     useSettingsStore.setState({ locale: 'en' })
     useChatAppearanceStore.setState({ appearance: { ...DEFAULT_CHAT_APPEARANCE } })
+    useSelectionMenuPlacementStore.setState({ placement: DEFAULT_SELECTION_MENU_PLACEMENT })
   })
 
   afterEach(() => {
     cleanup()
     localStorage.clear()
     useChatAppearanceStore.setState(useChatAppearanceStore.getInitialState(), true)
+    useSelectionMenuPlacementStore.setState(useSelectionMenuPlacementStore.getInitialState(), true)
     useSettingsStore.setState(useSettingsStore.getInitialState(), true)
     for (const property of ['--chat-font-family', '--chat-font-size', '--chat-content-max-width']) {
       document.documentElement.style.removeProperty(property)
@@ -31,9 +38,9 @@ describe('Chat appearance settings', () => {
     expect(preview.querySelector('table')).toBeInTheDocument()
     expect(preview.querySelector('code')).toHaveTextContent('const answer = 42')
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Chat font' }), { target: { value: 'serif' } })
+    fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Chat font' })).getByRole('radio', { name: 'Serif' }))
     fireEvent.change(screen.getByRole('slider', { name: 'Chat font size' }), { target: { value: '24' } })
-    fireEvent.change(screen.getByRole('combobox', { name: 'Conversation width' }), { target: { value: 'full' } })
+    fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Conversation width' })).getByRole('radio', { name: 'Fill available space' }))
 
     expect(useChatAppearanceStore.getState().appearance).toEqual({ font: 'serif', fontSize: 24, width: 'full' })
     expect(preview.style.getPropertyValue('--chat-font-family')).toContain('Songti SC')
@@ -41,6 +48,32 @@ describe('Chat appearance settings', () => {
     expect(document.documentElement.style.getPropertyValue('--chat-content-max-width')).toBe('100%')
     expect(JSON.parse(localStorage.getItem(CHAT_APPEARANCE_STORAGE_KEY)!)).toMatchObject({ font: 'serif', fontSize: 24, width: 'full' })
     expect(useSettingsStore.getState().uiZoom).toBe(useSettingsStore.getInitialState().uiZoom)
+  })
+
+  it('defaults the selection menu to the upstream rule and saves opting out', () => {
+    render(<ChatAppearanceSettings />)
+    const placement = () => screen.getByRole('radiogroup', { name: 'Selection menu' })
+
+    expect(within(placement()).getByRole('radio', { name: 'Automatic' })).toHaveAttribute('aria-checked', 'true')
+
+    fireEvent.click(within(placement()).getByRole('radio', { name: 'Above only' }))
+
+    expect(useSelectionMenuPlacementStore.getState().placement).toBe('above')
+    expect(localStorage.getItem(SELECTION_MENU_PLACEMENT_STORAGE_KEY)).toBe('above')
+    // The two preferences are independent, in both directions.
+    expect(useChatAppearanceStore.getState().appearance).toEqual(DEFAULT_CHAT_APPEARANCE)
+    expect(localStorage.getItem(CHAT_APPEARANCE_STORAGE_KEY)).toBeNull()
+  })
+
+  it('leaves the bubble placement alone when chat appearance is reset', () => {
+    localStorage.setItem(SELECTION_MENU_PLACEMENT_STORAGE_KEY, 'above')
+    useSelectionMenuPlacementStore.setState({ placement: 'above' })
+    render(<ChatAppearanceSettings />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset chat appearance' }))
+
+    expect(useSelectionMenuPlacementStore.getState().placement).toBe('above')
+    expect(localStorage.getItem(SELECTION_MENU_PLACEMENT_STORAGE_KEY)).toBe('above')
   })
 
   it('restores all controls, saved values and preview together', () => {
@@ -52,10 +85,10 @@ describe('Chat appearance settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Reset chat appearance' }))
 
-    expect(screen.getByRole('combobox', { name: 'Chat font' })).toHaveValue('system')
-    expect(screen.getByRole('slider')).toHaveValue('14')
-    expect(screen.getByRole('combobox', { name: 'Conversation width' })).toHaveValue('standard')
-    expect(screen.getByRole('region').style.getPropertyValue('--chat-font-size')).toBe('14px')
+    expect(within(screen.getByRole('radiogroup', { name: 'Chat font' })).getByRole('radio', { name: 'System default' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('slider')).toHaveValue('15')
+    expect(within(screen.getByRole('radiogroup', { name: 'Conversation width' })).getByRole('radio', { name: 'Standard' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('region').style.getPropertyValue('--chat-font-size')).toBe('15px')
     expect(JSON.parse(localStorage.getItem(CHAT_APPEARANCE_STORAGE_KEY)!)).toMatchObject(DEFAULT_CHAT_APPEARANCE)
   })
 })

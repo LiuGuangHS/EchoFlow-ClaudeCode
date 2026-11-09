@@ -251,6 +251,7 @@ describe('initializeTouchH5', () => {
 
 class FakeVisualViewport extends EventTarget {
   height: number
+  scale = 1
 
   constructor(height: number) {
     super()
@@ -279,6 +280,17 @@ function createStubWindow({
   visualViewportHeight = 900,
 }: StubWindowOptions = {}) {
   const doc = document.implementation.createHTMLDocument()
+  // jsdom has no layout; the page's layout height is the initial window height.
+  Object.defineProperty(doc.documentElement, 'clientHeight', { configurable: true, value: innerHeight })
+  // The shell renders into #root; dialogs and sheets are portaled to <body>.
+  const appRoot = doc.createElement('div')
+  appRoot.id = 'root'
+  const composer = doc.createElement('textarea')
+  appRoot.appendChild(composer)
+  const sheetInput = doc.createElement('input')
+  doc.body.append(appRoot, sheetInput)
+  let focused: Element = composer
+  Object.defineProperty(doc, 'activeElement', { configurable: true, get: () => focused })
   const visualViewport =
     visualViewportHeight === null ? null : new FakeVisualViewport(visualViewportHeight)
   const win = {
@@ -298,7 +310,10 @@ function createStubWindow({
     HTMLElement: window.HTMLElement,
     desktopHost: desktopHost ? { isDesktop: true } : undefined,
   }
-  return { win: win as unknown as Window & typeof globalThis, doc, visualViewport }
+  const focus = (element: Element) => {
+    focused = element
+  }
+  return { win: win as unknown as Window & typeof globalThis, doc, visualViewport, focus, sheetInput }
 }
 
 describe('isTouchH5Document', () => {
@@ -356,6 +371,65 @@ describe('visual viewport fit', () => {
     visualViewport!.dispatchEvent(new Event('resize'))
 
     expect(win.scrollTo).toHaveBeenCalledWith(0, 0)
+  })
+
+  it('keeps the keyboard open and snaps back after iOS 26 shrinks innerHeight while panning', () => {
+    // Recorded in iOS 26.5 Safari: the visible area drops to 376, then Safari
+    // pans the page up by 338 and reports innerHeight as 376 as well.
+    const { win, doc, visualViewport } = createStubWindow({ innerHeight: 714, visualViewportHeight: 714 })
+    initializeTouchH5(win)
+
+    visualViewport!.height = 376
+    visualViewport!.dispatchEvent(new Event('resize'))
+    ;(win as { innerHeight: number }).innerHeight = 376
+    ;(win as { scrollY: number }).scrollY = 338
+    visualViewport!.dispatchEvent(new Event('scroll'))
+
+    expect(doc.documentElement.hasAttribute(TOUCH_H5_KEYBOARD_ATTRIBUTE)).toBe(true)
+    expect(win.scrollTo).toHaveBeenCalledWith(0, 0)
+  })
+
+  it('snaps back the pan iOS reports only as a window scroll at the end of the keyboard animation', () => {
+    const { win, visualViewport } = createStubWindow({ innerHeight: 714, visualViewportHeight: 714 })
+    initializeTouchH5(win)
+    visualViewport!.height = 376
+    visualViewport!.dispatchEvent(new Event('resize'))
+    expect(win.scrollTo).not.toHaveBeenCalled()
+
+    ;(win as { scrollY: number }).scrollY = 20
+    const onScroll = vi.mocked(win.addEventListener).mock.calls.find(([type]) => type === 'scroll')?.[1] as () => void
+    onScroll()
+
+    expect(win.scrollTo).toHaveBeenCalledWith(0, 0)
+  })
+
+  it('leaves the pan alone while an input in a portaled sheet has focus', () => {
+    // Recorded in iOS 26.5 Safari: a sheet input sat at 578 of a 714 layout;
+    // Safari's 337 pan was the only thing keeping it above the keyboard.
+    const { win, doc, visualViewport, focus, sheetInput } = createStubWindow({ innerHeight: 714, visualViewportHeight: 714 })
+    initializeTouchH5(win)
+    focus(sheetInput)
+
+    ;(win as { scrollY: number }).scrollY = 337
+    visualViewport!.height = 377
+    visualViewport!.dispatchEvent(new Event('resize'))
+
+    expect(doc.documentElement.hasAttribute(TOUCH_H5_KEYBOARD_ATTRIBUTE)).toBe(true)
+    expect(win.scrollTo).not.toHaveBeenCalled()
+  })
+
+  it('does not take pinch zoom for the keyboard', () => {
+    const { win, doc, visualViewport } = createStubWindow({ innerHeight: 844, visualViewportHeight: 844 })
+    initializeTouchH5(win)
+
+    ;(win as { scrollY: number }).scrollY = 200
+    visualViewport!.scale = 2
+    visualViewport!.height = 422
+    visualViewport!.dispatchEvent(new Event('resize'))
+
+    expect(doc.documentElement.hasAttribute(TOUCH_H5_KEYBOARD_ATTRIBUTE)).toBe(false)
+    expect(doc.documentElement.style.getPropertyValue(TOUCH_H5_VIEWPORT_HEIGHT_VAR)).toBe('844px')
+    expect(win.scrollTo).not.toHaveBeenCalled()
   })
 
   it('clears the keyboard marker when the keyboard collapses', () => {
@@ -437,12 +511,12 @@ describe('touch-H5 stylesheet contract', () => {
     expect(css).toMatch(/html\[data-touch-h5\]\[data-touch-h5-keyboard\] \.app-shell-viewport \{\s*\n\s*padding-bottom: 0px;/)
   })
 
-  it('keeps message action bars visible in the mobile shell without relying on touch detection', () => {
-    expect(css).toMatch(/\.app-shell--mobile \[data-message-actions\],\s*\nhtml\[data-touch-h5\] \[data-message-actions\] \{\s*\n\s*opacity: 1;\s*\n\s*pointer-events: auto;/)
-    // 2.75rem = 44px, the platform minimum for primary touch targets. These
-    // buttons shipped at 40px because IconButton's size doc had the 40/44
-    // tiers reversed.
-    expect(css).toMatch(/\.app-shell--mobile \[data-message-actions\] button \{\s*\n\s*width: 2\.75rem;/)
+  it('does not force the hover action bars open on touch: the phone holds a message for its actions', () => {
+    // The bars were kept visible under every message on a phone, a row of
+    // icons per message. They are no longer drawn there (useMessageActionMenu),
+    // and a rule forcing them visible would bring the row back the moment a
+    // bar renders on a touch layout again.
+    expect(css).not.toMatch(/\[data-message-actions\]/)
   })
 
   it('disables paint skipping for the trace-window rows too', () => {

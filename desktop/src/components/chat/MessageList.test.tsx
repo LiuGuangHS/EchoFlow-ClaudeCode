@@ -1,3 +1,4 @@
+import { setDisclosure, getDisclosure, clearDisclosureMemory } from '@/lib/disclosureMemory'
 import { openSideChat } from '@/lib/workspace/openSideChat'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -20,22 +21,32 @@ import {
   getHeightsForSession,
   type VirtualRenderItemMetric,
 } from './virtualHeightCache'
+import { setComposerText, stubRangeGeometry } from './composerTestUtils'
 import { relativizeWorkspacePath } from './CurrentTurnChangeCard'
 import { sessionsApi } from '../../api/sessions'
 import { ApiError } from '../../api/client'
 import { subagentsApi, type SubagentRunResponse } from '../../api/subagents'
 import { teamsApi } from '../../api/teams'
 import { resetAgentRunActivityCache } from './useAgentRunActivity'
+import { resetWorkspaceFileStatsForTests } from '../../lib/workspaceFileStats'
 import { useChatStore } from '../../stores/chatStore'
 import { useWorkspaceChatContextStore } from '../../stores/workspaceChatContextStore'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { initializeChatAppearance, useChatAppearanceStore } from '../../stores/chatAppearanceStore'
 import { CHAT_APPEARANCE_STORAGE_KEY } from '../../lib/chatAppearance'
+import {
+  DEFAULT_SELECTION_MENU_PLACEMENT,
+  useSelectionMenuPlacementStore,
+} from '../../stores/selectionMenuPlacementStore'
 import { useSessionStore } from '../../stores/sessionStore'
+import { useSideChatStore } from '../../stores/sideChatStore'
 import { useTabStore } from '../../stores/tabStore'
+import { useTrajectoryViewStore } from '../../stores/trajectoryViewStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useTeamStore } from '../../stores/teamStore'
+import { useTeamPlanStore } from '../../stores/teamPlanStore'
+import type { TeamPlanRecord } from '../../../../src/shared/teamPlan'
 import { formatExactMessageTimestamp, formatMessageHoverTime } from '../../lib/formatMessageTimestamp'
 import type { UIMessage } from '../../types/chat'
 import type { MessageEntry } from '../../types/session'
@@ -309,9 +320,6 @@ async function selectAcrossMessageText(
     await Promise.resolve()
   })
   await waitForSelectionMenuUpdate()
-  await waitFor(() => {
-    expect(screen.getByRole('button', { name: 'Add to chat' })).toBeTruthy()
-  })
 }
 
 async function expandChangedFileCards() {
@@ -330,6 +338,7 @@ describe('MessageList nested tool calls', () => {
     useSessionStore.setState({ sessions: [], activeSessionId: null, isLoading: false, error: null })
     useChatStore.setState({ sessions: { [ACTIVE_TAB]: makeSessionState() } })
     useTeamStore.getState().clearTeam()
+    useSelectionMenuPlacementStore.setState({ placement: DEFAULT_SELECTION_MENU_PLACEMENT })
     useWorkspaceChatContextStore.setState(useWorkspaceChatContextStore.getInitialState(), true)
     // The workspace panel store is a shared singleton; reset it so preview tabs opened by
     // one test (clicking a change-card row) don't dedupe/leak into the next test.
@@ -455,8 +464,90 @@ describe('MessageList nested tool calls', () => {
     expect(className).toContain('max-w-[360px]')
   })
 
+  it('navigates from a user attachment through assistant and tool images in the same session', () => {
+    const messages: UIMessage[] = [
+      { id: 'gallery-user', type: 'user_text', content: 'Compare images', timestamp: 1, attachments: [
+        { type: 'image', name: 'upload.png', data: 'data:image/png;base64,AAAA' },
+      ] },
+      { id: 'gallery-reply', type: 'assistant_text', content: '![reply](/tmp/reply.png)', timestamp: 2 },
+      { id: 'gallery-tool', type: 'tool_use', toolUseId: 'gallery-shot', toolName: 'Bash', input: { command: 'screenshot' }, timestamp: 3 },
+      { id: 'gallery-result', type: 'tool_result', toolUseId: 'gallery-shot', content: 'Saved /tmp/tool-shot.png', isError: false, timestamp: 4 },
+    ]
+    useChatStore.setState({ sessions: { [ACTIVE_TAB]: makeSessionState({ messages }) } })
+    render(<MessageList sessionId={ACTIVE_TAB} />)
+
+    fireEvent.click(screen.getByRole('img', { name: 'upload.png' }).closest('button')!)
+    expect(screen.getByRole('dialog', { name: 'upload.png' })).toBeTruthy()
+    expect(screen.getByText('1 / 3')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Next image' }))
+    expect(screen.getByRole('dialog', { name: 'reply.png' })).toBeTruthy()
+    fireEvent.keyDown(document, { key: 'ArrowRight' })
+    expect(screen.getByRole('dialog', { name: 'tool-shot.png' })).toBeTruthy()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    // The provider stays stable while the store grows, but the next opening must
+    // collect the latest messages rather than retain the initial closure.
+    act(() => useChatStore.setState({ sessions: { [ACTIVE_TAB]: makeSessionState({ messages: [
+      ...messages,
+      { id: 'gallery-followup', type: 'assistant_text', content: '![new](/tmp/new.png)', timestamp: 5 },
+    ] }) } }))
+    fireEvent.click(screen.getByRole('img', { name: 'upload.png' }).closest('button')!)
+    expect(screen.getByText('1 / 4')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Previous image' }))
+    expect(screen.getByRole('dialog', { name: 'new.png' })).toBeTruthy()
+  })
+
+  it('opens an assistant image with neighbors from virtualized-away message rows', () => {
+    const messages: UIMessage[] = [
+      { id: 'gallery-old-user', type: 'user_text', content: 'Old attachment', timestamp: 0, attachments: [
+        { type: 'image', name: 'old.png', data: 'data:image/png;base64,AAAA' },
+      ] },
+      ...Array.from({ length: 220 }, (_, index): UIMessage => ({
+        id: `gallery-filler-${index}`, type: 'assistant_text', content: `History row ${index}`, timestamp: index + 1,
+      })),
+      { id: 'gallery-latest', type: 'assistant_text', content: '![latest](/tmp/latest.png)', timestamp: 222 },
+    ]
+    useChatStore.setState({ sessions: { [ACTIVE_TAB]: makeSessionState({ messages }) } })
+    const { container } = render(<MessageList sessionId={ACTIVE_TAB} />)
+    expect(container.querySelector('[data-virtual-spacer="top"]')).not.toBeNull()
+    expect(screen.queryByRole('img', { name: 'old.png' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('img', { name: 'latest' }))
+    expect(screen.getByText('2 / 2')).toBeTruthy()
+    fireEvent.keyDown(document, { key: 'ArrowLeft' })
+    const dialog = screen.getByRole('dialog', { name: 'old.png' })
+    expect(within(dialog).getByRole('img', { name: 'old.png' }).getAttribute('src')).toBe('data:image/png;base64,AAAA')
+  })
+
+  it('includes disk-confirmed Chinese images from virtualized-away replies', async () => {
+    vi.spyOn(sessionsApi, 'getWorkspaceTree').mockResolvedValue({
+      state: 'ok', path: '', entries: [{ name: '流程图.png', path: '流程图.png', isDirectory: false }],
+    })
+    const messages: UIMessage[] = [
+      { id: 'gallery-old-reply', type: 'assistant_text', content: '已导出 流程图.png，格式选.png即可', timestamp: 0 },
+      ...Array.from({ length: 220 }, (_, index): UIMessage => ({
+        id: `gallery-filler-${index}`, type: 'assistant_text', content: `History row ${index}`, timestamp: index + 1,
+      })),
+      { id: 'gallery-latest-user', type: 'user_text', content: 'Compare', timestamp: 222, attachments: [
+        { type: 'image', name: 'upload.png', data: 'data:image/png;base64,AAAA' },
+      ] },
+    ]
+    useChatStore.setState({ sessions: { [ACTIVE_TAB]: makeSessionState({ messages }) } })
+    const { container } = render(<MessageList sessionId={ACTIVE_TAB} />)
+    expect(container.querySelector('[data-virtual-spacer="top"]')).not.toBeNull()
+    expect(screen.queryByRole('img', { name: '流程图.png' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('img', { name: 'upload.png' }).closest('button')!)
+    await screen.findByText('2 / 2')
+    fireEvent.keyDown(document, { key: 'ArrowLeft' })
+    const image = within(screen.getByRole('dialog')).getByRole('img', { name: '流程图.png' })
+    expect(decodeURIComponent(image.getAttribute('src')!)).toContain(`/preview-fs/${ACTIVE_TAB}/流程图.png`)
+    expect(sessionsApi.getWorkspaceTree).toHaveBeenCalledWith(ACTIVE_TAB, '')
+  })
+
   it('keeps the ImageGen result as the only image owner when final Markdown repeats its managed path', () => {
-    const generatedPath = '/Users/me/.claude/echoflow-code/generated-images/session/result.png'
+    const generatedPath = '/Users/me/.claude/cc-haha/generated-images/session/result.png'
     render(<MessageList sessionId={ACTIVE_TAB} />)
     const store = useChatStore.getState()
 
@@ -638,6 +729,41 @@ describe('MessageList nested tool calls', () => {
     act(() => useChatAppearanceStore.setState({ appearance: { font: 'system', fontSize: 14, width: 'standard' } }))
     dispose()
     localStorage.removeItem(CHAT_APPEARANCE_STORAGE_KEY)
+    dropSession(sessionId)
+  })
+
+  it.each([true, false])('preserves follow intent after an idle same-ID height correction (following=%s, #1652)', async (following) => {
+    const sessionId = 'issue1652-idle-resize'
+    const observers: Array<{ callback: ResizeObserverCallback, targets: Element[] }> = []
+    class TestResizeObserver {
+      targets: Element[] = []
+      observe = (target: Element) => { this.targets.push(target) }
+      unobserve = vi.fn()
+      disconnect = vi.fn()
+      constructor(callback: ResizeObserverCallback) { observers.push({ callback, targets: this.targets }) }
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver)
+    dropSession(sessionId)
+    useChatStore.setState({ sessions: { [sessionId]: makeSessionState({ chatState: 'idle', messages: Array.from({ length: 220 }, (_, i) => ({ id: `idle-row-${i}`, type: 'assistant_text' as const, content: `answer ${i}`, timestamp: i })) }) } })
+    const { container } = render(<MessageList sessionId={sessionId} />)
+    const scroller = container.querySelector('.chat-scroll-area') as HTMLElement
+    let scrollTop = following ? 15000 : 7000
+    let scrollHeight = 15500
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, get: () => scrollHeight })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 500 })
+    Object.defineProperty(scroller, 'scrollTop', { configurable: true, get: () => scrollTop, set: (value) => { scrollTop = value } })
+    await waitForProgrammaticScrollReset()
+    if (!following) fireEvent.wheel(scroller, { deltaY: -100 })
+    fireEvent.scroll(scroller)
+    const item = container.querySelector('[data-virtual-message-item]') as HTMLElement
+    const observer = observers.find(o => o.targets.includes(item))!
+    expect(observer).toBeTruthy()
+    const key = item.dataset.virtualMessageItem!
+    const oldHeight = getHeightsForSession(sessionId).get(key) ?? 112
+    scrollHeight += 600
+    act(() => observer.callback([{ target: item, borderBoxSize: [{ blockSize: oldHeight + 600, inlineSize: 800 }], contentRect: { height: oldHeight + 600 } } as unknown as ResizeObserverEntry], {} as ResizeObserver))
+    await waitForProgrammaticScrollReset()
+    expect(scrollTop).toBe(following ? scrollHeight - 500 : 7000)
     dropSession(sessionId)
   })
 
@@ -967,6 +1093,21 @@ describe('MessageList nested tool calls', () => {
     expect(screen.getByText('latest assistant reply')).toBeTruthy()
   })
 
+  it.each([
+    { compact: false, mobileLayout: false, gutter: 'px-6' },
+    { compact: true, mobileLayout: false, gutter: 'px-4' },
+    { compact: false, mobileLayout: true, gutter: 'px-3' },
+    { compact: true, mobileLayout: true, gutter: 'px-3' },
+  ])('aligns a transcript without navigation with the composer at $gutter', ({ compact, mobileLayout, gutter }) => {
+    useChatStore.setState({ sessions: { [ACTIVE_TAB]: makeSessionState({
+      messages: [{ id: 'single-message', type: 'user_text', content: 'Review this change', timestamp: 1 }],
+    }) } })
+    render(<MessageList compact={compact} mobileLayout={mobileLayout} />)
+    expect(screen.queryByTestId('conversation-navigator')).toBeNull()
+    const scroller = screen.getByTestId('message-list').querySelector('.chat-scroll-area') as HTMLElement
+    expect(scroller.className.split(/\s+/)).toContain(gutter)
+  })
+
   it('keeps the conversation navigator available in compact desktop transcripts', () => {
     useChatStore.setState({
       sessions: {
@@ -1076,6 +1217,7 @@ describe('MessageList nested tool calls', () => {
       set: (value: number) => { scrollTop = value },
     })
 
+    fireEvent.pointerDown(scroller)
     fireEvent.scroll(scroller)
     expect(screen.getByRole('button', { name: /Turn 1 of 4: First prompt/ }).getAttribute('aria-current')).toBe('location')
 
@@ -1222,6 +1364,103 @@ describe('MessageList nested tool calls', () => {
     await waitFor(() => expect(screen.getByText('Prompt 0')).toBeTruthy())
     expect(scrollTop).toBe(0)
     expect(container.querySelector('[data-chat-render-item-key="user-0"]')?.className).toContain('chat-render-item--navigation-target')
+  })
+
+  it('scrolls to and highlights the message a trajectory row asks to locate', async () => {
+    const messages: UIMessage[] = Array.from({ length: 220 }, (_, index) => ({
+      id: `${index % 2 === 0 ? 'user' : 'assistant'}-${index}`,
+      type: index % 2 === 0 ? 'user_text' : 'assistant_text',
+      content: `${index % 2 === 0 ? 'Prompt' : 'Answer'} ${index}`,
+      timestamp: index,
+    })) as UIMessage[]
+    useChatStore.setState({ sessions: { [ACTIVE_TAB]: makeSessionState({ messages }) } })
+    useTrajectoryViewStore.setState({ nav: null, modes: {}, opened: {} })
+
+    const { container } = render(<MessageList />)
+    const scroller = container.querySelector('.chat-scroll-area') as HTMLElement
+    let scrollTop = 24_000
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 500 })
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 25_000 })
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => { scrollTop = value },
+    })
+
+    // An unknown uuid first, then the real one: any listed uuid identifies the item.
+    act(() => useTrajectoryViewStore.getState().revealInChat(ACTIVE_TAB, { uuids: ['not-loaded', 'assistant-1'] }))
+
+    await waitFor(() => expect(container.querySelector('[data-chat-render-item-key="assistant-1"]')?.className).toContain('chat-render-item--navigation-target'))
+    expect(scrollTop).toBeLessThan(1000)
+    expect(container.querySelector('[data-chat-render-item-key="user-0"]')?.className ?? '').not.toContain('chat-render-item--navigation-target')
+    expect(useTrajectoryViewStore.getState().nav).toBeNull()
+  })
+
+  it('opens a folded run onto the tool call a trajectory row locates, and marks that row', async () => {
+    // Regression: the jump only scrolled to the run and tinted it, but a settled
+    // run is folded to its summary line, so the call it was about stayed hidden.
+    const messages: UIMessage[] = [
+      { id: 'locate-user', type: 'user_text', content: 'Inspect the repo', timestamp: 1 },
+      { id: 'locate-read', type: 'tool_use', toolName: 'Read', toolUseId: 'toolu-locate-read', input: { file_path: '/repo/a.ts' }, timestamp: 2 },
+      { id: 'locate-read-result', type: 'tool_result', toolUseId: 'toolu-locate-read', content: 'a', isError: false, timestamp: 3 },
+      { id: 'locate-bash', type: 'tool_use', toolName: 'Bash', toolUseId: 'toolu-locate-bash', input: { command: 'ls' }, timestamp: 4 },
+      { id: 'locate-bash-result', type: 'tool_result', toolUseId: 'toolu-locate-bash', content: 'a.ts', isError: false, timestamp: 5 },
+      { id: 'locate-grep', type: 'tool_use', toolName: 'Grep', toolUseId: 'toolu-locate-grep', input: { pattern: 'x' }, timestamp: 6 },
+      { id: 'locate-grep-result', type: 'tool_result', toolUseId: 'toolu-locate-grep', content: '', isError: false, timestamp: 7 },
+      { id: 'locate-answer', type: 'assistant_text', content: 'Done.', timestamp: 8 },
+    ] as UIMessage[]
+    useChatStore.setState({ sessions: { [ACTIVE_TAB]: makeSessionState({ messages }) } })
+    useTrajectoryViewStore.setState({ nav: null, modes: {}, opened: {} })
+
+    const { container } = render(<MessageList />)
+    const scroller = container.querySelector('.chat-scroll-area') as HTMLElement
+    const scrollWrites: number[] = []
+    let scrollTop = 0
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 500 })
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 4_000 })
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => { scrollTop = value; scrollWrites.push(value) },
+    })
+    // Only the located row has a box; the run around it measures as empty, so
+    // any correction can only have come from aligning the row itself.
+    const realRect = HTMLElement.prototype.getBoundingClientRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.dataset.toolUseId === 'toolu-locate-bash') return { top: 900, bottom: 920, height: 20, left: 0, right: 100, width: 100, x: 0, y: 900, toJSON: () => ({}) } as DOMRect
+      return realRect.call(this)
+    })
+
+    const group = screen.getByTestId('activity-group')
+    expect(group.getAttribute('data-expanded')).toBe('false')
+    expect(container.querySelector('[data-tool-use-id="toolu-locate-bash"]')).toBeNull()
+
+    act(() => useTrajectoryViewStore.getState().revealInChat(ACTIVE_TAB, { toolUseId: 'toolu-locate-bash' }))
+
+    await waitFor(() => expect(container.querySelector('[data-tool-use-id="toolu-locate-bash"]')?.className).toContain('chat-tool-navigation-target'))
+    expect(screen.getByTestId('activity-group').getAttribute('data-expanded')).toBe('true')
+    // Exactly the located call is marked, not its neighbours.
+    expect(container.querySelectorAll('.chat-tool-navigation-target')).toHaveLength(1)
+    expect(container.querySelector('[data-tool-use-id="toolu-locate-read"]')?.className).not.toContain('chat-tool-navigation-target')
+    // Aligned to the row: 900px down, brought to the 25% reading line of a 500px viewport.
+    await waitFor(() => expect(scrollWrites.length).toBeGreaterThanOrEqual(2))
+    expect(scrollWrites.at(-1)! - scrollWrites.at(-2)!).toBe(900 - 500 * 0.25)
+
+    // The mark is brief; the run stays open as if the reader had opened it.
+    await waitFor(
+      () => expect(container.querySelector('.chat-tool-navigation-target')).toBeNull(),
+      { timeout: 3_000 },
+    )
+    expect(screen.getByTestId('activity-group').getAttribute('data-expanded')).toBe('true')
+  })
+
+  it('ignores a locate request addressed to another session', async () => {
+    useChatStore.setState({ sessions: { [ACTIVE_TAB]: makeSessionState({ messages: makeConversationNavigationMessages() }) } })
+    useTrajectoryViewStore.setState({ nav: null, modes: {}, opened: {} })
+    render(<MessageList />)
+    act(() => useTrajectoryViewStore.getState().revealInChat('other-session', { uuids: ['user-0'] }))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(useTrajectoryViewStore.getState().nav).toMatchObject({ sessionId: 'other-session' })
   })
 
   it('keeps streaming output out of the user-turn navigator after a prompt jump', async () => {
@@ -1970,6 +2209,19 @@ describe('MessageList nested tool calls', () => {
     expect(firstTopChunk.style.contentVisibility).toBe('auto')
     expect(firstTopChunk.style.containIntrinsicSize).toMatch(/^0 \d+px$/)
 
+    // At native 80% zoom, each chunk's layout rounding accumulates. The outer
+    // box must own the requested total, or switching a virtual boundary can
+    // change scrollHeight by ~20px and trigger another native scroll event.
+    for (const position of ['top', 'bottom']) {
+      const spacer = container.querySelector<HTMLElement>(`[data-virtual-spacer="${position}"]`)!
+      const requestedHeight = Array.from(spacer.children).reduce(
+        (total, chunk) => total + Number.parseFloat((chunk as HTMLElement).style.height),
+        0,
+      )
+      expect(Number.parseFloat(spacer.style.height)).toBeCloseTo(requestedHeight, 6)
+      expect(spacer.classList.contains('overflow-hidden')).toBe(true)
+    }
+
     // Items inside the active window must NOT carry content-visibility (this
     // is the regression guard that previous content-visibility rollout hit).
     const visibleItems = container.querySelectorAll('[data-virtual-message-item]')
@@ -2070,22 +2322,27 @@ describe('MessageList nested tool calls', () => {
     }
 
     setChatState('thinking')
-    render(<MessageList />)
+    const { container } = render(<MessageList />)
     fireEvent.click(screen.getByRole('button', { name: /dispatched 4 agents/i }))
 
+    // One pill for the group; each row carries its state on its avatar.
+    const runningRows = () => container.querySelectorAll('[data-agent-call-layout="row"][data-agent-status="running"]')
     expect(screen.queryByText('Starting')).toBeNull()
-    expect(screen.getAllByText('Running')).toHaveLength(5)
+    expect(screen.getAllByText('Running')).toHaveLength(1)
+    expect(runningRows()).toHaveLength(4)
 
     act(() => setChatState('tool_executing'))
     await waitFor(() => {
       expect(screen.queryByText('Starting')).toBeNull()
-      expect(screen.getAllByText('Running')).toHaveLength(5)
+      expect(screen.getAllByText('Running')).toHaveLength(1)
+      expect(runningRows()).toHaveLength(4)
     })
 
     act(() => setChatState('thinking'))
     await waitFor(() => {
       expect(screen.queryByText('Starting')).toBeNull()
-      expect(screen.getAllByText('Running')).toHaveLength(5)
+      expect(screen.getAllByText('Running')).toHaveLength(1)
+      expect(runningRows()).toHaveLength(4)
     })
   })
 
@@ -2104,6 +2361,70 @@ describe('MessageList nested tool calls', () => {
     const divider = screen.getByTestId('compact-status-divider')
     expect(within(divider).getByText('Compacting context')).toBeTruthy()
     expect(screen.queryByText('Compacting context...')).toBeNull()
+    // No divider message yet means no known start time, so no fake 0:00 timer.
+    expect(within(divider).queryByTestId('compact-progress')).toBeNull()
+  })
+
+  it('ticks compaction elapsed time and shows the generated summary size', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-10T08:00:00Z'))
+    const startedAt = Date.now() - 65_000
+    const compactingDivider = (outputChars?: number): UIMessage => ({
+      id: 'compacting-1',
+      type: 'compact_summary',
+      title: 'Context compacted',
+      phase: 'compacting',
+      ...(outputChars !== undefined ? { outputChars } : {}),
+      timestamp: startedAt,
+    })
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          chatState: 'compacting',
+          statusVerb: 'Compacting conversation',
+          messages: [compactingDivider()],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    const progress = () => within(screen.getByTestId('compact-status-divider')).getByTestId('compact-progress')
+    expect(screen.getAllByTestId('compact-status-divider')).toHaveLength(1)
+    expect(within(screen.getByTestId('compact-status-divider')).getByText('Compacting context')).toBeTruthy()
+    expect(progress().textContent).toBe(' · 1:05')
+
+    act(() => { vi.advanceTimersByTime(2_000) })
+    expect(progress().textContent).toBe(' · 1:07')
+
+    act(() => {
+      useChatStore.setState({
+        sessions: {
+          [ACTIVE_TAB]: makeSessionState({
+            chatState: 'compacting',
+            statusVerb: 'Compacting conversation',
+            messages: [compactingDivider(3_240)],
+          }),
+        },
+      })
+    })
+    expect(progress().textContent).toBe(' · 1:07 · 3.2k chars generated')
+
+    act(() => { vi.advanceTimersByTime(60_000) })
+    expect(progress().textContent).toBe(' · 2:07 · 3.2k chars generated')
+
+    act(() => {
+      useChatStore.setState({
+        sessions: {
+          [ACTIVE_TAB]: makeSessionState({
+            chatState: 'thinking',
+            messages: [{ ...compactingDivider(3_240), phase: 'complete' } as UIMessage],
+          }),
+        },
+      })
+    })
+    expect(within(screen.getByTestId('compact-status-divider')).queryByTestId('compact-progress')).toBeNull()
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('shows API retry metadata in the active turn indicator', () => {
@@ -2478,7 +2799,8 @@ describe('MessageList nested tool calls', () => {
     render(<MessageList sessionId={ACTIVE_TAB} />)
 
     expect(screen.getByText('1 memory reference(s)')).toBeTruthy()
-    expect(screen.getByText('Bash')).toBeTruthy()
+    // Led by its verb; the raw tool name is the row's tooltip.
+    expect(screen.getByText('Run')).toBeTruthy()
     expect(screen.getByText('bun test')).toBeTruthy()
   })
 
@@ -2587,7 +2909,7 @@ describe('MessageList nested tool calls', () => {
   it('summarizes repeated Edit events for one path as one changed file', () => {
     render(<MessageList sessionId={ACTIVE_TAB} />)
     const store = useChatStore.getState()
-    const filePath = '/tmp/echoflow-code-manual-qa/live-run.json'
+    const filePath = '/tmp/cc-haha-manual-qa/live-run.json'
 
     act(() => {
       for (let index = 0; index < 4; index += 1) {
@@ -2631,8 +2953,8 @@ describe('MessageList nested tool calls', () => {
 
     act(() => {
       for (const [index, filePath] of [
-        '/tmp/echoflow-code-manual-qa/live-run.json',
-        '/tmp/echoflow-code-manual-qa/summary.json',
+        '/tmp/cc-haha-manual-qa/live-run.json',
+        '/tmp/cc-haha-manual-qa/summary.json',
       ].entries()) {
         const toolUseId = `edit-distinct-${index}`
         store.handleServerMessage(ACTIVE_TAB, {
@@ -3650,6 +3972,73 @@ describe('MessageList nested tool calls', () => {
     expect(document.activeElement).not.toBe(copyButton)
   })
 
+  it.each(['user', 'assistant'] as const)('discards a %s selection after non-pointer navigation to an identical message', async (role) => {
+    const destination = 'selection-destination'
+    const content = 'Shared transcript entry with identical message identity.'
+    const messages: UIMessage[] = [{ id: 'shared-message', type: role === 'user' ? 'user_text' : 'assistant_text', content, timestamp: 1 }]
+    useChatStore.setState({ sessions: {
+      [ACTIVE_TAB]: makeSessionState({ messages }),
+      [destination]: makeSessionState({ messages }),
+    } })
+    render(<MessageList />)
+    await selectMessageText(screen.getByText(content), 'Shared transcript entry')
+
+    // Notification/keyboard navigation has no outside pointerdown to dismiss
+    // the old toolbar. Reusing the message id and content used to retain it.
+    act(() => useTabStore.setState({ activeTabId: destination }))
+    const retainedAdd = screen.queryByRole('button', { name: 'Add to chat' })
+    if (retainedAdd) fireEvent.click(retainedAdd)
+    expect(useWorkspaceChatContextStore.getState().referencesBySession[destination] ?? []).toEqual([])
+    expect(retainedAdd).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Ask in side chat' })).toBeNull()
+
+    // A fresh selection in B is still usable and cannot alter A's draft.
+    await selectMessageText(screen.getByText(content), 'identical message identity')
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }))
+    expect(useWorkspaceChatContextStore.getState().referencesBySession[destination]).toMatchObject([
+      { quote: 'identical message identity', sourceRole: role, messageId: 'shared-message' },
+    ])
+    expect(useWorkspaceChatContextStore.getState().referencesBySession[ACTIVE_TAB] ?? []).toEqual([])
+  })
+
+  it('does not open a side chat from a selection retained across sessions', async () => {
+    const messages: UIMessage[] = [{ id: 'shared-message', type: 'assistant_text', content: 'Shared side chat selection.', timestamp: 1 }]
+    useChatStore.setState({ sessions: {
+      [ACTIVE_TAB]: makeSessionState({ messages }),
+      destination: makeSessionState({ messages }),
+    } })
+    render(<MessageList />)
+    await selectMessageText(screen.getByText('Shared side chat selection.'), 'side chat selection')
+    vi.mocked(openSideChat).mockClear()
+    act(() => useTabStore.setState({ activeTabId: 'destination' }))
+    const retainedAction = screen.queryByRole('button', { name: 'Ask in side chat' })
+    if (retainedAction) fireEvent.click(retainedAction)
+    expect(openSideChat).not.toHaveBeenCalled()
+    expect(retainedAction).toBeNull()
+  })
+
+  it.each([0, 1])('cancels queued selection updates when switching sessions after %i animation frames', async (frames) => {
+    const content = 'Shared pending selection.'
+    const messages: UIMessage[] = [{ id: 'shared-message', type: 'assistant_text', content, timestamp: 1 }]
+    useChatStore.setState({ sessions: {
+      [ACTIVE_TAB]: makeSessionState({ messages }),
+      destination: makeSessionState({ messages }),
+    } })
+    render(<MessageList />)
+    const element = screen.getByText(content)
+    prepareMessageTextSelection(element, 'pending selection')
+    const pointer = { button: 0, clientX: 180, clientY: 88, pointerId: 1, pointerType: 'mouse' }
+    fireSelectionPointerEvent(element, 'down', pointer)
+    fireSelectionPointerEvent(element, 'up', pointer)
+    if (frames) await waitForProgrammaticScrollReset()
+    act(() => useTabStore.setState({ activeTabId: 'destination' }))
+    fireEvent(document, new Event('selectionchange'))
+    await waitForSelectionMenuUpdate()
+    expect(screen.queryByRole('button', { name: 'Add to chat' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Ask in side chat' })).toBeNull()
+    expect(useWorkspaceChatContextStore.getState().referencesBySession).toEqual({})
+  })
+
   it('opens a side chat with a selected quote without adding it to the main composer', async () => {
     useChatStore.setState({ sessions: { [ACTIVE_TAB]: makeSessionState({ messages: [{
       id: 'assistant-side', type: 'assistant_text', content: 'Explain this isolated selection.', timestamp: 1,
@@ -3924,6 +4313,44 @@ describe('MessageList nested tool calls', () => {
     expect(useWorkspaceChatContextStore.getState().referencesBySession[ACTIVE_TAB]?.[0]?.quote).toContain('finish the selection')
   })
 
+  it('floats a multi-line selection above the text when the placement preference asks for it', async () => {
+    useSelectionMenuPlacementStore.setState({ placement: 'above' })
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [{
+            id: 'assistant-1',
+            type: 'assistant_text',
+            content: [
+              'First line can start the selection.',
+              '',
+              'Second paragraph should still belong to the same chat message.',
+              '',
+              '- Third block can finish the selection.',
+            ].join('\n'),
+            timestamp: 1,
+          }],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    await selectAcrossMessageText(
+      screen.getByText('First line can start the selection.'),
+      'First line',
+      screen.getByText('Third block can finish the selection.'),
+      'finish the selection',
+      { left: 160, top: 80, right: 520, bottom: 160, width: 360, height: 80 },
+    )
+    const floatingAddButton = screen.getByRole('button', { name: 'Add to chat' })
+
+    // Above the whole selection (top 80 - 44 - 10) and centred on it, instead of
+    // over the text that follows the selection.
+    expect((floatingAddButton.closest('[role=toolbar]') as HTMLElement).style.left).toBe('160px')
+    expect((floatingAddButton.closest('[role=toolbar]') as HTMLElement).style.top).toBe('26px')
+  })
+
   it('shows the selected-message action after browser selectionchange for multi-line replies', async () => {
     useChatStore.setState({
       sessions: {
@@ -4146,6 +4573,256 @@ describe('MessageList nested tool calls', () => {
         quote: 'Second assistant reply',
       },
     ])
+  })
+
+  it.each(['thinking', 'tool_result'] as const)('does not transfer expanded %s geometry into renamed collapsed rows', async (messageType) => {
+    const sessionId = 'review-thinking-state'
+    dropSession(sessionId)
+    clearDisclosureMemory()
+    const messages: UIMessage[] = Array.from({ length: 220 }, (_, index) => {
+      const common = { id: `thinking-old-${index}`, content: `Reasoning ${index}`, timestamp: index }
+      return messageType === 'tool_result'
+        ? { ...common, type: 'tool_result', toolUseId: `orphan-${index}`, isError: false }
+        : { ...common, type: 'thinking' }
+    })
+    setDisclosure('thinking-old-0', true)
+    const heights = getHeightsForSession(sessionId)
+    for (const message of messages) heights.set(message.id, message.id === 'thinking-old-0' ? 300 : 40)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return { top: 0, bottom: 40, width: 800, height: this.hasAttribute('data-virtual-message-item')
+        ? (this.querySelector('[data-thinking-content="expanded"]') ? 300 : 40) : 0 } as DOMRect
+    })
+    useChatStore.setState({ sessions: { [sessionId]: makeSessionState({ messages }) } })
+    const { container } = render(<MessageList sessionId={sessionId} />)
+    const scroller = container.querySelector<HTMLElement>('.chat-scroll-area')!
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 400 })
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 9060 })
+    await waitForProgrammaticScrollReset()
+    scroller.scrollTop = 5000
+    fireEvent.scroll(scroller)
+    expect(container.querySelector('[data-virtual-message-item="thinking-old-0"]')).toBeNull()
+    act(() => useChatStore.setState({ sessions: { [sessionId]: makeSessionState({
+      messages: messages.map((message, index) => ({ ...message, id: `thinking-new-${index}` })),
+    }) } }))
+    await waitForProgrammaticScrollReset()
+    expect(getDisclosure('thinking-new-0')).toBeUndefined()
+    expect(container.querySelector('[data-virtual-message-item="thinking-new-0"]')).toBeNull()
+    // Its disclosure state reset under the new key, so the old 300px open
+    // geometry cannot be used for this 40px collapsed offscreen row.
+    expect(heights.get('thinking-new-0')).not.toBe(300)
+    expect(heights.get('thinking-new-1')).toBe(40)
+    clearDisclosureMemory()
+  })
+
+  it.each([0, 1])('preserves the reading position when standalone tool-result button %s expands (idle)', async (buttonIndex) => {
+    const sessionId = 'review-idle-tool-result'
+    dropSession(sessionId)
+    clearDisclosureMemory()
+    const observers: Array<{callback: ResizeObserverCallback, targets: Element[]}> = []
+    class TestResizeObserver {
+      targets: Element[] = []
+      observe = (target: Element) => this.targets.push(target)
+      disconnect = vi.fn()
+      unobserve = vi.fn()
+      constructor(callback: ResizeObserverCallback) { observers.push({callback, targets: this.targets}) }
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver)
+    const messages: UIMessage[] = Array.from({ length: 220 }, (_, index) => ({
+      id: `reader-${index}`, type: 'assistant_text', content: `answer ${index}`, timestamp: index,
+    }))
+    messages[219] = { id: 'reader-219', type: 'tool_result', toolUseId: 'orphan-result', content: 'long result line\n'.repeat(100), isError: true, timestamp: 219 }
+    const heights = getHeightsForSession(sessionId)
+    for (const message of messages) heights.set(message.id, 80)
+    useChatStore.setState({ sessions: { [sessionId]: makeSessionState({ messages }) } })
+    const { container } = render(<MessageList sessionId={sessionId} />)
+    const scroller = container.querySelector<HTMLElement>('.chat-scroll-area')!
+    let scrollTop = 17200
+    let scrollHeight = 17600
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 400 })
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, get: () => scrollHeight })
+    Object.defineProperty(scroller, 'scrollTop', { configurable: true, get: () => scrollTop, set: value => { scrollTop = Math.min(value, scrollHeight - 400) } })
+    await waitForProgrammaticScrollReset()
+    fireEvent.scroll(scroller)
+    const row = container.querySelector<HTMLElement>('[data-virtual-message-item="reader-219"]')!
+    const button = row.querySelectorAll('button')[buttonIndex]!
+    expect(button).toBeTruthy()
+    const observer = observers.find(observer => observer.targets.includes(row))!
+    expect(observer).toBeTruthy()
+    act(() => {
+      fireEvent.click(button)
+      scrollHeight += 600
+      observer.callback([{target: row, borderBoxSize: [{blockSize: 680, inlineSize: 800}], contentRect: {height: 680}} as unknown as ResizeObserverEntry], {} as ResizeObserver)
+    })
+    await waitForProgrammaticScrollReset()
+    expect(scrollTop).toBe(17200)
+    clearDisclosureMemory()
+  })
+
+  it('issue1662 retains the tail after idle history replaces local row ids', async () => {
+    const sessionId = 'issue1662-tail-reload'
+    dropSession(sessionId)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return { top: 0, bottom: 80, width: 800, height: this.hasAttribute('data-virtual-message-item') ? 80 : 0 } as DOMRect
+    })
+    const messages: UIMessage[] = Array.from({ length: 220 }, (_, index) => ({
+      id: `local-${index}`, type: 'assistant_text',
+      content: `line ${index} ` + 'x'.repeat(800), timestamp: index,
+    }))
+    const heights = getHeightsForSession(sessionId)
+    for (const message of messages) heights.set(message.id, 80)
+    useChatStore.setState({ sessions: { [sessionId]: makeSessionState({ messages }) } })
+    const { container } = render(<MessageList sessionId={sessionId} />)
+    const scroller = container.querySelector<HTMLElement>('.chat-scroll-area')!
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 400 })
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 17600 })
+    await waitForProgrammaticScrollReset()
+    scroller.scrollTop = 17200
+    fireEvent.scroll(scroller)
+    expect(container.querySelector('[data-virtual-message-item="local-219"]')).not.toBeNull()
+    act(() => useChatStore.setState({ sessions: { [sessionId]: makeSessionState({
+      messages: messages.map((message, index) => ({ ...message, id: `history-${index}` })),
+    }) } }))
+    await waitForProgrammaticScrollReset()
+    expect(container.querySelector('[data-virtual-message-item="history-219"]')).not.toBeNull()
+    dropSession(sessionId)
+  })
+
+  it.each([true, false])('preserves the reader position after a transcript reload (following=%s, #1652)', async (following) => {
+    const sessionId = 'reload-renames-rows'
+    // Many short lines inflate the estimate (22px a line) far above the 40px the
+    // rows were measured at, the shape of a collapsed tool-heavy transcript.
+    const content = (index: number) => `reloaded transcript line ${index}\n${'filler\n'.repeat(60)}`
+    const liveMessages: UIMessage[] = Array.from({ length: 220 }, (_, index) => ({
+      id: `live-${index}`,
+      type: 'assistant_text',
+      content: content(index),
+      timestamp: index,
+    }))
+    const heights = getHeightsForSession(sessionId)
+    heights.clear()
+    for (const message of liveMessages) heights.set(message.id, 40)
+    useChatStore.setState({
+      sessions: { [sessionId]: makeSessionState({ messages: liveMessages }) },
+    })
+
+    const { container } = render(<MessageList sessionId={sessionId} />)
+    const scroller = container.querySelector('.chat-scroll-area') as HTMLElement
+    const clientHeight = 500
+    const scrollHeight = 220 * 40
+    const expectedScrollTop = following ? scrollHeight - clientHeight : 110 * 40
+    let scrollTop = expectedScrollTop
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: clientHeight })
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, get: () => scrollHeight })
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value) => {
+        scrollTop = Math.min(value, scrollHeight - clientHeight)
+      },
+    })
+    await waitForProgrammaticScrollReset()
+    await act(async () => {
+      if (!following) fireEvent.wheel(scroller, { deltaY: -100 })
+      fireEvent.scroll(scroller)
+    })
+    expect(container.querySelector(`[data-virtual-message-item="live-${following ? 219 : 110}"]`)).not.toBeNull()
+
+    // The post-reply history reload: same messages, new ids.
+    act(() => {
+      useChatStore.setState((state) => ({
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...state.sessions[sessionId]!,
+            messages: liveMessages.map((message, index) => ({ ...message, id: `restored-${index}` })),
+          },
+        },
+      }))
+    })
+    await waitForProgrammaticScrollReset()
+    await waitForProgrammaticScrollReset()
+
+    expect(heights.get('restored-219')).toBe(40)
+    expect(container.querySelector(`[data-virtual-message-item="restored-${following ? 219 : 110}"]`)).not.toBeNull()
+    expect(scrollTop).toBe(expectedScrollTop)
+  })
+
+  it('does not carry a measured height to different text of the same length on reload', async () => {
+    const sessionId = 'reload-equal-length-content'
+    const oldMessage: UIMessage = { id: 'old-row', type: 'assistant_text', content: 'abcdefgh', timestamp: 1 }
+    const heights = getHeightsForSession(sessionId)
+    heights.set(oldMessage.id, 400)
+    useChatStore.setState({ sessions: { [sessionId]: makeSessionState({ messages: [oldMessage] }) } })
+    render(<MessageList sessionId={sessionId} />)
+    act(() => useChatStore.setState({ sessions: { [sessionId]: makeSessionState({
+      messages: [{ ...oldMessage, id: 'new-row', content: 'a\nb\nc\nd\n' }],
+    }) } }))
+    expect(heights.has('new-row')).toBe(false)
+  })
+
+  it('re-pins to the bottom when an idle transcript rewrite changes the row heights (#1662)', async () => {
+    const sessionId = 'idle-rewrite-repins'
+    const liveMessages: UIMessage[] = Array.from({ length: 220 }, (_, index) => ({
+      id: `live-${index}`,
+      type: 'assistant_text',
+      content: `idle transcript line ${index}`,
+      timestamp: index,
+    }))
+    const heights = getHeightsForSession(sessionId)
+    heights.clear()
+    for (const message of liveMessages) heights.set(message.id, 40)
+    useChatStore.setState({
+      sessions: { [sessionId]: makeSessionState({ messages: liveMessages }) },
+    })
+
+    const { container } = render(<MessageList sessionId={sessionId} />)
+    const scroller = container.querySelector('.chat-scroll-area') as HTMLElement
+    const clientHeight = 500
+    let scrollHeight = 220 * 40
+    let scrollTop = scrollHeight - clientHeight
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: clientHeight })
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, get: () => scrollHeight })
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value) => {
+        scrollTop = Math.min(value, scrollHeight - clientHeight)
+      },
+    })
+    await waitForProgrammaticScrollReset()
+    await act(async () => {
+      fireEvent.scroll(scroller)
+    })
+    expect(screen.getByText('idle transcript line 219')).toBeTruthy()
+
+    // The reload rewrites every row with different content (and ids), so no
+    // measured height applies and the transcript grows under the reader to the
+    // estimated height of the new rows.
+    const restoredMessages: UIMessage[] = liveMessages.map((message, index) => ({
+      ...message,
+      id: `restored-${index}`,
+      content: `restored transcript line ${index}\n${'filler\n'.repeat(60)}`,
+    }))
+    scrollHeight = restoredMessages.reduce(
+      (total, message) => total + estimateRenderItemHeight({ kind: 'message', message } as Parameters<typeof estimateRenderItemHeight>[0]),
+      0,
+    )
+    act(() => {
+      useChatStore.setState((state) => ({
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...state.sessions[sessionId]!,
+            messages: restoredMessages,
+          },
+        },
+      }))
+    })
+    await waitForProgrammaticScrollReset()
+    await waitForProgrammaticScrollReset()
+
+    expect(scrollTop).toBe(scrollHeight - clientHeight)
+    expect(screen.getByText(/restored transcript line 219/)).toBeTruthy()
   })
 
   it('does not force-scroll to the bottom while the user is reading history', async () => {
@@ -4835,7 +5512,7 @@ describe('MessageList nested tool calls', () => {
     expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull()
   })
 
-  it('does not follow resize for stale permission state without a pending file permission', async () => {
+  it('keeps following the bottom with stale permission state and no pending file permission', async () => {
     let resizeCallback: ResizeObserverCallback | null = null
     class TestResizeObserver {
       observe = vi.fn()
@@ -4889,7 +5566,8 @@ describe('MessageList nested tool calls', () => {
       } as ResizeObserverEntry], {} as ResizeObserver)
     })
 
-    expect(scrollTop).toBe(600)
+    await waitForProgrammaticScrollReset()
+    expect(scrollTop).toBe(1000)
   })
 
   it('preserves upward wheel and keyboard intent while a pending file permission preview resizes', async () => {
@@ -5031,6 +5709,7 @@ describe('MessageList nested tool calls', () => {
     })
 
     scrollTop = 200
+    fireEvent.pointerDown(scroller)
     fireEvent.scroll(scroller)
     expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy()
 
@@ -5205,12 +5884,16 @@ describe('MessageList nested tool calls', () => {
       expect(resizeCallback).not.toBeNull()
     })
 
+    await waitForProgrammaticScrollReset()
+    fireEvent.pointerDown(scroller)
+    fireEvent.scroll(scroller)
     scrollIntoView.mockClear()
     scrollHeight = 1600
     act(() => {
       resizeCallback?.([], {} as ResizeObserver)
     })
 
+    await waitForProgrammaticScrollReset()
     expect(scrollIntoView).not.toHaveBeenCalled()
     expect(scrollTop).toBe(180)
   })
@@ -5287,14 +5970,296 @@ describe('MessageList nested tool calls', () => {
       expect(resizeCallback).not.toBeNull()
     })
 
+    await waitForProgrammaticScrollReset()
+    fireEvent.pointerDown(scroller)
+    fireEvent.scroll(scroller)
     scrollIntoView.mockClear()
     scrollHeight = 2100
     act(() => {
       resizeCallback?.([], {} as ResizeObserver)
     })
 
+    await waitForProgrammaticScrollReset()
     expect(scrollIntoView).not.toHaveBeenCalled()
     expect(scrollTop).toBe(260)
+  })
+
+  it.each([['switch', true, true], ['remount', true, true], ['switch', false, true], ['remount', false, true], ['switch', false, false], ['remount', false, false]] as const)('restores the visible row and pixel offset after %s (evicted=%s, virtualized=%s) and late measurements (#1704, #1751)', async (mode, evicted, virtualized) => {
+    const sessionA = `viewport-anchor-${mode}-${evicted}-${virtualized}`
+    const sessionB = `${sessionA}-other`
+    dropSession(sessionA)
+    const anchorIndex = virtualized ? 80 : 12
+    const messages: UIMessage[] = Array.from({ length: virtualized ? 180 : 28 }, (_, index) => ({
+      id: `anchor-row-${index}`, type: 'assistant_text', content: `Reply ${index}`, timestamp: index,
+    }))
+    // Model the DOM's spacer + mounted rows, independently of virtual offsets.
+    const heights = new Map(messages.map((message, index) => [message.id, 180.25 + index % 5 * 45]))
+    for (const [key, height] of heights) getHeightsForSession(sessionA).set(key, height)
+    const rowHeight = (node: Element) => heights.get((node as HTMLElement).dataset.chatRenderItemKey!) ?? 0
+    const nodeHeight = (node: Element) => node.hasAttribute('data-virtual-spacer') ? parseFloat((node as HTMLElement).style.height) : rowHeight(node)
+    const scrollTops = new WeakMap<HTMLElement, number>()
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('chat-scroll-area') ? 400 : 0
+    })
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('chat-scroll-area') ? 32 + [...this.firstElementChild!.children].reduce((sum, node) => sum + nodeHeight(node), 0) : 0
+    })
+    vi.spyOn(HTMLElement.prototype, 'scrollTop', 'get').mockImplementation(function (this: HTMLElement) { return scrollTops.get(this) ?? 0 })
+    vi.spyOn(HTMLElement.prototype, 'scrollTop', 'set').mockImplementation(function (this: HTMLElement, value: number) {
+      scrollTops.set(this, Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)))
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('chat-scroll-area')) return { top: 100, bottom: 500, height: 400, width: 800 } as DOMRect
+      const scroller = this.closest<HTMLElement>('.chat-scroll-area')
+      if (!scroller || !this.dataset.chatRenderItemKey) return { top: 0, bottom: 0, height: 0, width: 800 } as DOMRect
+      let top = 116 - scroller.scrollTop
+      for (const sibling of this.parentElement!.children) {
+        if (sibling === this) break
+        top += nodeHeight(sibling)
+      }
+      const height = rowHeight(this)
+      return { top, bottom: top + height, height, width: 800 } as DOMRect
+    })
+    const observers = new Map<Element, ResizeObserverCallback>()
+    vi.stubGlobal('ResizeObserver', class {
+      targets: Element[] = []
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) { this.targets.push(target); observers.set(target, this.callback) }
+      disconnect() { this.targets.forEach((target) => observers.delete(target)) }
+      unobserve(target: Element) { observers.delete(target) }
+    })
+    useChatStore.setState({ sessions: {
+      [sessionA]: makeSessionState({ messages }),
+      [sessionB]: makeSessionState({ messages: [{ id: 'other-row', type: 'assistant_text', content: 'Other conversation', timestamp: 1 }] }),
+    } })
+    let view = render(<MessageList sessionId={sessionA} />)
+    const scroller = () => view.container.querySelector<HTMLElement>('.chat-scroll-area')!
+    const visibleAnchor = () => {
+      const top = scroller().getBoundingClientRect().top
+      const row = [...scroller().querySelectorAll<HTMLElement>('[data-chat-render-item-key]')]
+        .find((node) => node.getBoundingClientRect().bottom > top)!
+      return { key: row?.dataset.chatRenderItemKey, offset: row?.getBoundingClientRect().top - top }
+    }
+    await waitForProgrammaticScrollReset()
+    fireEvent.wheel(scroller(), { deltaY: -100 })
+    scroller().scrollTop = 16 + [...heights.values()].slice(0, anchorIndex).reduce((sum, height) => sum + height, 0) + 75.25
+    fireEvent.scroll(scroller())
+    let before = visibleAnchor()
+    expect(before).toEqual({ key: `anchor-row-${anchorIndex}`, offset: -75.25 })
+    expect(Boolean(view.container.querySelector('[data-virtual-message-item]'))).toBe(virtualized)
+    expect(view.container.querySelectorAll('[data-chat-render-item-key]').length).toBeLessThanOrEqual(messages.length)
+    const switchTo = (sessionId: string) => {
+      if (mode === 'remount') { view.unmount(); view = render(<MessageList sessionId={sessionId} />) }
+      else view.rerender(<MessageList sessionId={sessionId} />)
+    }
+    // Layout can land immediately before leaving, before its ResizeObserver or
+    // native scroll event. The departure snapshot must read the outgoing DOM.
+    heights.set(`anchor-row-${anchorIndex - 1}`, heights.get(`anchor-row-${anchorIndex - 1}`)! + 44)
+    before = visibleAnchor()
+    switchTo(sessionB)
+    // Scroll snapshots outlive the real height-cache LRU boundary.
+    if (evicted) {
+      for (let index = 0; index < 17; index++) getHeightsForSession(`${sessionA}-eviction-${index}`)
+      expect(getHeightsForSession(sessionA).size).toBe(0)
+    }
+    switchTo(sessionA)
+    expect(visibleAnchor().key).toBe(before.key)
+    expect(Math.abs(visibleAnchor().offset - before.offset)).toBeLessThanOrEqual(1)
+    // Async Markdown/image layout arrives after the old 250ms restore window.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)) })
+    const rowAbove = [...scroller().querySelectorAll<HTMLElement>('[data-chat-render-item-key]')]
+      .find((row) => row.dataset.chatRenderItemKey !== before.key)!
+    const grow = (row: HTMLElement) => {
+      const height = rowHeight(row) + 240.5
+      heights.set(row.dataset.chatRenderItemKey!, height)
+      const target = virtualized ? row : scroller().firstElementChild!
+      const observedHeight = virtualized ? height : scroller().scrollHeight
+      act(() => observers.get(target)?.([{ target, borderBoxSize: [{ blockSize: observedHeight }], contentRect: { height: observedHeight } } as unknown as ResizeObserverEntry], {} as ResizeObserver))
+    }
+    grow(rowAbove)
+    expect(visibleAnchor().key).toBe(before.key)
+    expect(Math.abs(visibleAnchor().offset - before.offset)).toBeLessThanOrEqual(1)
+    // Focus can enter from the external navigator via Tab/Shift+Tab: there is
+    // no keydown on the scroller before the browser scrolls its focused row.
+    // Both focus navigation and wheel gestures must release restoration.
+    if (evicted) fireEvent.wheel(scroller(), { deltaY: 150 })
+    else {
+      rowAbove.tabIndex = 0
+      act(() => rowAbove.focus())
+    }
+    const manualPosition = scroller().scrollTop + 150
+    scroller().scrollTop = manualPosition
+    fireEvent.scroll(scroller())
+    expect(scroller().scrollTop).toBe(manualPosition)
+    grow(rowAbove)
+    expect(scroller().scrollTop).toBe(manualPosition)
+    fireEvent.click(screen.getByRole('button', { name: 'Latest' }))
+    await waitForProgrammaticScrollReset()
+    fireEvent.scroll(scroller())
+    switchTo(sessionB)
+    switchTo(sessionA)
+    await waitForProgrammaticScrollReset()
+    expect(scroller().scrollHeight - scroller().scrollTop - scroller().clientHeight).toBeLessThanOrEqual(1)
+    dropSession(sessionA)
+  })
+
+  it.each([['latest', 300], ['switch', 300], ['latest', 600], ['switch', 600]] as const)('keeps the restored bottom when %s supersedes a %sms old gesture (#1751)', async (mode, elapsed) => {
+    let now = 1000
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const observers = new Map<Element, ResizeObserverCallback>()
+    vi.stubGlobal('ResizeObserver', class {
+      targets: Element[] = []
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) { this.targets.push(target); observers.set(target, this.callback) }
+      disconnect() { this.targets.forEach(target => observers.delete(target)) }
+      unobserve(target: Element) { observers.delete(target) }
+    })
+    let height = 1000
+    const scrollTops = new WeakMap<HTMLElement, number>()
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400)
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => height)
+    vi.spyOn(HTMLElement.prototype, 'scrollTop', 'get').mockImplementation(function (this: HTMLElement) { return scrollTops.get(this) ?? 0 })
+    vi.spyOn(HTMLElement.prototype, 'scrollTop', 'set').mockImplementation(function (this: HTMLElement, value: number) { scrollTops.set(this, Math.max(0, Math.min(value, height - 400))) })
+    const sessionA = `restore-supersede-${mode}-${elapsed}`
+    const sessionB = `${sessionA}-other`
+    useChatStore.setState({ sessions: {
+      [sessionA]: makeSessionState({ messages: [{ id: 'restore-a', type: 'assistant_text', content: 'A', timestamp: 1 }] }),
+      [sessionB]: makeSessionState({ messages: [{ id: 'restore-b', type: 'assistant_text', content: 'B', timestamp: 1 }] }),
+    } })
+    const view = render(<MessageList sessionId={sessionA} />)
+    const scroller = () => view.container.querySelector<HTMLElement>('.chat-scroll-area')!
+    await waitForProgrammaticScrollReset()
+    if (mode === 'switch') {
+      view.rerender(<MessageList sessionId={sessionB} />)
+      await waitForProgrammaticScrollReset()
+    }
+    fireEvent.wheel(scroller(), { deltaY: -120 })
+    scroller().scrollTop = 100
+    fireEvent.scroll(scroller())
+    if (mode === 'latest') fireEvent.click(screen.getByRole('button', { name: 'Latest' }))
+    else view.rerender(<MessageList sessionId={sessionA} />)
+    await waitForProgrammaticScrollReset()
+    expect(scroller().scrollTop).toBe(600)
+    now += elapsed
+    // Late layout grows both above and below the viewport. Native anchoring
+    // adjusts scrollTop by 200 before the content observer sees total +600.
+    height += 600
+    scroller().scrollTop = 800
+    fireEvent.scroll(scroller())
+    const content = scroller().firstElementChild!
+    act(() => observers.get(content)?.([{ target: content, contentRect: { height } } as ResizeObserverEntry], {} as ResizeObserver))
+    await waitForProgrammaticScrollReset()
+    expect(scroller().scrollTop).toBe(1200)
+  })
+
+  it.each(['switch', 'remount'] as const)('keeps a 14-turn idle session at latest after %s and delayed content layout (#1751)', async (mode) => {
+    const sessionA = `short-tail-${mode}`
+    const sessionB = `${sessionA}-other`
+    const messages: UIMessage[] = Array.from({ length: 14 }, (_, index): UIMessage[] => [
+      { id: `short-user-${index}`, type: 'user_text', content: `Prompt ${index + 1}`, timestamp: index * 4 },
+      { id: `short-tool-${index}`, type: 'tool_use', toolUseId: `short-tool-${index}`, toolName: 'Bash', input: { command: 'pwd' }, timestamp: index * 4 + 1 },
+      { id: `short-result-${index}`, type: 'tool_result', toolUseId: `short-tool-${index}`, content: '/tmp/fixture', isError: false, timestamp: index * 4 + 2 },
+      { id: `short-reply-${index}`, type: 'assistant_text', content: `Reply ${index + 1}\n\n\`\`\`ts\nconst turn = ${index + 1}\n\`\`\``, timestamp: index * 4 + 3 },
+    ]).flat()
+    let contentHeight = 2800
+    const scrollTops = new WeakMap<HTMLElement, number>()
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400)
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.querySelector('[data-chat-render-item-key="short-user-0"]') ? contentHeight : 800
+    })
+    vi.spyOn(HTMLElement.prototype, 'scrollTop', 'get').mockImplementation(function (this: HTMLElement) { return scrollTops.get(this) ?? 0 })
+    vi.spyOn(HTMLElement.prototype, 'scrollTop', 'set').mockImplementation(function (this: HTMLElement, value: number) {
+      scrollTops.set(this, Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)))
+    })
+    const observers = new Map<Element, ResizeObserverCallback>()
+    vi.stubGlobal('ResizeObserver', class {
+      targets: Element[] = []
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) { this.targets.push(target); observers.set(target, this.callback) }
+      disconnect() { this.targets.forEach((target) => observers.delete(target)) }
+      unobserve(target: Element) { observers.delete(target) }
+    })
+    useChatStore.setState({ sessions: {
+      [sessionA]: makeSessionState({ messages }),
+      [sessionB]: makeSessionState({ messages: [{ id: 'other-row', type: 'assistant_text', content: 'Other conversation', timestamp: 1 }] }),
+    } })
+    let view = render(<MessageList sessionId={sessionA} />)
+    const scroller = () => view.container.querySelector<HTMLElement>('.chat-scroll-area')!
+    const switchTo = (sessionId: string) => {
+      if (mode === 'remount') { view.unmount(); view = render(<MessageList sessionId={sessionId} />) }
+      else view.rerender(<MessageList sessionId={sessionId} />)
+    }
+    const resizeContent = async (growth: number) => {
+      contentHeight += growth
+      const content = scroller().firstElementChild!
+      // Chromium may deliver a native anchoring/clamping scroll before the
+      // observer. Without a reader gesture this must not cancel restoration.
+      fireEvent.scroll(scroller())
+      act(() => observers.get(content)?.([{ target: content, contentRect: { height: contentHeight } } as ResizeObserverEntry], {} as ResizeObserver))
+      await waitForProgrammaticScrollReset()
+    }
+    await waitForProgrammaticScrollReset()
+    expect(view.container.querySelector('[data-virtual-message-item]')).toBeNull()
+    expect(scroller().scrollTop).toBe(2400)
+    fireEvent.scroll(scroller())
+    switchTo(sessionB)
+    fireEvent.pointerDown(scroller())
+    switchTo(sessionA)
+    await waitForProgrammaticScrollReset()
+    expect(scroller().scrollTop).toBe(2400)
+
+    // Syntax highlighting / tool results can settle after the 250ms restore
+    // guard, with the same message ids/count and no live model output.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)) })
+    await resizeContent(600)
+    expect(scroller().scrollTop).toBe(3000)
+    await resizeContent(400)
+    expect(scroller().scrollTop).toBe(3400)
+
+    // An upward gesture cancels even an already queued follow before onScroll.
+    const content = scroller().firstElementChild!
+    contentHeight += 300
+    act(() => {
+      observers.get(content)?.([{ target: content, contentRect: { height: contentHeight } } as ResizeObserverEntry], {} as ResizeObserver)
+      fireEvent.wheel(scroller(), { deltaY: -120 })
+    })
+    await waitForProgrammaticScrollReset()
+    expect(scroller().scrollTop).toBe(3400)
+    scroller().scrollTop = 1200
+    fireEvent.scroll(scroller())
+    switchTo(sessionB)
+    switchTo(sessionA)
+    await resizeContent(500)
+    expect(scroller().scrollTop).toBe(1200)
+    expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy()
+
+    // Returning while history loads must retain the saved bottom intent too.
+    fireEvent.click(screen.getByRole('button', { name: 'Latest' }))
+    await waitForProgrammaticScrollReset()
+    switchTo(sessionB)
+    act(() => useChatStore.setState((state) => ({ sessions: {
+      ...state.sessions, [sessionA]: makeSessionState({ historyStatus: 'loading', historyHydrated: false }),
+    } })))
+    switchTo(sessionA)
+    await waitForProgrammaticScrollReset()
+    act(() => useChatStore.setState((state) => ({ sessions: {
+      ...state.sessions, [sessionA]: makeSessionState({ messages }),
+    } })))
+    await waitForProgrammaticScrollReset()
+    await resizeContent(600)
+    expect(scroller().scrollTop).toBe(contentHeight - 400)
+
+    const beforeInspection = scroller().scrollTop
+    const restoredContent = scroller().firstElementChild!
+    contentHeight += 200
+    act(() => {
+      observers.get(restoredContent)?.([{ target: restoredContent, contentRect: { height: contentHeight } } as ResizeObserverEntry], {} as ResizeObserver)
+      fireEvent.pointerDown(restoredContent)
+    })
+    await waitForProgrammaticScrollReset()
+    expect(scroller().scrollTop).toBe(beforeInspection)
+    await resizeContent(400)
+    expect(scroller().scrollTop).toBe(beforeInspection)
   })
 
   it('restores a session scroll position when switching back to a tab', async () => {
@@ -5342,6 +6307,7 @@ describe('MessageList nested tool calls', () => {
     })
 
     await waitForProgrammaticScrollReset()
+    fireEvent.pointerDown(scroller)
     fireEvent.scroll(scroller)
     expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy()
 
@@ -5401,6 +6367,7 @@ describe('MessageList nested tool calls', () => {
     })
 
     await waitForProgrammaticScrollReset()
+    fireEvent.pointerDown(firstScroller)
     fireEvent.scroll(firstScroller)
     expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy()
     firstSession.unmount()
@@ -5510,6 +6477,7 @@ describe('MessageList nested tool calls', () => {
 
     scrollIntoView.mockClear()
     await waitForProgrammaticScrollReset()
+    fireEvent.pointerDown(scroller)
     fireEvent.scroll(scroller)
     fireEvent.click(screen.getByRole('button', { name: 'Latest' }))
 
@@ -5580,6 +6548,7 @@ describe('MessageList nested tool calls', () => {
 
     scrollIntoView.mockClear()
     await waitForProgrammaticScrollReset()
+    fireEvent.pointerDown(scroller)
     fireEvent.scroll(scroller)
     expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy()
 
@@ -5655,6 +6624,7 @@ describe('MessageList nested tool calls', () => {
 
     scrollIntoView.mockClear()
     await waitForProgrammaticScrollReset()
+    fireEvent.pointerDown(scroller)
     fireEvent.scroll(scroller)
     expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy()
 
@@ -5774,11 +6744,19 @@ describe('MessageList nested tool calls', () => {
     expect(assistantShell?.className).not.toContain('ml-10')
     expect(userActions?.getAttribute('data-align')).toBe('end')
     expect(assistantActions?.getAttribute('data-align')).toBe('start')
-    expect(userActions?.className).toContain('h-7')
-    expect(userActions?.className).toContain('mt-2')
-    expect(userActions?.className).not.toContain('h-0')
-    expect(userActions?.className).not.toContain('group-hover:h-7')
+    // The prompt's bar hangs under the bubble as a zero-height row: hovering
+    // never moves the transcript, the bar holds no height of its own whether
+    // hidden or shown (a constant h-0, not a hover-driven height change), and
+    // it stays in flow so the hover shell is never narrower than its bar (#1616).
+    expect(userActions?.getAttribute('data-placement')).toBe('overlay')
+    expect(userActions?.className).not.toMatch(/(^|\s)(absolute|fixed)(\s|$)/)
+    expect(userActions?.className).toContain('h-0')
+    expect(userActions?.className).not.toContain('mt-2')
+    expect(userActions?.className).not.toContain('group-hover:h-')
     expect(userActions?.className).not.toContain('invisible')
+    // The closing reply's bar stays in flow: it is always shown.
+    expect(assistantActions?.getAttribute('data-placement')).toBe('inline')
+    expect(assistantActions?.className).not.toContain('absolute')
     expect(userTime.getAttribute('title')).toBe(formatExactMessageTimestamp(userTimestamp, 'en'))
     // The closing reply's bar is not hover-gated: it is rare and deliberate now,
     // so hiding it until hover would only make a present affordance hard to find.
@@ -5991,6 +6969,16 @@ describe('MessageList nested tool calls', () => {
     expect(screen.queryByRole('button', { name: 'Rewind to here' })).toBeNull()
   })
 
+  it('does not offer transcript branching for a restored lean conversation', () => {
+    useSessionStore.setState({ sessions: [{ id: ACTIVE_TAB, agentProfile: 'lean', title: 'Lean', createdAt: '', modifiedAt: '', messageCount: 2, projectPath: '/tmp/project', workDir: '/tmp/project', workDirExists: true }] })
+    useChatStore.setState({ sessions: { [ACTIVE_TAB]: makeSessionState({ messages: [
+      { id: 'lean-u', transcriptMessageId: 'tu', type: 'user_text', content: 'Question', timestamp: 1 },
+      { id: 'lean-a', transcriptMessageId: 'ta', type: 'assistant_text', content: 'Answer', timestamp: 2 },
+    ] }) } })
+    render(<MessageList />)
+    expect(screen.queryByRole('button', { name: 'Fork a new conversation' })).toBeNull()
+  })
+
   it('branches from completed transcript-backed chat messages using the original transcript id', async () => {
     const branchSession = vi.fn().mockResolvedValue({
       sessionId: 'branched-session-1',
@@ -6169,6 +7157,8 @@ describe('MessageList nested tool calls', () => {
     expect(fallback.closest('[data-chat-render-item-key]')).toBeNull()
     expect(within(fallback).getByText(/too long for turn previews or file undo/)).toBeTruthy()
     expect(within(fallback).getByText(/current workspace changes/)).toBeTruthy()
+    expect(within(fallback).queryByRole('button', { name: 'Open current content of qa-status.txt' })).toBeNull()
+    fireEvent.click(within(fallback).getByRole('button', { name: 'Show 1 changed files' }))
     fireEvent.click(within(fallback).getByRole('button', { name: 'Open current content of qa-status.txt' }))
     expect(openFile).toHaveBeenCalledWith(ACTIVE_TAB, 'qa-status.txt')
     expect(openReview).not.toHaveBeenCalled()
@@ -6559,7 +7549,7 @@ describe('MessageList nested tool calls', () => {
     expect(document.activeElement).toBe(remountedOpener)
     expect(screen.getByRole('button', { name: 'Hide changed files' }).getAttribute('aria-expanded')).toBe('true')
     expect(useWorkspaceStore.getState().getSession(ACTIVE_TAB).origin).toBeNull()
-  }, 15_000)
+  })
 
   it('opens the workspace diff (working-tree) when a historical turn change row is clicked', async () => {
     vi.spyOn(sessionsApi, 'getTurnCheckpoints').mockResolvedValue({
@@ -7934,6 +8924,77 @@ describe('MessageList nested tool calls', () => {
     expect(within(turnCard).getByText('ink-survey-philosophy.md')).toBeTruthy()
   })
 
+  describe('output cards need the turn to have produced the file', () => {
+    function mockCheckpoint(unverifiedChangeSources: string[], startedAt: number) {
+      return vi.spyOn(sessionsApi, 'getTurnCheckpoints').mockResolvedValue({
+        checkpoints: [{
+          target: { targetUserMessageId: 'transcript-user-1', userMessageIndex: 0, userMessageCount: 1 },
+          workDir: '/private/tmp',
+          code: { available: true, filesChanged: [], insertions: 0, deletions: 0 },
+          unverifiedChangeSources,
+          startedAt,
+        }],
+      })
+    }
+
+    function replyWith(text: string) {
+      const store = useChatStore.getState()
+      act(() => {
+        store.sendMessage(ACTIVE_TAB, 'Summarise the last commits')
+        store.handleServerMessage(ACTIVE_TAB, { type: 'content_start', blockType: 'text' })
+        store.handleServerMessage(ACTIVE_TAB, { type: 'content_delta', text })
+        store.handleServerMessage(ACTIVE_TAB, { type: 'status', state: 'idle' })
+      })
+    }
+
+    beforeEach(() => {
+      resetWorkspaceFileStatsForTests()
+    })
+
+    it('shows none for file names a read-only turn only quoted', async () => {
+      // The turn ran `git log`; the reply quoted names from commit messages.
+      const getTurnCheckpoints = mockCheckpoint([], Date.now())
+      const statWorkspaceFiles = vi.spyOn(sessionsApi, 'statWorkspaceFiles').mockImplementation(async (_sessionId, paths) => ({
+        files: paths.map((path) => ({ path, state: 'missing' as const })),
+      }))
+
+      render(<MessageList sessionId={ACTIVE_TAB} />)
+      replyWith('QUOTED_NAMES 修复了 `开题报告2.docx`、`D:/资料/测试文档1.docx` 被截断的问题')
+
+      await waitFor(() => expect(getTurnCheckpoints).toHaveBeenCalled())
+      await waitFor(() => expect(statWorkspaceFiles).toHaveBeenCalled())
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      })
+      const reply = screen.getByText('QUOTED_NAMES', { exact: false }).closest('[data-chat-render-item-key]')
+      expect(reply).not.toBeNull()
+      expect(within(reply as HTMLElement).queryByRole('button', { name: 'Open' })).toBeNull()
+      // Nothing there to open, so nothing looks openable either.
+      expect(within(reply as HTMLElement).queryByRole('link')).toBeNull()
+    })
+
+    it('shows only what a shell command wrote after the turn began', async () => {
+      const startedAt = Date.parse('2026-10-04T08:00:00Z')
+      mockCheckpoint(['Bash'], startedAt)
+      const statWorkspaceFiles = vi.spyOn(sessionsApi, 'statWorkspaceFiles').mockImplementation(async (_sessionId, paths) => ({
+        files: paths.map((path) => ({
+          path,
+          state: 'file' as const,
+          mtimeMs: path === 'out/report.docx' ? startedAt + 5_000 : startedAt - 86_400_000,
+        })),
+      }))
+
+      render(<MessageList sessionId={ACTIVE_TAB} />)
+      replyWith('CONVERTED 已把 `in/source.docx` 转成 `out/report.docx`')
+
+      await waitFor(() => expect(statWorkspaceFiles).toHaveBeenCalled())
+      const reply = screen.getByText('CONVERTED', { exact: false }).closest('[data-chat-render-item-key]') as HTMLElement
+      await waitFor(() => expect(within(reply).getAllByRole('button', { name: 'Open' })).toHaveLength(1))
+      expect(within(reply).getByText('report.docx', { selector: 'span' })).toBeTruthy()
+      expect(within(reply).queryByText('source.docx', { selector: 'span' })).toBeNull()
+    })
+  })
+
   it('keeps one output card per turn when separate turns generate the same path', async () => {
     const generatedPath = '/private/tmp/repeated-report.md'
     vi.spyOn(sessionsApi, 'getTurnCheckpoints').mockResolvedValue({
@@ -8093,6 +9154,64 @@ describe('MessageList nested tool calls', () => {
       ),
     ).toBeTruthy()
     expect(screen.queryByText(/This model does not support images/)).toBeNull()
+  })
+
+  it('blames the upstream provider for an interrupted stream and keeps the stream evidence', () => {
+    useSettingsStore.setState({ locale: 'zh' })
+    const raw =
+      'API Error: Provider stream ended before completing the response. The upstream model provider closed the stream before the reply finished; this is not a context-limit error. (retried 10 times · 412 events · last content_block_delta · stop_reason none · message_stop missing · 1 block open · 263s)'
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            {
+              id: 'error-1',
+              type: 'error',
+              code: 'unknown',
+              businessErrorCode: 'upstream_stream_interrupted',
+              message: raw,
+              timestamp: 1,
+            },
+          ],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    expect(screen.getByText(/上游模型服务商在回复完成前断开了连接/)).toBeTruthy()
+    expect(screen.getByText(/不是上下文超限/)).toBeTruthy()
+    // The evidence is what tells a mid-block cut from a dropped message_stop
+    // when users send a screenshot; the translation alone would hide it.
+    expect(screen.getByText(raw)).toBeTruthy()
+  })
+
+  it('explains why auto-compact stopped instead of showing the English CLI text (#1544)', () => {
+    useSettingsStore.setState({ locale: 'zh' })
+    const raw =
+      'Auto-compact is thrashing: the context refilled to the limit within 3 turns of the previous compaction, 3 times in a row.'
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            {
+              id: 'error-1',
+              type: 'error',
+              code: 'unknown',
+              businessErrorCode: 'autocompact_thrashing',
+              message: raw,
+              timestamp: 1,
+            },
+          ],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    expect(screen.getByText(/自动压缩已停止/)).toBeTruthy()
+    expect(screen.getByText(/精简 CLAUDE.md/)).toBeTruthy()
+    expect(screen.queryByText(raw)).toBeNull()
   })
 
   it.each([
@@ -8890,6 +10009,24 @@ describe('Agent Teams chat projection', () => {
     }).renderItems.some(item => item.kind === 'team_card')).toBe(false)
   })
 
+  it('ends a team the host removed once the lead creates its next one', () => {
+    // A cancelled or ended plan is removed by the desktop, so no TeamDelete
+    // marks it; a lead still leads one team at a time.
+    const create = (name: string, at: number): UIMessage[] => [
+      { id: `${name}-tool`, type: 'tool_use', toolName: 'TeamCreate', toolUseId: name, input: { team_name: name }, timestamp: at },
+      { id: `${name}-result`, type: 'tool_result', toolUseId: name, content: { team_name: name }, isError: false, timestamp: at + 1 },
+    ]
+    const cards = buildRenderModel([...create('first-team', 1), ...create('second-team', 5)], null, {
+      hideTeamCoordinationTools: true,
+    }).renderItems.filter(item => item.kind === 'team_card')
+
+    expect(cards).toMatchObject([
+      { teamName: 'first-team', endedAt: 5 },
+      { teamName: 'second-team' },
+    ])
+    expect(cards[1]).not.toHaveProperty('endedAt')
+  })
+
   it('keeps Team scope active when TeamDelete returns success false', () => {
     const messages: UIMessage[] = [
       {
@@ -9324,6 +10461,76 @@ describe('Agent Teams chat projection', () => {
       teamLeadSessionId: ACTIVE_TAB,
     }))
   })
+
+  it('calls a team the host removed ended, not completed, once the lead forms another', async () => {
+    vi.spyOn(teamsApi, 'get').mockImplementation(() => new Promise(() => {}))
+    vi.spyOn(teamsApi, 'getWorkbench').mockImplementation(() => new Promise(() => {}))
+    const createRun = (name: string, timestamp: number): UIMessage[] => [
+      { id: `${name}-tool`, type: 'tool_use', toolName: 'TeamCreate', toolUseId: name, input: { team_name: name }, timestamp },
+      { id: `${name}-result`, type: 'tool_result', toolUseId: name, content: { success: true, team_name: name }, isError: false, timestamp: timestamp + 1 },
+    ]
+    useChatStore.setState({
+      sessions: {
+        // No TeamDelete: the user cancelled the first team, and the desktop removed it.
+        [ACTIVE_TAB]: makeSessionState({ messages: [...createRun('first-team', 100_000), ...createRun('second-team', 102_000)] }),
+      },
+    })
+    render(<MessageList sessionId={ACTIVE_TAB} />)
+
+    const cards = await screen.findAllByTestId('agent-teams-inline-card')
+    expect(cards).toHaveLength(2)
+    expect(within(cards[0]!).getByText('Ended')).toBeTruthy()
+    expect(within(cards[0]!).queryByText('Completed')).toBeNull()
+    expect(within(cards[1]!).getByText('Forming team')).toBeTruthy()
+  })
+
+  it('calls an interrupted team interrupted, though its tasks read as running', async () => {
+    let resolveWorkbench!: (snapshot: Awaited<ReturnType<typeof teamsApi.getWorkbench>>) => void
+    vi.spyOn(teamsApi, 'get').mockImplementation(() => new Promise(() => {}))
+    vi.spyOn(teamsApi, 'getWorkbench').mockImplementation(() => new Promise((resolve) => { resolveWorkbench = resolve }))
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({ messages: [
+          { id: 'cut-tool', type: 'tool_use', toolName: 'TeamCreate', toolUseId: 'cut', input: { team_name: 'cut-team' }, timestamp: 100_000 },
+          { id: 'cut-result', type: 'tool_result', toolUseId: 'cut', content: { success: true, team_name: 'cut-team' }, isError: false, timestamp: 100_001 },
+        ] }),
+      },
+    })
+    act(() => {
+      useTeamStore.getState().handleTeamCreated('cut-team', ACTIVE_TAB, { createdAt: 100_000 })
+    })
+    render(<MessageList sessionId={ACTIVE_TAB} />)
+    await act(async () => {
+      resolveWorkbench({
+        version: 'cut', generatedAt: new Date(100_010).toISOString(),
+        team: {
+          name: 'cut-team', leadSessionId: ACTIVE_TAB, leadAgentId: 'team-lead@cut-team', createdAt: '100000',
+          members: [
+            { agentId: 'team-lead@cut-team', name: 'team-lead', role: 'lead', status: 'idle' },
+            { agentId: 'lister@cut-team', name: 'lister', role: 'lister', status: 'idle' },
+          ],
+        },
+        tasks: [{ id: '1', subject: 'List files', description: '', status: 'pending', owner: 'lister', blocks: [], blockedBy: [], taskListId: 'cut-team' }],
+        messages: [],
+      })
+      await Promise.resolve()
+    })
+    const card = await screen.findByTestId('agent-teams-inline-card')
+    await waitFor(() => expect(within(card).getByText('Parallel execution')).toBeTruthy())
+
+    act(() => {
+      useTeamPlanStore.setState({ bySession: { [ACTIVE_TAB]: {
+        plan: { teamName: 'cut-team', state: 'interrupted' } as TeamPlanRecord,
+        loading: false, busy: false, error: null, conflict: false,
+      } } })
+    })
+    try {
+      expect(within(screen.getByTestId('agent-teams-inline-card')).getByText('Interrupted')).toBeTruthy()
+      expect(within(screen.getByTestId('agent-teams-inline-card')).queryByText('Parallel execution')).toBeNull()
+    } finally {
+      useTeamPlanStore.setState({ bySession: {} })
+    }
+  })
 })
 
 describe('MessageList agent card activity', () => {
@@ -9417,6 +10624,49 @@ describe('MessageList agent card activity', () => {
     fireEvent.click(screen.getByRole('button', { name: /dispatched an agent/ }))
     fireEvent.click(screen.getByRole('button', { name: /Expand agent/ }))
   }
+
+  it.each(['pointer', 'focus'] as const)('preserves idle reading when Agent activity loads after %s interaction (#1751)', async (interaction) => {
+    const observers = new Map<Element, ResizeObserverCallback>()
+    vi.stubGlobal('ResizeObserver', class {
+      targets: Element[] = []
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) { this.targets.push(target); observers.set(target, this.callback) }
+      disconnect() { this.targets.forEach((target) => observers.delete(target)) }
+      unobserve(target: Element) { observers.delete(target) }
+    })
+    let scrollHeight = 1000
+    const scrollTops = new WeakMap<HTMLElement, number>()
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400)
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => scrollHeight)
+    vi.spyOn(HTMLElement.prototype, 'scrollTop', 'get').mockImplementation(function (this: HTMLElement) { return scrollTops.get(this) ?? 0 })
+    vi.spyOn(HTMLElement.prototype, 'scrollTop', 'set').mockImplementation(function (this: HTMLElement, value: number) { scrollTops.set(this, Math.max(0, Math.min(value, scrollHeight - 400))) })
+    let resolveActivity!: (run: SubagentRunResponse) => void
+    vi.spyOn(subagentsApi, 'getRunByTool').mockImplementation(() => new Promise((resolve) => { resolveActivity = resolve }))
+    const view = renderDispatchedAgent()
+    const scroller = view.container.querySelector<HTMLElement>('.chat-scroll-area')!
+    fireEvent.click(screen.getByRole('button', { name: /dispatched an agent/ }))
+    await waitForProgrammaticScrollReset()
+    scroller.scrollTop = 600
+    fireEvent.scroll(scroller)
+    const expand = screen.getByRole('button', { name: /Expand agent/ })
+    if (interaction === 'pointer') fireEvent.pointerDown(expand)
+    else fireEvent.focus(expand)
+    fireEvent.click(expand)
+    await screen.findByTestId('agent-call-activity-loading')
+    const content = scroller.firstElementChild!
+    // The loading placeholder is still within the near-bottom threshold. The
+    // fetched activity arrives after the disclosure suppression window.
+    scrollHeight += 28
+    act(() => observers.get(content)?.([{ target: content, contentRect: { height: scrollHeight } } as ResizeObserverEntry], {} as ResizeObserver))
+    await waitForProgrammaticScrollReset()
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)) })
+    act(() => resolveActivity(runWithActivity(CHILD_ACTIVITY)))
+    await screen.findByTestId('agent-call-activity')
+    scrollHeight += 600
+    act(() => observers.get(content)?.([{ target: content, contentRect: { height: scrollHeight } } as ResizeObserverEntry], {} as ResizeObserver))
+    await waitForProgrammaticScrollReset()
+    expect(scroller.scrollTop).toBe(600)
+  })
 
   it('fetches a run’s tool stream only once its Agent card is expanded', async () => {
     const getRunByTool = vi.spyOn(subagentsApi, 'getRunByTool')
@@ -9519,10 +10769,535 @@ describe('MessageList agent card activity', () => {
     renderDispatchedAgent()
     openAgentCard()
 
-    // The card renders a thousand tool entries, which under load can outlast
-    // testing-library's 1s default before the fetch even resolves. The budget
-    // is this wait only; the test's own timeout stays the suite default.
-    expect(await screen.findByTestId('agent-call-activity', undefined, { timeout: 5000 })).toBeTruthy()
+    expect(await screen.findByTestId('agent-call-activity')).toBeTruthy()
     expect(screen.getByText(/Showing the start and end of this run/)).toBeTruthy()
+  })
+})
+
+// #1343. Editing a prompt reuses the existing rewind — same targets, same
+// dry-run/`conversation`/`both` semantics — and then sends the edit. Nothing
+// may change before the rewind succeeds, and once it has, the edit must reach
+// either the model or the composer.
+describe('MessageList edit and resend', () => {
+  type Checkpoint = Awaited<ReturnType<typeof sessionsApi.getTurnCheckpoints>>['checkpoints'][number]
+  type RewindResult = Awaited<ReturnType<typeof sessionsApi.rewind>>
+
+  function checkpoint(
+    targetUserMessageId: string,
+    userMessageIndex: number,
+    userMessageCount: number,
+    overrides: Partial<Checkpoint> = {},
+  ): Checkpoint {
+    return {
+      target: { targetUserMessageId, userMessageIndex, userMessageCount },
+      code: { available: false, filesChanged: [], insertions: 0, deletions: 0 },
+      ...overrides,
+    }
+  }
+
+  function rewindResult(overrides: Partial<RewindResult> = {}): RewindResult {
+    return {
+      target: { targetUserMessageId: 'user-1', userMessageIndex: 0, userMessageCount: 1 },
+      conversation: { messagesRemoved: 2 },
+      code: { available: false, filesChanged: [], insertions: 0, deletions: 0 },
+      ...overrides,
+    }
+  }
+
+  function setup(messages: UIMessage[], checkpoints: Checkpoint[], sessionOverrides: Partial<PerSessionState> = {}) {
+    vi.spyOn(sessionsApi, 'getTurnCheckpoints').mockResolvedValue({ checkpoints })
+    const reloadHistory = vi.fn().mockResolvedValue(undefined)
+    const sendMessage = vi.fn()
+    const queueComposerPrefill = vi.fn()
+    const stopGeneration = vi.fn()
+    useChatStore.setState({
+      reloadHistory,
+      sendMessage,
+      queueComposerPrefill,
+      stopGeneration,
+      sessions: { [ACTIVE_TAB]: makeSessionState({ messages, ...sessionOverrides }) },
+    })
+    return { reloadHistory, sendMessage, queueComposerPrefill, stopGeneration }
+  }
+
+  const oneTurn: UIMessage[] = [
+    { id: 'user-1', type: 'user_text', content: 'Build a page', transcriptMessageId: 'user-1', timestamp: 1 },
+    { id: 'assistant-1', type: 'assistant_text', content: 'Done', timestamp: 2 },
+  ]
+
+  const threeTurns: UIMessage[] = [
+    { id: 'user-1', type: 'user_text', content: 'First prompt', timestamp: 1 },
+    { id: 'assistant-1', type: 'assistant_text', content: 'First answer', timestamp: 2 },
+    { id: 'user-2', type: 'user_text', content: 'Second prompt', timestamp: 3 },
+    { id: 'assistant-2', type: 'assistant_text', content: 'Second answer', timestamp: 4 },
+    { id: 'user-3', type: 'user_text', content: 'Third prompt', timestamp: 5 },
+    { id: 'assistant-3', type: 'assistant_text', content: 'Third answer', timestamp: 6 },
+  ]
+
+  async function enabledEditButton(bubble: HTMLElement) {
+    // The bubble renders before the turn checkpoints load; until they do the
+    // action is shown disabled, and only then is the prompt known rewindable.
+    return waitFor(() => {
+      const button = within(bubble).getByRole('button', { name: 'Edit and resend' }) as HTMLButtonElement
+      expect(button.disabled).toBe(false)
+      return button
+    })
+  }
+
+  async function openEditorFor(content: string) {
+    const bubble = (await screen.findByText(content)).closest('[data-message-shell="user"]') as HTMLElement
+    fireEvent.click(await enabledEditButton(bubble))
+    return screen.getByRole('textbox', { name: 'Edited message' })
+  }
+
+  function editButtonIn(content: string) {
+    const bubble = screen.getByText(content).closest('[data-message-shell="user"]') as HTMLElement
+    return within(bubble).getByRole('button', { name: 'Edit and resend' }) as HTMLButtonElement
+  }
+
+  function typeAndSend(_textbox: HTMLElement, text: string) {
+    setComposerText(text)
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+  }
+
+  let restoreRangeGeometry = () => {}
+  afterEach(() => { restoreRangeGeometry() })
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    restoreRangeGeometry = stubRangeGeometry()
+    resetSessionScrollSnapshotsForTests()
+    useSettingsStore.setState({ locale: 'en', chatSendBehavior: 'enter' })
+    useUIStore.setState({ toasts: [] })
+    useTabStore.setState({ activeTabId: ACTIVE_TAB, tabs: [{ sessionId: ACTIVE_TAB, title: 'Test', type: 'session' as const, status: 'idle' }] })
+    useSessionStore.setState({ sessions: [], activeSessionId: null, isLoading: false, error: null })
+    useSideChatStore.setState({ entries: {} })
+    useTeamStore.getState().clearTeam()
+    useWorkspaceStore.setState(useWorkspaceStore.getInitialState(), true)
+    vi.spyOn(sessionsApi, 'getWorkspaceStatus').mockResolvedValue({
+      state: 'ok',
+      workDir: '/tmp/example-project',
+      repoName: 'example-project',
+      branch: null,
+      isGitRepo: false,
+      changedFiles: [],
+    })
+  })
+
+  it('offers edit only on prompts the rewind API can target', async () => {
+    setup([
+      ...threeTurns.slice(0, 4),
+      { id: 'collab', type: 'user_text', content: 'Delivered from elsewhere', collaboration: { sourceSessionId: 's2' }, timestamp: 5 },
+      { id: 'assistant-c', type: 'assistant_text', content: 'Ack', timestamp: 6 },
+    ], [checkpoint('user-1', 0, 3), checkpoint('collab', 2, 3)])
+    render(<MessageList />)
+
+    const first = (await screen.findByText('First prompt')).closest('[data-message-shell="user"]') as HTMLElement
+    await enabledEditButton(first)
+    const second = screen.getByText('Second prompt').closest('[data-message-shell="user"]') as HTMLElement
+    expect(within(second).queryByRole('button', { name: 'Edit and resend' })).toBeNull()
+    const collab = screen.getByText('Delivered from elsewhere').closest('[data-message-shell="user"]') as HTMLElement
+    expect(within(collab).queryByRole('button', { name: 'Edit and resend' })).toBeNull()
+  })
+
+  it('keeps edit visible but disabled, with the reason, while a turn runs; none in a side chat', async () => {
+    setup(oneTurn, [checkpoint('user-1', 0, 1)])
+    const { unmount } = render(<MessageList />)
+    await enabledEditButton((await screen.findByText('Build a page')).closest('[data-message-shell="user"]') as HTMLElement)
+
+    act(() => {
+      const current = useChatStore.getState().sessions[ACTIVE_TAB]!
+      useChatStore.setState({ sessions: { [ACTIVE_TAB]: { ...current, chatState: 'thinking' } } })
+    })
+    const busy = editButtonIn('Build a page')
+    expect(busy.disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Edit and resend', description: 'Editing is available once this turn finishes.' })).toBe(busy)
+    expect(busy.closest('[title]')?.getAttribute('title')).toBe('Editing is available once this turn finishes.')
+    unmount()
+
+    setup(oneTurn, [checkpoint('user-1', 0, 1)])
+    useSideChatStore.setState({ entries: { [ACTIVE_TAB]: { sessionId: ACTIVE_TAB, parentSessionId: 'parent' } as never } })
+    render(<MessageList />)
+    await screen.findByText('Build a page')
+    await waitFor(() => expect(sessionsApi.getTurnCheckpoints).toHaveBeenCalled())
+    await act(async () => { await Promise.resolve() })
+    expect(screen.queryByRole('button', { name: 'Edit and resend' })).toBeNull()
+  })
+
+  it('keeps edit disabled while a background task runs, even when the checkpoints never loaded, then enables it', async () => {
+    const runningTask = {
+      taskId: 'shell-1', status: 'running', taskType: 'local_bash', description: 'npm run dev', startedAt: 1, updatedAt: 2,
+    } as const
+    setup(oneTurn, [checkpoint('user-1', 0, 1)], { backgroundAgentTasks: { 'shell-1': runningTask } })
+    render(<MessageList />)
+    await screen.findByText('Build a page')
+
+    const blocked = editButtonIn('Build a page')
+    expect(blocked.disabled).toBe(true)
+    expect(screen.getByRole('button', {
+      name: 'Edit and resend',
+      description: 'Editing is available once the running background tasks finish or are stopped.',
+    })).toBe(blocked)
+    expect(sessionsApi.getTurnCheckpoints).not.toHaveBeenCalled()
+
+    act(() => {
+      const current = useChatStore.getState().sessions[ACTIVE_TAB]!
+      useChatStore.setState({ sessions: { [ACTIVE_TAB]: {
+        ...current, backgroundAgentTasks: { 'shell-1': { ...runningTask, status: 'completed', updatedAt: 3 } },
+      } } })
+    })
+    const bubble = screen.getByText('Build a page').closest('[data-message-shell="user"]') as HTMLElement
+    await enabledEditButton(bubble)
+  })
+
+  it('says the prompt is being checked while the checkpoints load, and why when they fail', async () => {
+    let rejectCheckpoints!: (error: Error) => void
+    setup(oneTurn, [])
+    vi.mocked(sessionsApi.getTurnCheckpoints).mockReturnValue(new Promise((_, reject) => { rejectCheckpoints = reject }))
+    render(<MessageList />)
+    await screen.findByText('Build a page')
+    await waitFor(() => expect(editButtonIn('Build a page').disabled).toBe(true))
+    expect(screen.getByRole('button', { name: 'Edit and resend', description: 'Checking whether this prompt can be rewound…' })).toBeTruthy()
+
+    await act(async () => { rejectCheckpoints(new Error('checkpoint store offline')) })
+    await waitFor(() => expect(screen.getByRole('button', {
+      name: 'Edit and resend',
+      description: "Editing is unavailable: this session's checkpoints could not be loaded.",
+    })).toBeTruthy())
+    expect(editButtonIn('Build a page').disabled).toBe(true)
+  })
+
+  it('still edits a prompt past the checkpoint preview budget, rolling back the conversation only', async () => {
+    const { sendMessage } = setup(oneTurn, [])
+    vi.mocked(sessionsApi.getTurnCheckpoints).mockRejectedValue(new ApiError(413, { error: 'HISTORY_CHECKPOINT_PREVIEW_LIMIT' }))
+    // The dry run finds changed files; this mode has told the user file undo
+    // is unavailable, so they must not be offered back.
+    const rewind = vi.spyOn(sessionsApi, 'rewind').mockResolvedValue(rewindResult({
+      code: { available: true, filesChanged: ['app.ts'], insertions: 1, deletions: 0 },
+    }))
+    render(<MessageList />)
+    await screen.findByRole('region', { name: 'Workspace changed files' })
+
+    typeAndSend(await openEditorFor('Build a page'), 'Build a landing page')
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(rewind).toHaveBeenNthCalledWith(1, ACTIVE_TAB, {
+      targetUserMessageId: 'user-1', userMessageIndex: 0, expectedContent: 'Build a page', dryRun: true,
+    })
+    expect(rewind).toHaveBeenNthCalledWith(2, ACTIVE_TAB, {
+      targetUserMessageId: 'user-1', userMessageIndex: 0, expectedContent: 'Build a page', mode: 'conversation',
+    })
+  })
+
+  it('offers no edit past the budget for a live prompt that has no transcript id yet', async () => {
+    setup([
+      { id: 'live-user', type: 'user_text', content: 'Live prompt', timestamp: 1 },
+      { id: 'live-reply', type: 'assistant_text', content: 'Live answer', timestamp: 2 },
+    ], [])
+    vi.mocked(sessionsApi.getTurnCheckpoints).mockRejectedValue(new ApiError(413, { error: 'HISTORY_CHECKPOINT_PREVIEW_LIMIT' }))
+    render(<MessageList />)
+    await screen.findByRole('region', { name: 'Workspace changed files' })
+    expect(screen.queryByRole('button', { name: 'Edit and resend' })).toBeNull()
+  })
+
+  it('edits a prompt that was stopped before any reply by rewinding the conversation only', async () => {
+    // The server lists no checkpoint for a turn without a response, so the
+    // action must not wait on (or depend on) one.
+    const { sendMessage } = setup([
+      { id: 'user-1', type: 'user_text', content: 'Build a pgae', transcriptMessageId: 'transcript-1', timestamp: 1 },
+      { id: 'stopped-1', type: 'system', content: 'Stopped', generationStopped: true, transcriptMessageId: 'stopped-t', timestamp: 2 },
+    ], [])
+    const rewind = vi.spyOn(sessionsApi, 'rewind').mockResolvedValue(rewindResult({
+      target: { targetUserMessageId: 'transcript-1', userMessageIndex: 0, userMessageCount: 1 },
+    }))
+    render(<MessageList />)
+
+    typeAndSend(await openEditorFor('Build a pgae'), 'Build a page')
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(rewind).toHaveBeenNthCalledWith(1, ACTIVE_TAB, {
+      targetUserMessageId: 'transcript-1', userMessageIndex: 0, expectedContent: 'Build a pgae', dryRun: true,
+    })
+    expect(rewind).toHaveBeenNthCalledWith(2, ACTIVE_TAB, {
+      targetUserMessageId: 'transcript-1', userMessageIndex: 0, expectedContent: 'Build a pgae', mode: 'conversation',
+    })
+    expect(sendMessage).toHaveBeenCalledWith(ACTIVE_TAB, 'Build a page', [], expect.objectContaining({ displayContent: 'Build a page' }))
+  })
+
+  it('does not offer edit on the prompt that is still being answered', async () => {
+    setup([
+      { id: 'live-1', type: 'user_text', content: 'Running prompt', transcriptMessageId: 'transcript-1', timestamp: 1 },
+    ], [], { chatState: 'thinking' })
+    render(<MessageList />)
+    await screen.findByText('Running prompt')
+    await act(async () => { await Promise.resolve() })
+    expect(screen.queryByRole('button', { name: 'Edit and resend' })).toBeNull()
+  })
+
+  it('replaces a prompt the CLI never acknowledged without any rewind', async () => {
+    const { sendMessage } = setup([
+      { id: 'live-1', type: 'user_text', content: 'Build a pgae', awaitingReplay: true, timestamp: 1 },
+    ], [])
+    const rewind = vi.spyOn(sessionsApi, 'rewind')
+    render(<MessageList />)
+
+    typeAndSend(await openEditorFor('Build a pgae'), 'Build a page')
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    expect(sendMessage).toHaveBeenCalledWith(ACTIVE_TAB, 'Build a page', [], {
+      displayContent: 'Build a page',
+      displayAttachments: [],
+    })
+    expect(rewind).not.toHaveBeenCalled()
+    // The unsent bubble is gone, so the edit is not shown beside its typo.
+    expect(useChatStore.getState().sessions[ACTIVE_TAB]!.messages.map((message) => message.id)).toEqual([])
+    expect(screen.queryByRole('textbox', { name: 'Edited message' })).toBeNull()
+  })
+
+  it('keeps an unacknowledged prompt that a later turn has followed uneditable', async () => {
+    setup([
+      { id: 'live-1', type: 'user_text', content: 'Lost prompt', awaitingReplay: true, timestamp: 1 },
+      { id: 'user-2', type: 'user_text', content: 'Next prompt', transcriptMessageId: 'transcript-2', timestamp: 2 },
+      { id: 'assistant-2', type: 'assistant_text', content: 'Answer', timestamp: 3 },
+    ], [checkpoint('transcript-2', 1, 2)])
+    render(<MessageList />)
+    await enabledEditButton((await screen.findByText('Next prompt')).closest('[data-message-shell="user"]') as HTMLElement)
+    const lost = screen.getByText('Lost prompt').closest('[data-message-shell="user"]') as HTMLElement
+    expect(within(lost).queryByRole('button', { name: 'Edit and resend' })).toBeNull()
+  })
+
+  it('resends the latest text-only turn straight away: dry run, conversation rewind, reload, send', async () => {
+    const { reloadHistory, sendMessage, queueComposerPrefill } = setup(oneTurn, [checkpoint('user-1', 0, 1)])
+    const rewind = vi.spyOn(sessionsApi, 'rewind').mockResolvedValue(rewindResult())
+    render(<MessageList />)
+
+    const textbox = await openEditorFor('Build a page')
+    expect(textbox.textContent).toBe('Build a page')
+    typeAndSend(textbox, 'Build a landing page')
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(rewind).toHaveBeenCalledTimes(2)
+    expect(rewind).toHaveBeenNthCalledWith(1, ACTIVE_TAB, {
+      targetUserMessageId: 'user-1', userMessageIndex: 0, expectedContent: 'Build a page', dryRun: true,
+    })
+    expect(rewind).toHaveBeenNthCalledWith(2, ACTIVE_TAB, {
+      targetUserMessageId: 'user-1', userMessageIndex: 0, expectedContent: 'Build a page', mode: 'conversation',
+    })
+    expect(sendMessage).toHaveBeenCalledWith(ACTIVE_TAB, 'Build a landing page', [], {
+      displayContent: 'Build a landing page',
+      displayAttachments: [],
+    })
+    // The edit is sent into the rewound history, never before it is reloaded.
+    expect(reloadHistory.mock.invocationCallOrder[0]!)
+      .toBeGreaterThan(rewind.mock.invocationCallOrder[1]!)
+    expect(sendMessage.mock.invocationCallOrder[0]!)
+      .toBeGreaterThan(reloadHistory.mock.invocationCallOrder[0]!)
+    expect(queueComposerPrefill).not.toHaveBeenCalled()
+    expect(screen.queryByRole('textbox', { name: 'Edited message' })).toBeNull()
+  })
+
+  it('lets the open editor draw its menus past the row: no paint containment while editing', async () => {
+    setup(oneTurn, [checkpoint('user-1', 0, 1)])
+    render(<MessageList />)
+
+    const row = (await openEditorFor('Build a page')).closest('.chat-render-item') as HTMLElement
+    expect(row.className).not.toContain('chat-render-item--cv')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect((screen.getByText('Build a page').closest('.chat-render-item') as HTMLElement).className)
+      .toContain('chat-render-item--cv')
+  })
+
+  it('says how many later turns an older edit deletes, and Cancel changes nothing', async () => {
+    const { sendMessage } = setup(threeTurns, [
+      checkpoint('user-1', 0, 3), checkpoint('user-2', 1, 3), checkpoint('user-3', 2, 3),
+    ])
+    const rewind = vi.spyOn(sessionsApi, 'rewind').mockResolvedValue(rewindResult())
+    render(<MessageList />)
+
+    const textbox = await openEditorFor('First prompt')
+    typeAndSend(textbox, 'First prompt, revised')
+
+    const dialog = await screen.findByRole('dialog', { name: 'Edit and resend?' })
+    expect(within(dialog).getByText('The 2 later turn(s) after this message will be deleted, then the edited message is sent.')).toBeTruthy()
+    expect(within(dialog).getByText('Files on disk will not be changed.')).toBeTruthy()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(rewind).toHaveBeenCalledOnce()
+    expect(rewind.mock.calls[0]![1]).toMatchObject({ dryRun: true })
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: 'Edited message' }).textContent)
+      .toBe('First prompt, revised')
+    expect(screen.getByText('Second prompt')).toBeTruthy()
+  })
+
+  it('restores code and conversation through the authoritative checkpoint when chosen', async () => {
+    // The live bubble has a local id; the server's checkpoint names the
+    // transcript message, and that is the one the rewind must address.
+    const { sendMessage } = setup([
+      { id: 'local-1', type: 'user_text', content: 'Edit the file', timestamp: 1 },
+      { id: 'assistant-1', type: 'assistant_text', content: 'Edited', timestamp: 2 },
+    ], [checkpoint('transcript-1', 0, 1, {
+      code: { available: true, filesChanged: ['src/a.ts'], insertions: 1, deletions: 0 },
+    })])
+    const rewind = vi.spyOn(sessionsApi, 'rewind')
+      .mockResolvedValueOnce(rewindResult({
+        code: { available: true, filesChanged: ['src/a.ts'], insertions: 1, deletions: 0 },
+      }))
+      .mockResolvedValueOnce(rewindResult({
+        code: { available: true, filesChanged: ['src/a.ts'], insertions: 1, deletions: 0 },
+        mode: 'both',
+      }))
+    render(<MessageList />)
+
+    const textbox = await openEditorFor('Edit the file')
+    typeAndSend(textbox, 'Edit the other file')
+
+    const dialog = await screen.findByRole('dialog', { name: 'Edit and resend?' })
+    expect(within(dialog).getByText('The reply to this turn will be deleted, then the edited message is sent.')).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: 'Roll back conversation only and send' })).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Roll back code and conversation and send' }))
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    expect(rewind).toHaveBeenCalledTimes(2)
+    expect(rewind).toHaveBeenNthCalledWith(1, ACTIVE_TAB, {
+      targetUserMessageId: 'transcript-1', userMessageIndex: 0, expectedContent: 'Edit the file', dryRun: true,
+    })
+    expect(rewind).toHaveBeenNthCalledWith(2, ACTIVE_TAB, {
+      targetUserMessageId: 'transcript-1', userMessageIndex: 0, expectedContent: 'Edit the file', mode: 'both',
+    })
+    expect(useUIStore.getState().toasts).toEqual([
+      expect.objectContaining({ type: 'success', message: 'Rewound 2 messages and restored tracked files.' }),
+    ])
+  })
+
+  it('offers only the conversation rollback when the files cannot be restored', async () => {
+    const { sendMessage } = setup(oneTurn, [checkpoint('user-1', 0, 1, {
+      code: { available: true, filesChanged: ['src/a.ts'], insertions: 1, deletions: 0 },
+      restoreAvailable: false,
+    })])
+    const rewind = vi.spyOn(sessionsApi, 'rewind').mockResolvedValue(rewindResult({
+      code: { available: true, filesChanged: ['src/a.ts'], insertions: 1, deletions: 0 },
+      restoreAvailable: false,
+    }))
+    render(<MessageList />)
+
+    typeAndSend(await openEditorFor('Build a page'), 'Build a smaller page')
+
+    const dialog = await screen.findByRole('dialog', { name: 'Edit and resend?' })
+    expect(within(dialog).queryByRole('button', { name: 'Roll back code and conversation and send' })).toBeNull()
+    expect(within(dialog).getByText(/incomplete file checkpoint/)).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Roll back conversation only and send' }))
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    expect(rewind).toHaveBeenLastCalledWith(ACTIVE_TAB, expect.objectContaining({ mode: 'conversation' }))
+  })
+
+  it('keeps the draft and sends nothing when the rewind itself fails', async () => {
+    const { reloadHistory, sendMessage } = setup(oneTurn, [checkpoint('user-1', 0, 1)])
+    vi.spyOn(sessionsApi, 'rewind')
+      .mockResolvedValueOnce(rewindResult())
+      .mockRejectedValueOnce(new Error('late tool output'))
+    render(<MessageList />)
+
+    typeAndSend(await openEditorFor('Build a page'), 'Build a landing page')
+
+    await waitFor(() => expect(useUIStore.getState().toasts).toEqual([
+      expect.objectContaining({
+        type: 'error',
+        message: 'Could not resend the edited message. The conversation was not changed. Details: late tool output',
+      }),
+    ]))
+    expect(reloadHistory).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: 'Edited message' }).textContent)
+      .toBe('Build a landing page')
+  })
+
+  it('keeps the draft when the dry run fails', async () => {
+    const { sendMessage } = setup(oneTurn, [checkpoint('user-1', 0, 1)])
+    const rewind = vi.spyOn(sessionsApi, 'rewind').mockRejectedValue(new Error('prompt changed'))
+    render(<MessageList />)
+
+    typeAndSend(await openEditorFor('Build a page'), 'Build a landing page')
+
+    await waitFor(() => expect(useUIStore.getState().toasts).toHaveLength(1))
+    expect(rewind).toHaveBeenCalledOnce()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: 'Edited message' }).textContent)
+      .toBe('Build a landing page')
+  })
+
+  it('hands the edit to the composer when it cannot be sent after the rewind', async () => {
+    const { reloadHistory, sendMessage, queueComposerPrefill } = setup(oneTurn, [checkpoint('user-1', 0, 1)])
+    reloadHistory.mockRejectedValue(new Error('offline'))
+    vi.spyOn(sessionsApi, 'rewind').mockResolvedValue(rewindResult())
+    render(<MessageList />)
+
+    typeAndSend(await openEditorFor('Build a page'), 'Build a landing page')
+
+    await waitFor(() => expect(queueComposerPrefill).toHaveBeenCalledWith(ACTIVE_TAB, {
+      text: 'Build a landing page',
+      attachments: [],
+    }, { restoreMissingSession: true }))
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(useUIStore.getState().toasts).toEqual([
+      expect.objectContaining({ type: 'warning' }),
+    ])
+  })
+
+  it('cancels with Escape without touching the conversation', async () => {
+    setup(oneTurn, [checkpoint('user-1', 0, 1)])
+    const rewind = vi.spyOn(sessionsApi, 'rewind')
+    render(<MessageList />)
+
+    const textbox = await openEditorFor('Build a page')
+    setComposerText('Never mind')
+    fireEvent.keyDown(textbox, { key: 'Escape' })
+
+    expect(screen.queryByRole('textbox', { name: 'Edited message' })).toBeNull()
+    expect(screen.getByText('Build a page')).toBeTruthy()
+    expect(rewind).not.toHaveBeenCalled()
+  })
+
+  it('resends workspace references and images with the edited text', async () => {
+    const referencePrompt = [
+      'Referenced workspace context:',
+      '@"src/app.ts:L3-L5":',
+      '```typescript',
+      'for (;;) {}',
+      '```',
+    ].join('\n')
+    const { sendMessage } = setup([
+      {
+        id: 'user-1',
+        type: 'user_text',
+        content: 'Why does this spin?',
+        modelContent: `@"/repo/src/app.ts" ${referencePrompt}\n\nWhy does this spin?`,
+        attachments: [
+          { type: 'file', name: 'app.ts', path: 'src/app.ts', lineStart: 3, lineEnd: 5, quote: 'for (;;) {}' },
+          { type: 'image', name: 'shot.png', data: 'data:image/png;base64,AAAA', mimeType: 'image/png' },
+        ],
+        timestamp: 1,
+      },
+      { id: 'assistant-1', type: 'assistant_text', content: 'Because', timestamp: 2 },
+    ], [checkpoint('user-1', 0, 1)])
+    vi.spyOn(sessionsApi, 'rewind').mockResolvedValue(rewindResult())
+    render(<MessageList />)
+
+    typeAndSend(await openEditorFor('Why does this spin?'), 'How do I stop it?')
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    const [, content, attachments, options] = sendMessage.mock.calls[0]!
+    expect(content).toBe(`${referencePrompt.replace('src/app.ts:L3-L5', '/repo/src/app.ts:L3-L5')}\n\nHow do I stop it?`)
+    expect(attachments).toEqual([
+      expect.objectContaining({ type: 'file', path: '/repo/src/app.ts', lineStart: 3, lineEnd: 5, quote: 'for (;;) {}' }),
+      { type: 'image', name: 'shot.png', mimeType: 'image/png', data: 'data:image/png;base64,AAAA' },
+    ])
+    expect(options).toMatchObject({ displayContent: 'How do I stop it?' })
   })
 })

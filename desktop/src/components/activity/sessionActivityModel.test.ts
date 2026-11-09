@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   buildMainSessionActivityModel,
   buildSessionActivityModel,
+  getMainSessionActivityModel,
   getVisibleActivitySections,
   hasVisibleSessionActivity,
 } from './sessionActivityModel'
 import { createBackgroundTaskDismissKey } from '../../lib/backgroundTasks'
 import type { BackgroundAgentTask, AgentTaskNotification, UIMessage } from '../../types/chat'
 import type { CLITask } from '../../types/cliTask'
+import type { WorkflowRun } from '../../types/workflow'
 
 const task = (overrides: Partial<CLITask>): CLITask => ({
   id: 'task-1',
@@ -1012,76 +1014,6 @@ describe('buildSessionActivityModel', () => {
     expect(model.badgeCount).toBe(3)
   })
 
-  it('keeps a workflow background task visible before its structured workflow run has progress', () => {
-    const model = buildSessionActivityModel({
-      sessionId: 'session-1',
-      tasks: [],
-      completedAndDismissed: false,
-      backgroundTasks: [
-        background({
-          taskId: 'local-workflow-1',
-          toolUseId: 'local-workflow-tool',
-          taskType: 'local_workflow',
-          description: 'Release audit workflow',
-        }),
-      ],
-      agentNotifications: [],
-      workflowRuns: [{
-        taskId: 'local-workflow-1',
-        sessionId: 'session-1',
-        workflowName: 'Release audit workflow',
-        status: 'running',
-        startedAt: 0,
-        updatedAt: 0,
-        agentCount: 0,
-        totalTokens: 0,
-        toolCalls: 0,
-        progress: [],
-      } as never],
-    })
-
-    expect(model.sections.workflow.rows).toEqual([])
-    expect(model.sections.backgroundTasks.rows).toEqual([
-      expect.objectContaining({ taskId: 'local-workflow-1' }),
-    ])
-    expect(model.badgeCount).toBe(1)
-  })
-
-  it('hides a workflow background task when its structured workflow run is available', () => {
-    const model = buildSessionActivityModel({
-      sessionId: 'session-1',
-      tasks: [],
-      completedAndDismissed: false,
-      backgroundTasks: [
-        background({
-          taskId: 'local-workflow-1',
-          toolUseId: 'local-workflow-tool',
-          taskType: 'local_workflow',
-          description: 'Release audit workflow',
-        }),
-      ],
-      agentNotifications: [],
-      workflowRuns: [{
-        taskId: 'local-workflow-1',
-        sessionId: 'session-1',
-        workflowName: 'Release audit workflow',
-        status: 'running',
-        startedAt: 0,
-        updatedAt: 0,
-        agentCount: 0,
-        totalTokens: 0,
-        toolCalls: 0,
-        progress: [{ type: 'workflow_phase', index: 0, title: 'Run' }],
-      } as never],
-    })
-
-    expect(model.sections.workflow.rows).toEqual([
-      expect.objectContaining({ label: 'Run', groupProgress: { done: 0, total: 0 } }),
-    ])
-    expect(model.sections.backgroundTasks.rows).toEqual([])
-    expect(model.badgeCount).toBe(0)
-  })
-
   it('restores task rows from the latest TodoWrite message', () => {
     const model = buildSessionActivityModel({
       sessionId: 'session-1',
@@ -1247,6 +1179,55 @@ describe('buildSessionActivityModel', () => {
       }),
     ])
     expect(model.badgeCount).toBe(1)
+  })
+
+  it('does not add rows for TaskCreate calls that were cancelled or blocked', () => {
+    const cancelled = "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed."
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      messages: [
+        ...['脚手架', '数据层', '3D 场景'].map((subject, index) => ({
+          id: `task-create-${index}`,
+          type: 'tool_use' as const,
+          toolName: 'TaskCreate',
+          toolUseId: `task-create-call-${index}`,
+          input: { subject, description: `完成${subject}` },
+          timestamp: 1000 + index,
+        })),
+        {
+          id: 'task-create-result-0',
+          type: 'tool_result',
+          toolUseId: 'task-create-call-0',
+          content: 'Task #1 created successfully: 脚手架',
+          isError: false,
+          timestamp: 1010,
+        },
+        {
+          id: 'task-create-result-1',
+          type: 'tool_result',
+          toolUseId: 'task-create-call-1',
+          content: cancelled,
+          isError: true,
+          timestamp: 1011,
+        },
+        {
+          id: 'task-create-result-2',
+          type: 'tool_result',
+          toolUseId: 'task-create-call-2',
+          content: 'TaskCreated hook blocked: subject must reference a ticket',
+          isError: true,
+          timestamp: 1012,
+        },
+      ],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.tasks.rows).toEqual([
+      expect.objectContaining({ id: '1', label: '脚手架', status: 'pending' }),
+    ])
   })
 
   it('does not let a stale live task list regress a successful TaskUpdate', () => {
@@ -2906,5 +2887,111 @@ describe('workflow section', () => {
   it('shows the workflow above the individual subagents it spawned', () => {
     const order = getVisibleActivitySections(build()).map((section) => section.id)
     expect(order).toEqual(['workflow'])
+  })
+})
+
+describe('getMainSessionActivityModel', () => {
+  // The tab bar and the session page both derive the on-screen session's model
+  // from the same store state, each rebuilding its own arrays and sets. The
+  // model walks the whole transcript, so the second caller reuses the first.
+  const todoMessages: UIMessage[] = [{
+    id: 'todo-1',
+    type: 'tool_use',
+    toolName: 'TodoWrite',
+    toolUseId: 'todo-1',
+    input: { todos: [{ content: 'Add vehicle 401', status: 'in_progress' }] },
+    timestamp: 1,
+  }]
+  const runningTask = background({ taskId: 'bg-1' })
+  const input = (overrides: Partial<Parameters<typeof getMainSessionActivityModel>[0]> = {}) => ({
+    sessionId: 'session-1',
+    messages: todoMessages,
+    tasks: [],
+    teamTaskWindows: [{ startedAt: 10, endedAt: 20 }],
+    completedAndDismissed: false,
+    isForegroundTurnActive: true,
+    backgroundTasks: [runningTask],
+    dismissedBackgroundTaskKeys: new Set<string>(),
+    agentNotifications: [],
+    workflowRuns: [],
+    ...overrides,
+  })
+
+  it('reuses the model for the same state passed through freshly built arrays and sets', () => {
+    const first = getMainSessionActivityModel(input())
+    const second = getMainSessionActivityModel(input())
+    expect(second).toBe(first)
+    expect(second).toEqual(buildMainSessionActivityModel(input()))
+  })
+
+  it.each([
+    ['the transcript', { messages: [...todoMessages] }],
+    ['the session', { sessionId: 'session-2' }],
+    ['a background task', { backgroundTasks: [background({ taskId: 'bg-1', status: 'completed' })] }],
+    ['a dismissed task', { dismissedBackgroundTaskKeys: new Set([createBackgroundTaskDismissKey(runningTask)]) }],
+    ['the turn state', { isForegroundTurnActive: false }],
+    ['when a team window ends', { teamTaskWindows: [{ startedAt: 10 }] }],
+    ['when a team window starts', { teamTaskWindows: [{ startedAt: 11, endedAt: 20 }] }],
+    ['an agent notification', { agentNotifications: [notification({})] }],
+    ['the workflow runs', {
+      workflowRuns: [{
+        taskId: 'w1',
+        sessionId: 'session-1',
+        workflowName: 'vehicle-sweep',
+        status: 'running',
+        startedAt: 0,
+        updatedAt: 0,
+        agentCount: 1,
+        totalTokens: 0,
+        toolCalls: 0,
+        progress: [{ type: 'workflow_agent', index: 1, label: 'check vehicle 401', state: 'progress', phaseIndex: 0, agentId: 'a1' }],
+      } as unknown as WorkflowRun],
+    }],
+    ['the CLI tasks', { tasks: [task({ status: 'in_progress' })] }],
+    ['the dismissal of finished tasks', { completedAndDismissed: true }],
+    ['the delegated sessions', { delegatedSessions: [{ key: 'batch:a', sessionId: 'child-a', title: 'Review', status: 'running' as const }] }],
+  ])('rebuilds when %s changes', (_label, change) => {
+    const first = getMainSessionActivityModel(input())
+    const next = getMainSessionActivityModel(input(change))
+    expect(next).not.toBe(first)
+    expect(next).toEqual(buildMainSessionActivityModel(input(change)))
+  })
+})
+
+describe('delegated sessions', () => {
+  const base = {
+    sessionId: 'parent',
+    messages: [],
+    tasks: [],
+    completedAndDismissed: false,
+    backgroundTasks: [],
+    agentNotifications: [],
+  }
+
+  it('lists them after SubAgents and lets running or waiting ones open the rail', () => {
+    const model = buildMainSessionActivityModel({
+      ...base,
+      delegatedSessions: [
+        { key: 'b:sec', sessionId: 'child-sec', title: 'Security review', status: 'running', modelLabel: 'MiniMax · M3.1' },
+        { key: 'b:ux', sessionId: 'child-ux', title: 'UX review', status: 'queued' },
+        { key: 'b:perf', sessionId: 'child-perf', title: 'Performance review', status: 'completed' },
+        { key: 'b:new', title: 'Not started yet', status: 'review' },
+      ],
+    })
+    expect(hasVisibleSessionActivity(model)).toBe(true)
+    expect(getVisibleActivitySections(model).map(section => section.id)).toEqual(['sessions'])
+    expect(model.sections.sessions.rows.map(row => [row.label, row.status, row.openable])).toEqual([
+      ['Security review', 'running', true],
+      ['UX review', 'pending', true],
+      ['Performance review', 'completed', true],
+      ['Not started yet', 'pending', false],
+    ])
+    expect(model.badgeCount).toBe(3)
+  })
+
+  it('adds nothing for a session that never delegated', () => {
+    const model = buildMainSessionActivityModel({ ...base, delegatedSessions: [] })
+    expect(hasVisibleSessionActivity(model)).toBe(false)
+    expect(model.badgeCount).toBe(0)
   })
 })

@@ -5,8 +5,25 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const openPreviewLink = vi.hoisted(() => vi.fn(() => true))
 vi.mock('../../lib/openPreviewLink', () => ({ openPreviewLink }))
 
-import { UserMessage } from './UserMessage'
+import { UserMessage, type UserMessageEditAction } from './UserMessage'
+import { withAgentTeamRequest } from '../../lib/agentTeamRequest'
+import { useCapabilityCatalogStore } from '../../stores/capabilityCatalogStore'
 import { useSettingsStore } from '../../stores/settingsStore'
+
+function makeEditAction(overrides: Partial<UserMessageEditAction> = {}): UserMessageEditAction {
+  return {
+    label: 'Edit and resend',
+    editing: false,
+    submitting: false,
+    disabled: false,
+    getDraft: () => ({ text: 'A prompt', attachments: [], sessionReferences: [] }),
+    onStart: vi.fn(),
+    onCancel: vi.fn(),
+    onDraftChange: vi.fn(),
+    onSubmit: vi.fn(),
+    ...overrides,
+  }
+}
 
 function bubbleOf(container: HTMLElement): HTMLElement {
   const bubble = container.querySelector<HTMLElement>('[data-message-body="user"]')
@@ -15,28 +32,75 @@ function bubbleOf(container: HTMLElement): HTMLElement {
 }
 
 describe('UserMessage', () => {
+  it('keeps a teammate Markdown file reference parsed through the click callback', () => {
+    render(<UserMessage sessionId="s1" content="[open](docs/literal%2520name.md:7)" teammateFrom="reviewer" />)
+    fireEvent.click(screen.getByRole('link', { name: 'open' }))
+    expect(openPreviewLink).toHaveBeenCalledWith({ path: 'docs/literal%20name.md', line: 7 }, 's1')
+  })
+
   afterEach(() => {
     useSettingsStore.setState({ locale: 'en' })
     openPreviewLink.mockClear().mockReturnValue(true)
   })
 
-  it('places rollback beside copy and fork in the existing hover and keyboard-focus action row', () => {
+  it('places edit beside copy and fork in the existing hover and keyboard-focus action row', () => {
     useSettingsStore.setState({ locale: 'en' })
-    const rollback = vi.fn()
-    const { container } = render(<UserMessage content="A prompt" branchAction={{ label: 'Fork', onBranch: vi.fn() }} rewindAction={{ label: 'Roll back conversation', onRewind: rollback }} />)
-    const button = screen.getByRole('button', { name: 'Roll back conversation' })
+    const editAction = makeEditAction()
+    const { container } = render(<UserMessage content="A prompt" branchAction={{ label: 'Fork', onBranch: vi.fn() }} editAction={editAction} />)
+    const button = screen.getByRole('button', { name: 'Edit and resend' })
     const actions = button.closest('[data-message-actions]')
     expect(actions).toBeTruthy()
     expect(actions?.className).toContain('opacity-0')
     expect(actions?.className).toContain('group-hover:opacity-100')
     expect(actions?.className).toContain('group-focus-within:opacity-100')
+    // Hung under the bubble with no layout height, so revealing it never shifts
+    // the transcript. It must stay in flow inside the hover shell (see
+    // MessageActionBar.overlay.test.tsx for why, #1616).
+    expect(actions?.getAttribute('data-placement')).toBe('overlay')
+    expect(actions?.className).toContain('h-0')
+    expect(actions?.className).not.toMatch(/(^|\s)(absolute|fixed)(\s|$)/)
+    expect(actions?.parentElement?.getAttribute('data-message-shell')).toBe('user')
     expect(container.querySelectorAll('[data-message-actions]')).toHaveLength(1)
     expect(screen.getByRole('button', { name: 'Fork' }).closest('[data-message-actions]')).toBe(actions)
     expect(button.textContent).toBe('')
     button.focus()
     expect(document.activeElement).toBe(button)
     fireEvent.click(button)
-    expect(rollback).toHaveBeenCalledOnce()
+    expect(editAction.onStart).toHaveBeenCalledOnce()
+  })
+
+  it('replaces the bubble with the inline editor while editing, seeded from the saved draft', () => {
+    useSettingsStore.setState({ locale: 'en' })
+    const editAction = makeEditAction({
+      editing: true,
+      getDraft: () => ({ text: 'Draft kept by the list', attachments: [], sessionReferences: [] }),
+    })
+    const { container } = render(<UserMessage content="Original prompt" editAction={editAction} />)
+
+    expect(container.querySelector('[data-message-body="user"]')).toBeNull()
+    expect(container.querySelector('[data-message-actions]')).toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Edited message' }).textContent).toBe('Draft kept by the list')
+  })
+
+  it('offers edit on an attachment-only prompt, which has no text to copy', () => {
+    useSettingsStore.setState({ locale: 'en' })
+    render(
+      <UserMessage
+        content=""
+        attachments={[{ type: 'image', name: 'shot.png', data: 'data:image/png;base64,AAAA' }]}
+        editAction={makeEditAction()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Edit and resend' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Copy prompt' })).toBeNull()
+  })
+
+  it('never offers edit on a teammate message', () => {
+    useSettingsStore.setState({ locale: 'en' })
+    render(<UserMessage content="Do the review" teammateFrom="reviewer" editAction={makeEditAction()} />)
+
+    expect(screen.queryByRole('button', { name: 'Edit and resend' })).toBeNull()
   })
 
   it('keeps long URLs inside the message bubble', () => {
@@ -228,4 +292,71 @@ it('labels a collaboration delivery with its source session above a normal user 
   expect(container.firstElementChild?.className).toContain('justify-end')
   expect(bubbleOf(container).textContent).toBe('只读发现：#1335 未复现')
   open.mockRestore()
+})
+
+describe('UserMessage capability pills', () => {
+  const SKILL = 'Use the Skill tool with skill: "frontend-design" for this request.'
+  const TEAM_MODEL_CONTENT = withAgentTeamRequest(`${SKILL} 做个落地页`)
+
+  afterEach(() => {
+    useSettingsStore.setState({ locale: 'en' })
+    useCapabilityCatalogStore.setState({ entries: {} })
+  })
+
+  function pills(container: HTMLElement) {
+    return [...bubbleOf(container).querySelectorAll('[data-user-message-pill]')]
+      .map((pill) => `${pill.getAttribute('data-user-message-pill')}:${pill.textContent}`)
+  }
+
+  it('shows the Agent Team switch as a read-only chip above the bubble', () => {
+    useSettingsStore.setState({ locale: 'en' })
+    const { container } = render(<UserMessage content="@frontend-design 做个落地页" modelContent={TEAM_MODEL_CONTENT} />)
+    const chip = screen.getByTestId('agent-team-chip')
+    expect(chip.textContent).toBe('Agent Teams')
+    expect(bubbleOf(container).contains(chip)).toBe(false)
+    expect(screen.queryByRole('button', { name: 'Remove Agent Teams' })).toBeNull()
+  })
+
+  it('renders a live pill and its reloaded copy the same way', () => {
+    // Live: the bubble text is the composer projection, the model text the sentence.
+    const live = render(<UserMessage content="@Frontend Design 做个落地页" modelContent={TEAM_MODEL_CONTENT} />)
+    // Reload: history keeps the sentence in the text (no team block, no modelContent).
+    const reloaded = render(<UserMessage content={`${SKILL} 做个落地页`} />)
+    for (const { container } of [live, reloaded]) {
+      expect(pills(container)).toEqual(['skill:@frontend-design'])
+      expect(bubbleOf(container).textContent).toBe('@frontend-design 做个落地页')
+      expect(bubbleOf(container).textContent).not.toContain('Use the Skill tool')
+    }
+    expect(reloaded.container.querySelector('[data-testid="agent-team-chip"]')).toBeNull()
+  })
+
+  it('names a pill the way the composer showed it, brand icon included', () => {
+    const PLUGIN = 'Use the enabled plugin "amap@official" for this request. Available skill identities: []. '
+      + 'MCP server identities: ["plugin:amap:maps"]. Invoke skills using the Skill tool and use only tools currently '
+      + 'available from these servers. If unavailable or authentication is required, report that; do not install or authenticate automatically.'
+    useCapabilityCatalogStore.getState().remember([
+      { kind: 'plugin', id: 'amap@official', name: 'amap', displayName: '高德地图', description: '', source: 'amap@official', icon: '/connectors/amap.svg', modelText: PLUGIN },
+      { kind: 'skill', id: 'frontend-design', name: 'frontend-design', displayName: 'Frontend Design', description: '', source: 'skills', modelText: SKILL },
+    ])
+    // Live (composer projection + model text) and reloaded (sentence only) agree.
+    const live = render(<UserMessage content="@Frontend Design 用 @高德地图 查路线" modelContent={`${SKILL} 用 ${PLUGIN} 查路线`} />)
+    const reloaded = render(<UserMessage content={`${SKILL} 用 ${PLUGIN} 查路线`} />)
+    for (const { container } of [live, reloaded]) {
+      expect(pills(container)).toEqual(['skill:@Frontend Design', 'plugin:@高德地图'])
+      const brand = bubbleOf(container).querySelector('[data-user-message-pill="plugin"] img')
+      expect(brand?.getAttribute('src')).toMatch(/connectors\/amap\.svg$/)
+    }
+  })
+
+  it('marks a leading slash command inside the bubble', () => {
+    const { container } = render(<UserMessage content="/commit 只提交 docs" />)
+    expect(pills(container)).toEqual(['command:/commit'])
+    expect(bubbleOf(container).textContent).toBe('/commit 只提交 docs')
+  })
+
+  it('leaves a plain prompt as plain text', () => {
+    const { container } = render(<UserMessage content="分析最近一个版本的commit" />)
+    expect(pills(container)).toEqual([])
+    expect(screen.queryByTestId('agent-team-chip')).toBeNull()
+  })
 })

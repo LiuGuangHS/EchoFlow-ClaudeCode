@@ -1,6 +1,9 @@
+import type { ScheduledTaskTrigger } from './task'
 // Source: src/server/services/sessionService.ts
 
 import type { ReasoningEffortLevel } from './settings'
+
+export type AgentProfile = 'standard' | 'lean'
 
 export type LocalIndexMode = 'off' | 'shadow' | 'on'
 export type LocalIndexState = 'off' | 'building' | 'ready' | 'degraded'
@@ -18,6 +21,8 @@ export type LocalIndexStatus = {
 }
 
 export type SessionListItem = {
+  /** Server-owned, immutable after creation; absent legacy values mean standard. */
+  agentProfile?: AgentProfile
   id: string
   archived?: boolean
   title: string
@@ -33,6 +38,7 @@ export type SessionListItem = {
   runtimeProviderId?: string | null
   runtimeModelId?: string
   effortLevel?: ReasoningEffortLevel
+  openAIFastMode?: boolean
 }
 
 export type SessionWorkspaceState = 'available' | 'worktree_removed' | 'missing'
@@ -45,6 +51,7 @@ export type MessageUsage = {
 }
 
 export type MessageEntry = {
+  scheduledTask?: ScheduledTaskTrigger
   sessionReferences?: Array<{ sessionId: string }>
   /** Present when this user-position message was delivered from another session. */
   collaboration?: { sourceSessionId: string; messageId?: string }

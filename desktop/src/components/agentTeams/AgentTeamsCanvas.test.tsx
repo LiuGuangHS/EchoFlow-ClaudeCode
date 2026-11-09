@@ -111,6 +111,43 @@ describe('AgentTeamsCanvas', () => {
     useSettingsStore.setState({ locale: 'en' })
   })
 
+  it.each([undefined, ' Builder@canvas-team '])('connects an active task with recovered or normalized owner %s', (owner) => {
+    const current = snapshot('current')
+    current.tasks[1]!.owner = owner
+    render(<AgentTeamsCanvas {...props({ snapshots: [current], selectedIndex: 0, snapshot: current })} />)
+    expect(screen.getByTestId('agent-teams-canvas-task-2').textContent).toContain('builder')
+    expect(screen.getByTestId('agent-teams-canvas-tether-builder@canvas-team')).toBeTruthy()
+  })
+
+  it('does not describe an ownerless running task as waiting to be claimed', () => {
+    const current = snapshot('current')
+    current.tasks.push(task('5', 'in_progress'))
+    render(<AgentTeamsCanvas {...props({ snapshots: [current], selectedIndex: 0, snapshot: current })} />)
+    const card = screen.getByTestId('agent-teams-canvas-task-5')
+    expect(card.getAttribute('data-state')).toBe('running')
+    expect(card.textContent).toContain('Owner not recorded')
+    expect(card.textContent).not.toContain('Waiting for a teammate')
+  })
+
+  it('removes the current task and tether when its owner is explicitly cleared, then restores a new assignment', () => {
+    const assigned = snapshot('current')
+    const cleared = structuredClone(assigned)
+    cleared.tasks[1]!.owner = ''
+    const { rerender } = render(<AgentTeamsCanvas {...props({ snapshots: [assigned], selectedIndex: 0, snapshot: assigned })} />)
+    expect(screen.getByTestId('agent-teams-canvas-tether-builder@canvas-team')).toBeTruthy()
+
+    rerender(<AgentTeamsCanvas {...props({ snapshots: [assigned, cleared], selectedIndex: 1, snapshot: cleared })} />)
+    expect(screen.queryByTestId('agent-teams-canvas-tether-builder@canvas-team')).toBeNull()
+    expect(screen.getByTestId('agent-teams-canvas-member-builder@canvas-team').textContent).not.toContain('Executing #2')
+    expect(screen.getByTestId('agent-teams-canvas-task-2').textContent).toContain('Owner not recorded')
+
+    const reassigned = structuredClone(cleared)
+    reassigned.tasks[1]!.owner = 'builder'
+    rerender(<AgentTeamsCanvas {...props({ snapshots: [assigned, cleared, reassigned], selectedIndex: 2, snapshot: reassigned })} />)
+    expect(screen.getByTestId('agent-teams-canvas-tether-builder@canvas-team').getAttribute('data-task-id')).toBe('2')
+    expect(screen.getByTestId('agent-teams-canvas-member-builder@canvas-team').textContent).toContain('Executing #2')
+  })
+
   it('renders the fixed formation over horizontal dependency lanes with one node per member', () => {
     const { container } = render(<AgentTeamsCanvas {...props()} />)
 
@@ -355,6 +392,26 @@ describe('AgentTeamsCanvas', () => {
     )
   })
 
+  it('loops every flowing line by whole dash periods so the dashes never snap back', () => {
+    const css = readFileSync(join(__dirname, '../../theme/globals.css'), 'utf8')
+    const offset = Number(css.match(/@keyframes agent-teams-flow\s*\{\s*to\s*\{\s*stroke-dashoffset:\s*(-?[\d.]+);/)?.[1])
+    expect(offset).not.toBe(0)
+
+    const { container } = render(<AgentTeamsCanvas {...props()} />)
+    const flowing = [...container.querySelectorAll('.agent-teams-flow')]
+    expect(flowing.some(path => path.getAttribute('data-testid')?.startsWith('agent-teams-canvas-tether-'))).toBe(true)
+    expect(flowing.some(path => path.getAttribute('data-testid') === 'agent-teams-active-flight-path')).toBe(true)
+    expect(flowing.some(path => path.closest('[data-testid="agent-teams-legend"]'))).toBe(true)
+
+    for (const path of flowing) {
+      const period = path.getAttribute('stroke-dasharray')!.split(/[\s,]+/).map(Number).reduce((sum, dash) => sum + dash, 0)
+      expect({ dasharray: path.getAttribute('stroke-dasharray'), remainder: Math.abs(offset) % period }).toEqual({
+        dasharray: path.getAttribute('stroke-dasharray'),
+        remainder: 0,
+      })
+    }
+  })
+
   it('chips each member card with its model family and keeps the full id on hover', () => {
     const current = snapshot('current')
     const withModels: TeamWorkbenchSnapshot = {
@@ -400,5 +457,84 @@ describe('AgentTeamsCanvas', () => {
     expect(builder).toBeNull()
     const lead = screen.queryByTestId('agent-teams-canvas-member-model-team-lead@canvas-team')
     expect(lead).toBeNull()
+  })
+
+  it('chips what each member has done, is doing and does next, with the subject on hover', () => {
+    render(<AgentTeamsCanvas {...props()} />)
+    const chips = (agentId: string) => Array.from(
+      screen.getByTestId(`agent-teams-canvas-member-${agentId}`).querySelectorAll('[data-member-task]'),
+    ).map(chip => ({
+      id: chip.getAttribute('data-member-task'),
+      status: chip.getAttribute('data-task-status'),
+      next: chip.getAttribute('data-task-next') === 'true',
+      title: chip.getAttribute('title'),
+    }))
+
+    expect(chips('builder@canvas-team')).toEqual([
+      { id: '1', status: 'completed', next: false, title: 'Task 1' },
+      { id: '2', status: 'in_progress', next: false, title: 'Task 2' },
+    ])
+    // Nothing started yet, but the member's next task is already known.
+    expect(chips('reviewer@canvas-team')).toEqual([
+      { id: '3', status: 'pending', next: true, title: 'Task 3' },
+    ])
+    // The connector line runs behind the chip row; a see-through chip lets
+    // it strike through the label.
+    const next = screen.getByTestId('agent-teams-canvas-member-reviewer@canvas-team').querySelector<HTMLElement>('[data-task-next]')!
+    expect(next.style.backgroundColor).not.toBe('transparent')
+    expect(next.style.backgroundColor).not.toBe('')
+  })
+
+  it('labels stopped, retrying and failed members and keeps their failure on hover', () => {
+    const current = snapshot('current')
+    const recovering: TeamWorkbenchSnapshot = {
+      ...current,
+      team: {
+        ...current.team,
+        members: current.team.members.map(member => (
+          member.agentId === 'builder@canvas-team'
+            ? {
+                ...member,
+                status: 'idle' as const,
+                activity: 'idle' as const,
+                lastError: 'API Error: 529 overloaded',
+                autoRetry: { attempt: 2, max: 5, nextAt: Date.parse('2026-08-12T02:30:45.000Z') },
+              }
+            : member.agentId === 'reviewer@canvas-team'
+              ? { ...member, status: 'idle' as const, activity: 'stopped' as const }
+              : member.agentId === 'qa@canvas-team'
+                ? { ...member, status: 'error' as const, activity: 'idle' as const, lastError: 'Credit balance is too low' }
+                : member
+        )),
+      },
+    }
+
+    render(<AgentTeamsCanvas {...props({
+      snapshots: [recovering],
+      selectedIndex: 0,
+      snapshot: recovering,
+      previousSnapshot: undefined,
+      activeMessageId: null,
+    })} />)
+
+    const builder = screen.getByTestId('agent-teams-canvas-member-builder@canvas-team')
+    expect(builder.getAttribute('data-member-state')).toBe('retrying')
+    // It names the task it stopped on, not just that it stopped.
+    expect(screen.getByText('Auto-retry 2/5 · at #2').getAttribute('title')).toBe('API Error: 529 overloaded')
+    // The task list still says in progress; the card must not animate work
+    // nobody is doing.
+    const stalledTask = screen.getByTestId('agent-teams-canvas-task-2')
+    expect(stalledTask.getAttribute('data-stalled')).toBe('retrying')
+    expect(stalledTask.textContent).toContain('Auto-retry 2/5')
+    expect(stalledTask.textContent).not.toContain('In progress')
+    expect(stalledTask.querySelector('[data-progress="indeterminate"]')).toBeNull()
+
+    const reviewer = screen.getByTestId('agent-teams-canvas-member-reviewer@canvas-team')
+    expect(reviewer.getAttribute('data-member-state')).toBe('stopped')
+    expect(reviewer.textContent).toContain('Stopped')
+
+    const qa = screen.getByTestId('agent-teams-canvas-member-qa@canvas-team')
+    expect(qa.getAttribute('data-member-state')).toBe('error')
+    expect(screen.getByText('Error').getAttribute('title')).toBe('Credit balance is too low')
   })
 })

@@ -6,6 +6,7 @@ import type { BackgroundAgentTask, ChatState, ServerMessage, UIMessage } from '.
 import type { TeamWorkbenchSessionTimeline, TeamWorkbenchTask, TeamWorkbenchTimeline } from '../../types/team'
 import type { WorkflowRun } from '../../types/workflow'
 import { browserHost } from '../../lib/desktopHost/browserHost'
+import { tabChipClass } from '@/components/ui/tabChip'
 
 type ToolUseMessage = Extract<UIMessage, { type: 'tool_use' }>
 
@@ -174,6 +175,7 @@ vi.mock('../../i18n', () => ({
       'tabs.closeLeft': 'Close Left',
       'tabs.closeRight': 'Close Right',
       'tabs.closeAll': 'Close All',
+      'tabs.reopenClosed': 'Reopen Closed Tab',
       'tabs.closeConfirmTitle': 'Session Running',
       'tabs.closeConfirmMessage': 'Still running',
       'tabs.closeConfirmKeep': 'Keep Running',
@@ -307,6 +309,7 @@ describe('TabBar', () => {
     const { useTeamStore } = await import('../../stores/teamStore')
     const { useWorkflowStore } = await import('../../stores/workflowStore')
     const { useWorkspaceStore } = await import('../../stores/workspaceStore')
+    const { useUIStore } = await import('../../stores/uiStore')
 
     useTabStore.setState({ tabs: [], activeTabId: null })
     useChatStore.setState({
@@ -325,6 +328,7 @@ describe('TabBar', () => {
     useCLITaskStore.setState(useCLITaskStore.getInitialState(), true)
     useTeamStore.setState(useTeamStore.getInitialState(), true)
     useWorkflowStore.setState({ runs: {} })
+    useUIStore.setState({ newSessionDraft: null, draftWorkspaceRequest: null })
 
     Reflect.deleteProperty(window, 'desktopHost')
     Reflect.deleteProperty(window, '__TAURI__')
@@ -377,6 +381,46 @@ describe('TabBar', () => {
     fireEvent.click(side)
     expect(useWorkspaceStore.getState().getSession('second-session').layout).toBe('split')
     expect(useWorkspaceStore.getState().getSession(sessionId).tabs).toEqual(before)
+  })
+
+  it('offers the project and workspace entry points on the retained new-session draft', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useUIStore } = await import('../../stores/uiStore')
+    const { useWorkspaceStore } = await import('../../stores/workspaceStore')
+    useUIStore.setState({
+      newSessionDraft: { workDir: '/repo/project', revision: 7, hasContent: false },
+      draftWorkspaceRequest: null,
+    })
+    render(<TabBar />)
+
+    expect(screen.getByTestId('open-project-menu')).toHaveTextContent('/repo/project')
+    const side = screen.getByTestId('workspace-toggle-side')
+    const bottom = screen.getByTestId('workspace-toggle-bottom')
+    expect(screen.queryByTestId('workspace-toggle-fullscreen')).not.toBeInTheDocument()
+
+    fireEvent.click(side)
+    fireEvent.click(bottom)
+
+    // The draft has no session yet, so the controls only record the intent.
+    expect(useUIStore.getState().draftWorkspaceRequest).toMatchObject({
+      action: 'toggle-bottom',
+      revision: 7,
+    })
+    expect(useWorkspaceStore.getState().bySession).toEqual({})
+  })
+
+  it('keeps the draft workspace controls when the draft has no project yet', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useUIStore } = await import('../../stores/uiStore')
+    useUIStore.setState({
+      newSessionDraft: { workDir: '', revision: 8, hasContent: false },
+      draftWorkspaceRequest: null,
+    })
+    render(<TabBar />)
+
+    expect(screen.queryByTestId('open-project-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-toggle-side')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-toggle-bottom')).toBeInTheDocument()
   })
 
   it('hides the activity button for no-activity chat session tabs', async () => {
@@ -668,6 +712,111 @@ describe('TabBar', () => {
     expect(screen.queryByRole('button', { name: /activity/i })).not.toBeInTheDocument()
   })
 
+  it('does not re-derive Activity when another session streams (#1480)', async () => {
+    // The strip derived Activity inside a store selector, and selectors run on
+    // every update of every session. Each token of a background run cost one
+    // pass over the on-screen session's whole transcript.
+    const actual = await vi.importActual<typeof import('../activity/sessionActivityModel')>('../activity/sessionActivityModel')
+    const derivedFor = vi.fn<(sessionId: string) => void>()
+    vi.doMock('../activity/sessionActivityModel', () => ({
+      ...actual,
+      buildMainSessionActivityModel: (input: Parameters<typeof actual.buildMainSessionActivityModel>[0]) => {
+        derivedFor(input.sessionId)
+        return actual.buildMainSessionActivityModel(input)
+      },
+      getMainSessionActivityModel: (input: Parameters<typeof actual.getMainSessionActivityModel>[0]) => {
+        derivedFor(input.sessionId)
+        return actual.getMainSessionActivityModel(input)
+      },
+    }))
+    try {
+      const { TabBar } = await import('./TabBar')
+      const { useTabStore } = await import('../../stores/tabStore')
+      const { useChatStore } = await import('../../stores/chatStore')
+      const onScreen = makeChatSession('idle')
+      onScreen.messages = [completedTodoWriteMessage()]
+      useTabStore.setState({
+        tabs: [
+          { sessionId: 'session-1', title: 'On screen', type: 'session', status: 'idle' },
+          { sessionId: 'session-2', title: 'Background', type: 'session', status: 'running' },
+        ],
+        activeTabId: 'session-1',
+      })
+      useChatStore.setState({
+        sessions: { 'session-1': onScreen, 'session-2': makeChatSession('streaming') },
+        disconnectSession: vi.fn(),
+      } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+      await act(async () => {
+        render(<TabBar />)
+      })
+      expect(screen.getByRole('button', { name: /activity/i })).toBeInTheDocument()
+
+      derivedFor.mockClear()
+      for (const chunk of ['Adding', 'Adding vehicle', 'Adding vehicle 401']) {
+        act(() => {
+          useChatStore.setState((state) => ({
+            sessions: {
+              ...state.sessions,
+              'session-2': { ...state.sessions['session-2']!, streamingText: chunk },
+            },
+          }))
+        })
+      }
+      expect(derivedFor).not.toHaveBeenCalled()
+
+      // The on-screen session still drives it: clearing its history hides the button.
+      act(() => {
+        useChatStore.setState((state) => ({
+          sessions: { ...state.sessions, 'session-1': { ...state.sessions['session-1']!, messages: [] } },
+        }))
+      })
+      expect(derivedFor).toHaveBeenCalledWith('session-1')
+      expect(screen.queryByRole('button', { name: /activity/i })).not.toBeInTheDocument()
+    } finally {
+      vi.doUnmock('../activity/sessionActivityModel')
+    }
+  })
+
+  it('shows the activity button for a background task that starts after mount', async () => {
+    // The strip derives Activity from inputs it selects one by one, so each of
+    // them has to reach the derivation when it changes on its own.
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+    useTabStore.setState({
+      tabs: [{ sessionId: 'session-1', title: 'Chat', type: 'session', status: 'idle' }],
+      activeTabId: 'session-1',
+    })
+    useChatStore.setState({
+      sessions: { 'session-1': makeChatSession('idle') },
+      disconnectSession: vi.fn(),
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    await act(async () => {
+      render(<TabBar />)
+    })
+    expect(screen.queryByRole('button', { name: /activity/i })).not.toBeInTheDocument()
+
+    // Only the task record changes: the transcript array keeps its identity.
+    const withTasks = (tasks: BackgroundAgentTask[]) => {
+      useChatStore.setState((state) => ({
+        sessions: {
+          ...state.sessions,
+          'session-1': {
+            ...state.sessions['session-1']!,
+            backgroundAgentTasks: Object.fromEntries(tasks.map((task) => [task.taskId, task])),
+          },
+        },
+      }))
+    }
+    act(() => withTasks([makeBackgroundTask('bg-1', { taskType: 'local_agent' })]))
+    expect(screen.getByRole('button', { name: /activity/i })).toBeInTheDocument()
+
+    act(() => withTasks([]))
+    expect(screen.queryByRole('button', { name: /activity/i })).not.toBeInTheDocument()
+  })
+
   it('shows the activity button without a numeric badge for running or failed activity', async () => {
     const { TabBar } = await import('./TabBar')
     const { useTabStore } = await import('../../stores/tabStore')
@@ -953,26 +1102,7 @@ describe('TabBar', () => {
     expect(screen.queryByText('设置')).not.toBeInTheDocument()
   })
 
-  // Same upstream placeholder as the sidebar: the tab must not surface the
-  // server's English literal when the UI has a localized label for it.
-  it('labels an unnamed session tab with the localized placeholder', async () => {
-    const { TabBar } = await import('./TabBar')
-    const { useTabStore } = await import('../../stores/tabStore')
-
-    useTabStore.setState({
-      tabs: [{ sessionId: 'fresh-session', title: 'Untitled Session', type: 'session', status: 'idle' }],
-      activeTabId: 'fresh-session',
-    })
-
-    await act(async () => {
-      render(<TabBar />)
-    })
-
-    expect(screen.getByText('Untitled')).toBeInTheDocument()
-    expect(screen.queryByText('Untitled Session')).not.toBeInTheDocument()
-  })
-
-  it('matches only the settings tab to the settings rail width', async () => {
+  it('gives the settings tab the same chip width as every other tab', async () => {
     const { TabBar } = await import('./TabBar')
     const { SETTINGS_TAB_ID, useTabStore } = await import('../../stores/tabStore')
 
@@ -991,11 +1121,13 @@ describe('TabBar', () => {
     const settingsTab = screen.getByText('Localized Settings').closest('.tab-strip-item')
     const chatTab = screen.getByText('Chat').closest('.tab-strip-item')
 
-    expect(settingsTab?.className).toContain('min-w-[195px]')
-    expect(settingsTab?.className).toContain('max-w-[195px]')
-    expect(chatTab?.className).toContain('min-w-[140px]')
-    expect(chatTab?.className).toContain('max-w-[200px]')
-    expect(chatTab?.className).not.toContain('min-w-[195px]')
+    // The settings tab used to be pinned to 195px to line up with the old
+    // settings rail; that rail is gone, and one strip has one tab width.
+    for (const tab of [settingsTab, chatTab]) {
+      expect(tab?.className).toContain('min-w-[112px]')
+      expect(tab?.className).toContain('max-w-[200px]')
+      expect(tab?.className).not.toContain('195px')
+    }
   })
 
   it('shows current-session CLI tasks without a numeric activity badge', async () => {
@@ -1175,10 +1307,12 @@ describe('TabBar', () => {
     // which is most of the strip, so the row filled up with identical bubbles
     // that said nothing the titles did not. The glyph now carries exactly one
     // message: "this tab is not a conversation".
-    expect(screen.getByText('Idle Session').previousElementSibling?.textContent).toBe('')
-    expect(screen.getByText('Terminal').previousElementSibling?.textContent).toBe('terminal')
-    expect(screen.getByText('Extension Market').previousElementSibling?.textContent).toBe('storefront')
-    expect(screen.queryByText('chat_bubble')).not.toBeInTheDocument()
+    const glyphOf = (title: string) => screen.getByText(title).previousElementSibling
+    expect(glyphOf('Idle Session')?.querySelector('svg')).toBeNull()
+    expect(glyphOf('Terminal')?.querySelector('[data-tab-type-icon="terminal"]')).toHaveClass('lucide-square-terminal')
+    expect(glyphOf('Extension Market')?.querySelector('[data-tab-type-icon="market"]')).toHaveClass('lucide-store')
+    // Glyphs are svg now; no icon-font ligature text leaks into the title row.
+    expect(glyphOf('Terminal')?.textContent).toBe('')
   })
 
   it('keeps the title still when a chat tab starts running', async () => {
@@ -1254,25 +1388,38 @@ describe('TabBar', () => {
     let position = 0
     Object.defineProperty(strip, 'clientWidth', { configurable: true, get: () => viewport })
     Object.defineProperty(strip, 'scrollLeft', { configurable: true, get: () => position })
+    // As Chromium lays them out: the strip's `px-1` puts the first chip 4px
+    // in, and offsetLeft does not move when the strip scrolls.
     items.forEach((item, index) => {
-      Object.defineProperty(item, 'offsetLeft', { configurable: true, get: () => index * 142 })
+      Object.defineProperty(item, 'offsetLeft', { configurable: true, get: () => 4 + index * 142 })
       Object.defineProperty(item, 'offsetWidth', { configurable: true, get: () => 140 })
     })
     fireStripResize()
     const hitRegion = screen.getByTestId('tab-bar-hit-region')
-    expect(hitRegion).toHaveStyle({ width: '282px' })
+    // The mask starts at the strip's left edge, so it reaches the last chip's
+    // right edge (4 + 142 + 140). Measured from the first chip it stopped 4px
+    // short, and pressing the last tab's edge dragged the window instead.
+    expect(hitRegion).toHaveStyle({ width: '286px' })
     expect(strip).not.toContainElement(hitRegion)
-    expect(hitRegion).toHaveClass('pointer-events-none', 'top-[6px]')
+    // The no-drag rectangle covers the 28px chips only (12px above and below
+    // in the 52px strip), so the space around them still drags the window.
+    expect(hitRegion).toHaveClass('pointer-events-none', 'top-[12px]', 'bottom-[12px]')
     viewport = 200
     fireStripResize()
     expect(hitRegion).toHaveStyle({ width: '200px' })
     position = 82
     fireEvent.scroll(strip)
     expect(hitRegion).toHaveStyle({ width: '200px' })
+    // Scrolled to the end with room to spare: the mask stops where the last
+    // chip now ends, not at the viewport edge.
+    viewport = 250
+    position = 40
+    fireEvent.scroll(strip)
+    expect(hitRegion).toHaveStyle({ width: '246px' })
     position = 0
     viewport = 600
     fireStripResize()
-    expect(hitRegion).toHaveStyle({ width: '282px' })
+    expect(hitRegion).toHaveStyle({ width: '286px' })
   })
 
   it('scrolls by a fraction of the visible strip rather than a fixed tab width', async () => {
@@ -1309,7 +1456,7 @@ describe('TabBar', () => {
     })
 
     const rightButton = await waitFor(() => {
-      const button = screen.getByText('chevron_right').closest('button')
+      const button = screen.getByRole('button', { name: 'Scroll tabs right' })
       expect(button).toBeInTheDocument()
       return button as HTMLButtonElement
     })
@@ -1438,7 +1585,7 @@ describe('TabBar', () => {
       stubRect(activeTab, 640, 896)
 
       const leftChevron = await waitFor(() => {
-        const button = screen.getByText('chevron_left').closest('button')
+        const button = screen.getByRole('button', { name: 'Scroll tabs left' })
         expect(button).toBeInTheDocument()
         return button as HTMLButtonElement
       })
@@ -1459,7 +1606,7 @@ describe('TabBar', () => {
       stubRect(activeTab, 640, 896)
 
       const leftChevron = await waitFor(() => {
-        const button = screen.getByText('chevron_left').closest('button')
+        const button = screen.getByRole('button', { name: 'Scroll tabs left' })
         expect(button).toBeInTheDocument()
         return button as HTMLButtonElement
       })
@@ -1531,10 +1678,10 @@ describe('TabBar', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('window-controls')).toBeInTheDocument()
-      expect(screen.getByText('chevron_right').closest('button')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Scroll tabs right' })).toBeInTheDocument()
     })
 
-    const rightButton = screen.getByText('chevron_right').closest('button')
+    const rightButton = screen.getByRole('button', { name: 'Scroll tabs right' })
     expect(rightButton?.nextElementSibling).toBe(screen.getByTestId('window-controls'))
   })
 
@@ -1564,7 +1711,7 @@ describe('TabBar', () => {
 
     useTabStore.setState({
       tabs: [
-        { sessionId: 'tab-1', title: 'Draft session', type: 'session', status: 'idle' },
+        { sessionId: 'tab-1', title: 'Untitled Session', type: 'session', status: 'idle' },
       ],
       activeTabId: 'tab-1',
     })
@@ -1580,9 +1727,110 @@ describe('TabBar', () => {
     expect(screen.getByTestId('tab-bar')).toHaveAttribute('data-desktop-drag-region')
     expect(screen.getByTestId('tab-bar-scroll-region')).toHaveAttribute('data-desktop-drag-region')
     expect(screen.getByTestId('tab-bar-drag-gutter')).toHaveAttribute('data-desktop-drag-region')
-    const tab = screen.getByText('Draft session').closest('.tab-bar-interactive')
+    const tab = screen.getByText('Untitled Session').closest('.tab-bar-interactive')
     expect(tab).toBeInTheDocument()
     expect(tab).not.toHaveAttribute('data-desktop-drag-region')
+  })
+
+  it('lets only titlebar controls carve the drag region, not the content rendered after it', async () => {
+    // Chromium reports a rectangle for every box whose app-region is drag or
+    // no-drag — unclipped by overflow, whatever its opacity — and Electron
+    // lets the later one win. ContentRouter renders after TabBar, so when
+    // every button in the app was no-drag, the transcript scrolled under the
+    // 52px titlebar (or kept mounted at opacity 0 behind Settings) punched
+    // holes in the empty strip beside the tabs: Windows users could not drag
+    // the window there once a few sessions were open.
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+    const { resolveAppRegion } = await import('../../test/appRegion')
+
+    useTabStore.setState({
+      tabs: [
+        { sessionId: 'tab-1', title: 'First Session', type: 'session', status: 'idle' },
+        { sessionId: 'tab-2', title: 'Second Session', type: 'session', status: 'idle' },
+      ],
+      activeTabId: 'tab-1',
+    })
+    useChatStore.setState({
+      sessions: {},
+      disconnectSession: vi.fn(),
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    // Every kind of control, once in titlebar chrome and once in the content.
+    const controls = () => (
+      <>
+        <button type="button">Copy prompt</button>
+        <a href="#trajectory">View in trajectory</a>
+        <div role="button" tabIndex={0}>Tool call</div>
+        <div draggable="true">Session row</div>
+        <input aria-label="Search" />
+        <textarea aria-label="Note" />
+        <select aria-label="Mode"><option>Auto</option></select>
+      </>
+    )
+    const root = document.body.appendChild(document.createElement('div'))
+    root.id = 'root'
+    await act(async () => {
+      render(
+        <>
+          <div data-testid="titlebar-chrome" data-desktop-drag-region>{controls()}</div>
+          <TabBar />
+          <main data-testid="content-under-titlebar">{controls()}</main>
+        </>,
+        { container: root },
+      )
+    })
+
+    for (const control of Array.from(screen.getByTestId('titlebar-chrome').children)) {
+      expect(resolveAppRegion(control), control.outerHTML).toBe('no-drag')
+    }
+    for (const control of Array.from(screen.getByTestId('content-under-titlebar').children)) {
+      expect(resolveAppRegion(control), control.outerHTML).toBe('none')
+    }
+
+    const tabBar = screen.getByTestId('tab-bar')
+    expect(resolveAppRegion(tabBar)).toBe('drag')
+    expect(resolveAppRegion(screen.getByTestId('tab-bar-scroll-region'))).toBe('drag')
+    expect(resolveAppRegion(screen.getByTestId('tab-bar-drag-gutter'))).toBe('drag')
+
+    // Scrolled tabs report nothing; the stationary sibling stands in for them.
+    expect(resolveAppRegion(screen.getByTestId('tab-bar-hit-region'))).toBe('no-drag')
+    for (const title of ['First Session', 'Second Session']) {
+      const tab = screen.getByText(title).closest('.tab-bar-interactive')!
+      for (const node of [tab, ...Array.from(tab.querySelectorAll('*'))]) {
+        expect(resolveAppRegion(node), node.outerHTML).toBe('none')
+      }
+    }
+
+    // Every other control in the titlebar still takes its own clicks.
+    const toolbarButtons = Array.from(tabBar.querySelectorAll('button'))
+      .filter((button) => !button.closest('.tab-strip-scroll'))
+    expect(toolbarButtons.length).toBeGreaterThan(0)
+    for (const button of toolbarButtons) {
+      expect(resolveAppRegion(button), button.outerHTML).toBe('no-drag')
+    }
+  })
+
+  it('gives an overlay portalled over the titlebar its own pixels, but not a tooltip', async () => {
+    const { resolveAppRegion } = await import('../../test/appRegion')
+    const root = document.body.appendChild(document.createElement('div'))
+    root.id = 'root'
+    const menu = document.body.appendChild(document.createElement('div'))
+    const item = menu.appendChild(document.createElement('button'))
+    const tooltip = document.body.appendChild(document.createElement('div'))
+    tooltip.setAttribute('role', 'tooltip')
+    try {
+      expect(resolveAppRegion(menu)).toBe('no-drag')
+      // The menu's own box is the rectangle; a row scrolled inside it is not.
+      expect(resolveAppRegion(item)).toBe('none')
+      expect(resolveAppRegion(tooltip)).toBe('none')
+      expect(resolveAppRegion(root)).toBe('none')
+    } finally {
+      root.remove()
+      menu.remove()
+      tooltip.remove()
+    }
   })
 
   it('keeps the desktop tab strip at a roomier titlebar height', async () => {
@@ -1592,7 +1840,7 @@ describe('TabBar', () => {
 
     useTabStore.setState({
       tabs: [
-        { sessionId: 'tab-1', title: 'Draft session', type: 'session', status: 'idle' },
+        { sessionId: 'tab-1', title: 'Untitled Session', type: 'session', status: 'idle' },
       ],
       activeTabId: 'tab-1',
     })
@@ -1607,7 +1855,7 @@ describe('TabBar', () => {
 
     const tabBar = screen.getByTestId('tab-bar')
     const scrollRegion = screen.getByTestId('tab-bar-scroll-region')
-    const tab = screen.getByText('Draft session').closest('.tab-bar-interactive')
+    const tab = screen.getByText('Untitled Session').closest('.tab-bar-interactive')
 
     // 52px, from the handoff. The strip and the drag gutter are siblings, so a
     // mismatch leaves the shorter one with a dead strip of titlebar that the
@@ -1615,15 +1863,13 @@ describe('TabBar', () => {
     expect(tabBar).toHaveClass('min-h-[52px]')
     expect(screen.getByTestId('tab-bar-drag-gutter')).toHaveClass('min-h-[52px]')
 
-    // The tab is 6px shorter and the scroll region pays for it: 46 + 6 = 52.
-    // Those 6px are what makes the top corners read as rounded instead of as
-    // corners clipped by the window frame, so the two numbers are a pair — the
-    // tab cannot be shortened without the padding growing to match, or the
-    // strip stops being 52px tall.
-    expect(scrollRegion).toHaveClass('pt-[6px]')
-    expect(tab).toHaveClass('min-h-[46px]')
-    // The giveback stays inside the drag region: it belongs to the scroll
-    // region, which carries the attribute, not to the tab, which must not.
+    // The tab is a 28px chip centred in the 52px strip, the same chip the
+    // workspace's resource tabs use.
+    expect(scrollRegion).toHaveClass('items-center')
+    expect(scrollRegion.className).not.toMatch(/\bpt-/)
+    expect(tab).toHaveClass('h-7')
+    // The space around the chips stays inside the drag region: it belongs to
+    // the scroll region, which carries the attribute, not to the tab.
     expect(scrollRegion).toHaveAttribute('data-desktop-drag-region')
     expect(tab).not.toHaveAttribute('data-desktop-drag-region')
   })
@@ -1702,18 +1948,17 @@ describe('TabBar', () => {
     const gutter = screen.getByTestId('tab-bar-drag-gutter')
 
     // Closed, the trough runs to the window edge and the gutter disappears
-    // into it. Painting the frame unconditionally would paste a white block
-    // over the end of the strip instead.
-    expect(frame).not.toHaveClass('bg-[var(--color-surface)]')
+    // into it; the frame paints nothing of its own.
+    expect(frame.className).not.toMatch(/\bbg-\[/)
 
-    // Open, everything above the panel is one ground. The gutter is a
-    // transparent sibling of the header, so whichever element paints paper has
-    // to contain it — otherwise the trough shows through the strip and the
-    // window's top-right corner carries a grey notch beside the panel.
+    // Open, everything above the panel is one ground — the trough the
+    // workspace's resource tabs sit in, not paper. The gutter is a transparent
+    // sibling of the header, so the element that paints has to contain it.
     await act(async () => {
       useWorkspaceStore.getState().toggleWorkspace(sessionId)
     })
-    expect(frame).toHaveClass('bg-[var(--color-surface)]')
+    expect(frame).toHaveClass('bg-[var(--color-surface-sidebar)]')
+    expect(frame).not.toHaveClass('bg-[var(--color-surface)]')
     expect(frame).toContainElement(gutter)
   })
 
@@ -1751,7 +1996,7 @@ describe('TabBar', () => {
     expect(header).toHaveAttribute('data-desktop-drag-region')
   })
 
-  it('lifts the active tab onto the paper ground without turning it into a pill', async () => {
+  it('uses the shared tab chip, with selection strictly stronger than hover', async () => {
     const { TabBar } = await import('./TabBar')
     const { useTabStore } = await import('../../stores/tabStore')
     const { useChatStore } = await import('../../stores/chatStore')
@@ -1775,62 +2020,34 @@ describe('TabBar', () => {
     const active = screen.getByText('Active One').closest('.tab-bar-interactive')
     const inactive = screen.getByText('Inactive One').closest('.tab-bar-interactive')
 
-    // The fill is the point, and it is not a pill. #1123 landed because the
-    // strip, the active tab and the content below it were all
-    // `--color-surface`: three planes, one colour, nothing but a 3px rule to
-    // separate them. The strip now sits on the sidebar's ground and the active
-    // tab is filled with paper, so it reads as a sheet lifted off the desk and
-    // continuous with the view it opens onto.
+    // One chip for both strips: the session tabs carry exactly the classes the
+    // workspace's resource tabs do.
+    expect(active?.className).toContain(tabChipClass(true))
+    expect(inactive?.className).toContain(tabChipClass(false))
+
+    // #1123 landed because the strip, the active tab and the content were all
+    // `--color-surface`. The strip stays on the sidebar's ground and only the
+    // active chip is filled with paper at rest.
     expect(active?.className).toContain('bg-[var(--color-surface)]')
-    expect(active?.className).not.toContain('bg-transparent')
-    expect(inactive?.className).toContain('bg-transparent')
+    expect(inactive?.className).not.toMatch(/(?:^|\s)bg-/)
 
-    // The outline is load-bearing, not decoration. Keeping the trough on the
-    // sidebar's exact ground is what stops the titlebar reading as a separate
-    // band, and it costs this: paper against that trough is 1.05–1.10:1 in all
-    // six themes, so without an outline there is no visible edge and therefore
-    // no visible corner. `--color-border` cannot stand in — it is calibrated
-    // against paper and lands at 1.12:1 on the trough. See the tab-strip block
-    // in contrast.test.ts for the measured floors.
-    expect(active?.className).toContain('border-[var(--color-tab-edge)]')
-    expect(active?.className).not.toContain('border-[var(--color-border)]')
-    // Same box on both, so switching tabs does not shift the title by the 2px
-    // the border occupies.
-    expect(inactive?.className).toContain('border-transparent')
-    expect(inactive?.className).toContain('border-b-0')
+    // Paper against the trough is 1.05–1.10:1, so the active chip needs the
+    // `--color-tab-edge` ring to have a shape; `--color-border` lands at
+    // 1.12:1 there and cannot draw it (see contrast.test.ts).
+    expect(active?.className).toContain('0_0_0_1px_var(--color-tab-edge)')
+    expect(active?.className).not.toContain('var(--color-border)')
 
-    // What stays banned is still the *shape*. Only the top two corners round
-    // and the bottom border is gone, so the tab's lower edge runs straight
-    // into the view it opens onto; a pill is a fully rounded block floating
-    // clear of both the strip and the content. Guard the properties that would
-    // turn one into the other. (`(?:^|\s)` so the drag-over indicator's
-    // `before:rounded-full` is not mistaken for the tab's own radius.)
-    expect(active?.className).toContain('rounded-t-[8px]')
-    expect(active?.className).toContain('border-b-0')
-    expect(active?.className).not.toMatch(/(?:^|\s)rounded-(?!t-)/)
-    expect(active?.className).not.toMatch(/\bshadow-\[0/)
-    expect(active?.className).not.toMatch(/\bm[xlr]?-/)
-
-    // Selection no longer needs the terracotta rule, and the rule had become
-    // the enemy: a 3px line across the bottom is exactly the cut that the
-    // rounded shape exists to avoid. Weight plus the outline carry it now.
-    expect(active?.className).not.toContain('inset_0_-3px')
-    expect(inactive?.className).not.toContain('inset_0_-3px')
-
-    // Hover shares paper with the active tab instead of using
-    // `--color-surface-hover`. That token is tuned for hovering *on* paper, so
-    // on the ink themes it sits brighter than paper (dark #2B271F vs #201D17)
-    // and a hovered tab would outshine the selected one. Selection stays
-    // strictly stronger because only it adds the full edge and the weight.
+    // Hover rises to paper with the faint ring and never uses
+    // `--color-surface-hover`, which is brighter than paper on the ink themes
+    // and would make a hovered tab outshine the selected one.
     expect(inactive?.className).toContain('hover:bg-[var(--color-surface)]')
-    expect(inactive?.className).not.toContain('hover:bg-[var(--color-surface-hover)]')
-
-    // Three legible tiers, and the middle one needs its own outline for the
-    // same reason the selected tab does: a hover fill at 1.05–1.10:1 against
-    // the trough has no discernible shape. The hairline, not the full edge —
-    // hover must stay strictly weaker than selection.
-    expect(inactive?.className).toContain('hover:border-[var(--color-tab-separator)]')
+    expect(inactive?.className).toContain('hover:shadow-[0_0_0_1px_var(--color-tab-separator)]')
+    expect(inactive?.className).not.toContain('surface-hover')
     expect(active?.className).not.toContain('--color-tab-separator')
+
+    // Rings are shadows, not borders, so selecting a tab never moves its title.
+    expect(active?.className).not.toMatch(/(?:^|\s)border(?:-|\s|$)/)
+    expect(inactive?.className).not.toMatch(/(?:^|\s)border(?:-|\s|$)/)
   })
 
   it('keeps the strip on the frame ground so the active tab can lift off it', async () => {
@@ -1868,13 +2085,12 @@ describe('TabBar', () => {
     // of the window instead of the same surface the sidebar is already on.
     expect(strip.className).not.toMatch(/bg-\[var\(--color-(?!surface-sidebar)/)
 
-    // No rule under the strip. The selected tab's bottom edge has to run
-    // straight into the content it opens onto, and a border spanning the whole
-    // strip cuts through exactly that edge.
+    // No rule under the strip: like the workspace's resource strip, it is
+    // separated from the content by its ground alone.
     expect(strip.className).not.toMatch(/\bborder-b\b/)
   })
 
-  it('marks tabs so the CSS sibling rules can place the hairline between them', async () => {
+  it('marks every tab with its selection state', async () => {
     const { TabBar } = await import('./TabBar')
     const { useTabStore } = await import('../../stores/tabStore')
     const { useChatStore } = await import('../../stores/chatStore')
@@ -1898,12 +2114,8 @@ describe('TabBar', () => {
     const active = screen.getByText('Active One').closest('.tab-bar-interactive')
     const inactive = screen.getByText('Inactive One').closest('.tab-bar-interactive')
 
-    // The hairline that keeps a row of same-length titles from smearing into
-    // one block lives in globals.css, because it belongs to the *gap* and has
-    // to disappear when either side of that gap is filled — only sibling
-    // combinators can say "the tab after the selected one". jsdom does not
-    // apply the stylesheet, so what is checkable here is the hook it selects
-    // on: drop either and the rules silently match nothing.
+    // Chips are separated by spacing, not by the old hairline. `tab-strip-item`
+    // stays as the hook drag measurement and these tests locate tabs by.
     expect(active).toHaveClass('tab-strip-item')
     expect(inactive).toHaveClass('tab-strip-item')
     expect(active).toHaveAttribute('data-active', 'true')
@@ -1932,7 +2144,7 @@ describe('TabBar', () => {
 
     const tab = screen.getByText('Short').closest('.tab-bar-interactive') as HTMLElement
 
-    expect(tab.className).toContain('min-w-[140px]')
+    expect(tab.className).toContain('min-w-[112px]')
     expect(tab.className).toContain('max-w-[200px]')
     // The inline `width`/`maxWidth` pair is what pinned every tab to 180px and
     // left short titles trailing dead space. Only `transform` belongs inline
@@ -2184,7 +2396,7 @@ describe('TabBar', () => {
 
     useTabStore.setState({
       tabs: [
-        { sessionId: 'tab-1', title: 'Draft session', type: 'session', status: 'idle' },
+        { sessionId: 'tab-1', title: 'Untitled Session', type: 'session', status: 'idle' },
       ],
       activeTabId: 'tab-1',
     })
@@ -2197,7 +2409,7 @@ describe('TabBar', () => {
       render(<TabBar />)
     })
 
-    fireEvent.mouseDown(screen.getByText('Draft session'))
+    fireEvent.mouseDown(screen.getByText('Untitled Session'))
 
     expect(startDraggingMock).not.toHaveBeenCalled()
   })
@@ -2489,7 +2701,7 @@ describe('TabBar', () => {
       render(<TabBar />)
     })
 
-    fireEvent.click(screen.getByLabelText('Close Untitled'))
+    fireEvent.click(screen.getByLabelText('Close New Session'))
 
     expect(sessionsApiMock.delete).not.toHaveBeenCalled()
   })
@@ -2530,7 +2742,7 @@ describe('TabBar', () => {
       render(<TabBar />)
     })
 
-    fireEvent.click(screen.getByLabelText('Close Untitled'))
+    fireEvent.click(screen.getByLabelText('Close New Session'))
 
     await waitFor(() => {
       expect(sessionsApiMock.delete).toHaveBeenCalledWith(sessionId)
@@ -3170,6 +3382,55 @@ describe('TabBar', () => {
       expect(useTabStore.getState().tabs.map((tab) => tab.sessionId)).toEqual(['tab-kept'])
       expect(useChatStore.getState().sessions['tab-kept']?.backgroundAgentTasks?.['kept-1']?.status).toBe('running')
     })
+  })
+
+  it('reopens a closed chat tab from the tab menu, and offers it only after one was closed', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+    const { useSessionStore } = await import('../../stores/sessionStore')
+    const connectToSession = vi.fn()
+    const disconnectSession = vi.fn()
+
+    useSessionStore.setState({
+      sessions: [
+        { id: 'tab-a', title: 'Session A', createdAt: '2026-10-01T00:00:00.000Z', modifiedAt: '2026-10-01T00:00:00.000Z', messageCount: 3, projectPath: '-repo', workDir: '/repo', workDirExists: true },
+      ],
+    } as never)
+    useTabStore.setState({
+      tabs: [
+        { sessionId: 'tab-a', title: 'Session A', type: 'session', status: 'idle' },
+        { sessionId: 'tab-b', title: 'Session B', type: 'session', status: 'idle' },
+      ],
+      activeTabId: 'tab-b',
+      closedSessionTabs: [],
+    })
+    useChatStore.setState({
+      sessions: { 'tab-a': makeChatSession('idle'), 'tab-b': makeChatSession('idle') },
+      connectToSession,
+      disconnectSession,
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    await act(async () => {
+      render(<TabBar />)
+    })
+
+    fireEvent.contextMenu(screen.getByText('Session B'))
+    expect(screen.getByText('Reopen Closed Tab')).toBeDisabled()
+
+    fireEvent.click(screen.getByText('Close Others'))
+    expect(useTabStore.getState().tabs.map((tab) => tab.sessionId)).toEqual(['tab-b'])
+    expect(disconnectSession).toHaveBeenCalledWith('tab-a')
+
+    fireEvent.contextMenu(screen.getByText('Session B'))
+    await act(async () => {
+      fireEvent.click(screen.getByText('Reopen Closed Tab'))
+    })
+
+    expect(useTabStore.getState().tabs.map((tab) => tab.sessionId)).toEqual(['tab-b', 'tab-a'])
+    expect(useTabStore.getState().activeTabId).toBe('tab-a')
+    expect(connectToSession).toHaveBeenCalledWith('tab-a')
+    expect(screen.queryByText('Reopen Closed Tab')).not.toBeInTheDocument()
   })
 
   it('shows a running marker on tabs from tab status, live chat state, or background tasks', async () => {

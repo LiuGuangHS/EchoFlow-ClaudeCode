@@ -7,6 +7,7 @@ import { skillsApi } from '../api/skills'
 import { mcpApi } from '../api/mcp'
 import { sessionsApi } from '../api/sessions'
 import { useUIStore } from '../stores/uiStore'
+import { useContextUsageStore } from '../stores/contextUsageStore'
 
 vi.mock('../api/skills', () => ({
   skillsApi: {
@@ -91,6 +92,7 @@ import { useTabStore } from '../stores/tabStore'
 import { useTaskStore } from '../stores/taskStore'
 
 beforeEach(() => {
+  useContextUsageStore.setState({ bySession: {} })
   useSettingsStore.setState({ locale: 'en' })
   useProviderStore.setState({
     providers: [],
@@ -185,15 +187,18 @@ describe('Content-only pages render without errors', () => {
       await Promise.resolve()
     })
     expect(container.querySelector('[data-composer-editor]')).toBeInTheDocument()
-    expect(container.innerHTML).toContain('What would you like to work on?')
+    // The 「素」 new-session hero asks what to work on (with or without a project).
+    expect(container.innerHTML).toMatch(/What should we work on/)
     expect(container.innerHTML).toContain('Ask anything')
   })
 
-  it('EmptySession shows draft context usage before a session is created', async () => {
+  it('EmptySession draws no context usage before a session is created', async () => {
     render(<EmptySession />)
 
-    const indicator = await screen.findByLabelText('Context usage not calculated')
-    expect(indicator).toHaveTextContent('--')
+    // A draft has no reading: no "--" ring on the toolbar, and nothing is inspected.
+    expect(await screen.findByRole('button', { name: /^Run$/ })).toBeInTheDocument()
+    expect(screen.queryByTestId('context-usage-indicator')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Context usage not calculated')).not.toBeInTheDocument()
     expect(vi.mocked(sessionsApi.getInspection)).not.toHaveBeenCalled()
   })
 
@@ -243,8 +248,8 @@ describe('Content-only pages render without errors', () => {
       await Promise.resolve()
     })
     expect(screen.getByText('Add files or photos')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('option', { name: 'More tools' }))
-    expect(screen.getByText('Slash commands')).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /Slash commands/ })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'More tools' })).not.toBeInTheDocument()
   })
 
   it('ActiveSession renders with chat components', () => {
@@ -274,8 +279,8 @@ describe('Content-only pages render without errors', () => {
       },
     })
     const { container } = render(<ActiveSession />)
-    // With empty messages, the empty-session hero is shown
-    expect(container.innerHTML).toContain('What would you like to work on?')
+    // With empty messages, the new-session hero is shown
+    expect(container.innerHTML).toMatch(/What should we work on/)
     // ChatInput renders the ProseMirror composer
     const composer = container.querySelector('[data-composer-editor]')
     expect(composer).toBeInTheDocument()
@@ -335,62 +340,7 @@ describe('Content-only pages render without errors', () => {
     render(<ActiveSession />)
 
     const composer = screen.getByRole('textbox')
-    expect(composer).toHaveAttribute('data-placeholder', 'Ask EchoFlow to edit, debug or explain...')
-
-    resetPageStores()
-  })
-
-  it('ActiveSession localizes a session the server left with its placeholder title', () => {
-    const SESSION_ID = 'test-active-session-placeholder-title'
-    useTabStore.setState({ tabs: [{ sessionId: SESSION_ID, title: 'Test', type: 'session' as const, status: 'idle' }], activeTabId: SESSION_ID })
-    useChatStore.setState({
-      sessions: {
-        [SESSION_ID]: {
-          messages: [{
-            id: 'msg-1',
-            type: 'user_text',
-            content: 'hello',
-            timestamp: Date.now(),
-          }],
-          chatState: 'idle',
-          connectionState: 'connected',
-          streamingText: '',
-          streamingToolInput: '',
-          activeToolUseId: null,
-          activeToolName: null,
-          activeThinkingId: null,
-          pendingPermission: null,
-          pendingComputerUsePermission: null,
-          tokenUsage: { input_tokens: 0, output_tokens: 0 },
-          streamingResponseChars: 0,
-          elapsedSeconds: 0,
-          statusVerb: '',
-          slashCommands: [],
-          agentTaskNotifications: {},
-          elapsedTimer: null,
-        },
-      },
-    })
-    useSessionStore.setState({
-      sessions: [{
-        id: SESSION_ID,
-        title: 'New Session',
-        createdAt: '2026-04-10T00:00:00.000Z',
-        modifiedAt: '2026-04-10T00:00:00.000Z',
-        messageCount: 1,
-        projectPath: '',
-        workDir: null,
-        workDirExists: true,
-      }],
-      activeSessionId: SESSION_ID,
-      isLoading: false,
-      error: null,
-    })
-
-    render(<ActiveSession />)
-
-    expect(screen.getByText('Untitled Session')).toBeInTheDocument()
-    expect(screen.queryByText('New Session')).not.toBeInTheDocument()
+    expect(composer).toHaveAttribute('data-placeholder', 'Ask Claude to edit, debug or explain...')
 
     resetPageStores()
   })
@@ -691,7 +641,10 @@ describe('Content-only pages render without errors', () => {
     expect(screen.getByText('Slash commands')).toBeInTheDocument()
     expect(screen.getByText('/compact')).toBeInTheDocument()
     expect(screen.getByText('/cost')).toBeInTheDocument()
-    expect(screen.getByText('10 more commands available. Type / to search the full command list.')).toBeInTheDocument()
+    // 14 extras + 8 ungrouped fallback commands, minus `/btw` (a blank session
+    // has nothing to fork) and the 12 listed under "More".
+    expect(screen.queryByText('/btw')).not.toBeInTheDocument()
+    expect(screen.getByText('9 more commands available. Type / to search the full command list.')).toBeInTheDocument()
 
     resetPageStores()
   })
@@ -747,8 +700,15 @@ describe('Content-only pages render without errors', () => {
 
     expect(sendMessage).not.toHaveBeenCalled()
     expect(await screen.findByText('Session inspector')).toBeInTheDocument()
-    expect(vi.mocked(sessionsApi.getInspection)).toHaveBeenCalledWith(SESSION_ID, { includeContext: false })
-    expect(container.innerHTML).toContain('bg-[var(--color-inspector-surface)]')
+    expect(vi.mocked(sessionsApi.getInspection)).toHaveBeenCalledWith(SESSION_ID, {
+      statusOnly: true,
+      signal: expect.any(AbortSignal),
+    })
+    // The inspector is a token-colored popover card, not the old hex-tinted sheet.
+    expect(screen.getByText('Session inspector').closest('.absolute')).toHaveClass(
+      'bg-[var(--color-surface-container-lowest)]',
+      'shadow-[var(--shadow-dropdown)]',
+    )
     expect(container.innerHTML).not.toContain('bg-[#fbfaf6]')
     expect(container.innerHTML).not.toContain('bg-[#f4f2ed]')
     expect(container.innerHTML).not.toContain('border-[#d8b3a8]')
@@ -890,7 +850,9 @@ describe('Content-only pages render without errors', () => {
 
     const indicator = await screen.findByLabelText('Context usage loading')
     expect(indicator).toHaveTextContent('--')
-    expect(indicator).toHaveClass('h-8')
+    // Same 28px box as the loaded indicator, so the toolbar does not shift when
+    // the first context reading arrives.
+    expect(indicator).toHaveClass('h-7')
 
     resetPageStores()
   })
@@ -1384,12 +1346,12 @@ describe('AppShell layout renders chrome', () => {
 })
 
 describe('Design system compliance', () => {
-  it('Pages use Material Symbols Outlined icons', () => {
+  it('Pages draw their icons from lucide, never Material Symbols ligatures', () => {
     const pages = [EmptySession]
     for (const Page of pages) {
       const { container, unmount } = render(<Page />)
-      const icons = container.querySelectorAll('.material-symbols-outlined')
-      expect(icons.length).toBeGreaterThan(0)
+      expect(container.querySelectorAll('svg.lucide').length).toBeGreaterThan(0)
+      expect(container.querySelector('.material-symbols-outlined')).toBeNull()
       unmount()
     }
   })

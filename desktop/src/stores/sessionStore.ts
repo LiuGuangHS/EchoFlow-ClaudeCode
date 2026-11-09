@@ -11,7 +11,7 @@ import { ApiError } from '../api/client'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
 import { useSettingsStore } from './settingsStore'
 import { useTabStore } from './tabStore'
-import type { LocalIndexStatus, SessionListItem } from '../types/session'
+import type { AgentProfile, LocalIndexStatus, SessionListItem } from '../types/session'
 import type { PermissionMode } from '../types/settings'
 import type { RuntimeSelection } from '../types/runtime'
 import { isPlaceholderSessionTitle } from '../lib/sessionTitle'
@@ -34,11 +34,15 @@ export type ProjectHistoryState = {
 type RecentProjectBoundary = { beforeModifiedAt: string; beforeId: string }
 
 type CreateSessionOptions = {
+  agentProfile?: AgentProfile
   repository?: CreateSessionRepositoryOptions
   permissionMode?: PermissionMode
 }
 
 type BranchSessionResult = Pick<BranchSessionResponse, 'sessionId' | 'title' | 'workDir'>
+
+export type ArchiveSessionsFailure = { id: string; error: unknown }
+export type ArchiveSessionsResult = { successes: string[]; failures: ArchiveSessionsFailure[] }
 
 type SessionStore = {
   sessions: SessionListItem[]
@@ -53,15 +57,14 @@ type SessionStore = {
   recentSessionIds: Set<string>
   recentProjectBoundaries: Record<string, RecentProjectBoundary>
   projectSessionTotals: Record<string, number>
+  projectArchivedTotals: Record<string, number>
   projectHistory: Record<string, ProjectHistoryState>
-  showArchived: boolean
 
   fetchSessions: (project?: string) => Promise<void>
-  setShowArchived: (show: boolean) => void
   loadMoreProjectSessions: (projectRoot: string) => Promise<void>
   releaseProjectHistory: (projectRoot: string) => void
   hydrateHistoricalSessions: (sessions: SessionListItem[], runtimeSelections?: Record<string, RuntimeSelection>) => SessionListItem[]
-  openHistoricalSession: (session: SessionListItem) => void
+  openHistoricalSession: (session: SessionListItem, runtimeSelections?: Record<string, RuntimeSelection>) => void
   createSession: (workDir?: string, options?: CreateSessionOptions) => Promise<string>
   branchSession: (
     sourceSessionId: string,
@@ -78,6 +81,8 @@ type SessionStore = {
   clearSessionSelection: () => void
   renameSession: (id: string, title: string) => Promise<void>
   setSessionArchived: (id: string, archived: boolean) => Promise<void>
+  /** Archives or restores each id in order and refreshes the list once. */
+  setSessionsArchived: (ids: string[], archived: boolean) => Promise<ArchiveSessionsResult>
   updateSessionTitle: (id: string, title: string) => void
   updateSessionMessageCount: (id: string, messageCount: number) => void
   updateSessionPermissionMode: (id: string, mode: PermissionMode) => void
@@ -113,8 +118,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   recentSessionIds: new Set(),
   recentProjectBoundaries: {},
   projectSessionTotals: {},
+  projectArchivedTotals: {},
   projectHistory: {},
-  showArchived: false,
 
   fetchSessions: async (project?: string) => {
     const requestId = ++fetchSessionsRequestId
@@ -124,9 +129,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     // attempt makes the whole pane flicker.
     set({ isLoading: true, sessionListRequestId: requestId })
     try {
-      const response = await sessionsApi.list(buildSessionListParams(project, get().showArchived))
+      const response = await sessionsApi.list(buildSessionListParams(project))
       if (requestId !== get().sessionListRequestId) return
-      const raw = response.sessions.filter((session) => Boolean(session.archived) === get().showArchived)
+      const raw = response.sessions
+      const archivedIds = response.archivedSessionIds ? new Set(response.archivedSessionIds) : null
       const indexStatus = response.index ?? null
       useSessionRuntimeStore.getState().syncFromSessions(raw, runtimeSelections)
       let syncedSessions: SessionListItem[] = []
@@ -140,7 +146,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         // page. Closing its tab releases it even while the index is building.
         const retainedSessions = state.sessions.filter((session) => (
           !state.historicalSessionIds.has(session.id) || historicalSessionIds.has(session.id) || projectSessionIds.has(session.id)
-        ))
+        )).map((session) => archivedIds && Boolean(session.archived) !== archivedIds.has(session.id)
+          ? { ...session, archived: archivedIds.has(session.id) }
+          : session)
         const incomingSessions = reconcilePendingCreatedSessions(raw, retainedSessions)
         const incomingIds = new Set(incomingSessions.map((session) => session.id))
         const retainedHistory = retainedSessions.filter((session) => (
@@ -164,6 +172,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           projectSessionTotals: response.projects
             ? Object.fromEntries(response.projects.map((project) => [project.projectRoot, project.total]))
             : {},
+          projectArchivedTotals: response.projects
+            ? Object.fromEntries(response.projects.map((project) => [project.projectRoot, project.archivedTotal ?? 0]))
+            : {},
           indexStatus,
           isLoading: indexStatus?.state === 'building' && sessions.length === 0,
         }
@@ -174,11 +185,6 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       console.error('[session-list] refresh failed', err)
       set({ isLoading: false })
     }
-  },
-
-  setShowArchived: (show) => {
-    set({ showArchived: show })
-    void get().fetchSessions()
   },
 
   loadMoreProjectSessions: async (projectRoot) => {
@@ -309,8 +315,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     return selected
   },
 
-  openHistoricalSession: (session) => {
-    const [selected] = get().hydrateHistoricalSessions([session])
+  openHistoricalSession: (session, runtimeSelections) => {
+    const [selected] = get().hydrateHistoricalSessions([session], runtimeSelections)
     if (!selected) return
     set({ activeSessionId: selected.id })
     useTabStore.getState().openTab(selected.id, selected.title)
@@ -320,6 +326,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     const requestedPermissionMode = options?.permissionMode ?? getDefaultSessionPermissionMode()
     const { sessionId: id, workDir: resolvedWorkDir } = await sessionsApi.create({
       ...(workDir ? { workDir } : {}),
+      ...(options?.agentProfile ? { agentProfile: options.agentProfile } : {}),
       ...(options?.repository ? { repository: options.repository } : {}),
       ...(requestedPermissionMode ? { permissionMode: requestedPermissionMode } : {}),
     })
@@ -336,6 +343,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       projectRoot: resolvedWorkDir ?? workDir ?? null,
       workDirExists: true,
       permissionMode: requestedPermissionMode,
+      agentProfile: options?.agentProfile ?? 'standard',
     }
 
     pendingCreatedSessionIds.add(id)
@@ -392,6 +400,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   deleteSession: async (id: string) => {
     await sessionsApi.delete(id)
     releaseWorkspaceSession(id)
+    useTabStore.getState().markSessionsDeleted([id])
     pendingCreatedSessionIds.delete(id)
     pendingSessionTitles.delete(id)
     invalidateRecentProjectsCache()
@@ -422,6 +431,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       useSessionRuntimeStore.getState().clearSelection(id)
     }
     excludeDeletedProjectSessions(result.successes)
+    useTabStore.getState().markSessionsDeleted(result.successes)
     set((s) => ({
       sessions: s.sessions.filter((session) => !result.successes.includes(session.id)),
       historicalSessionIds: removeIdsFromSet(s.historicalSessionIds, result.successes),
@@ -459,6 +469,77 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   })),
   clearSessionSelection: () => set({ selectedSessionIds: new Set() }),
 
+  setSessionArchived: async (id, archived) => {
+    const { failures } = await get().setSessionsArchived([id], archived)
+    if (failures.length > 0) throw failures[0]!.error
+  },
+
+  setSessionsArchived: async (ids, archived) => {
+    const successes: string[] = []
+    const failures: ArchiveSessionsFailure[] = []
+    const restoredSessions: SessionListItem[] = []
+    // One request at a time: each archive is checked against the session's
+    // activity on the server, and a batch must not race its own refresh.
+    for (const id of ids) {
+      try {
+        // The restored row can be older than the sidebar preview and absent
+        // from the cache. Read its metadata before the mutation, so a failed
+        // read leaves the archive intact and a fully loaded project can regain
+        // the actual row.
+        const restored = archived ? null : { ...await sessionsApi.getSummary(id), archived: false }
+        await sessionsApi.setArchived(id, archived)
+        if (restored) restoredSessions.push(restored)
+        successes.push(id)
+      } catch (error) {
+        failures.push({ id, error })
+      }
+    }
+    if (successes.length === 0) return { successes, failures }
+
+    // This is a reversible visibility change. Keep open tabs, workspace state,
+    // runtime selections and connections intact; only delete releases them.
+    if (archived) {
+      for (const id of successes) pendingCreatedSessionIds.delete(id)
+      excludeDeletedProjectSessions(successes)
+    } else {
+      for (const request of projectHistoryRequests.values()) {
+        for (const id of successes) request.excludedSessionIds.delete(id)
+      }
+    }
+    invalidateRecentProjectsCache()
+    const changed = new Set(successes)
+    const openIds = getOpenSessionIds()
+    const restoredIdsByRoot = new Map<string, string[]>()
+    for (const session of restoredSessions) {
+      const root = session.projectRoot || session.workDir || session.projectPath
+      restoredIdsByRoot.set(root, [...restoredIdsByRoot.get(root) ?? [], session.id])
+    }
+    set((state) => ({
+      sessions: archived
+        ? state.sessions.map((session) => changed.has(session.id) ? { ...session, archived } : session)
+        : mergeSessionList([...restoredSessions, ...state.sessions.filter((session) => !changed.has(session.id))], state.sessions),
+      recentSessionIds: archived ? removeIdsFromSet(state.recentSessionIds, successes) : state.recentSessionIds,
+      historicalSessionIds: successes.some((id) => openIds.has(id))
+        ? new Set([...state.historicalSessionIds, ...successes.filter((id) => openIds.has(id))])
+        : state.historicalSessionIds,
+      selectedSessionIds: removeIdsFromSet(state.selectedSessionIds, successes),
+      projectHistory: archived
+        ? removeProjectHistorySessionIds(state.projectHistory, successes)
+        : Object.fromEntries(Object.entries(state.projectHistory).map(([root, history]) => [root, {
+          ...history,
+          sessionIds: restoredIdsByRoot.has(root)
+            ? new Set([...history.sessionIds, ...restoredIdsByRoot.get(root)!])
+            : history.sessionIds,
+          excludedSessionIds: removeIdsFromSet(history.excludedSessionIds ?? new Set(), successes),
+        }])),
+      // A response begun before this mutation may still contain the old flag.
+      sessionListRequestId: ++fetchSessionsRequestId,
+      isLoading: false,
+    }))
+    await get().fetchSessions()
+    return { successes, failures }
+  },
+
   renameSession: async (id: string, title: string) => {
     await sessionsApi.rename(id, title)
     pendingSessionTitles.set(id, title)
@@ -467,16 +548,6 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         session.id === id ? { ...session, title } : session,
       ),
     }))
-  },
-
-  setSessionArchived: async (id: string, archived: boolean) => {
-    await sessionsApi.setArchived(id, archived)
-    set((s) => ({
-      sessions: s.sessions.map((session) =>
-        session.id === id ? { ...session, archived } : session,
-      ),
-    }))
-    void get().fetchSessions()
   },
 
   updateSessionTitle: (id, title) => {
@@ -521,9 +592,7 @@ function removeIdsFromSet(selected: Set<string>, ids: string[]): Set<string> {
 }
 
 function getOpenSessionIds(): Set<string> {
-  return new Set(useTabStore.getState().tabs.flatMap((tab) => tab.type === 'session'
-    ? [tab.sessionId]
-    : tab.type === 'trace' && tab.traceSessionId ? [tab.traceSessionId] : []))
+  return new Set(useTabStore.getState().tabs.flatMap((tab) => tab.type === 'session' ? [tab.sessionId] : []))
 }
 
 function getProjectHistorySessionIds(projectHistory: Record<string, ProjectHistoryState>): Set<string> {
@@ -532,7 +601,7 @@ function getProjectHistorySessionIds(projectHistory: Record<string, ProjectHisto
 
 function initialProjectHistoryParams(
   projectRoot: string,
-  state: Pick<SessionStore, 'recentProjectBoundaries' | 'showArchived'>,
+  state: Pick<SessionStore, 'recentProjectBoundaries'>,
 ): ProjectSessionHistoryParams {
   // Only the recent page forms a contiguous prefix. An individually restored
   // old tab cannot serve as the boundary without skipping the history gap.
@@ -540,7 +609,6 @@ function initialProjectHistoryParams(
     projectRoot,
     limit: PROJECT_HISTORY_PAGE_SIZE,
     ...state.recentProjectBoundaries[projectRoot],
-    ...(state.showArchived ? { includeArchived: true } : {}),
   }
 }
 
@@ -580,10 +648,10 @@ function removeProjectHistorySessionIds(
   ]))
 }
 
-function buildSessionListParams(project: string | undefined, includeArchived = false) {
+function buildSessionListParams(project: string | undefined) {
   return project
-    ? { project, limit: SIDEBAR_PROJECT_SESSION_PREVIEW_LIMIT, ...(includeArchived ? { includeArchived: true } : {}) }
-    : { view: 'sidebar' as const, perProjectLimit: SIDEBAR_PROJECT_SESSION_PREVIEW_LIMIT, ...(includeArchived ? { includeArchived: true } : {}) }
+    ? { project, limit: SIDEBAR_PROJECT_SESSION_PREVIEW_LIMIT }
+    : { view: 'sidebar' as const, perProjectLimit: SIDEBAR_PROJECT_SESSION_PREVIEW_LIMIT }
 }
 
 function getDefaultSessionPermissionMode(): PermissionMode | undefined {
@@ -601,7 +669,7 @@ export function reconcileSessionSnapshots(
   return snapshots.map((snapshot) => {
     const current = currentById.get(snapshot.id)
     return current && sessionModifiedTime(current) >= sessionModifiedTime(snapshot)
-      ? current
+      ? (snapshot.archived !== undefined ? { ...current, archived: snapshot.archived } : current)
       : snapshot
   })
 }

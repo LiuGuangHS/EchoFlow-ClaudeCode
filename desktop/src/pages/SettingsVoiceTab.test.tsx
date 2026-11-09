@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -35,8 +35,9 @@ const catalog = {
     info: { id: 'sensevoice-local', name: 'SenseVoice (local)', location: 'local' as const, languages: ['auto' as const], downloadBytes: 1 },
     preparation: { phase: 'unprepared' as const },
   }],
-  preferences: { enabled: false, providerId: 'sensevoice-local', language: 'auto' as const, downloadSource: 'auto' as const },
+  preferences: { enabled: false, providerId: 'sensevoice-local', language: 'auto' as const, downloadSource: 'auto' as const, correctionEnabled: false, correctionProviderId: null, correctionModelId: null },
   limits: { maxAudioSeconds: 60, maxAudioBytes: 1_000_000 },
+  correction: { defaultTarget: null, target: null },
 }
 
 beforeEach(() => {
@@ -61,7 +62,7 @@ describe('Voice Input settings tab wiring', () => {
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Voice Input' })).toBeInTheDocument()
     expect(useUIStore.getState().activeSettingsTab).toBe('voice')
-    expect(localStorage.getItem('echoflow-code-active-settings-tab')).toBe('voice')
+    expect(localStorage.getItem('cc-haha-active-settings-tab')).toBe('voice')
   })
 
   it('opens the panel for a pending request, so other screens can deep-link to it', async () => {
@@ -74,19 +75,17 @@ describe('Voice Input settings tab wiring', () => {
   })
 
   it('restores the tab from storage on the next launch', async () => {
-    localStorage.setItem('echoflow-code-active-settings-tab', 'voice')
+    localStorage.setItem('cc-haha-active-settings-tab', 'voice')
     vi.resetModules()
     const fresh = await import('../stores/uiStore')
     expect(fresh.useUIStore.getState().activeSettingsTab).toBe('voice')
   })
 
-  it('keeps voice out of the browser shell: a stored voice tab falls back to model settings', async () => {
+  it('keeps voice out of the browser shell: a stored voice tab opens the settings list instead', async () => {
     useUIStore.setState({ activeSettingsTab: 'voice' })
     render(<H5Settings />)
 
-    expect(await screen.findByText('provider-panel')).toBeInTheDocument()
+    expect(await screen.findByTestId('h5-settings-providers')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Voice Input' })).not.toBeInTheDocument()
-    expect(within(screen.getByRole('navigation', { name: 'Settings' })).getAllByRole('button')).toHaveLength(2)
-    await waitFor(() => expect(useUIStore.getState().activeSettingsTab).toBe('providers'))
   })
 })

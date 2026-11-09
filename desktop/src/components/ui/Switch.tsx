@@ -12,6 +12,13 @@ export type SwitchProps = {
    */
   label: string
   labelHidden?: boolean
+  /**
+   * Rendered right after the visible label, outside the span that names the
+   * switch — a help trigger, for instance. Clicking it does not toggle the
+   * switch: it is interactive content, and the `<label>` is tied to the
+   * checkbox by `htmlFor`, so the adornment never becomes the labelled control.
+   */
+  labelAdornment?: ReactNode
   description?: ReactNode
   disabled?: boolean
   size?: 'sm' | 'md'
@@ -19,18 +26,18 @@ export type SwitchProps = {
 }
 
 const TRACK_SIZE = {
-  sm: 'h-5 w-9',
-  md: 'h-6 w-11',
+  sm: 'h-4 w-7',
+  md: 'h-[18px] w-8',
 } as const
 
 const THUMB_SIZE = {
-  sm: 'h-3.5 w-3.5',
-  md: 'h-4 w-4',
+  sm: 'h-3 w-3',
+  md: 'h-3.5 w-3.5',
 } as const
 
 const THUMB_OFFSET = {
-  sm: 'translate-x-0.5 peer-checked:translate-x-[18px]',
-  md: 'translate-x-1 peer-checked:translate-x-[22px]',
+  sm: 'translate-x-0.5 peer-checked:translate-x-[14px]',
+  md: 'translate-x-0.5 peer-checked:translate-x-[16px]',
 } as const
 
 /**
@@ -47,16 +54,22 @@ export function Switch({
   onChange,
   label,
   labelHidden = false,
+  labelAdornment,
   description,
   disabled = false,
   size = 'md',
   className,
 }: SwitchProps) {
+  const inputId = useId()
   const labelId = useId()
   const descriptionId = useId()
 
   return (
+    // `htmlFor`, not nesting alone: an implicit label labels its FIRST
+    // labelable descendant, so a button placed before the checkbox (a
+    // `labelAdornment`) would capture every click on the label.
     <label
+      htmlFor={inputId}
       className={cx(
         'flex items-center justify-between gap-6',
         disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',
@@ -65,9 +78,18 @@ export function Switch({
     >
       {!labelHidden && (
         <span className="min-w-0">
-          <span id={labelId} className="block text-sm font-medium text-[var(--color-text-primary)]">
-            {label}
-          </span>
+          {labelAdornment ? (
+            <span className="flex min-w-0 items-center gap-1">
+              <span id={labelId} className="block text-sm font-medium text-[var(--color-text-primary)]">
+                {label}
+              </span>
+              {labelAdornment}
+            </span>
+          ) : (
+            <span id={labelId} className="block text-sm font-medium text-[var(--color-text-primary)]">
+              {label}
+            </span>
+          )}
           {description && (
             <span id={descriptionId} className="mt-0.5 block text-xs text-[var(--color-text-secondary)]">
               {description}
@@ -78,6 +100,7 @@ export function Switch({
 
       <span className={cx('relative inline-flex flex-none items-center', TRACK_SIZE[size])}>
         <input
+          id={inputId}
           type="checkbox"
           role="switch"
           className="peer sr-only"
@@ -93,7 +116,7 @@ export function Switch({
         />
         <span
           aria-hidden="true"
-          className="absolute inset-0 rounded-full bg-[var(--color-border)] transition-colors peer-checked:bg-[var(--color-switch-checked-bg)] peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--color-border-focus)]"
+          className="absolute inset-0 rounded-full bg-[var(--color-outline)] transition-colors peer-checked:bg-[var(--color-switch-checked-bg)] peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--color-border-focus)]"
         />
         <span
           aria-hidden="true"

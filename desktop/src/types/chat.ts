@@ -1,5 +1,7 @@
+import type { ScheduledTaskTrigger } from './task'
 import type { PermissionMode } from './settings'
 import type { RuntimeSelection } from './runtime'
+import type { TeamMemberActivity, TeamMemberAutoRetry } from './team'
 
 // Source: src/server/ws/events.ts
 
@@ -27,18 +29,6 @@ export type ClientMessage =
     }
   | { type: 'set_permission_mode'; mode: PermissionMode }
   | ({ type: 'set_runtime_config' } & RuntimeSelection)
-  | {
-      type: 'set_model_config'
-      configId?: string
-      config?: {
-        providerId: string | null
-        modelId: string
-        effortLevel?: string
-      }
-      requestId: string
-    }
-  | { type: 'restart_runtime'; requestId: string; reason?: string }
-  | { type: 'set_cli_runtime'; cliRuntimeId: 'bundled' | 'installed' }
   | { type: 'stop_generation' }
   | { type: 'ask_user_question_activity'; requestId: string }
   | { type: 'stop_background_task'; taskId: string }
@@ -143,46 +133,25 @@ export type ServerMessage =
       computerUseRequestIds: string[]
       turnActive: boolean
     }
-  | { type: 'user_message_replay'; content: string; sessionReferences?: Array<{ sessionId: string }>; collaboration?: { sourceSessionId: string; messageId?: string } }
-  | { type: 'message_complete'; usage: TokenUsage; timing?: TurnTiming }
+  | { type: 'user_message_replay'; content: string; scheduledTask?: ScheduledTaskTrigger; sessionReferences?: Array<{ sessionId: string }>; collaboration?: { sourceSessionId: string; messageId?: string } }
+  | { type: 'message_complete'; usage: TokenUsage; timing?: TurnTiming; scheduledTask?: ScheduledTaskTrigger }
   /** `complete` marks a whole thinking block; without it `text` is a stream fragment. */
   | { type: 'thinking'; text: string; complete?: boolean }
-  | { type: 'status'; state: ChatState; verb?: string; attemptStart?: boolean }
+  | {
+      type: 'status'
+      state: ChatState
+      verb?: string
+      attemptStart?: boolean
+      /** Re-sent about once a second while a compaction summary streams; absent on the first `compacting` status. */
+      compactProgress?: CompactProgress
+    }
   | {
       type: 'runtime_config_applied'
       providerId: string | null
       modelId: string
       effortLevel?: string
-      requestedConfig?: { providerId: string | null; modelId: string; effortLevel?: string }
-    }
-  | {
-      type: 'model_config_applied'
-      requestId: string
-      configId: string
-      application: 'noop' | 'in_place' | 'runtime_restart' | 'deferred'
-      runtimeInstanceId: string
-      providerId: string | null
-      modelId: string
-      effortLevel?: string
-    }
-  | {
-      type: 'model_config_apply_failed'
-      requestId: string
-      configId: string
-      previousConfigId?: string
-      code: string
-      message: string
-    }
-  | {
-      type: 'runtime_status'
-      runtimeInstanceId: string
-      state: 'starting' | 'ready' | 'busy' | 'stopping' | 'stopped' | 'error'
-      processGeneration: number
-      reason?: string
-    }
-  | {
-      type: 'cli_runtime_applied'
-      cliRuntimeId: 'bundled' | 'installed'
+      openAIFastMode?: boolean
+      requestedConfig?: { providerId: string | null; modelId: string; effortLevel?: string; openAIFastMode?: boolean }
     }
   // CLI 回传的权限模式变化（如 ExitPlanMode 退出 plan 后恢复、Shift+Tab）。
   // 桌面端据此把选择器校正回 CLI 的真实权限，避免本地影子值漂移。
@@ -195,6 +164,7 @@ export type ServerMessage =
       errorStatus: number | null
       errorType?: string
       errorMessage?: string
+      requestId?: string
     }
   // 流式请求失败后的恢复状态：可能安全重试流，也可能降级为非流式请求。
   | { type: 'streaming_fallback'; cause: StreamingFallbackCause }
@@ -209,6 +179,13 @@ export type ServerMessage =
   | { type: 'team_deleted'; teamName: string; incarnationId?: string; leadSessionId?: string; createdAt?: number }
   | { type: 'task_update'; taskId: string; status: string; progress?: string }
   | { type: 'session_title_updated'; sessionId: string; title: string }
+  /** Predicted next user prompt for the composer; sent after a turn ends. */
+  | { type: 'prompt_suggestion'; suggestion: string }
+
+export type CompactProgress = {
+  /** Cumulative summary characters for the current compaction attempt; restarts from 0 on a CLI retry. */
+  outputChars: number
+}
 
 export type AgentRunStreamMessage =
   | { type: 'content_start'; blockType: 'text' | 'tool_use'; toolName?: string; toolUseId?: string; originalToolUseId?: string; parentToolUseId?: string }
@@ -217,7 +194,7 @@ export type AgentRunStreamMessage =
   | { type: 'tool_result'; toolUseId: string; originalToolUseId?: string; content: unknown; isError: boolean; parentToolUseId?: string }
   | { type: 'thinking'; text: string; complete?: boolean }
   | { type: 'status'; state: ChatState; verb?: string; attemptStart?: boolean }
-  | { type: 'api_retry'; attempt: number; maxRetries: number; retryDelayMs: number; errorStatus: number | null; errorType?: string; errorMessage?: string }
+  | { type: 'api_retry'; attempt: number; maxRetries: number; retryDelayMs: number; errorStatus: number | null; errorType?: string; errorMessage?: string; requestId?: string }
   | { type: 'streaming_fallback'; cause: StreamingFallbackCause }
   | { type: 'error'; message: string; code: string; retryable?: boolean; businessErrorCode?: string }
 
@@ -245,6 +222,7 @@ export type ApiRetryState = {
   errorStatus: number | null
   errorType?: string
   errorMessage?: string
+  requestId?: string
   receivedAt: number
 }
 
@@ -264,8 +242,12 @@ export type TeamMemberStatus = {
    * Omitted when the watcher cannot tell from the roster alone, so a receiver
    * keeps whatever the last full team read established.
    */
-  activity?: 'active' | 'idle' | 'exited' | 'unknown'
+  activity?: TeamMemberActivity
   currentTask?: string
+  /** Why the last turn failed; `null` says the member has recovered. */
+  lastError?: string | null
+  /** A pending automatic continuation; `null` once it has settled. */
+  autoRetry?: TeamMemberAutoRetry | null
 }
 
 export type ComputerUseGrantFlags = {
@@ -391,7 +373,7 @@ export type UIMessage =
    * the user's own prompt render identically, which is what flattened the
    * member transcript.
    */
-  | { id: string; type: 'user_text'; content: string; sessionReferences?: Array<{ sessionId: string }>; collaboration?: { sourceSessionId: string; messageId?: string }; modelContent?: string; transcriptMessageId?: string; timestamp: number; attachments?: UIAttachment[]; pending?: boolean; optimisticQueued?: boolean; awaitingReplay?: boolean; teammateFrom?: string }
+  | { id: string; type: 'user_text'; content: string; scheduledTask?: ScheduledTaskTrigger; sessionReferences?: Array<{ sessionId: string }>; collaboration?: { sourceSessionId: string; messageId?: string }; modelContent?: string; transcriptMessageId?: string; timestamp: number; attachments?: UIAttachment[]; pending?: boolean; optimisticQueued?: boolean; awaitingReplay?: boolean; teammateFrom?: string }
   | { id: string; type: 'assistant_text'; content: string; transcriptMessageId?: string; timestamp: number; model?: string }
   | { id: string; type: 'thinking'; content: string; timestamp: number }
   | {
@@ -409,7 +391,16 @@ export type UIMessage =
     }
   | { id: string; type: 'tool_result'; toolUseId: string; originalToolUseId?: string; content: unknown; isError: boolean; timestamp: number; parentToolUseId?: string }
   | { id: string; type: 'background_task'; task: BackgroundAgentTask; timestamp: number }
-  | { id: string; type: 'system'; content: string; generationStopped?: boolean; transcriptMessageId?: string; timestamp: number }
+  | {
+      id: string
+      type: 'system'
+      content: string
+      generationStopped?: boolean
+      /** Background tasks whose results started this turn without a user send. */
+      backgroundContinueTaskIds?: string[]
+      transcriptMessageId?: string
+      timestamp: number
+    }
   | {
       id: string
       type: 'compact_summary'
@@ -419,6 +410,8 @@ export type UIMessage =
       trigger?: 'manual' | 'auto'
       preTokens?: number
       messagesSummarized?: number
+      /** Summary characters generated so far; only meaningful while `phase` is `compacting`. */
+      outputChars?: number
       timestamp: number
     }
   | {

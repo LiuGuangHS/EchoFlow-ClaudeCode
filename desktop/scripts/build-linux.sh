@@ -29,7 +29,7 @@ ELECTRON_OUTPUT_DIR="${DESKTOP_DIR}/build-artifacts/electron"
 
 usage() {
   cat <<'EOF'
-Build EchoFlow Code desktop for Linux with Electron Builder.
+Build Claude Code Haha desktop for Linux with Electron Builder.
 
 Usage:
   ./desktop/scripts/build-linux.sh [extra electron-builder args...]
@@ -73,6 +73,10 @@ if [[ "${SKIP_INSTALL:-0}" != "1" ]]; then
 
   echo "[build-linux] Installing desktop dependencies..."
   (cd "${DESKTOP_DIR}" && bun install)
+
+  # `bun run build` exports the phone app (mobile/) into dist/m as the phone H5.
+  echo "[build-linux] Installing mobile dependencies..."
+  (cd "${REPO_ROOT}/mobile" && bun install --frozen-lockfile)
 fi
 
 echo "[build-linux] Cleaning stale Electron outputs..."
@@ -84,6 +88,7 @@ rm -f "${DESKTOP_DIR}/tsconfig.tsbuildinfo"
 rm -rf "${DESKTOP_DIR}/src-tauri/binaries/claude-sidecar-"*
 
 echo "[build-linux] Building sidecars for ${TARGET_TRIPLE}..."
+(cd "${DESKTOP_DIR}" && SIDECAR_TARGET_TRIPLE="${TARGET_TRIPLE}" bun run prepare:cloudflared)
 (cd "${DESKTOP_DIR}" && SIDECAR_TARGET_TRIPLE="${TARGET_TRIPLE}" bun run build:sidecars)
 
 echo "[build-linux] Building renderer and Electron main/preload bundles..."
@@ -124,7 +129,7 @@ EOF
 
 if [[ "${SKIP_PACKAGE_SMOKE:-0}" != "1" ]]; then
   echo "[build-linux] Running package smoke..."
-  (cd "${REPO_ROOT}" && bun run test:package-smoke --platform linux --arch "${LINUX_ARCH}" --package-kind release --artifacts-dir "desktop/build-artifacts/${CANONICAL_ARCH}" --max-linux-glibc 2.28)
+  (cd "${REPO_ROOT}" && bun run test:package-smoke --platform linux --arch "${LINUX_ARCH}" --package-kind release --artifacts-dir "desktop/build-artifacts/${CANONICAL_ARCH}")
 fi
 
 echo

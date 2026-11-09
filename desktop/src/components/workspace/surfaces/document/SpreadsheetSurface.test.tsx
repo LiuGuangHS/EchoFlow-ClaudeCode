@@ -8,10 +8,26 @@ import { blobWithBytes } from '@/test/blobs'
 import { createFakeSpreadsheetEngine, gridOf, type FakeSheet } from '@/test/fakeSpreadsheetEngine'
 import { SpreadsheetError, type SpreadsheetEngine } from './spreadsheetEngine'
 import SpreadsheetSurface from './SpreadsheetSurface'
+import type { DocumentAnnotationSelection } from './DocumentAnnotation'
 
 vi.mock('@/lib/systemFileOpen', () => ({
   openLocalFileWithSystem: vi.fn().mockResolvedValue(undefined),
   reportOpenFailure: vi.fn(),
+}))
+
+// The code view has its own suite; here it is the text it was handed and its one action.
+vi.mock('../CodeSurface', () => ({
+  CodeSurface: ({ value, onAddSelection }: {
+    value: string
+    onAddSelection: (selection: { startLine: number; endLine: number; text: string }) => void
+  }) => (
+    <div data-testid="code-surface">
+      {value}
+      <button type="button" onClick={() => onAddSelection({ startLine: 1, endLine: 1, text: 'Item,Cost' })}>
+        add selection
+      </button>
+    </div>
+  ),
 }))
 
 // ---- the panel: jsdom lays nothing out, so its size is whatever a test says ----
@@ -66,16 +82,18 @@ type SurfaceProps = {
   blob?: Blob
   sheet?: string
   onSheetChange?: (sheet: string) => void
+  onAnnotate?: (selection: DocumentAnnotationSelection) => void
   initialView?: WorkspaceFileView
   absolutePath?: string
 }
 
 /** Holds the worksheet the way the workspace store does: chosen here, handed back down. */
-function Surface({ engine, blob = xlsxBlob, sheet: initialSheet, onSheetChange, initialView, absolutePath = '/work/data/budget.xlsx' }: SurfaceProps) {
+function Surface({ engine, blob = xlsxBlob, sheet: initialSheet, onSheetChange, onAnnotate, initialView, absolutePath = '/work/data/budget.xlsx' }: SurfaceProps) {
   const [sheet, setSheet] = useState(initialSheet)
   return (
     <SpreadsheetSurface
       engine={engine}
+      onAnnotate={onAnnotate}
       blob={blob}
       path="data/budget.xlsx"
       absolutePath={absolutePath}
@@ -588,5 +606,122 @@ describe('SpreadsheetSurface', () => {
 
       expect(scroller().scrollTop).toBe(123)
     })
+  })
+})
+
+describe('SpreadsheetSurface with a delimited text file', () => {
+  const csvBlob = blobWithBytes(new TextEncoder().encode('Item,Cost\nRent,1200\n'), 'text/csv')
+  const sourceActions = () => ({
+    onAddLineComment: vi.fn(),
+    onAddSelection: vi.fn(),
+  })
+
+  function renderCsv({ path = 'data/budget.csv', reveal }: { path?: string; reveal?: { line: number; nonce: number } } = {}) {
+    const fake = createFakeSpreadsheetEngine({ sheets: [BUDGET], autoFinish: true })
+    const actions = sourceActions()
+    render(
+      <SpreadsheetSurface
+        engine={fake.engine}
+        blob={csvBlob}
+        path={path}
+        absolutePath={`/work/${path}`}
+        version="1"
+        refreshing={false}
+        zoom={undefined}
+        onZoomChange={() => undefined}
+        initialView={undefined}
+        source={{ ...actions, reveal }}
+      />,
+    )
+    return { ...fake, ...actions }
+  }
+
+  it('opens the bytes as delimited text, named by the extension and nothing else', async () => {
+    const { engine } = renderCsv({ path: 'data/budget.tsv' })
+
+    await waitFor(() => expect(engine.open).toHaveBeenCalled())
+    expect(engine.open.mock.calls[0]![1]).toEqual({ delimited: 'tsv' })
+  })
+
+  it('does not name a workbook as delimited text', async () => {
+    const fake = createFakeSpreadsheetEngine({ sheets: WORKBOOK, autoFinish: true })
+    render(<Surface engine={fake.engine} />)
+
+    await waitFor(() => expect(fake.engine.open).toHaveBeenCalled())
+    expect(fake.engine.open.mock.calls[0]![1]).toBeUndefined()
+  })
+
+  it('shows the table with no sheet tabs, and a note that says what it is', async () => {
+    renderCsv()
+
+    expect(await screen.findByRole('cell', { name: 'Rent' })).toBeInTheDocument()
+    expect(screen.queryAllByRole('tab')).toEqual([])
+    expect(screen.getByText(/every value as written/)).toBeInTheDocument()
+  })
+
+  it('goes to the source and back, and the table is still there', async () => {
+    renderCsv()
+    await screen.findByRole('cell', { name: 'Rent' })
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Source' }))
+
+    expect(await screen.findByTestId('code-surface')).toHaveTextContent('Item,Cost')
+    expect(screen.queryByText(/every value as written/)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Table' }))
+
+    expect(screen.queryByTestId('code-surface')).not.toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: 'Rent' })).toBeInTheDocument()
+  })
+
+  it('hands the source view the actions the panel gave it', async () => {
+    const { onAddSelection } = renderCsv()
+    await screen.findByRole('cell', { name: 'Rent' })
+    fireEvent.click(screen.getByRole('radio', { name: 'Source' }))
+    await screen.findByTestId('code-surface')
+
+    fireEvent.click(screen.getByRole('button', { name: 'add selection' }))
+
+    expect(onAddSelection).toHaveBeenCalledWith({ startLine: 1, endLine: 1, text: 'Item,Cost' })
+  })
+
+  it('opens on the source when a line of the file was asked for', async () => {
+    renderCsv({ reveal: { line: 2, nonce: 1 } })
+
+    expect(await screen.findByTestId('code-surface')).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Source' })).toBeChecked()
+  })
+
+  it('offers no way to the source for a workbook, which has none', async () => {
+    const fake = createFakeSpreadsheetEngine({ sheets: WORKBOOK, autoFinish: true })
+    render(<Surface engine={fake.engine} />)
+    await screen.findByRole('cell', { name: 'Rent' })
+
+    expect(screen.queryByRole('radio', { name: 'Source' })).not.toBeInTheDocument()
+  })
+})
+
+describe('spreadsheet annotation integration', () => {
+  it('routes worksheet selection and clears it when switching away and back', async () => {
+    const onAnnotate = vi.fn()
+    await shown({ onAnnotate })
+    fireEvent.click(await screen.findByRole('gridcell', { name: 'A2: Rent' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }))
+    expect(onAnnotate).toHaveBeenCalledWith({ text: 'Rent', location: 'Budget!A2' })
+    fireEvent.click(tab('Notes'))
+    await screen.findByRole('gridcell', { name: 'A2: the milk' })
+    expect(screen.getByRole('button', { name: 'Add comment' })).toBeDisabled()
+    fireEvent.click(tab('Budget'))
+    await screen.findByRole('gridcell', { name: 'A2: Rent' })
+    expect(screen.getByRole('button', { name: 'Add comment' })).toBeDisabled()
+  })
+
+  it.each(['csv', 'tsv'])('routes %s table annotations through the document callback', async (extension) => {
+    const fake = createFakeSpreadsheetEngine({ sheets: [BUDGET], autoFinish: true })
+    const onAnnotate = vi.fn()
+    render(<SpreadsheetSurface engine={fake.engine} blob={blobWithBytes(new TextEncoder().encode('Rent,1200'))} path={`budget.${extension}`} absolutePath={`/work/budget.${extension}`} version="1" refreshing={false} zoom={undefined} onZoomChange={() => undefined} initialView={undefined} onAnnotate={onAnnotate} />)
+    fireEvent.click(await screen.findByRole('gridcell', { name: 'B2: 1200' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }))
+    expect(onAnnotate).toHaveBeenCalledWith({ text: '1200', location: 'Budget!B2' })
   })
 })

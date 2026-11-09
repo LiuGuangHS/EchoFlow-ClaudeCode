@@ -1,10 +1,11 @@
 import { Copy, RefreshCw } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from '../../i18n'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { DoctorPanel } from '../doctor/DoctorPanel'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { isRetainedSidecarStartupTimeout } from '@/lib/sidecarStartupError'
 
 const LOG_MARKER = '\n\nRecent server logs:\n'
 
@@ -27,6 +28,27 @@ export function splitStartupError(error: string) {
   }
 }
 
+/**
+ * A Windows child process that dies on an NTSTATUS failure reports it as a
+ * large unsigned exit code: 3221225477 is 0xC0000005 (access violation),
+ * 3221225725 is 0xC00000FD (stack overflow). A sidecar exiting that way at
+ * startup crashed instead of rejecting its configuration, so the hint points at
+ * what the user can check: security software and the installed runtime files.
+ * Returns the code as "decimal (0xHEX)" for the hint, or null for ordinary
+ * exit codes.
+ */
+export function matchRuntimeCrashExitCode(text: string): string | null {
+  for (const match of text.matchAll(/code=(-?\d+)\b/g)) {
+    const signed = Number(match[1])
+    if (!Number.isSafeInteger(signed)) continue
+    const code = signed < 0 ? signed >>> 0 : signed
+    if (code >= 0xc0000000 && code <= 0xc0ffffff) {
+      return `${code} (0x${code.toString(16).toUpperCase()})`
+    }
+  }
+  return null
+}
+
 type StartupErrorViewProps = {
   error: string
 }
@@ -34,19 +56,18 @@ type StartupErrorViewProps = {
 export function StartupErrorView({ error }: StartupErrorViewProps) {
   const t = useTranslation()
   const { message, logs, diagnostics } = useMemo(() => splitStartupError(error), [error])
+  // After a startup timeout the host keeps the sidecar running; Retry resumes
+  // waiting on it, so asking for an issue report would be the wrong advice.
+  const stillStarting = isRetainedSidecarStartupTimeout(message)
+  const crashExitCode = useMemo(() => matchRuntimeCrashExitCode(error), [error])
   const [copied, setCopied] = useState(false)
-  // Held so unmount can cancel it: the timer fires a setState later, which
-  // after a test teardown is an update on an unmounted tree.
-  const copiedTimer = useRef<number | undefined>(undefined)
-  useEffect(() => () => window.clearTimeout(copiedTimer.current), [])
 
   const handleCopy = async () => {
     const ok = await copyTextToClipboard(diagnostics)
     if (!ok) return
 
     setCopied(true)
-    window.clearTimeout(copiedTimer.current)
-    copiedTimer.current = window.setTimeout(() => setCopied(false), 1600)
+    window.setTimeout(() => setCopied(false), 1600)
   }
 
   return (
@@ -54,39 +75,45 @@ export function StartupErrorView({ error }: StartupErrorViewProps) {
       <Card
         as="section"
         radius="xl"
-        surface="low"
+        surface="lowest"
         padding="lg"
         shadow="card"
         className="w-full max-w-3xl"
       >
         <div className="flex flex-col gap-4">
           <div>
-            <h1
-              className="text-[21px] font-semibold tracking-tight text-[var(--color-text-primary)]"
-              style={{ fontFamily: 'var(--font-headline)' }}
-            >
-              {t('app.serverFailed')}
+            <h1 className="text-[22px] font-semibold tracking-tight text-[var(--color-text-primary)]">
+              {t(stillStarting ? 'app.serverStillStarting' : 'app.serverFailed')}
             </h1>
-            <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
-              {t('app.serverFailedHint')}
+            <p className="mt-1.5 text-[13px] leading-6 text-[var(--color-text-tertiary)]">
+              {t(stillStarting ? 'app.serverStillStartingHint' : 'app.serverFailedHint')}
             </p>
           </div>
 
-          <Card radius="lg" surface="none" className="bg-[var(--color-code-bg)]">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
+          <Card radius="md" surface="none" padding="sm" className="bg-[var(--color-code-bg)]">
+            <div className="text-[12px] font-semibold text-[var(--color-text-tertiary)]">
               {t('app.startupError')}
             </div>
-            <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-words font-mono text-[13px] leading-[1.7] text-[var(--color-error)]">
+            <pre className="mt-1.5 max-h-28 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-[1.65] text-[var(--color-error)]">
               {message}
             </pre>
           </Card>
 
+          {crashExitCode ? (
+            <p
+              data-testid="startup-crash-hint"
+              className="text-[13px] leading-6 text-[var(--color-text-secondary)]"
+            >
+              {t('app.startupCrashHint', { code: crashExitCode })}
+            </p>
+          ) : null}
+
           {logs ? (
-            <Card radius="lg" surface="none" className="bg-[var(--color-code-bg)]">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
+            <Card radius="md" surface="none" padding="sm" className="bg-[var(--color-code-bg)]">
+              <div className="text-[12px] font-semibold text-[var(--color-text-tertiary)]">
                 {t('app.serverLogs')}
               </div>
-              <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[13px] leading-[1.7] text-[var(--color-text-secondary)]">
+              <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-[1.65] text-[var(--color-text-secondary)]">
                 {logs}
               </pre>
             </Card>
@@ -97,7 +124,7 @@ export function StartupErrorView({ error }: StartupErrorViewProps) {
               type="button"
               variant="secondary"
               size="sm"
-              icon={<Copy className="h-4 w-4" aria-hidden="true" />}
+              icon={<Copy size={14} strokeWidth={1.75} aria-hidden="true" />}
               onClick={handleCopy}
             >
               {copied ? t('app.copiedDiagnostics') : t('app.copyDiagnostics')}
@@ -106,7 +133,7 @@ export function StartupErrorView({ error }: StartupErrorViewProps) {
               type="button"
               variant="ghost"
               size="sm"
-              icon={<RefreshCw className="h-4 w-4" aria-hidden="true" />}
+              icon={<RefreshCw size={14} strokeWidth={1.75} aria-hidden="true" />}
               onClick={() => window.location.reload()}
             >
               {t('common.retry')}

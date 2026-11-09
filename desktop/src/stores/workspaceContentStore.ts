@@ -71,6 +71,8 @@ export type WorkspaceFileView = {
 type WorkspaceContentStore = {
   filesByKey: Record<string, WorkspaceFileEntry | undefined>
   treeByKey: Record<string, WorkspaceTreeResult | undefined>
+  /** Accepted watch refreshes, in memory only; searches may have no cached parent tree. */
+  watchRevisionBySession: Record<string, number | undefined>
   treeLoadingByKey: Record<string, boolean | undefined>
   expandedBySession: Record<string, string[] | undefined>
   statusBySession: Record<string, WorkspaceStatusResult | undefined>
@@ -106,23 +108,38 @@ export function workspaceFileKey(sessionId: string, path: string) {
 
 const key = workspaceFileKey
 
-const fileRequests = new Map<string, number>()
-const treeRequests = new Map<string, number>()
+type ContentRequest = {
+  promise: Promise<void>
+  complete: () => void
+  signal?: AbortSignal
+}
+
+const fileRequests = new Map<string, ContentRequest>()
+const treeRequests = new Map<string, ContentRequest>()
+const statusLoads = new Map<string, ContentRequest>()
 /** Sessions whose status probe has been attempted, successfully or not. */
 const statusRequests = new Set<string>()
 
-function nextRequest(store: Map<string, number>, id: string) {
-  const next = (store.get(id) ?? 0) + 1
-  store.set(id, next)
-  return next
+function nextRequest(store: Map<string, ContentRequest>, id: string, signal?: AbortSignal) {
+  let complete!: () => void
+  const promise = new Promise<void>((resolve) => { complete = resolve })
+  const request = { promise, complete, signal }
+  store.set(id, request)
+  return request
 }
 
-function isCurrent(store: Map<string, number>, id: string, request: number) {
+function isCurrent(store: Map<string, ContentRequest>, id: string, request: ContentRequest) {
   return store.get(id) === request
 }
 
-function invalidate(store: Map<string, number>, id: string) {
-  store.set(id, (store.get(id) ?? 0) + 1)
+function finishRequest(store: Map<string, ContentRequest>, id: string, request: ContentRequest) {
+  // Object identity stays unique after deletion, including a close/reopen race.
+  if (isCurrent(store, id, request)) store.delete(id)
+  request.complete()
+}
+
+function invalidate(store: Map<string, ContentRequest>, id: string) {
+  store.delete(id)
 }
 
 function dropSessionKeys<T>(record: Record<string, T>, sessionId: string) {
@@ -135,6 +152,7 @@ function dropSessionKeys<T>(record: Record<string, T>, sessionId: string) {
 export const useWorkspaceContentStore = create<WorkspaceContentStore>((set, get) => ({
   filesByKey: {},
   treeByKey: {},
+  watchRevisionBySession: {},
   treeLoadingByKey: {},
   expandedBySession: {},
   statusBySession: {},
@@ -181,30 +199,33 @@ export const useWorkspaceContentStore = create<WorkspaceContentStore>((set, get)
 
   loadStatus: async (sessionId, options) => {
     if (options?.signal?.aborted) return
-    const key = `${sessionId}::status`
     if (get().statusBySession[sessionId] && !options?.force) return
     // Guard the *request*, not just the result: a probe that fails caches
     // nothing, so without this every remount of the file tab fires another one.
     if (statusRequests.has(sessionId) && !options?.force) return
     statusRequests.add(sessionId)
-    const request = nextRequest(fileRequests, key)
+    const request = nextRequest(statusLoads, sessionId, options?.signal)
     try {
       const result = await sessionsApi.getWorkspaceStatus(sessionId, options?.signal)
-      if (options?.signal?.aborted || !isCurrent(fileRequests, key, request)) return
+      if (options?.signal?.aborted || !isCurrent(statusLoads, sessionId, request)) return
       set((state) => ({ statusBySession: { ...state.statusBySession, [sessionId]: result } }))
     } catch {
       // The launcher only needs this to explain why review is unavailable; a
       // failed probe leaves the entry enabled rather than blaming the folder.
+    } finally {
+      finishRequest(statusLoads, sessionId, request)
     }
   },
 
   loadFile: async (sessionId, path, options) => {
     if (options?.signal?.aborted) return
     const entryKey = key(sessionId, path)
+    const pending = fileRequests.get(entryKey)
+    if (pending && !pending.signal?.aborted && !options?.force) return pending.promise
     const existing = get().filesByKey[entryKey]
     if (existing && existing.state !== 'loading' && !options?.force) return
 
-    const request = nextRequest(fileRequests, entryKey)
+    const request = nextRequest(fileRequests, entryKey, options?.signal)
     set((state) => ({
       filesByKey: {
         ...state.filesByKey,
@@ -267,15 +288,26 @@ export const useWorkspaceContentStore = create<WorkspaceContentStore>((set, get)
           },
         }
       })
+    } finally {
+      if (options?.signal?.aborted && isCurrent(fileRequests, entryKey, request)) {
+        set((state) => {
+          if (state.filesByKey[entryKey]?.state !== 'loading') return state
+          const { [entryKey]: _removed, ...filesByKey } = state.filesByKey
+          return { filesByKey }
+        })
+      }
+      finishRequest(fileRequests, entryKey, request)
     }
   },
 
   loadTree: async (sessionId, path = '', options) => {
     if (options?.signal?.aborted) return
     const entryKey = key(sessionId, path)
-    if (get().treeByKey[entryKey] && !options?.force) return
+    const pending = treeRequests.get(entryKey)
+    if (pending && !pending.signal?.aborted && !options?.force) return pending.promise
+    if (get().treeByKey[entryKey]?.state === 'ok' && !options?.force) return
 
-    const request = nextRequest(treeRequests, entryKey)
+    const request = nextRequest(treeRequests, entryKey, options?.signal)
     set((state) => ({
       treeLoadingByKey: { ...state.treeLoadingByKey, [entryKey]: true },
     }))
@@ -305,6 +337,7 @@ export const useWorkspaceContentStore = create<WorkspaceContentStore>((set, get)
       if (options?.signal?.aborted && isCurrent(treeRequests, entryKey, request)) {
         set((state) => ({ treeLoadingByKey: { ...state.treeLoadingByKey, [entryKey]: false } }))
       }
+      finishRequest(treeRequests, entryKey, request)
     }
   },
 
@@ -316,7 +349,7 @@ export const useWorkspaceContentStore = create<WorkspaceContentStore>((set, get)
         expanded.delete(path)
       } else {
         expanded.add(path)
-        if (!state.treeByKey[key(sessionId, path)]) shouldLoad = true
+        if (state.treeByKey[key(sessionId, path)]?.state !== 'ok') shouldLoad = true
       }
       return { expandedBySession: { ...state.expandedBySession, [sessionId]: [...expanded] } }
     })
@@ -346,6 +379,13 @@ export const useWorkspaceContentStore = create<WorkspaceContentStore>((set, get)
 
   refreshWatchedPaths: async (sessionId, paths, directories, signal) => {
     if (signal.aborted) return
+    // A watched file parent need not be loaded (for example, a restored search
+    // already has its remote results). Notify query consumers independently of
+    // whether any cached directory listing can be replaced by this refresh.
+    set(state => ({ watchRevisionBySession: {
+      ...state.watchRevisionBySession,
+      [sessionId]: (state.watchRevisionBySession[sessionId] ?? 0) + 1,
+    } }))
     const prefix = `${sessionId}::`
     const changed = (candidate: string) => paths.some((path) => candidate === path || candidate.startsWith(`${path}/`))
     // Directory invalidations remain authoritative when either batching layer
@@ -391,6 +431,7 @@ export const useWorkspaceContentStore = create<WorkspaceContentStore>((set, get)
 
   clearSession: (sessionId) => {
     statusRequests.delete(sessionId)
+    statusLoads.delete(sessionId)
     forgetDocumentBlobs(sessionId)
     const prefix = `${sessionId}::`
     for (const store of [fileRequests, treeRequests]) {
@@ -402,6 +443,7 @@ export const useWorkspaceContentStore = create<WorkspaceContentStore>((set, get)
       const { [sessionId]: _removed, ...expandedBySession } = state.expandedBySession
       const { [sessionId]: _status, ...statusBySession } = state.statusBySession
       const { [sessionId]: _treeView, ...treeViewBySession } = state.treeViewBySession
+      const { [sessionId]: _watchRevision, ...watchRevisionBySession } = state.watchRevisionBySession
       return {
         filesByKey: dropSessionKeys(state.filesByKey, sessionId),
         treeByKey: dropSessionKeys(state.treeByKey, sessionId),
@@ -409,6 +451,7 @@ export const useWorkspaceContentStore = create<WorkspaceContentStore>((set, get)
         expandedBySession,
         statusBySession,
         treeViewBySession,
+        watchRevisionBySession,
         fileViewByKey: dropSessionKeys(state.fileViewByKey, sessionId),
       }
     })

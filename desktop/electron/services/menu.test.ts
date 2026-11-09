@@ -9,7 +9,6 @@ import {
 } from './menu'
 
 const menuMocksKey = '__electronMenuMocks'
-const trayMocksKey = '__electronTrayMocks'
 
 function createElectronMenuMocks() {
   const popup = vi.fn()
@@ -29,40 +28,15 @@ function getElectronMenuMocks() {
   return created
 }
 
-function createElectronTrayMocks() {
-  const handlers = new Map<string, () => void>()
-  return {
-    handlers,
-    buildFromTemplate: vi.fn((template: unknown) => ({ template })),
-    createFromPath: vi.fn((iconPath: string) => ({ iconPath })),
-    tray: {
-      setToolTip: vi.fn(),
-      setContextMenu: vi.fn(),
-      on: vi.fn((event: string, handler: () => void) => {
-        handlers.set(event, handler)
-      }),
-      destroy: vi.fn(),
-    },
-    Tray: vi.fn(),
-  }
-}
-
-function getElectronTrayMocks() {
-  const store = globalThis as Record<string, unknown>
-  const existing = store[trayMocksKey] as ReturnType<typeof createElectronTrayMocks> | undefined
-  if (existing) return existing
-  const created = createElectronTrayMocks()
-  store[trayMocksKey] = created
-  return created
-}
-
 function rendererContextMenuParams({
   isEditable = false,
   selectionText = '',
+  mediaType = 'none',
   editFlags = {},
 }: {
   isEditable?: boolean
   selectionText?: string
+  mediaType?: string
   editFlags?: Partial<{
     canUndo: boolean
     canRedo: boolean
@@ -75,6 +49,9 @@ function rendererContextMenuParams({
   return {
     isEditable,
     selectionText,
+    mediaType,
+    x: 120,
+    y: 80,
     editFlags: {
       canUndo: false,
       canRedo: false,
@@ -88,21 +65,11 @@ function rendererContextMenuParams({
 }
 
 vi.mock('electron', () => {
+  const mocks = getElectronMenuMocks()
   return {
     Menu: {
-      buildFromTemplate: (...args: Parameters<ReturnType<typeof createElectronMenuMocks>['buildFromTemplate']>) =>
-        getElectronMenuMocks().buildFromTemplate(...args),
-      setApplicationMenu: (...args: Parameters<ReturnType<typeof createElectronMenuMocks>['setApplicationMenu']>) =>
-        getElectronMenuMocks().setApplicationMenu(...args),
-    },
-    Tray: function MockTray(...args: unknown[]) {
-      const mocks = getElectronTrayMocks()
-      mocks.Tray(...args)
-      return mocks.tray
-    },
-    nativeImage: {
-      createFromPath: (...args: Parameters<ReturnType<typeof createElectronTrayMocks>['createFromPath']>) =>
-        getElectronTrayMocks().createFromPath(...args),
+      buildFromTemplate: mocks.buildFromTemplate,
+      setApplicationMenu: mocks.setApplicationMenu,
     },
   }
 })
@@ -122,6 +89,55 @@ describe('Electron application menu service', () => {
     }))).toEqual([
       { role: 'copy', enabled: true },
     ])
+  })
+
+  it('offers Copy Image for images and copies the image under the pointer', () => {
+    const copyImageAt = vi.fn()
+    const template = buildRendererContextMenuTemplate(
+      rendererContextMenuParams({ mediaType: 'image' }),
+      { locale: 'zh', copyImageAt },
+    )
+
+    expect(template).toHaveLength(1)
+    expect(template[0]?.label).toBe('复制图片')
+    template[0]?.click?.({} as never, {} as never, {} as never)
+    expect(copyImageAt).toHaveBeenCalledWith(120, 80)
+  })
+
+  it('keeps image copy out of editable fields and non-image media', () => {
+    const copyImageAt = vi.fn()
+    expect(buildRendererContextMenuTemplate(
+      rendererContextMenuParams({ mediaType: 'video' }),
+      { copyImageAt },
+    )).toEqual([])
+    expect(buildRendererContextMenuTemplate(
+      rendererContextMenuParams({ isEditable: true, mediaType: 'image' }),
+      { copyImageAt },
+    ).map(item => item.role)).toContain('paste')
+  })
+
+  it('wires Copy Image to the window contents when the menu opens on an image', async () => {
+    const menuMocks = getElectronMenuMocks()
+    let contextMenuHandler: ((event: unknown, params: ReturnType<typeof rendererContextMenuParams>) => void) | undefined
+    const copyImageAt = vi.fn()
+    const window = {
+      isDestroyed: () => false,
+      webContents: {
+        copyImageAt,
+        on: vi.fn((event: string, handler: typeof contextMenuHandler) => {
+          if (event === 'context-menu') contextMenuHandler = handler
+        }),
+      },
+    }
+
+    await installRendererContextMenu(window as never, () => 'en')
+    contextMenuHandler?.({}, rendererContextMenuParams({ mediaType: 'image' }))
+
+    const template = menuMocks.buildFromTemplate.mock.calls[0]?.[0] as MenuItemConstructorOptions[]
+    expect(template[0]?.label).toBe('Copy Image')
+    template[0]?.click?.({} as never, {} as never, {} as never)
+    expect(copyImageAt).toHaveBeenCalledWith(120, 80)
+    expect(menuMocks.popup).toHaveBeenCalledWith({ window })
   })
 
   it('offers native editing actions for editable renderer fields', () => {
@@ -180,7 +196,7 @@ describe('Electron application menu service', () => {
 
   it('emits native navigation destinations from macOS app menu items', () => {
     const onNavigate = vi.fn()
-    const template = buildApplicationMenuTemplate('EchoFlow Code', onNavigate, 'darwin')
+    const template = buildApplicationMenuTemplate('Claude Code Haha', onNavigate, 'darwin')
     const appMenu = template[0]
     expect(appMenu).toBeDefined()
     const submenu = appMenu!.submenu as MenuItemConstructorOptions[]
@@ -198,10 +214,10 @@ describe('Electron application menu service', () => {
 
   it('routes macOS Hide through the provided safe hide action', () => {
     const hide = vi.fn()
-    const template = buildApplicationMenuTemplate('EchoFlow Code', vi.fn(), 'darwin', { hide })
+    const template = buildApplicationMenuTemplate('Claude Code Haha', vi.fn(), 'darwin', { hide })
     const appMenu = template[0]
     const submenu = appMenu!.submenu as MenuItemConstructorOptions[]
-    const hideItem = submenu.find(item => item.label === 'Hide EchoFlow Code')
+    const hideItem = submenu.find(item => item.label === 'Hide Claude Code Haha')
 
     expect(hideItem).toBeDefined()
     expect(hideItem?.accelerator).toBe('Command+H')
@@ -212,7 +228,7 @@ describe('Electron application menu service', () => {
 
   it('keeps explicit window close separate from the tab accelerator', () => {
     const close = vi.fn()
-    const template = buildApplicationMenuTemplate('EchoFlow Code', vi.fn(), 'darwin', { close })
+    const template = buildApplicationMenuTemplate('Claude Code Haha', vi.fn(), 'darwin', { close })
     const closeItem = template
       .flatMap(item => (item.submenu as MenuItemConstructorOptions[] | undefined) ?? [])
       .find(item => item.label === 'Close Window')
@@ -226,7 +242,7 @@ describe('Electron application menu service', () => {
 
   it('routes the View fullscreen accelerator through the provided fullscreen action', () => {
     const toggleFullScreen = vi.fn()
-    const template = buildApplicationMenuTemplate('EchoFlow Code', vi.fn(), 'darwin', { toggleFullScreen })
+    const template = buildApplicationMenuTemplate('Claude Code Haha', vi.fn(), 'darwin', { toggleFullScreen })
     const fullScreenItem = template
       .flatMap(item => (item.submenu as MenuItemConstructorOptions[] | undefined) ?? [])
       .find(item => item.label === 'Toggle Full Screen')
@@ -239,7 +255,7 @@ describe('Electron application menu service', () => {
   })
 
   it('uses F11 for custom fullscreen on non-macOS platforms', () => {
-    const template = buildApplicationMenuTemplate('EchoFlow Code', vi.fn(), 'linux', {})
+    const template = buildApplicationMenuTemplate('Claude Code Haha', vi.fn(), 'linux', {})
     const fullScreenItem = template
       .flatMap(item => (item.submenu as MenuItemConstructorOptions[] | undefined) ?? [])
       .find(item => item.label === 'Toggle Full Screen')
@@ -248,7 +264,7 @@ describe('Electron application menu service', () => {
   })
 
   it('keeps a settings entry available on non-macOS platforms', () => {
-    const template = buildApplicationMenuTemplate('EchoFlow Code', vi.fn(), 'win32')
+    const template = buildApplicationMenuTemplate('Claude Code Haha', vi.fn(), 'win32')
     const fileMenu = template[0]
     expect(fileMenu).toBeDefined()
     const fileSubmenu = fileMenu!.submenu as MenuItemConstructorOptions[]
@@ -263,7 +279,7 @@ describe('Electron application menu service', () => {
     const send = vi.fn()
 
     await installApplicationMenu(
-      { name: 'EchoFlow Code' } as never,
+      { name: 'Claude Code Haha' } as never,
       () => ({ webContents: { send } }) as never,
       'darwin',
     )
@@ -289,7 +305,7 @@ describe('Electron application menu service', () => {
     menuMocks.setApplicationMenu.mockClear()
 
     await installApplicationMenu(
-      { name: 'EchoFlow Code' } as never,
+      { name: 'Claude Code Haha' } as never,
       () => ({ webContents: { send: vi.fn() } }) as never,
       'win32',
     )
@@ -305,7 +321,7 @@ describe('Electron application menu service', () => {
     const send = vi.fn()
 
     await installApplicationMenu(
-      { name: 'EchoFlow Code' } as never,
+      { name: 'Claude Code Haha' } as never,
       () => ({ webContents: { send } }) as never,
       'linux',
     )
@@ -321,7 +337,6 @@ describe('Electron application menu service', () => {
     const onceHandlers = new Map<string, (...args: never[]) => void>()
     const window = {
       isFullScreen: () => true,
-      isSimpleFullScreen: () => false,
       once: vi.fn((event: string, handler: (...args: never[]) => void) => {
         onceHandlers.set(event, handler)
       }),
@@ -333,7 +348,7 @@ describe('Electron application menu service', () => {
     const menuMocks = getElectronMenuMocks()
 
     await installApplicationMenu(
-      { name: 'EchoFlow Code', hide: appHide } as never,
+      { name: 'Claude Code Haha', hide: appHide } as never,
       () => window as never,
       'darwin',
     )
@@ -341,7 +356,7 @@ describe('Electron application menu service', () => {
     const template = menuMocks.buildFromTemplate.mock.calls[0]?.[0] as MenuItemConstructorOptions[]
     const hideItem = template
       .flatMap(item => (item.submenu as MenuItemConstructorOptions[] | undefined) ?? [])
-      .find(item => item.label === 'Hide EchoFlow Code')
+      .find(item => item.label === 'Hide Claude Code Haha')
 
     hideItem?.click?.({} as never, {} as never, {} as never)
     expect(window.setFullScreen).toHaveBeenCalledWith(false)
@@ -353,18 +368,18 @@ describe('Electron application menu service', () => {
     expect(appHide).toHaveBeenCalledTimes(1)
   })
 
-  it('installs fullscreen as simple fullscreen on macOS instead of native Spaces', async () => {
+  it('installs fullscreen as a native macOS fullscreen Space', async () => {
     const window = {
-      isSimpleFullScreen: () => false,
+      isSimpleFullScreen: vi.fn(),
       setSimpleFullScreen: vi.fn(),
-      isFullScreen: vi.fn(),
+      isFullScreen: () => false,
       setFullScreen: vi.fn(),
       webContents: { send: vi.fn() },
     }
     const menuMocks = getElectronMenuMocks()
 
     await installApplicationMenu(
-      { name: 'EchoFlow Code' } as never,
+      { name: 'Claude Code Haha' } as never,
       () => window as never,
       'darwin',
     )
@@ -375,8 +390,8 @@ describe('Electron application menu service', () => {
       .find(item => item.label === 'Toggle Full Screen')
 
     fullScreenItem?.click?.({} as never, {} as never, {} as never)
-    expect(window.setSimpleFullScreen).toHaveBeenCalledWith(true)
-    expect(window.setFullScreen).not.toHaveBeenCalled()
+    expect(window.setFullScreen).toHaveBeenCalledWith(true)
+    expect(window.setSimpleFullScreen).not.toHaveBeenCalled()
   })
 })
 

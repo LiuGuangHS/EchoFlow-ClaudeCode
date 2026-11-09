@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Image as ImageIcon, Maximize2 } from 'lucide-react'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { useTranslation } from '@/i18n'
 import { AuthedImage } from './AuthedImage'
@@ -11,17 +12,25 @@ import {
 import { isAbsoluteLocalPath, previewFsUrl } from '../../lib/handlePreviewLink'
 import { getServerBaseUrl } from '../../lib/desktopRuntime'
 import { resolveAbsoluteOpenPath } from '../../lib/systemFileOpen'
+import { useDiskConfirmedTargets } from '../../hooks/useDiskConfirmedTargets'
 
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg|bmp|avif|ico)$/i
 
 /**
  * Extracts absolute image file paths from text content.
  * Matches paths like /Users/.../image.png, /tmp/output.jpg, etc.
+ *
+ * Wildcards (`*`, `?`) and substitutions (`{name}`, `${id}`, `$NAME`, `%03d`)
+ * are not path characters: the character that opens one ends the match. A path
+ * like `/tmp/shots/0*.png` or `/tmp/frames/f%03d.png` names a set of files, or a
+ * template for one, that no URL can load; taken as a file, it became a red
+ * "unable to load" tile under a reply that only quoted it. Brackets stay: real
+ * directories use them (`app/[slug]/opengraph-image.png`).
  */
 export function extractImagePaths(text: string): string[] {
   // Match absolute paths ending with image extensions
   // Handles paths that may be wrapped in backticks, quotes, or standalone
-  const regex = /(?:^|[\s`"'(])(\/?(?:[A-Za-z]:[\\/]|\/)[^\s`"')<>]+\.(?:png|jpe?g|gif|webp|svg|bmp|avif|ico))/gim
+  const regex = /(?:^|[\s`"'(])(\/?(?:[A-Za-z]:[\\/]|\/)[^\s`"')<>*?{$%]+\.(?:png|jpe?g|gif|webp|svg|bmp|avif|ico))/gim
   const paths: string[] = []
   const seen = new Set<string>()
 
@@ -76,12 +85,17 @@ type Props = {
 export function InlineImageGallery({ text, sessionId, workDir, changedFiles, suppressManagedGeneratedImages = false }: Props) {
   const t = useTranslation()
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
-  const [failureState, setFailureState] = useState(() => ({ sessionId, workDir, sources: new Set<string>() }))
+  const [failureState, setFailureState] = useState(() => ({
+    sessionId,
+    workDir,
+    failed: new Set<string>(),
+    unavailable: new Set<string>(),
+  }))
   // The same absolute URL can become readable in a different workspace/session.
   if (failureState.sessionId !== sessionId || failureState.workDir !== workDir) {
-    setFailureState({ sessionId, workDir, sources: new Set() })
+    setFailureState({ sessionId, workDir, failed: new Set(), unavailable: new Set() })
   }
-  const failedSources = failureState.sources
+  const failedSources = failureState.failed
 
   const markdownImageSources = useMemo(
     () => new Set(extractMarkdownImageSources(text).map(normalizeImageReference)),
@@ -108,6 +122,24 @@ export function InlineImageGallery({ text, sessionId, workDir, changedFiles, sup
   // back to text-only extraction instead of filtering every mention away.
   const changedFileEvidence = changedFiles !== undefined && changedFiles.length === 0 ? undefined : changedFiles
 
+  const extractedRelativeTargets = useMemo(() => sessionId
+    ? extractAssistantOutputTargets(text, {
+      workDir,
+      changedFiles: changedFileEvidence,
+      includeUnconfirmedNames: true,
+    }).filter(
+      (target) => (
+        target.kind === 'image' &&
+        target.source !== 'markdown-link' &&
+        !markdownImageSources.has(normalizeImageReference(target.href)) &&
+        !markdownImageSources.has(normalizeImageReference(target.normalizedPath ?? ''))
+      ),
+    )
+    : [], [changedFileEvidence, markdownImageSources, sessionId, text, workDir])
+  // `截图保存为1.png` may be `1.png` saved by a glued verb, or one CJK name; the
+  // workspace listing settles which, as it does for the output cards.
+  const relativeTargets = useDiskConfirmedTargets(sessionId, extractedRelativeTargets)
+
   const images = useMemo<GalleryImage[]>(() => {
     // 1. Absolute paths (legacy behavior) — served via /api/filesystem/file.
     const absolute: GalleryImage[] = imagePaths.map((p) => ({ src: localImageFileUrl(p), name: fileName(p), path: p }))
@@ -120,14 +152,6 @@ export function InlineImageGallery({ text, sessionId, workDir, changedFiles, sup
     //    build a /preview-fs URL. Reuses the sandboxed target extractor instead of
     //    a bespoke relative-path regex.
     const base = getServerBaseUrl()
-    const relativeTargets = extractAssistantOutputTargets(text, { workDir, changedFiles: changedFileEvidence }).filter(
-      (target) => (
-        target.kind === 'image' &&
-        target.source !== 'markdown-link' &&
-        !markdownImageSources.has(normalizeImageReference(target.href)) &&
-        !markdownImageSources.has(normalizeImageReference(target.normalizedPath ?? ''))
-      ),
-    )
 
     // Dedup: an absolute path inside the workspace can be caught by BOTH sources.
     // Skip a relative target whose basename already appears among the absolute
@@ -153,28 +177,33 @@ export function InlineImageGallery({ text, sessionId, workDir, changedFiles, sup
     }
 
     return [...absolute, ...relative]
-  }, [changedFileEvidence, imagePaths, markdownImageSources, sessionId, text, workDir])
+  }, [imagePaths, relativeTargets, sessionId, workDir])
 
-  if (images.length === 0) return null
+  // A picture the server will not serve — missing, outside the readable roots, not
+  // an image — leaves no trace. The reply only named it, and its text still does:
+  // a file cleaned out of /tmp, a web route, a name quoted from a log. Only a load
+  // that should have worked is an error worth a retry.
+  const visibleImages = images.filter((img) => !failureState.unavailable.has(img.src))
+  if (visibleImages.length === 0) return null
 
   return (
     <>
       <div className="mt-3 space-y-2">
-        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-outline)]">
-          <span className="material-symbols-outlined text-[12px]">image</span>
-          {images.length === 1 ? '1 image' : `${images.length} images`}
+        <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-tertiary)]">
+          <ImageIcon size={12} strokeWidth={2} aria-hidden="true" />
+          {t(visibleImages.length === 1 ? 'chat.imageCountOne' : 'chat.imageCountOther', { count: visibleImages.length })}
         </div>
-        <div className={`grid gap-2 ${images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
-          {images.map((img, i) => failedSources.has(img.src) ? (
+        <div className={`grid gap-2 ${visibleImages.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+          {visibleImages.map((img, i) => failedSources.has(img.src) ? (
             <ErrorState
               key={img.src}
               size="sm"
               title={t('chat.imageLoadFailed')}
               retryLabel={t('common.retry')}
               onRetry={() => setFailureState((previous) => {
-                const sources = new Set(previous.sources)
-                sources.delete(img.src)
-                return { ...previous, sources }
+                const failed = new Set(previous.failed)
+                failed.delete(img.src)
+                return { ...previous, failed }
               })}
               detail={(
                 <>
@@ -188,25 +217,26 @@ export function InlineImageGallery({ text, sessionId, workDir, changedFiles, sup
               key={`${sessionId ?? ''}|${workDir ?? ''}|${img.src}`}
               type="button"
               onClick={() => setActiveIndex(i)}
-              className="group/image relative overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] text-left shadow-[var(--shadow-card)] transition-[border-color,box-shadow] duration-150 hover:shadow-[var(--shadow-composer)] hover:border-[var(--color-primary-fixed-dim)]"
+              className="group/image relative overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] text-left transition-[border-color] duration-150 hover:border-[var(--color-outline)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
             >
               <AuthedImage
                 src={img.src}
                 alt={img.name}
                 loading="lazy"
                 className="w-full object-cover"
-                style={{ maxHeight: images.length === 1 ? 400 : 240 }}
-                // img errors expose no HTTP status: a denied, missing or invalid
-                // image needs visible feedback without claiming a specific cause.
-                onFailure={() => setFailureState((previous) => ({ ...previous, sources: new Set(previous.sources).add(img.src) }))}
+                style={{ maxHeight: visibleImages.length === 1 ? 400 : 240 }}
+                onFailure={(failure) => setFailureState((previous) => ({
+                  ...previous,
+                  [failure]: new Set(previous[failure]).add(img.src),
+                }))}
               />
               <div className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover/image:bg-black/20 group-hover/image:opacity-100">
-                <span className="material-symbols-outlined rounded-full bg-white/90 p-2 text-[20px] text-[var(--color-text-primary)] shadow-lg">
-                  fullscreen
+                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-surface-container-lowest)] text-[var(--color-text-primary)] shadow-[var(--shadow-dropdown)]">
+                  <Maximize2 size={16} strokeWidth={1.75} aria-hidden="true" />
                 </span>
               </div>
               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent px-2.5 pb-2 pt-6">
-                <span className="text-[10px] font-medium text-white/90 drop-shadow-sm">
+                <span className="text-[11px] font-medium text-white/90 drop-shadow-sm">
                   {img.name}
                 </span>
               </div>
@@ -218,7 +248,7 @@ export function InlineImageGallery({ text, sessionId, workDir, changedFiles, sup
       {activeIndex !== null && activeIndex >= 0 && (
         <ImageGalleryModal
           open={activeIndex !== null}
-          images={images}
+          images={visibleImages}
           activeIndex={activeIndex}
           onClose={() => setActiveIndex(null)}
           onSelect={setActiveIndex}

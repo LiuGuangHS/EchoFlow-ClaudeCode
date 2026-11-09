@@ -10,6 +10,7 @@ import {
   hasVisibleSessionActivity,
 } from '../components/activity/sessionActivityModel'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
+import { hasRunningBackgroundTasks } from '../lib/backgroundTasks'
 import { registerSideChatSession, unregisterSideChatSession } from '../lib/sideChatSessions'
 
 const {
@@ -25,6 +26,7 @@ const {
   fetchSessionTasksMock,
   clearTasksMock,
   setTasksFromTodosMock,
+  restoreTasksMock,
   markCompletedAndDismissedMock,
   resetCompletedTasksMock,
   refreshTasksMock,
@@ -54,6 +56,7 @@ const {
   fetchSessionTasksMock: vi.fn(),
   clearTasksMock: vi.fn(),
   setTasksFromTodosMock: vi.fn(),
+  restoreTasksMock: vi.fn(),
   markCompletedAndDismissedMock: vi.fn(),
   resetCompletedTasksMock: vi.fn(async () => {}),
   refreshTasksMock: vi.fn(),
@@ -172,8 +175,11 @@ vi.mock('./cliTaskStore', () => ({
       fetchSessionTasks: fetchSessionTasksMock,
       tasks: cliTaskStoreSnapshot.tasks,
       sessionId: cliTaskStoreSnapshot.sessionId,
+      completedAndDismissed: false,
+      dismissedCompletionKey: null,
       clearTasks: clearTasksMock,
       setTasksFromTodos: setTasksFromTodosMock,
+      restoreTasks: restoreTasksMock,
       markCompletedAndDismissed: markCompletedAndDismissedMock,
       resetCompletedTasks: resetCompletedTasksMock,
       refreshTasks: refreshTasksMock,
@@ -391,165 +397,72 @@ describe('chatStore tool settlement', () => {
   })
 })
 
+describe('chatStore prompt suggestions', () => {
+  beforeEach(() => {
+    sendMock.mockReset()
+    useSettingsStore.setState({ locale: 'en' })
+    useChatStore.setState({
+      ...initialState,
+      sessions: { [TEST_SESSION_ID]: makeSession({ chatState: 'idle' }) },
+    })
+  })
+
+  const suggestionOf = () => useChatStore.getState().sessions[TEST_SESSION_ID]?.promptSuggestion ?? null
+
+  it('keeps the suggestion for an idle composer until the user sends', () => {
+    const store = useChatStore.getState()
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'prompt_suggestion', suggestion: 'run the tests' })
+    expect(suggestionOf()).toBe('run the tests')
+
+    // Idle housekeeping does not retire it.
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
+    expect(suggestionOf()).toBe('run the tests')
+
+    store.sendMessage(TEST_SESSION_ID, 'something else')
+    expect(suggestionOf()).toBeNull()
+  })
+
+  it('drops the suggestion when the next turn starts without a send from this composer', () => {
+    const store = useChatStore.getState()
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'prompt_suggestion', suggestion: 'commit this' })
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'thinking', verb: 'Thinking' })
+    expect(suggestionOf()).toBeNull()
+
+    // A late prediction for a turn that is already running is ignored.
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'prompt_suggestion', suggestion: 'stale' })
+    expect(suggestionOf()).toBeNull()
+  })
+
+  it('drops the suggestion as soon as another client sends into the session', () => {
+    const store = useChatStore.getState()
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'prompt_suggestion', suggestion: 'run the tests' })
+    // Only the sending socket gets `status: thinking`; this window sees the replay.
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'user_message_replay', content: 'from my phone' })
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.chatState).toBe('idle')
+    expect(suggestionOf()).toBeNull()
+  })
+
+  it('clears on dismiss, stop, and clear', () => {
+    const store = useChatStore.getState()
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'prompt_suggestion', suggestion: 'push it' })
+    store.dismissPromptSuggestion(TEST_SESSION_ID)
+    expect(suggestionOf()).toBeNull()
+
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'prompt_suggestion', suggestion: 'push it' })
+    store.stopGeneration(TEST_SESSION_ID)
+    expect(suggestionOf()).toBeNull()
+
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'prompt_suggestion', suggestion: 'push it' })
+    store.clearMessages(TEST_SESSION_ID)
+    expect(suggestionOf()).toBeNull()
+  })
+})
+
 // #1108: a background (async) agent's tool activity bubbles into the main
 // message stream carrying parentToolUseId, but MessageList folds those into
 // the agent card instead of rendering them inline. Merging streamed blocks
 // against the raw array tail therefore chopped one continuous thinking block
 // (or reply) into several, with nothing visible in between.
-describe('chatStore runtime switching', () => {
-  beforeEach(() => {
-    sendMock.mockReset()
-    useSessionRuntimeStore.setState({
-      selections: {},
-      runtimeRequestStatusBySessionId: {},
-    })
-    useChatStore.setState({
-      ...initialState,
-      sessions: {
-        [TEST_SESSION_ID]: makeSession({ chatState: 'idle' }),
-      },
-    })
-  })
-
-  it('marks a runtime request pending when it sends set_runtime_config', () => {
-    const selection = {
-      providerId: 'provider-b',
-      modelId: 'model-b',
-      effortLevel: 'high' as const,
-    }
-
-    useChatStore.getState().setSessionRuntime(TEST_SESSION_ID, selection)
-
-    expect(sendMock).toHaveBeenCalledWith(TEST_SESSION_ID, {
-      type: 'set_runtime_config',
-      ...selection,
-    })
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
-      [TEST_SESSION_ID]: 'pending',
-    })
-  })
-
-  it('marks only a pending runtime request failed after a runtime configuration rejection', () => {
-    const store = useChatStore.getState()
-    store.setSessionRuntime(TEST_SESSION_ID, {
-      providerId: 'provider-b',
-      modelId: 'model-b',
-    })
-    store.handleServerMessage(TEST_SESSION_ID, {
-      type: 'error',
-      code: 'RUNTIME_CONFIG_INVALID',
-      message: 'runtime configuration is invalid',
-    })
-
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
-      [TEST_SESSION_ID]: 'failed',
-    })
-
-    useSessionRuntimeStore.setState({
-      runtimeRequestStatusBySessionId: {},
-    })
-    store.handleServerMessage(TEST_SESSION_ID, {
-      type: 'error',
-      code: 'RUNTIME_CONFIG_INVALID',
-      message: 'unrelated runtime configuration rejection',
-    })
-
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({})
-  })
-
-  it('does not attribute a generic CLI restart failure to a runtime request', () => {
-    const store = useChatStore.getState()
-    store.setSessionRuntime(TEST_SESSION_ID, {
-      providerId: 'provider-b',
-      modelId: 'model-b',
-    })
-
-    store.handleServerMessage(TEST_SESSION_ID, {
-      type: 'error',
-      code: 'CLI_RESTART_FAILED',
-      message: 'restart failed',
-    })
-
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
-      [TEST_SESSION_ID]: 'pending',
-    })
-  })
-
-  it('marks an idle runtime request unconfirmed instead of applied', () => {
-    const store = useChatStore.getState()
-    store.setSessionRuntime(TEST_SESSION_ID, {
-      providerId: 'provider-b',
-      modelId: 'model-b',
-    })
-
-    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
-
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
-      [TEST_SESSION_ID]: 'unconfirmed',
-    })
-  })
-
-  it('marks an unconfirmed runtime request failed after a delayed runtime configuration rejection', () => {
-    const store = useChatStore.getState()
-    store.setSessionRuntime(TEST_SESSION_ID, {
-      providerId: 'provider-b',
-      modelId: 'model-b',
-    })
-    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
-
-    store.handleServerMessage(TEST_SESSION_ID, {
-      type: 'error',
-      code: 'RUNTIME_CONFIG_INVALID',
-      message: 'runtime configuration is invalid',
-    })
-
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
-      [TEST_SESSION_ID]: 'failed',
-    })
-  })
-
-  it('keeps a rejected runtime request failed after trailing idle status', () => {
-    const store = useChatStore.getState()
-    store.setSessionRuntime(TEST_SESSION_ID, {
-      providerId: 'provider-b',
-      modelId: 'model-b',
-    })
-    store.handleServerMessage(TEST_SESSION_ID, {
-      type: 'error',
-      code: 'RUNTIME_CONFIG_INVALID',
-      message: 'runtime configuration is invalid',
-    })
-
-    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
-
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
-      [TEST_SESSION_ID]: 'failed',
-    })
-  })
-
-  it('allows a programmatic runtime request to become pending after a rejection or unconfirmed result', () => {
-    const store = useChatStore.getState()
-    const selection = { providerId: 'provider-b', modelId: 'model-b' }
-
-    store.setSessionRuntime(TEST_SESSION_ID, selection)
-    store.handleServerMessage(TEST_SESSION_ID, {
-      type: 'error',
-      code: 'RUNTIME_CONFIG_INVALID',
-      message: 'runtime configuration is invalid',
-    })
-    store.setSessionRuntime(TEST_SESSION_ID, selection)
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
-      [TEST_SESSION_ID]: 'pending',
-    })
-
-    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
-    store.setSessionRuntime(TEST_SESSION_ID, selection)
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
-      [TEST_SESSION_ID]: 'pending',
-    })
-  })
-})
-
 describe('chatStore background agent activity interleaving', () => {
   beforeEach(() => {
     useChatStore.setState({
@@ -695,6 +608,7 @@ describe('chatStore history mapping', () => {
     fetchSessionTasksMock.mockReset()
     clearTasksMock.mockReset()
     setTasksFromTodosMock.mockReset()
+    restoreTasksMock.mockReset()
     markCompletedAndDismissedMock.mockReset()
     resetCompletedTasksMock.mockReset()
     refreshTasksMock.mockReset()
@@ -1935,6 +1849,90 @@ describe('chatStore history mapping', () => {
       .toBeUndefined()
   })
 
+  it.each(['Bash:0', 'root-shell-task'])(
+    'restores a stopped shell on cold load with terminal toolUseId %s',
+    async (toolUseId) => {
+      vi.mocked(sessionsApi.getFullHistory).mockResolvedValueOnce({
+        messages: [
+          {
+            id: 'root-shell-use',
+            type: 'assistant',
+            timestamp: '2026-04-06T00:00:00.000Z',
+            content: [{
+              type: 'tool_use',
+              id: 'Bash:0',
+              name: 'Bash',
+              input: { command: 'bun test', run_in_background: true },
+            }],
+          },
+          {
+            id: 'root-shell-result',
+            type: 'tool_result',
+            timestamp: '2026-04-06T00:00:01.000Z',
+            content: [{
+              type: 'tool_result',
+              tool_use_id: 'Bash:0',
+              content: 'Command running in background with ID: root-shell-task',
+            }],
+          },
+        ],
+        taskNotifications: [
+          {
+            taskId: 'root-shell-task',
+            toolUseId,
+            status: 'stopped',
+            summary: 'Background task stopped',
+            timestamp: '2026-04-06T00:00:02.000Z',
+          },
+          {
+            taskId: 'root-shell-task',
+            toolUseId: 'unrelated-shell-tool',
+            status: 'failed',
+            summary: 'A task ID match must not override an unrelated real tool anchor',
+            timestamp: '2026-04-06T00:00:03.000Z',
+          },
+          {
+            taskId: 'root-shell-task',
+            toolUseId: 'root-shell-task',
+            ownerAgentId: 'child-agent',
+            status: 'failed',
+            summary: 'An owned child notification must not replace the root outcome',
+            timestamp: '2026-04-06T00:00:03.000Z',
+          },
+          {
+            taskId: 'unjoined-child-task',
+            toolUseId: 'unjoined-child-task',
+            status: 'stopped',
+            summary: 'An unowned task with no root transcript anchor must stay excluded',
+          },
+        ],
+      })
+      useChatStore.setState({
+        sessions: {
+          [TEST_SESSION_ID]: makeSession({ messages: [] }),
+        },
+      })
+
+      await useChatStore.getState().loadHistory(TEST_SESSION_ID)
+
+      const session = useChatStore.getState().sessions[TEST_SESSION_ID]
+      expect(session?.backgroundAgentTasks?.['root-shell-task']).toMatchObject({
+        taskId: 'root-shell-task',
+        toolUseId: 'Bash:0',
+        status: 'stopped',
+        summary: 'Background task stopped',
+      })
+      expect(session?.agentTaskNotifications?.['Bash:0']).toMatchObject({
+        taskId: 'root-shell-task',
+        toolUseId: 'Bash:0',
+        status: 'stopped',
+      })
+      expect(session?.agentTaskNotifications?.['root-shell-task']).toBeUndefined()
+      expect(session?.agentTaskNotifications?.['unrelated-shell-tool']).toBeUndefined()
+      expect(session?.backgroundAgentTasks?.['unjoined-child-task']).toBeUndefined()
+    },
+  )
+
   it('does not assign an unjoined child notification to the root run', async () => {
     vi.mocked(sessionsApi.getFullHistory).mockResolvedValueOnce({
       messages: [{
@@ -2303,6 +2301,134 @@ describe('chatStore history mapping', () => {
       }
     },
   )
+
+  it('drops the tool calls a retried stream attempt finished streaming but never ran', () => {
+    const send = (message: ServerMessage) =>
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, message)
+    const planBeforeAttempt = [{ id: '1', subject: 'Earlier plan', status: 'in_progress' }]
+    cliTaskStoreSnapshot.sessionId = TEST_SESSION_ID
+    cliTaskStoreSnapshot.tasks = planBeforeAttempt
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          chatState: 'thinking',
+          messages: [
+            { id: 'user-1', type: 'user_text', content: 'Fix the build', timestamp: 1 },
+            {
+              id: 'earlier-read',
+              type: 'tool_use',
+              toolName: 'Read',
+              toolUseId: 'toolu_earlier_read',
+              input: { file_path: 'build.log' },
+              timestamp: 2,
+              isPending: false,
+            },
+            {
+              id: 'earlier-read-result',
+              type: 'tool_result',
+              toolUseId: 'toolu_earlier_read',
+              content: 'error TS2322',
+              isError: false,
+              timestamp: 3,
+            },
+            // From an earlier turn, before this attempt: never this retry's to drop.
+            {
+              id: 'earlier-unresolved',
+              type: 'tool_use',
+              toolName: 'Bash',
+              toolUseId: 'toolu_earlier_unresolved',
+              input: { command: 'ls' },
+              timestamp: 4,
+              isPending: false,
+            },
+          ],
+        }),
+      },
+    })
+
+    send({ type: 'status', state: 'thinking', attemptStart: true })
+    // The server completes a call at its block stop, before message_stop.
+    send({ type: 'content_start', blockType: 'tool_use', toolName: 'TodoWrite', toolUseId: 'toolu_ghost_todo' })
+    send({
+      type: 'tool_use_complete',
+      toolName: 'TodoWrite',
+      toolUseId: 'toolu_ghost_todo',
+      input: { todos: [{ content: 'Plan from the discarded attempt', status: 'in_progress' }] },
+    })
+    send({ type: 'content_start', blockType: 'tool_use', toolName: 'Bash', toolUseId: 'toolu_ghost_bash' })
+    send({
+      type: 'tool_use_complete',
+      toolName: 'Bash',
+      toolUseId: 'toolu_ghost_bash',
+      input: { command: 'npm run build' },
+    })
+    // A call that did run keeps its card, as does a sub-agent's call still
+    // running in the same window: only the root request is being retried.
+    send({ type: 'tool_use_complete', toolName: 'Grep', toolUseId: 'toolu_ran', input: { pattern: 'TS2322' } })
+    send({ type: 'tool_result', toolUseId: 'toolu_ran', content: 'src/a.ts', isError: false })
+    send({
+      type: 'tool_use_complete',
+      toolName: 'Read',
+      toolUseId: 'toolu_agent/toolu_child',
+      input: { file_path: 'src/a.ts' },
+      parentToolUseId: 'toolu_agent',
+    })
+    send({ type: 'content_start', blockType: 'tool_use', toolName: 'Edit', toolUseId: 'toolu_partial' })
+
+    send({ type: 'streaming_fallback', cause: 'stream_retry' })
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]
+    const toolCards = session?.messages
+      .filter((message): message is Extract<UIMessage, { type: 'tool_use' }> => message.type === 'tool_use')
+      .map((message) => message.toolUseId)
+    expect(toolCards).toEqual([
+      'toolu_earlier_read',
+      'toolu_earlier_unresolved',
+      'toolu_ran',
+      'toolu_agent/toolu_child',
+    ])
+    expect(session?.messages.filter((message) => message.type === 'tool_result')).toHaveLength(2)
+    expect(session?.chatState).toBe('thinking')
+    // The plan the discarded TodoWrite showed early is taken back.
+    expect(setTasksFromTodosMock).toHaveBeenCalledTimes(1)
+    expect(restoreTasksMock).toHaveBeenCalledWith({
+      sessionId: TEST_SESSION_ID,
+      tasks: planBeforeAttempt,
+      completedAndDismissed: false,
+      dismissedCompletionKey: null,
+    })
+  })
+
+  it('keeps a TodoWrite that ran when a later stream attempt is retried', () => {
+    const send = (message: ServerMessage) =>
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, message)
+    cliTaskStoreSnapshot.sessionId = TEST_SESSION_ID
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          chatState: 'thinking',
+          messages: [{ id: 'user-1', type: 'user_text', content: 'Plan the work', timestamp: 1 }],
+        }),
+      },
+    })
+
+    send({ type: 'status', state: 'thinking', attemptStart: true })
+    send({
+      type: 'tool_use_complete',
+      toolName: 'TodoWrite',
+      toolUseId: 'toolu_plan',
+      input: { todos: [{ content: 'Committed plan', status: 'in_progress' }] },
+    })
+    send({ type: 'tool_result', toolUseId: 'toolu_plan', content: 'Todos have been modified', isError: false })
+    send({ type: 'status', state: 'thinking', attemptStart: true })
+    send({ type: 'streaming_fallback', cause: 'stream_retry' })
+
+    expect(restoreTasksMock).not.toHaveBeenCalled()
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages
+      .filter((message) => message.type === 'tool_use')
+      .map((message) => message.type === 'tool_use' ? message.toolUseId : ''))
+      .toEqual(['toolu_plan'])
+  })
 
   it('treats the first history load as cold when a live task arrived before it started', async () => {
     const sessionId = 'cold-live-before-load'
@@ -3175,6 +3301,35 @@ describe('chatStore history mapping', () => {
     expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.tokenUsage).toEqual({
       input_tokens: 110,
       output_tokens: 320,
+      cache_read_tokens: 1_000,
+    })
+  })
+
+  it('counts the final usage of a reply whose first content-block line carried zero output', async () => {
+    const line = (id: string, usage: MessageEntry['usage']) => ({
+      id,
+      type: 'assistant' as const,
+      timestamp: '2026-08-31T00:00:00.000Z',
+      content: [{ type: 'text', text: id }],
+      usage,
+      usageKey: 'msg_zero_first\0req_zero_first',
+    })
+    vi.mocked(sessionsApi.getFullHistory).mockResolvedValueOnce({
+      messages: [
+        line('a1', { input_tokens: 100, output_tokens: 0, cache_read_input_tokens: 1_000 }),
+        line('a2', { input_tokens: 100, output_tokens: 5, cache_read_input_tokens: 1_000 }),
+        line('a3', { input_tokens: 100, output_tokens: 250, cache_read_input_tokens: 1_000 }),
+      ] as never,
+    })
+    useChatStore.setState({
+      sessions: { [TEST_SESSION_ID]: makeSession({ messages: [] }) },
+    })
+
+    await useChatStore.getState().loadHistory(TEST_SESSION_ID)
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.tokenUsage).toEqual({
+      input_tokens: 100,
+      output_tokens: 250,
       cache_read_tokens: 1_000,
     })
   })
@@ -4180,6 +4335,85 @@ describe('chatStore history mapping', () => {
     })
   })
 
+  it('restores a background shell stopped by TaskStop when no notification was recorded', () => {
+    const shellStart = (toolUseId: string, taskId: string, minute: number): MessageEntry[] => [
+      {
+        id: `${toolUseId}-use`,
+        type: 'assistant',
+        timestamp: `2026-04-06T00:0${minute}:00.000Z`,
+        content: [{
+          type: 'tool_use',
+          id: toolUseId,
+          name: 'Bash',
+          input: { command: 'bun run dev', description: `Start ${taskId}`, run_in_background: true },
+        }],
+      },
+      {
+        id: `${toolUseId}-result`,
+        type: 'tool_result',
+        timestamp: `2026-04-06T00:0${minute}:01.000Z`,
+        content: [{
+          type: 'tool_result',
+          tool_use_id: toolUseId,
+          content: `Command running in background with ID: ${taskId}. Output is being written to: /tmp/${taskId}.output`,
+        }],
+      },
+    ]
+    const taskStop = (
+      toolUseId: string,
+      taskId: string,
+      minute: number,
+      isError = false,
+    ): MessageEntry[] => [
+      {
+        id: `${toolUseId}-use`,
+        type: 'assistant',
+        timestamp: `2026-04-06T00:0${minute}:00.000Z`,
+        content: [{ type: 'tool_use', id: toolUseId, name: 'TaskStop', input: { task_id: taskId } }],
+      },
+      {
+        id: `${toolUseId}-result`,
+        type: 'tool_result',
+        timestamp: `2026-04-06T00:0${minute}:01.000Z`,
+        content: [{
+          type: 'tool_result',
+          tool_use_id: toolUseId,
+          // The CLI records the stop as a JSON string and leaves no task-notification.
+          content: isError
+            ? 'No task found with ID: ' + taskId
+            : JSON.stringify({
+              message: `Successfully stopped task: ${taskId} (bun run dev)`,
+              task_id: taskId,
+              task_type: 'local_bash',
+              command: 'bun run dev',
+            }),
+          ...(isError ? { is_error: true } : {}),
+        }],
+      },
+    ]
+
+    const restored = reconstructRunActivityFromTranscript([
+      ...shellStart('shell-tool-stopped', 'stopped-task', 0),
+      ...shellStart('shell-tool-live', 'live-task', 1),
+      ...taskStop('stop-tool-1', 'stopped-task', 2),
+      ...taskStop('stop-tool-2', 'live-task', 3, true),
+      ...taskStop('stop-tool-3', 'unknown-task', 4),
+    ])
+
+    expect(restored.backgroundAgentTasks['stopped-task']).toMatchObject({
+      taskId: 'stopped-task',
+      toolUseId: 'shell-tool-stopped',
+      status: 'stopped',
+      description: 'Start stopped-task',
+      taskType: 'local_bash',
+    })
+    expect(restored.backgroundAgentTasks['live-task']?.status).toBe('running')
+    expect(restored.backgroundAgentTasks['unknown-task']).toBeUndefined()
+    expect(hasRunningBackgroundTasks({
+      'stopped-task': restored.backgroundAgentTasks['stopped-task']!,
+    })).toBe(false)
+  })
+
   it('recognizes manually backgrounded PowerShell from structured tool output', () => {
     const restored = reconstructRunActivityFromTranscript([
       {
@@ -4312,6 +4546,29 @@ describe('chatStore history mapping', () => {
       },
     ])
     expect(mapped[2]).not.toHaveProperty('teammateFrom')
+  })
+
+  it.each([false, true])('preserves mailbox envelopes when projecting a batch (blocks=%s)', (asBlocks) => {
+    const envelopes = [
+      '<teammate-message teammate_id="peer">peer note</teammate-message>',
+      '<teammate-message teammate_id="user">repeat</teammate-message>',
+      '<teammate-message teammate_id="user">repeat</teammate-message>',
+    ]
+    const content = envelopes.join('\n\n')
+    const mapped = mapHistoryMessagesToUiMessages([{
+      id: 'batch',
+      type: 'user',
+      timestamp: '2026-10-26T00:00:00.000Z',
+      content: asBlocks ? [{ type: 'text', text: content }] : content,
+    }], { includeTeammateMessages: true })
+
+    expect(mapped).toHaveLength(1)
+    expect(mapped[0]).toMatchObject({
+      type: 'user_text',
+      transcriptMessageId: 'batch',
+      modelContent: content,
+    })
+    expect(mapped[0]?.type === 'user_text' && mapped[0].content).not.toContain('<teammate-message')
   })
 
   it('preserves source user ids when restoring array-content user prompts', () => {
@@ -5604,46 +5861,7 @@ describe('chatStore history mapping', () => {
     expect(refreshTasksMock).not.toHaveBeenCalled()
   })
 
-  it('does not sync parent-linked SubAgent task tools into the session task store', () => {
-    const childTodos = [{ content: 'SubAgent internal task', status: 'in_progress' }]
-    useChatStore.setState({
-      sessions: {
-        [TEST_SESSION_ID]: makeSession({ chatState: 'tool_executing' }),
-      },
-    })
-
-    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
-      type: 'tool_use_complete',
-      toolName: 'TodoWrite',
-      toolUseId: 'agent-tool-1/todo-child',
-      input: { todos: childTodos },
-      parentToolUseId: 'agent-tool-1',
-    })
-    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
-      type: 'tool_use_complete',
-      toolName: 'TaskCreate',
-      toolUseId: 'agent-tool-1/task-child',
-      input: { subject: 'Child task' },
-      parentToolUseId: 'agent-tool-1',
-    })
-    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
-      type: 'tool_result',
-      toolUseId: 'agent-tool-1/task-child',
-      content: 'Task #2 created successfully: Child task',
-      isError: false,
-      parentToolUseId: 'agent-tool-1',
-    })
-    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
-      type: 'message_complete',
-      usage: { input_tokens: 1, output_tokens: 1 },
-    })
-
-    expect(setTasksFromTodosMock).not.toHaveBeenCalledWith(childTodos, TEST_SESSION_ID)
-    expect(refreshTasksMock).not.toHaveBeenCalled()
-  })
-
   it('replays saved runtime selection and effort when reconnecting a session', () => {
-    useSessionRuntimeStore.setState({ runtimeRequestStatusBySessionId: {} })
     sessionStoreSnapshot.sessions = [{
       id: TEST_SESSION_ID,
       title: 'New Session',
@@ -5680,7 +5898,22 @@ describe('chatStore history mapping', () => {
       ],
       [TEST_SESSION_ID, { type: 'prewarm_session' }],
     ])
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({})
+  })
+
+  it('replays OAuth Fast and confirms both enabling and disabling without treating the old ack as current', () => {
+    const enabled = { providerId: 'openai-official', modelId: 'gpt-6-sol', effortLevel: 'high' as const, openAIFastMode: true }
+    useSessionRuntimeStore.getState().setSelection(TEST_SESSION_ID, enabled)
+    useChatStore.getState().connectToSession(TEST_SESSION_ID, { prewarm: false, minimalBootstrap: true })
+    expect(sendMock).toHaveBeenCalledWith(TEST_SESSION_ID, { type: 'set_runtime_config', ...enabled })
+
+    const disabled = { ...enabled, openAIFastMode: false }
+    useSessionRuntimeStore.getState().setSelection(TEST_SESSION_ID, disabled)
+    useChatStore.getState().setSessionRuntime(TEST_SESSION_ID, disabled)
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, { type: 'runtime_config_applied', ...enabled })
+    expect(useSessionRuntimeStore.getState().selections[TEST_SESSION_ID]).toEqual(disabled)
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, { type: 'runtime_config_applied', ...disabled })
+    expect(useSessionRuntimeStore.getState().selections[TEST_SESSION_ID]).toEqual(disabled)
+    expect(sendMock).toHaveBeenLastCalledWith(TEST_SESSION_ID, { type: 'set_runtime_config', ...disabled })
   })
 
   it.each(['reconnect', 'send'] as const)('recovers a removed provider before %s without replaying its stale model or effort', (action) => {
@@ -9565,30 +9798,6 @@ describe('chatStore history mapping', () => {
     })
   })
 
-  it('ignores a stale model_config_applied event after a newer request', () => {
-    const runtime = useSessionRuntimeStore.getState()
-    runtime.setSelection(TEST_SESSION_ID, { providerId: 'provider-a', modelId: 'model-a' })
-    runtime.markRequestPending(TEST_SESSION_ID, 'request-a')
-    runtime.setSelection(TEST_SESSION_ID, { providerId: 'provider-b', modelId: 'model-b' })
-    runtime.markRequestPending(TEST_SESSION_ID, 'request-b')
-
-    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
-      type: 'model_config_applied',
-      requestId: 'request-a',
-      configId: 'config-a',
-      application: 'runtime_restart',
-      runtimeInstanceId: 'runtime-test',
-      providerId: 'provider-a',
-      modelId: 'model-a',
-    })
-
-    expect(useSessionRuntimeStore.getState().selections[TEST_SESSION_ID]).toEqual({
-      providerId: 'provider-b',
-      modelId: 'model-b',
-    })
-    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId[TEST_SESSION_ID]).toBe('pending')
-  })
-
   it('bumps context refresh only for the runtime config currently selected', () => {
     useSessionRuntimeStore.getState().setSelection(TEST_SESSION_ID, {
       providerId: 'provider-b',
@@ -9823,7 +10032,7 @@ describe('chatStore history mapping', () => {
       dedupeKey: 'permission:perm-ask-1',
       cooldownScope: 'permission-prompt',
       requestAttention: true,
-      title: 'EchoFlow Code 需要你的确认',
+      title: 'Claude Code Haha 需要你的确认',
       body: 'AskUserQuestion 请求执行，正在等待允许。',
       target: { type: 'session', sessionId: TEST_SESSION_ID },
     })
@@ -10273,19 +10482,29 @@ describe('chatStore history mapping', () => {
     expect(updateSessionPermissionModeMock).toHaveBeenCalledWith('session-1', 'acceptEdits')
   })
 
-  it('does not send permission mode updates while the session turn is active', () => {
+  it('sends permission mode updates while the session turn is running', () => {
     useChatStore.setState({
       sessions: {
-        'session-1': makeSession({ chatState: 'thinking' }),
+        'session-1': makeSession({ chatState: 'tool_executing', permissionMode: 'default' }),
       },
     })
 
-    useChatStore.getState().setSessionPermissionMode('session-1', 'acceptEdits')
+    useChatStore.getState().setSessionPermissionMode('session-1', 'bypassPermissions')
 
-    expect(sendMock).not.toHaveBeenCalledWith('session-1', {
+    expect(sendMock).toHaveBeenCalledWith('session-1', {
       type: 'set_permission_mode',
-      mode: 'acceptEdits',
+      mode: 'bypassPermissions',
     })
+    // The selector follows the server's confirmation, not the request.
+    expect(useChatStore.getState().sessions['session-1']?.permissionMode).toBe('default')
+
+    useChatStore.getState().handleServerMessage('session-1', {
+      type: 'permission_mode_changed',
+      mode: 'bypassPermissions',
+    })
+
+    expect(useChatStore.getState().sessions['session-1']?.permissionMode).toBe('bypassPermissions')
+    expect(useChatStore.getState().sessions['session-1']?.chatState).toBe('tool_executing')
   })
 
   it('mirrors CLI permission-mode broadcasts locally without echoing back to the server', () => {
@@ -10405,7 +10624,9 @@ describe('chatStore history mapping', () => {
         .filter(row => row.groupProgress)
         .map(row => row.label),
     ).toEqual(['VERIFY'])
-    expect(model.sections.backgroundTasks.rows).toEqual([])
+    expect(model.sections.backgroundTasks.rows.map(row => [row.id, row.taskId])).toEqual([
+      ['workflow-tool-resumed', 'workflow-task-resumed'],
+    ])
     expect(session.backgroundAgentTasks?.['workflow-task-resumed']?.summary).toBeUndefined()
     expect(session.backgroundAgentTasks?.['workflow-task-resumed']?.result).toBeUndefined()
     expect(session.agentTaskNotifications).toEqual({})
@@ -12351,6 +12572,68 @@ describe('chatStore history mapping', () => {
     expect(updateTabStatusMock).toHaveBeenLastCalledWith(TEST_SESSION_ID, 'running')
   })
 
+  it('carries live compaction progress on the tail divider without losing its start time', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000_000)
+      useChatStore.setState({
+        sessions: {
+          [TEST_SESSION_ID]: makeSession({
+            chatState: 'thinking',
+            messages: [{ id: 'old-user', type: 'user_text', content: 'old context', timestamp: 1 }],
+          }),
+        },
+      })
+      const store = useChatStore.getState()
+      const tailDivider = () => {
+        const messages = useChatStore.getState().sessions[TEST_SESSION_ID]?.messages ?? []
+        const dividers = messages.filter((message) => message.type === 'compact_summary')
+        expect(dividers).toHaveLength(messages.length - 1)
+        return messages[messages.length - 1]
+      }
+
+      store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'compacting', verb: 'Compacting conversation' })
+      expect(tailDivider()).toEqual(expect.objectContaining({ type: 'compact_summary', phase: 'compacting', timestamp: 1_000_000 }))
+      expect(tailDivider()).not.toHaveProperty('outputChars')
+
+      vi.setSystemTime(1_005_000)
+      store.handleServerMessage(TEST_SESSION_ID, {
+        type: 'status', state: 'compacting', verb: 'Compacting conversation', compactProgress: { outputChars: 1_200 },
+      })
+      expect(tailDivider()).toMatchObject({ phase: 'compacting', outputChars: 1_200, timestamp: 1_000_000 })
+
+      // The 30s CLI keep-alive re-sends a bare compacting status; it must not
+      // wipe the progress already shown.
+      vi.setSystemTime(1_030_000)
+      store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'compacting', verb: 'Compacting conversation' })
+      expect(tailDivider()).toMatchObject({ phase: 'compacting', outputChars: 1_200, timestamp: 1_000_000 })
+
+      store.handleServerMessage(TEST_SESSION_ID, {
+        type: 'status', state: 'compacting', verb: 'Compacting conversation', compactProgress: { outputChars: 3_400 },
+      })
+      expect(tailDivider()).toMatchObject({ outputChars: 3_400, timestamp: 1_000_000 })
+
+      store.handleServerMessage(TEST_SESSION_ID, {
+        type: 'system_notification', subtype: 'compact_boundary', message: 'Context compacted', data: { trigger: 'auto' },
+      })
+      expect(tailDivider()).toMatchObject({ phase: 'complete', trigger: 'auto', timestamp: 1_000_000 })
+      expect(tailDivider()).not.toHaveProperty('outputChars')
+
+      // A later compaction gets its own divider and start time, with no
+      // leftover progress from the finished one.
+      vi.setSystemTime(2_000_000)
+      store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'compacting', verb: 'Compacting conversation' })
+      const messages = useChatStore.getState().sessions[TEST_SESSION_ID]?.messages ?? []
+      expect(messages).toHaveLength(3)
+      expect(messages[1]).toMatchObject({ type: 'compact_summary', phase: 'complete', timestamp: 1_000_000 })
+      expect(messages[2]).toMatchObject({ type: 'compact_summary', phase: 'compacting', timestamp: 2_000_000 })
+      expect(messages[2]).not.toHaveProperty('outputChars')
+    } finally {
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
+      vi.useRealTimers()
+    }
+  })
+
   it('starts an elapsed timer when a reconnected session reports running status', () => {
     vi.useFakeTimers()
 
@@ -13653,7 +13936,7 @@ describe('chatStore history mapping', () => {
     ]))
     // The desktop notification previews the same reply the transcript shows.
     expect(notifyDesktopMock).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'EchoFlow Code 已完成回复',
+      title: 'Claude Code Haha 已完成回复',
       body: expect.stringContaining('alpha 任务完成'),
     }))
 
@@ -13963,6 +14246,8 @@ describe('chatStore history mapping', () => {
       retryDelayMs: 2500,
       errorStatus: 503,
       errorType: 'server_error',
+      errorMessage: 'Upstream service unavailable',
+      requestId: 'req-retry-123',
     })
 
     const retryingSession = useChatStore.getState().sessions[TEST_SESSION_ID]
@@ -13974,6 +14259,8 @@ describe('chatStore history mapping', () => {
       retryDelayMs: 2500,
       errorStatus: 503,
       errorType: 'server_error',
+      errorMessage: 'Upstream service unavailable',
+      requestId: 'req-retry-123',
     })
     expect(updateTabStatusMock).toHaveBeenLastCalledWith(TEST_SESSION_ID, 'running')
 
@@ -14491,7 +14778,7 @@ describe('chatStore history mapping', () => {
       dedupeKey: 'computer-use-permission:cu-1',
       cooldownScope: 'permission-prompt',
       requestAttention: true,
-      title: 'EchoFlow Code 需要你的确认',
+      title: 'Claude Code Haha 需要你的确认',
       body: 'Open Finder and inspect a file',
       target: { type: 'session', sessionId: TEST_SESSION_ID },
     })
@@ -14949,6 +15236,43 @@ describe('chatStore history mapping', () => {
     ])
   })
 
+  it.each(['simple', 'detailed'] as const)('reconciles a delayed image guide replay after history hydration (%s metadata)', async (metadataStyle) => {
+    // A guide is persisted before the CLI's first assistant record triggers its
+    // replay ACK. History can therefore restore the image metadata first.
+    const prompt = '造桥这块儿有闪烁的情况'
+    const metadata = ['first.png', 'second.png'].map((name) => metadataStyle === 'simple'
+      ? `[Image: source: /tmp/fixture-uploads/${name}]`
+      : `[Image: source: /tmp/fixture-uploads/${name}, original 1024x768, displayed at 512x384. Multiply coordinates by 2 to map to original image.]`)
+    const persistedGuide: MessageEntry = {
+      id: 'persisted-image-guide',
+      type: 'user',
+      timestamp: '2026-10-23T07:27:42.922Z',
+      content: [
+        { type: 'text', text: prompt },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'BBBB' } },
+        ...metadata.map(text => ({ type: 'text', text })),
+      ],
+    }
+    useChatStore.setState({ sessions: { [TEST_SESSION_ID]: makeSession({ chatState: 'thinking' }) } })
+    vi.mocked(sessionsApi.getFullHistory).mockResolvedValueOnce({ messages: [persistedGuide] })
+    await useChatStore.getState().loadHistory(TEST_SESSION_ID)
+    const hydrated = useChatStore.getState().sessions[TEST_SESSION_ID]!.messages[0]!
+    expect(hydrated).toMatchObject({ content: prompt, modelContent: [prompt, ...metadata].join('\n') })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_use_complete', toolUseId: 'inspect-bridge', toolName: 'Bash', input: { command: 'ls bridge-lab' },
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'user_message_replay', content: [prompt, ...metadata].join('\n'),
+    })
+
+    const messages = useChatStore.getState().sessions[TEST_SESSION_ID]!.messages
+    expect(messages.filter(message => message.type === 'user_text')).toEqual([hydrated])
+    expect(messages.map(message => message.type)).toEqual(['user_text', 'tool_use'])
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
   it('dedupes a path-backed image after the server inlines it into replay content', () => {
     const prompt = '检查这张截图'
     const imagePath = 'C:\\Users\\tester\\Desktop\\screen.png'
@@ -15360,7 +15684,7 @@ describe('chatStore history mapping', () => {
 
     expect(notifyDesktopMock).toHaveBeenCalledWith(expect.objectContaining({
       cooldownScope: 'agent-completion',
-      title: 'EchoFlow Code 已完成回复',
+      title: 'Claude Code Haha 已完成回复',
       body: '结果 修复完成 bun test 已通过',
       target: { type: 'session', sessionId: TEST_SESSION_ID },
     }))
@@ -16858,5 +17182,610 @@ describe('chatStore inactive complete-page retention', () => {
       vi.clearAllTimers()
       vi.useRealTimers()
     }
+  })
+})
+
+// Edit-and-resend must not send on a swallowed error or an obsolete response:
+// the old turn has already been removed from the server transcript.
+describe('chatStore strict history reload', () => {
+  const sessionId = 'strict-history-reload'
+  const strict = { requireApplied: true }
+  const oldMessages: UIMessage[] = [
+    { id: 'rewound-user', type: 'user_text', content: 'Removed prompt', timestamp: 1 },
+    { id: 'rewound-reply', type: 'assistant_text', content: 'Removed reply', timestamp: 2 },
+  ]
+
+  beforeEach(() => {
+    vi.mocked(sessionsApi.getFullHistory).mockReset()
+    vi.mocked(sessionsApi.getFullHistory).mockResolvedValue({ messages: [] })
+    useChatStore.setState({
+      ...initialState,
+      sessions: { [sessionId]: makeSession({ chatState: 'idle', historyHydrated: true, messages: oldMessages }) },
+    })
+  })
+
+  it('rejects a failed fetch instead of treating stale messages as refreshed', async () => {
+    const failure = new Error('History unavailable after rewind')
+    vi.mocked(sessionsApi.getFullHistory).mockRejectedValueOnce(failure)
+    await expect(useChatStore.getState().reloadHistory(sessionId, undefined, strict)).rejects.toBe(failure)
+    expect(useChatStore.getState().sessions[sessionId]?.messages).toBe(oldMessages)
+  })
+
+  it('keeps best-effort reload failures compatible for existing callers', async () => {
+    vi.mocked(sessionsApi.getFullHistory).mockRejectedValueOnce(new Error('History unavailable'))
+    await expect(useChatStore.getState().reloadHistory(sessionId)).resolves.toBeUndefined()
+    expect(useChatStore.getState().sessions[sessionId]?.messages).toBe(oldMessages)
+  })
+
+  it('resolves once complete authoritative history replaces the removed turn', async () => {
+    await expect(useChatStore.getState().reloadHistory(sessionId, undefined, strict)).resolves.toBeUndefined()
+    expect(useChatStore.getState().sessions[sessionId]?.messages).toEqual([])
+    expect(useChatStore.getState().sessions[sessionId]?.historyStatus).toBe('ready')
+  })
+
+  it('rejects a superseded response even when the transport ignores abort', async () => {
+    let resolveFirst!: (value: { messages: MessageEntry[] }) => void
+    vi.mocked(sessionsApi.getFullHistory).mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve }))
+    const rejected = expect(useChatStore.getState().reloadHistory(sessionId, undefined, strict)).rejects.toThrow('History reload was not applied')
+    await useChatStore.getState().reloadHistory(sessionId)
+    resolveFirst({ messages: [{ id: 'stale', type: 'user', content: 'Stale', timestamp: '2026-10-03T00:00:00Z' }] })
+    await rejected
+    expect(useChatStore.getState().sessions[sessionId]?.messages).toEqual([])
+  })
+
+  it('rejects a response for a disconnected session without recreating it', async () => {
+    let resolveHistory!: (value: { messages: MessageEntry[] }) => void
+    vi.mocked(sessionsApi.getFullHistory).mockReturnValueOnce(new Promise((resolve) => { resolveHistory = resolve }))
+    const rejected = expect(useChatStore.getState().reloadHistory(sessionId, undefined, strict)).rejects.toThrow('History reload was not applied')
+    useChatStore.getState().disconnectSession(sessionId)
+    resolveHistory({ messages: [] })
+    await rejected
+    expect(useChatStore.getState().sessions[sessionId]).toBeUndefined()
+  })
+
+  it('rejects a guarded reload when a live prompt changes the conversation', async () => {
+    let resolveHistory!: (value: { messages: MessageEntry[] }) => void
+    vi.mocked(sessionsApi.getFullHistory).mockReturnValueOnce(new Promise((resolve) => { resolveHistory = resolve }))
+    const rejected = expect(useChatStore.getState().reloadHistory(sessionId, { messages: oldMessages }, strict)).rejects.toThrow('History reload was not applied')
+    useChatStore.getState().handleServerMessage(sessionId, { type: 'user_message_replay', content: 'Competing prompt' })
+    const liveMessages = useChatStore.getState().sessions[sessionId]?.messages
+    resolveHistory({ messages: [] })
+    await rejected
+    expect(useChatStore.getState().sessions[sessionId]?.messages).toBe(liveMessages)
+    expect(liveMessages).toContainEqual(expect.objectContaining({ content: 'Competing prompt' }))
+  })
+
+  it('rejects incomplete history instead of retaining removed rows as authoritative', async () => {
+    vi.mocked(sessionsApi.getFullHistory).mockResolvedValueOnce({ messages: [], page: {
+      nextCursor: 'older', hasMore: true, historyComplete: false,
+      sourceVersion: 'version', scannedBytes: 2, omittedOversizedEntries: 1,
+    } })
+    await expect(useChatStore.getState().reloadHistory(sessionId, undefined, strict)).rejects.toThrow('History reload was not applied')
+    expect(useChatStore.getState().sessions[sessionId]?.messages).toBe(oldMessages)
+  })
+})
+
+describe('chatStore composer prefill references', () => {
+  const sessionId = 'prefill-references'
+
+  beforeEach(() => {
+    useChatStore.setState({ ...initialState, sessions: { [sessionId]: makeSession({ chatState: 'idle' }) } })
+  })
+
+  it('retains session context with an edited prompt handed to the composer', () => {
+    const sessionReferences = [{ sessionId: 'referenced-session' }]
+    useChatStore.getState().queueComposerPrefill(sessionId, { text: 'Edited prompt', sessionReferences })
+    expect(useChatStore.getState().sessions[sessionId]?.composerPrefill).toMatchObject({
+      text: 'Edited prompt', sessionReferences,
+    })
+  })
+
+  it('keeps the existing prefill shape when no session references were supplied', () => {
+    useChatStore.getState().queueComposerPrefill(sessionId, { text: 'Existing prefill' })
+    expect(useChatStore.getState().sessions[sessionId]?.composerPrefill).not.toHaveProperty('sessionReferences')
+  })
+})
+
+
+// A completed rewind must retain its edit even when the source tab was closed
+// while the API call was pending; delayed ordinary prefills must stay ignored.
+describe('chatStore closed-session edit recovery', () => {
+  const sessionId = 'closed-edit-recovery'
+  const prefill = {
+    text: 'Recovered edit',
+    attachments: [{ type: 'file' as const, name: 'app.ts', path: '/repo/app.ts' }],
+    sessionReferences: [{ sessionId: 'context-session' }],
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useChatStore.setState({ ...initialState, sessions: {} })
+  })
+
+  it('ignores a normal delayed prefill for a missing session', () => {
+    useChatStore.getState().queueComposerPrefill(sessionId, prefill)
+    expect(useChatStore.getState().sessions[sessionId]).toBeUndefined()
+  })
+
+  it('retains an explicitly recovered edit without opening a socket or sending it', async () => {
+    const { wsManager } = await import('../api/websocket')
+    useChatStore.getState().queueComposerPrefill(sessionId, prefill, { restoreMissingSession: true })
+    expect(useChatStore.getState().sessions[sessionId]).toMatchObject({
+      connectionState: 'disconnected', chatState: 'idle', messages: [], composerPrefill: prefill,
+    })
+    expect(wsManager.connect).not.toHaveBeenCalled()
+    expect(wsManager.send).not.toHaveBeenCalled()
+    expect(sessionsApi.getFullHistory).not.toHaveBeenCalled()
+  })
+
+  it('preserves the recovered prefill when the user reopens its disconnected session', () => {
+    useChatStore.setState({ sessions: { [sessionId]: makeSession({ connectionState: 'disconnected', chatState: 'idle' }) } })
+    useChatStore.getState().queueComposerPrefill(sessionId, prefill)
+    const recovered = useChatStore.getState().sessions[sessionId]?.composerPrefill
+    useChatStore.getState().connectToSession(sessionId, { minimalBootstrap: true, prewarm: false, applyRuntimeSelection: false })
+    expect(useChatStore.getState().sessions[sessionId]?.composerPrefill).toBe(recovered)
+    expect(useChatStore.getState().sessions[sessionId]?.connectionState).toBe('connecting')
+    expect(sessionsApi.getFullHistory).not.toHaveBeenCalled()
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('chatStore streamed turn against its durable copy (#1476)', () => {
+  const sessionId = 'streamed-turn-durable-copy'
+  const THINKING = 'This is a large change (72 files, 14k insertions).'
+  const REPLY = 'Context gathered. Setting up the loop.'
+
+  beforeEach(() => {
+    sendMock.mockReset()
+    vi.mocked(sessionsApi.getFullHistory).mockReset()
+    vi.mocked(sessionsApi.getFullHistory).mockResolvedValue({ messages: [] })
+    useChatStore.setState({ ...initialState, sessions: {} })
+  })
+
+  afterEach(() => {
+    const timer = useChatStore.getState().sessions[sessionId]?.elapsedTimer
+    if (timer) clearInterval(timer)
+    useChatStore.setState({ ...initialState, sessions: {} })
+  })
+
+  const send = (message: ServerMessage) => useChatStore.getState().handleServerMessage(sessionId, message)
+  const timeline = () => (useChatStore.getState().sessions[sessionId]?.messages ?? []).map((message) =>
+    message.type === 'thinking' || message.type === 'assistant_text' || message.type === 'user_text'
+      ? `${message.type}: ${message.content}`
+      : message.type)
+
+  // DeepSeek-style tokenization streams the gap between words as its own delta.
+  async function streamTurn() {
+    send({ type: 'thinking', text: 'This is a large change (72 files,' })
+    send({ type: 'thinking', text: ' ' })
+    send({ type: 'thinking', text: '14k insertions).' })
+    send({ type: 'content_start', blockType: 'tool_use', toolName: 'Bash', toolUseId: 'toolu_status' })
+    send({ type: 'tool_use_complete', toolName: 'Bash', toolUseId: 'toolu_status', input: { command: 'git status' } })
+    send({ type: 'tool_result', toolUseId: 'toolu_status', content: 'clean', isError: false })
+    send({ type: 'content_start', blockType: 'text' })
+    send({ type: 'content_delta', text: REPLY })
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    send({ type: 'message_complete', usage: { input_tokens: 1, output_tokens: 1 } })
+  }
+
+  // The CLI persists each block when it completes, after its first live delta.
+  function durableTurn(): MessageEntry[] {
+    const at = (offset: number) => new Date(Date.now() + offset).toISOString()
+    return [
+      { id: 'durable-user', type: 'user', timestamp: at(-60_000), content: 'review it' },
+      { id: 'durable-thinking', type: 'assistant', timestamp: at(1_000), content: [{ type: 'thinking', thinking: THINKING }] },
+      { id: 'durable-tool', type: 'assistant', timestamp: at(2_000), content: [{ type: 'tool_use', id: 'toolu_status', name: 'Bash', input: { command: 'git status' } }] },
+      { id: 'durable-result', type: 'user', timestamp: at(3_000), content: [{ type: 'tool_result', tool_use_id: 'toolu_status', content: 'clean' }] },
+      { id: 'durable-reply', type: 'assistant', timestamp: at(4_000), content: [{ type: 'text', text: REPLY }] },
+    ]
+  }
+
+  const expectedTimeline = [
+    'user_text: review it',
+    `thinking: ${THINKING}`,
+    'tool_use',
+    'tool_result',
+    `assistant_text: ${REPLY}`,
+  ]
+
+  function touchLiveMessages() {
+    useChatStore.setState((state) => ({
+      sessions: {
+        ...state.sessions,
+        [sessionId]: { ...state.sessions[sessionId]!, messages: [...state.sessions[sessionId]!.messages] },
+      },
+    }))
+  }
+
+  it('keeps whitespace-only thinking deltas that continue a streaming block', () => {
+    useChatStore.setState({ sessions: { [sessionId]: makeSession({ chatState: 'thinking' }) } })
+
+    send({ type: 'thinking', text: '\n\n' })
+    send({ type: 'thinking', text: 'first' })
+    send({ type: 'thinking', text: '\n\n' })
+    send({ type: 'thinking', text: 'second' })
+    send({ type: 'thinking', text: '  ', complete: true })
+
+    expect(useChatStore.getState().sessions[sessionId]?.messages).toMatchObject([
+      { type: 'thinking', content: 'first\n\nsecond' },
+    ])
+  })
+
+  it('does not duplicate the streamed turn when completion runs a cold history load', async () => {
+    useChatStore.setState({ sessions: { [sessionId]: makeSession({
+      chatState: 'thinking',
+      historyHydrated: false,
+      historyStatus: 'error',
+      messages: [{ id: 'live-user', type: 'user_text', content: 'review it', timestamp: Date.now() - 60_000 }],
+    }) } })
+    let resolveHistory!: (value: { messages: MessageEntry[] }) => void
+    vi.mocked(sessionsApi.getFullHistory).mockReturnValueOnce(new Promise((resolve) => {
+      resolveHistory = resolve
+    }))
+
+    await streamTurn()
+    // Live activity (for example a background agent row) lands while REST is
+    // in flight, so the cold merge cannot hydrate transcript ids first.
+    touchLiveMessages()
+    resolveHistory({ messages: durableTurn() })
+    await vi.waitFor(() => expect(useChatStore.getState().sessions[sessionId]?.historyHydrated).toBe(true))
+
+    expect(timeline()).toEqual(expectedTimeline)
+  })
+
+  it('does not duplicate the streamed turn when a bounded reload merges it', async () => {
+    useChatStore.setState({ sessions: { [sessionId]: makeSession({
+      chatState: 'thinking',
+      historyHydrated: true,
+      historyStatus: 'ready',
+      messages: [{ id: 'live-user', type: 'user_text', content: 'review it', timestamp: Date.now() - 60_000, transcriptMessageId: 'durable-user' }],
+    }) } })
+    vi.mocked(sessionsApi.getFullHistory).mockResolvedValueOnce({ messages: durableTurn() })
+    await streamTurn()
+    await vi.waitFor(() => expect(sessionsApi.getFullHistory).toHaveBeenCalledTimes(1))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    let resolveHistory!: (value: SessionHistoryPage) => void
+    vi.mocked(sessionsApi.getFullHistory).mockReturnValueOnce(new Promise((resolve) => {
+      resolveHistory = resolve
+    }))
+    const session = useChatStore.getState().sessions[sessionId]!
+    const reload = useChatStore.getState().reloadHistory(sessionId, {
+      messages: session.messages,
+      backgroundAgentTasks: session.backgroundAgentTasks,
+    })
+    await vi.waitFor(() => expect(sessionsApi.getFullHistory).toHaveBeenCalledTimes(2))
+    // An oversized tool result was omitted, so the page is not authoritative.
+    resolveHistory({
+      messages: durableTurn(),
+      page: {
+        historyComplete: false,
+        omittedOversizedEntries: 1,
+        contentTruncated: false,
+        nextCursor: null,
+        hasMore: false,
+      },
+    } as SessionHistoryPage)
+    await reload
+
+    expect(timeline()).toEqual(expectedTimeline)
+  })
+
+  it('keeps an identical reply to a newer live prompt beside the durable one', async () => {
+    const now = Date.now()
+    useChatStore.setState({ sessions: { [sessionId]: makeSession({
+      chatState: 'idle',
+      historyHydrated: false,
+      historyStatus: 'error',
+      messages: [
+        { id: 'live-tool', type: 'tool_use', toolName: 'Bash', toolUseId: 'toolu_status', input: {}, timestamp: now - 3_000 },
+        { id: 'live-result', type: 'tool_result', toolUseId: 'toolu_status', content: 'clean', isError: false, timestamp: now - 2_000 },
+        { id: 'live-again', type: 'user_text', content: 'again', timestamp: now - 1_000 },
+        { id: 'live-done', type: 'assistant_text', content: 'Done.', timestamp: now },
+      ],
+    }) } })
+    let resolveHistory!: (value: { messages: MessageEntry[] }) => void
+    vi.mocked(sessionsApi.getFullHistory).mockReturnValueOnce(new Promise((resolve) => {
+      resolveHistory = resolve
+    }))
+
+    const load = useChatStore.getState().loadHistory(sessionId)
+    touchLiveMessages()
+    const at = (offset: number) => new Date(now + offset).toISOString()
+    resolveHistory({ messages: [
+      { id: 'durable-user', type: 'user', timestamp: at(-5_000), content: 'review it' },
+      { id: 'durable-tool', type: 'assistant', timestamp: at(-3_000), content: [{ type: 'tool_use', id: 'toolu_status', name: 'Bash', input: {} }] },
+      { id: 'durable-result', type: 'user', timestamp: at(-2_000), content: [{ type: 'tool_result', tool_use_id: 'toolu_status', content: 'clean' }] },
+      { id: 'durable-done', type: 'assistant', timestamp: at(-1_500), content: [{ type: 'text', text: 'Done.' }] },
+    ] })
+    await load
+
+    expect(timeline()).toEqual([
+      'user_text: review it',
+      'tool_use',
+      'tool_result',
+      'assistant_text: Done.',
+      'user_text: again',
+      'assistant_text: Done.',
+    ])
+  })
+})
+
+describe('chatStore discardUnconfirmedUserMessage', () => {
+  const sessionId = 'discard-unconfirmed'
+  const lost: UIMessage = { id: 'lost', type: 'user_text', content: 'Build a pgae', awaitingReplay: true, timestamp: 1 }
+
+  function seed(messages: UIMessage[], chatState: 'idle' | 'thinking' = 'idle') {
+    useChatStore.setState({ ...initialState, sessions: { [sessionId]: makeSession({ chatState, messages }) } })
+  }
+  const messageIds = () => useChatStore.getState().sessions[sessionId]!.messages.map((message) => message.id)
+
+  it('removes the unacknowledged prompt together with the markers that followed it', () => {
+    seed([
+      { id: 'earlier', type: 'user_text', content: 'Hi', transcriptMessageId: 't0', timestamp: 0 },
+      { id: 'earlier-reply', type: 'assistant_text', content: 'Hello', timestamp: 0 },
+      lost,
+      { id: 'stopped', type: 'system', content: 'Stopped', generationStopped: true, timestamp: 2 },
+    ])
+    expect(useChatStore.getState().discardUnconfirmedUserMessage(sessionId, 'lost')).toBe(true)
+    expect(messageIds()).toEqual(['earlier', 'earlier-reply'])
+  })
+
+  it.each([
+    ['acknowledged by the CLI', [{ ...lost, awaitingReplay: undefined } as UIMessage]],
+    ['already in the transcript', [{ ...lost, transcriptMessageId: 't1' } as UIMessage]],
+    ['answered by the model', [lost, { id: 'reply', type: 'assistant_text', content: 'Hi', timestamp: 2 } as UIMessage]],
+    ['followed by another turn', [lost, { id: 'next', type: 'user_text', content: 'Next', timestamp: 2 } as UIMessage]],
+  ])('leaves a prompt that is %s untouched', (_name, messages) => {
+    seed(messages)
+    const before = messageIds()
+    expect(useChatStore.getState().discardUnconfirmedUserMessage(sessionId, 'lost')).toBe(false)
+    expect(messageIds()).toEqual(before)
+  })
+
+  it('does nothing while the session is running or for an unknown message', () => {
+    seed([lost], 'thinking')
+    expect(useChatStore.getState().discardUnconfirmedUserMessage(sessionId, 'lost')).toBe(false)
+    seed([lost])
+    expect(useChatStore.getState().discardUnconfirmedUserMessage(sessionId, 'missing')).toBe(false)
+    expect(messageIds()).toEqual(['lost'])
+  })
+})
+
+describe('chatStore background-continue notice (#1674)', () => {
+  const sessionId = 'background-continue-notice'
+  // Frames below are copied from a real desktop server + CLI run (DeepSeek
+  // Flash): a run_in_background Bash command finished after the turn ended.
+  const SHELL_SUMMARY = 'Background command "Sleep 20s then print BG_DONE_7731" completed (exit code 0)'
+  const REPLY = '后台任务已完成（退出码 0），输出为 `BG_DONE_7731`。'
+
+  beforeEach(() => {
+    vi.mocked(sessionsApi.getFullHistory).mockReset()
+    vi.mocked(sessionsApi.getFullHistory).mockResolvedValue({ messages: [] })
+    useChatStore.setState({ ...initialState, sessions: {} })
+  })
+
+  afterEach(() => {
+    const timer = useChatStore.getState().sessions[sessionId]?.elapsedTimer
+    if (timer) clearInterval(timer)
+    useChatStore.setState({ ...initialState, sessions: {} })
+  })
+
+  const send = (message: ServerMessage) => useChatStore.getState().handleServerMessage(sessionId, message)
+  const messages = () => useChatStore.getState().sessions[sessionId]?.messages ?? []
+  const notices = () => messages().filter((message) =>
+    message.type === 'system' && message.backgroundContinueTaskIds !== undefined)
+  const timeline = () => messages().map((message) =>
+    message.type === 'system' || message.type === 'thinking' || message.type === 'assistant_text' || message.type === 'user_text'
+      ? `${message.type}: ${message.content}`
+      : message.type)
+
+  function seedIdle(overrides: Partial<PerSessionState> = {}) {
+    useChatStore.setState({ sessions: { [sessionId]: makeSession({
+      chatState: 'idle',
+      historyHydrated: true,
+      historyStatus: 'ready',
+      messages: [
+        { id: 'user-1', type: 'user_text', content: 'start it in the background', timestamp: 1, transcriptMessageId: 'durable-user' },
+        { id: 'reply-1', type: 'assistant_text', content: '已在后台启动', timestamp: 2, transcriptMessageId: 'durable-started' },
+      ],
+      ...overrides,
+    }) } })
+  }
+
+  function startTask(taskId: string, taskType: string, description: string) {
+    send({
+      type: 'system_notification',
+      subtype: 'task_started',
+      message: description,
+      data: { type: 'system', subtype: 'task_started', task_id: taskId, tool_use_id: `call_${taskId}`, description, task_type: taskType },
+    })
+  }
+
+  function endTask(taskId: string, status: 'completed' | 'failed' | 'stopped', summary: string) {
+    send({
+      type: 'system_notification',
+      subtype: 'task_notification',
+      data: { type: 'system', subtype: 'task_notification', task_id: taskId, tool_use_id: `call_${taskId}`, status, output_file: '', summary },
+    })
+  }
+
+  // What the CLI streams when it re-enters the model on its own.
+  function cliStartedTurn(reply: string) {
+    send({ type: 'system_notification', subtype: 'init', message: 'Model: deepseek-flash', data: { model: 'deepseek-flash' } })
+    send({ type: 'status', state: 'thinking', attemptStart: true })
+    send({ type: 'status', state: 'thinking', verb: 'Thinking' })
+    send({ type: 'thinking', text: 'The background command completed.' })
+    send({ type: 'content_start', blockType: 'text' })
+    send({ type: 'content_delta', text: reply })
+    send({ type: 'message_complete', usage: { input_tokens: 212, output_tokens: 157 } })
+    send({ type: 'system_notification', subtype: 'session_state_changed', data: { type: 'system', subtype: 'session_state_changed', state: 'idle' } })
+  }
+
+  it('says which background task reopened an idle session, in the real frame order', async () => {
+    seedIdle()
+    vi.mocked(sessionsApi.getFullHistory).mockResolvedValue({ messages: [
+      { id: 'durable-user', type: 'user', timestamp: '2026-11-02T01:00:00.000Z', content: 'start it in the background' },
+      { id: 'durable-started', type: 'assistant', timestamp: '2026-11-02T01:00:01.000Z', content: [{ type: 'text', text: '已在后台启动' }] },
+      {
+        id: 'durable-notification',
+        type: 'system',
+        timestamp: '2026-11-02T01:00:21.000Z',
+        content: { subtype: 'background_continue', notifications: [{ taskId: 'ba2prl5qw', status: 'completed', summary: SHELL_SUMMARY }] },
+      },
+      { id: 'durable-thinking', type: 'assistant', timestamp: '2026-11-02T01:00:22.000Z', content: [{ type: 'thinking', thinking: 'The background command completed.' }] },
+      { id: 'durable-reply', type: 'assistant', timestamp: '2026-11-02T01:00:23.000Z', content: [{ type: 'text', text: REPLY }] },
+    ] })
+    startTask('ba2prl5qw', 'local_bash', 'Sleep 20s then print BG_DONE_7731')
+    endTask('ba2prl5qw', 'completed', SHELL_SUMMARY)
+    cliStartedTurn(REPLY)
+
+    const expected = [
+      'user_text: start it in the background',
+      'assistant_text: 已在后台启动',
+      `system: ${t('chat.backgroundContinue', { summary: SHELL_SUMMARY })}`,
+      'thinking: The background command completed.',
+      `assistant_text: ${REPLY}`,
+    ]
+    expect(timeline().filter((row) => row !== 'background_task')).toEqual(expected)
+    expect(useChatStore.getState().sessions[sessionId]?.pendingBackgroundContinue).toEqual([])
+
+    // The completion reload brings the transcript copy; one line remains.
+    await vi.waitFor(() => expect(sessionsApi.getFullHistory).toHaveBeenCalled())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(timeline().filter((row) => row !== 'background_task')).toEqual(expected)
+  })
+
+  it('adds no notice to a turn the user started, even with a result pending', () => {
+    seedIdle()
+    startTask('agent-a', 'local_agent', 'Review API')
+    endTask('agent-a', 'completed', 'Agent "Review API" completed')
+
+    useChatStore.getState().sendMessage(sessionId, 'what did the agent find?')
+    send({ type: 'status', state: 'thinking', attemptStart: true })
+    send({ type: 'content_start', blockType: 'text' })
+    send({ type: 'content_delta', text: 'It found two issues.' })
+    send({ type: 'message_complete', usage: { input_tokens: 1, output_tokens: 1 } })
+
+    expect(notices()).toEqual([])
+  })
+
+  it('does not credit a stopped shell, whose result never reaches the model', () => {
+    seedIdle()
+    startTask('dev-server', 'local_bash', 'npm run dev')
+    // stopTask suppresses the shell notification and only emits this bookend.
+    endTask('dev-server', 'stopped', 'npm run dev')
+    startTask('tests', 'local_bash', 'npm test')
+    endTask('tests', 'completed', 'Background command "npm test" completed (exit code 0)')
+    cliStartedTurn('Tests pass.')
+
+    expect(notices()).toMatchObject([{
+      content: t('chat.backgroundContinue', { summary: 'Background command "npm test" completed (exit code 0)' }),
+      backgroundContinueTaskIds: ['tests'],
+    }])
+  })
+
+  it('credits a stopped agent, which still reports its partial result', () => {
+    seedIdle()
+    startTask('agent-b', 'local_agent', 'Review UI')
+    endTask('agent-b', 'stopped', 'Agent "Review UI" was stopped')
+    cliStartedTurn('The UI review stopped halfway; here is what it found.')
+
+    expect(notices()).toMatchObject([{ backgroundContinueTaskIds: ['agent-b'] }])
+  })
+
+  it('lets a result that ends mid-turn ride that turn instead of labelling a later one', () => {
+    seedIdle({ chatState: 'tool_executing' })
+    startTask('lint', 'local_bash', 'npm run lint')
+    endTask('lint', 'completed', 'Background command "npm run lint" completed (exit code 0)')
+    // The next attempt of the running turn carries the queued result.
+    send({ type: 'status', state: 'thinking', attemptStart: true })
+    send({ type: 'content_start', blockType: 'text' })
+    send({ type: 'content_delta', text: 'Lint is clean too.' })
+    send({ type: 'message_complete', usage: { input_tokens: 1, output_tokens: 1 } })
+    // Something else, such as a scheduled prompt, reopens the model later.
+    send({ type: 'status', state: 'thinking', attemptStart: true })
+
+    expect(notices()).toEqual([])
+  })
+
+  it('labels the next turn when a result lands after the last attempt of a turn', () => {
+    seedIdle({ chatState: 'streaming' })
+    startTask('build', 'local_bash', 'npm run build')
+    endTask('build', 'failed', 'Background command "npm run build" failed with exit code 2')
+    send({ type: 'message_complete', usage: { input_tokens: 1, output_tokens: 1 } })
+    cliStartedTurn('The build failed; reading the log.')
+
+    expect(notices()).toMatchObject([{ backgroundContinueTaskIds: ['build'] }])
+  })
+
+  it('withdraws the notice when the attempt turns out to be another client prompt', () => {
+    seedIdle()
+    startTask('agent-c', 'local_agent', 'Review docs')
+    endTask('agent-c', 'completed', 'Agent "Review docs" completed')
+    // A phone sends a prompt: this client sees the CLI attempt, then the replay.
+    send({ type: 'status', state: 'thinking', attemptStart: true })
+    expect(notices()).toHaveLength(1)
+    send({ type: 'user_message_replay', content: 'sent from my phone' })
+
+    expect(notices()).toEqual([])
+    expect(timeline()).toContain('user_text: sent from my phone')
+  })
+
+  it('maps the projected batch of settled agents to one notice listing each', () => {
+    const mapped = mapHistoryMessagesToUiMessages([
+      {
+        id: 'batch',
+        type: 'system',
+        timestamp: '2026-11-02T01:00:00.000Z',
+        content: {
+          subtype: 'background_continue',
+          notifications: [
+            { taskId: 'agent-a', status: 'completed', summary: 'Agent "Review API" completed' },
+            { taskId: 'agent-b', status: 'stopped', summary: 'Agent "Review UI" was stopped' },
+          ],
+        },
+      },
+      { id: 'reply', type: 'assistant', timestamp: '2026-11-02T01:00:01.000Z', content: [{ type: 'text', text: 'Both reviews are in.' }] },
+    ])
+
+    expect(mapped).toMatchObject([
+      {
+        id: 'batch',
+        type: 'system',
+        content: t('chat.backgroundContinue', { summary: 'Agent "Review API" completed · Agent "Review UI" was stopped' }),
+        backgroundContinueTaskIds: ['agent-a', 'agent-b'],
+        transcriptMessageId: 'batch',
+      },
+      { type: 'assistant_text', content: 'Both reviews are in.' },
+    ])
+  })
+
+  it('keeps one notice when a cold history load merges the live line with its transcript copy', async () => {
+    seedIdle({ historyHydrated: false, historyStatus: 'error' })
+    let resolveHistory!: (value: { messages: MessageEntry[] }) => void
+    vi.mocked(sessionsApi.getFullHistory).mockReturnValueOnce(new Promise((resolve) => {
+      resolveHistory = resolve
+    }))
+    startTask('ba2prl5qw', 'local_bash', 'Sleep 20s then print BG_DONE_7731')
+    endTask('ba2prl5qw', 'completed', SHELL_SUMMARY)
+    cliStartedTurn(REPLY)
+    expect(notices()).toHaveLength(1)
+
+    resolveHistory({ messages: [
+      { id: 'durable-user', type: 'user', timestamp: new Date(Date.now() - 60_000).toISOString(), content: 'start it in the background' },
+      { id: 'durable-started', type: 'assistant', timestamp: new Date(Date.now() - 59_000).toISOString(), content: [{ type: 'text', text: '已在后台启动' }] },
+      {
+        id: 'durable-notification',
+        type: 'system',
+        timestamp: new Date(Date.now() - 2_000).toISOString(),
+        content: { subtype: 'background_continue', notifications: [{ taskId: 'ba2prl5qw', status: 'completed', summary: SHELL_SUMMARY }] },
+      },
+      { id: 'durable-thinking', type: 'assistant', timestamp: new Date(Date.now() - 1_000).toISOString(), content: [{ type: 'thinking', thinking: 'The background command completed.' }] },
+      { id: 'durable-reply', type: 'assistant', timestamp: new Date().toISOString(), content: [{ type: 'text', text: REPLY }] },
+    ] })
+    await vi.waitFor(() => expect(useChatStore.getState().sessions[sessionId]?.historyHydrated).toBe(true))
+
+    expect(notices()).toMatchObject([{ id: 'durable-notification', transcriptMessageId: 'durable-notification' }])
   })
 })

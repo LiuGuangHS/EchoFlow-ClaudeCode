@@ -2,6 +2,9 @@
 
 export type ApiFormat = 'anthropic' | 'openai_chat' | 'openai_responses'
 
+/** Protocols a preset can route one model family to; a saved record only carries an ApiFormat. */
+export type ModelApiFormat = ApiFormat | 'gemini'
+
 export type ProviderAuthStrategy =
   | 'api_key'
   | 'auth_token'
@@ -9,7 +12,7 @@ export type ProviderAuthStrategy =
   | 'dual_same_token'
   | 'dual_dummy'
 
-export type ProviderRuntimeKind = 'anthropic_compatible' | 'openai_oauth' | 'grok_oauth'
+export type ProviderRuntimeKind = 'anthropic_compatible' | 'openai_oauth' | 'grok_oauth' | 'deepseek_oauth'
 
 export type ModelMapping = {
   main: string
@@ -29,8 +32,19 @@ export type Model1mSupport = {
 
 export type ModelContextWindows = Record<string, number>
 
+export type ImageGenerationProtocol = 'openai_images' | 'gemini_native' | 'xai_images'
+
+/** Per-provider network proxy override. Absent means follow the global setting. */
+export type ProviderProxyMode = 'follow_global' | 'direct' | 'manual'
+
+export type ProviderProxyConfig = {
+  mode: ProviderProxyMode
+  url?: string
+}
+
 export type ImageGenerationConfig = {
   model: string
+  protocol?: ImageGenerationProtocol
   baseUrl?: string
   apiKey?: string
 }
@@ -46,25 +60,11 @@ export type RequestCompatibility = {
   [key: string]: unknown
 }
 
-export type CredentialSource = {
-  kind: 'echoflow-token'
-  endpoint: 'main' | 'dedicated'
-  tokenId: string
-  tokenName?: string
-}
-
-export type AvailableModel = {
-  id: string
-  ownedBy?: string
-}
-
 export type SavedProvider = {
   id: string
   presetId: string
   name: string
   apiKey: string  // masked from server
-  hasApiKey?: boolean
-  keyPreview?: string
   authStrategy?: ProviderAuthStrategy
   baseUrl: string
   apiFormat: ApiFormat
@@ -73,14 +73,14 @@ export type SavedProvider = {
   model1mSupport?: Model1mSupport
   autoCompactWindow?: number
   modelContextWindows?: ModelContextWindows
+  modelMaxOutputTokens?: Record<string, number>
   toolSearchEnabled?: boolean
   disableExperimentalBetas?: boolean
   supportsNestedToolResultMedia?: boolean
   requestCompatibility?: RequestCompatibility
   imageGeneration?: ImageGenerationConfig
+  proxy?: ProviderProxyConfig
   notes?: string
-  credentialSource?: CredentialSource
-  availableModels?: AvailableModel[]
 }
 
 export type CreateProviderInput = {
@@ -95,14 +95,14 @@ export type CreateProviderInput = {
   model1mSupport?: Model1mSupport
   autoCompactWindow?: number
   modelContextWindows?: ModelContextWindows
+  modelMaxOutputTokens?: Record<string, number>
   toolSearchEnabled?: boolean
   disableExperimentalBetas?: boolean
   supportsNestedToolResultMedia?: boolean
   requestCompatibility?: RequestCompatibility
   imageGeneration?: ImageGenerationConfig
+  proxy?: ProviderProxyConfig
   notes?: string
-  credentialSource?: CredentialSource
-  availableModels?: AvailableModel[]
 }
 
 export type UpdateProviderInput = {
@@ -116,13 +116,14 @@ export type UpdateProviderInput = {
   model1mSupport?: Model1mSupport | null
   autoCompactWindow?: number | null
   modelContextWindows?: ModelContextWindows | null
+  modelMaxOutputTokens?: Record<string, number> | null
   toolSearchEnabled?: boolean
   disableExperimentalBetas?: boolean
   supportsNestedToolResultMedia?: boolean
   requestCompatibility?: RequestCompatibility | null
   imageGeneration?: ImageGenerationConfig | null
+  proxy?: ProviderProxyConfig | null
   notes?: string
-  availableModels?: AvailableModel[] | null
 }
 
 export type TestProviderConfigInput = {
@@ -133,6 +134,11 @@ export type TestProviderConfigInput = {
   apiFormat?: ApiFormat
   supportsNestedToolResultMedia?: boolean
   requestCompatibility?: RequestCompatibility
+  /**
+   * Per-provider proxy override typed on the test payload so an unsaved form
+   * probes with the same routing the saved provider would use.
+   */
+  proxy?: ProviderProxyConfig | null
   /**
    * Preset the form is based on, so the server can resolve per-model protocol
    * rules and upstream headers for an unsaved config. Only the id is sent.
@@ -218,6 +224,8 @@ export type ProviderModelsInput = {
   apiKey: string
   isFullUrl?: boolean
   modelsUrl?: string
+  /** The form's proxy override, so the probe takes the route chat will take. */
+  proxy?: ProviderProxyConfig
 }
 
 export type ProviderModelsErrorCode =
@@ -242,3 +250,33 @@ export type ProviderModelsResult =
     httpStatus?: number
     endpointsTried: string[]
   }
+
+/** The local Magpie gateway as the server found it (GET /api/providers/magpie). */
+export type MagpieStatus = {
+  installed: boolean
+  running: boolean
+  baseUrl: string
+  version?: string
+}
+
+export type MagpieModel = {
+  id: string
+  /** The id a session runs: a 1M Claude model carries `[1m]`. */
+  runtimeId: string
+  displayName: string
+  provider: string
+  providerName?: string
+  isGroup: boolean
+  contextWindow?: number
+  maxOutputTokens?: number
+  reasoningEfforts: string[]
+  images?: boolean
+}
+
+export type MagpieState = {
+  status: MagpieStatus
+  /** Null while Magpie is not running or did not answer. */
+  models: MagpieModel[] | null
+}
+
+export type OpenMagpieResult = { ok: boolean; unsupported?: boolean }

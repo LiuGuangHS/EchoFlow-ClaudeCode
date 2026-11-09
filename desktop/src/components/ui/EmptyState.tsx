@@ -16,6 +16,11 @@ export type EmptyStateProps = {
     onClick: () => void
     variant?: 'primary' | 'secondary' | 'tonal'
   }
+  /**
+   * Choices that replace a single action, e.g. a row of presets to start from.
+   * Rendered under the description; ignored by the `inline` variant.
+   */
+  children?: ReactNode
   size?: StateSize
   /**
    * `dashed` is the bordered placeholder box, `plain` drops the border, and
@@ -34,15 +39,15 @@ const SIZE_CLASSES: Record<StateSize, string> = {
 }
 
 const ICON_BOX: Record<StateSize, string> = {
-  sm: 'h-8 w-8 text-[16px]',
-  md: 'h-10 w-10 text-[20px]',
-  lg: 'h-12 w-12 text-[24px]',
+  sm: 'h-8 w-8',
+  md: 'h-10 w-10',
+  lg: 'h-12 w-12',
 }
 
 const TITLE_SIZE: Record<StateSize, string> = {
   sm: 'text-xs',
   md: 'text-sm',
-  lg: 'text-base',
+  lg: 'text-[15px]',
 }
 
 /**
@@ -61,6 +66,7 @@ export function EmptyState({
   title,
   description,
   action,
+  children,
   size = 'md',
   variant = 'dashed',
   headingLevel = 3,
@@ -115,6 +121,7 @@ export function EmptyState({
           {action.label}
         </Button>
       )}
+      {children ? <div className="mt-1 flex flex-wrap justify-center gap-2">{children}</div> : null}
     </div>
   )
 }

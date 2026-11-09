@@ -9,6 +9,7 @@ import { useUIStore } from '../stores/uiStore'
 import { useMcpStore } from '../stores/mcpStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import type { McpReconnectResult, McpSessionSync } from '../types/mcp'
 
 vi.mock('../api/sessions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/sessions')>()
@@ -28,6 +29,7 @@ vi.mock('../api/mcp', async (importOriginal) => {
     mcpApi: {
       ...actual.mcpApi,
       projectPaths: vi.fn(),
+      projectSharing: vi.fn(),
     },
   }
 })
@@ -60,6 +62,9 @@ describe('McpSettings', () => {
     vi.mocked(mcpApi.projectPaths).mockResolvedValue({
       projectPaths: ['/workspace/config-project'],
     })
+    vi.mocked(mcpApi.projectSharing).mockImplementation(async (_name, paths, sourceCwd) => ({
+      projects: paths.map(projectPath => ({ projectPath, revision: null, selected: projectPath === sourceCwd })),
+    }))
     useSettingsStore.setState({ locale: 'en' })
     useSessionStore.setState({
       sessions: [
@@ -350,6 +355,52 @@ describe('McpSettings', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
   })
 
+  it('switches transport from the segmented control on create and locks it while editing', async () => {
+    const server = {
+      name: 'global-user',
+      scope: 'user',
+      transport: 'http',
+      enabled: true,
+      status: 'connected',
+      statusLabel: 'Connected',
+      configLocation: '/tmp/config',
+      summary: 'https://example.com/mcp',
+      canEdit: true,
+      canRemove: true,
+      canReconnect: true,
+      canToggle: true,
+      config: { type: 'http', url: 'https://example.com/mcp', headers: {} },
+    } as const
+    useMcpStore.setState({ servers: [server] })
+
+    await renderLoadedMcpSettings()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /add server/i }))
+    })
+
+    const transport = screen.getByRole('radiogroup', { name: 'Transport' })
+    expect(screen.getByRole('radio', { name: 'STDIO' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByLabelText(/Command to launch/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Streamable HTTP' }))
+    expect(screen.getByRole('radio', { name: 'Streamable HTTP' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.queryByLabelText(/Command to launch/)).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/^URL/)).toBeInTheDocument()
+    expect(transport).not.toHaveTextContent(/expand_more|check/)
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /back/i }))
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open global-user' }))
+    })
+
+    for (const radio of screen.getAllByRole('radio')) expect(radio).toBeDisabled()
+    expect(screen.getByRole('radio', { name: 'Streamable HTTP' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByText('If you would like to switch MCP server type, uninstall first.')).toBeInTheDocument()
+  })
+
   it('keeps same-name project MCP servers distinct by project path', async () => {
     useMcpStore.setState({
       servers: [
@@ -586,6 +637,7 @@ describe('McpSettings', () => {
     [{ applied: false, reason: 'not_running' }, 'warning', 'chat is not running'],
     [{ applied: false, reason: 'different_project' }, 'warning', 'different project'],
     [{ applied: false, reason: 'no_session' }, 'warning', 'No chat was selected'],
+    [{ applied: false, reason: 'lean_profile' }, 'warning', 'Lean mode, which does not use MCP servers'],
     [undefined, 'warning', 'not confirmed'],
     [{ applied: true }, 'success', 'Disabled MCP server'],
   ] as const)('reports the runtime receipt after a saved toggle: %j', async (sessionSync, type, message) => {
@@ -732,7 +784,7 @@ describe('McpSettings', () => {
     )
   })
 
-  it('updates project MCP servers using the explicitly selected target project', async () => {
+  it('moves local MCP servers to the explicitly selected shared project', async () => {
     vi.mocked(sessionsApi.getRecentProjects).mockResolvedValue({
       projects: [{
         projectPath: '/workspace/moved-project',
@@ -763,7 +815,7 @@ describe('McpSettings', () => {
     })
     const server = {
       name: 'shared-tools',
-      scope: 'project',
+      scope: 'local',
       transport: 'stdio',
       enabled: true,
       status: 'connected',
@@ -788,6 +840,8 @@ describe('McpSettings', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Open shared-tools' }))
     })
+
+    fireEvent.click(screen.getByRole('button', { name: /^Project Shared/ }))
 
     expect(screen.getByText('project')).toBeInTheDocument()
 
@@ -819,7 +873,7 @@ describe('McpSettings', () => {
   })
 
   it('shows reconnecting status immediately in the detail view', async () => {
-    let resolveReconnect: ((value: typeof server) => void) | null = null
+    let resolveReconnect: ((value: McpReconnectResult) => void) | null = null
     const server = {
       name: 'plugin:telegram:telegram',
       scope: 'dynamic',
@@ -836,7 +890,7 @@ describe('McpSettings', () => {
       canToggle: true,
       config: { type: 'stdio' as const, command: 'bun', args: ['run', 'start'], env: {} },
     }
-    const reconnectServer = vi.fn().mockImplementation(() => new Promise<typeof server>((resolve) => {
+    const reconnectServer = vi.fn().mockImplementation(() => new Promise<McpReconnectResult>((resolve) => {
       resolveReconnect = resolve
     }))
 
@@ -856,15 +910,40 @@ describe('McpSettings', () => {
     })
 
     expect(screen.getAllByText('Reconnecting...').length).toBeGreaterThan(0)
-    expect(reconnectServer).toHaveBeenCalledWith(server, '/workspace/project')
+    expect(reconnectServer).toHaveBeenCalledWith(server, '/workspace/project', 'session-1')
 
     await act(async () => {
       resolveReconnect?.({
-        ...server,
-        status: 'connected',
-        statusLabel: 'Connected',
-        statusDetail: undefined,
+        server: { ...server, status: 'connected', statusLabel: 'Connected', statusDetail: undefined },
+        sessionSync: { applied: true },
       })
     })
   })
+  it.each([
+    [{ applied: true }, 'success', 'Reconnected MCP server "late-server"'],
+    [{ applied: false, reason: 'failed', error: 'CLI reconnect failed' }, 'warning', 'Chat synchronization failed: CLI reconnect failed'],
+    [{ applied: false, reason: 'different_project' }, 'warning', 'The current chat uses a different project'],
+    [{ applied: false, reason: 'not_running' }, 'warning', 'The current chat is not running'],
+    [{ applied: false, reason: 'no_session' }, 'warning', 'No chat was selected'],
+    [{ applied: false, reason: 'lean_profile' }, 'warning', 'The current chat uses Lean mode'],
+    [undefined, 'warning', 'The current chat update was not confirmed'],
+  ] as Array<[McpSessionSync | undefined, string, string]>)('reports reconnect receipt %j without mistaking the settings probe for chat success', async (sessionSync, type, message) => {
+    const addToast = vi.fn()
+    useUIStore.setState({ addToast })
+    const server = {
+      name: 'late-server', scope: 'local', transport: 'http', enabled: true,
+      status: 'connected' as const, statusLabel: 'Connected', configLocation: '/tmp/config',
+      summary: 'http://127.0.0.1/mcp', canEdit: true, canRemove: true, canReconnect: true, canToggle: true,
+      projectPath: '/workspace/project', config: { type: 'http' as const, url: 'http://127.0.0.1/mcp', headers: {} },
+    }
+    const reconnectServer = vi.fn().mockResolvedValue({ server, sessionSync })
+    useMcpStore.setState({ servers: [server], reconnectServer })
+    await renderLoadedMcpSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Open late-server' }))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /reconnect/i })) })
+    expect(reconnectServer).toHaveBeenCalledWith(server, '/workspace/project', 'session-1')
+    expect(addToast).toHaveBeenCalledWith({ type, message: expect.stringContaining(message) })
+    expect(screen.queryByText('Reconnecting...')).not.toBeInTheDocument()
+  })
+
 })

@@ -48,7 +48,7 @@ export function pdfjsAssets(options: { packageDir?: string } = {}): Plugin {
   const prefix = pdfjsAssetsPrefix(version)
 
   return {
-    name: 'echoflow-code:pdfjs-assets',
+    name: 'cc-haha:pdfjs-assets',
 
     configureServer(server) {
       server.middlewares.use(`/${prefix}`, (request, response, next) => {

@@ -1,18 +1,20 @@
 import { useState, useEffect, useRef, useMemo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Search, X } from 'lucide-react'
+import { MessageSquare, Search } from 'lucide-react'
 import { useTranslation, type TranslationKey } from '../../i18n'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useTabStore } from '../../stores/tabStore'
+import { useSessionRuntimeStore } from '@/stores/sessionRuntimeStore'
+import { sessionsApi } from '@/api/sessions'
 import { searchApi, type SessionSearchResult, type SessionMatch, type SessionMatchRole } from '../../api/search'
 import { Badge } from '@/components/ui/Badge'
-import { IconButton } from '@/components/ui/IconButton'
 import { Spinner } from '@/components/ui/Spinner'
 
 const DEBOUNCE_MS = 250
 const RECENT_LIMIT = 8
 const SEARCH_LIMIT = 50
 const MATCH_PREVIEW_PER_SESSION = 3
+const OPEN_SUMMARY_TIMEOUT_MS = 5_000
 
 type Props = {
   open: boolean
@@ -28,13 +30,11 @@ type Row = {
   modifiedAt: string
   matchCount: number
   matches: SessionMatch[]
-  archived?: boolean
 }
 
 export function GlobalSearchModal({ open, onClose }: Props) {
   const t = useTranslation()
   const sessions = useSessionStore((s) => s.sessions)
-  const showArchived = useSessionStore((s) => s.showArchived)
 
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
@@ -70,7 +70,10 @@ export function GlobalSearchModal({ open, onClose }: Props) {
     requestControllerRef.current = null
     requestIdRef.current += 1 // invalidate any in-flight request
     const id = requestAnimationFrame(() => inputRef.current?.focus())
-    return () => cancelAnimationFrame(id)
+    return () => {
+      cancelAnimationFrame(id)
+      requestControllerRef.current?.abort()
+    }
   }, [open])
 
   // Cancel stale work as soon as the visible query changes. Waiting for the
@@ -116,7 +119,7 @@ export function GlobalSearchModal({ open, onClose }: Props) {
     searchApi
       .searchSessions(
         q,
-        { limit: SEARCH_LIMIT, matchesPerSession: MATCH_PREVIEW_PER_SESSION, includeArchived: showArchived },
+        { limit: SEARCH_LIMIT, matchesPerSession: MATCH_PREVIEW_PER_SESSION },
         { signal: controller.signal },
       )
       .then((resp) => {
@@ -142,7 +145,7 @@ export function GlobalSearchModal({ open, onClose }: Props) {
       })
 
     return () => controller.abort()
-  }, [debouncedQuery, open, showArchived])
+  }, [debouncedQuery, open])
 
   const recentSessions = useMemo(
     () =>
@@ -174,7 +177,6 @@ export function GlobalSearchModal({ open, onClose }: Props) {
       modifiedAt: r.modifiedAt,
       matchCount: r.matchCount,
       matches: r.matches,
-      archived: r.archived,
     }))
   }, [isSearching, recentSessions, results])
 
@@ -189,9 +191,41 @@ export function GlobalSearchModal({ open, onClose }: Props) {
       ?.scrollIntoView({ block: 'nearest' })
   }, [activeIndex])
 
-  function openRow(row: Row) {
-    useTabStore.getState().openTab(row.sessionId, row.title)
-    onClose()
+  async function openRow(row: Row) {
+    requestControllerRef.current?.abort()
+    requestControllerRef.current = null
+    const requestId = ++requestIdRef.current
+    const session = useSessionStore.getState().sessions.find((item) => item.id === row.sessionId)
+    if (session) {
+      setLoading(false)
+      useSessionStore.getState().openHistoricalSession(session)
+      onClose()
+      return
+    }
+    // Search hits are not necessarily in the bounded sidebar list. Resolve
+    // their metadata before connecting, just like opening project history.
+    const controller = new AbortController()
+    requestControllerRef.current = controller
+    const runtimeSelections = useSessionRuntimeStore.getState().selections
+    const isCurrent = () => !controller.signal.aborted && requestId === requestIdRef.current
+    setLoading(true)
+    try {
+      const summary = await sessionsApi.getSummary(row.sessionId, { signal: controller.signal, timeout: OPEN_SUMMARY_TIMEOUT_MS })
+      if (!isCurrent()) return
+      useSessionStore.getState().openHistoricalSession(summary, runtimeSelections)
+      onClose()
+    } catch {
+      if (!isCurrent()) return
+      // A transient summary failure must not prevent opening the transcript
+      // or discard the title already supplied by the search result.
+      useTabStore.getState().openTab(row.sessionId, row.title)
+      onClose()
+    } finally {
+      if (requestControllerRef.current === controller) {
+        requestControllerRef.current = null
+        setLoading(false)
+      }
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -219,19 +253,21 @@ export function GlobalSearchModal({ open, onClose }: Props) {
   return createPortal(
     <div className="fixed inset-0 z-[var(--z-dialog)] flex items-start justify-center pt-[12vh]">
       <div
-        className="absolute inset-0 bg-[var(--color-modal-scrim)] backdrop-blur-[2px] transition-opacity duration-200"
+        className="absolute inset-0 bg-[var(--color-modal-scrim)] transition-opacity duration-200"
         onClick={onClose}
       />
 
+      {/* The command palette (「素」): a paper sheet with a 52px query row,
+          sectioned 36px rows, and the key legend as its footer. */}
       <div
-        className="animate-overlay-in relative z-10 flex max-h-[70vh] w-[640px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-overlay)]"
+        className="animate-overlay-in relative z-10 flex max-h-[70vh] w-[620px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-dropdown)]"
         role="dialog"
         aria-modal="true"
         aria-label={t('search.global.placeholder')}
       >
         {/* Search input */}
-        <div className="flex items-center gap-3 border-b border-[var(--color-border)] px-[22px] py-[18px]">
-          <Search className="h-[17px] w-[17px] shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+        <div className="flex h-[52px] shrink-0 items-center gap-2.5 border-b border-[var(--color-border)] px-3.5">
+          <Search size={18} strokeWidth={1.75} className="shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
           <input
             ref={inputRef}
             type="text"
@@ -242,28 +278,27 @@ export function GlobalSearchModal({ open, onClose }: Props) {
             onKeyDown={handleKeyDown}
             placeholder={t('search.global.placeholder')}
             aria-label={t('search.global.placeholder')}
-            className="min-w-0 flex-1 bg-transparent text-[16px] text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-tertiary)]"
+            className="min-w-0 flex-1 bg-transparent text-[15px] text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-tertiary)]"
           />
-          {loading && <Spinner size={16} className="text-[var(--color-text-tertiary)]" />}
-          <IconButton
-            icon={<X className="h-4 w-4" aria-hidden="true" />}
-            label={t('search.global.close')}
-            size="sm"
-            shape="circle"
-            tone="secondary"
+          {loading && <Spinner size={14} className="text-[var(--color-text-tertiary)]" />}
+          {/* Esc closes from the keyboard; this is the same exit for the
+              pointer, drawn as the key it stands for. */}
+          <button
+            type="button"
             onClick={onClose}
-          />
+            aria-label={t('search.global.close')}
+            title={t('search.global.close')}
+            className={`${KEYCAP_CLASS} cursor-pointer transition-colors hover:border-[var(--color-outline)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]`}
+          >
+            esc
+          </button>
         </div>
 
         {/* Results */}
-        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-2 py-2.5" role="listbox">
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto pb-1.5" role="listbox">
           {!isSearching ? (
             <>
-              {rows.length > 0 && (
-                <div className="px-4 py-1.5 text-[12px] text-[var(--color-text-tertiary)]">
-                  {t('search.global.recentTitle')}
-                </div>
-              )}
+              {rows.length > 0 && <SectionTitle>{t('search.global.recentTitle')}</SectionTitle>}
               {rows.map((row, i) => (
                 <ResultRow
                   key={row.sessionId}
@@ -290,6 +325,7 @@ export function GlobalSearchModal({ open, onClose }: Props) {
             </div>
           ) : (
             <>
+              <div className="h-1.5" aria-hidden="true" />
               {rows.map((row, i) => (
                 <ResultRow
                   key={row.sessionId}
@@ -311,19 +347,14 @@ export function GlobalSearchModal({ open, onClose }: Props) {
         </div>
 
         {/* Footer hints */}
-        <div className="flex items-center gap-3.5 border-t border-[var(--color-border)] px-[22px] py-3 text-[12px] text-[var(--color-text-tertiary)]">
-          <span className="flex items-center gap-1.5">
-            <Keycap>↑↓</Keycap>
-            {t('fileSearch.navigate')}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Keycap>Enter</Keycap>
-            {t('fileSearch.select')}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Keycap>Esc</Keycap>
-            {t('fileSearch.close')}
-          </span>
+        <div className="flex shrink-0 items-center gap-1 border-t border-[var(--color-border)] px-3.5 py-2.5 text-[11px] text-[var(--color-text-tertiary)]">
+          <Keycap>↑</Keycap>
+          <Keycap>↓</Keycap>
+          <span className="ml-0.5 mr-2.5">{t('fileSearch.navigate')}</span>
+          <Keycap>↵</Keycap>
+          <span className="ml-0.5 mr-2.5">{t('fileSearch.select')}</span>
+          <Keycap>esc</Keycap>
+          <span className="ml-0.5">{t('fileSearch.close')}</span>
         </div>
       </div>
     </div>,
@@ -331,11 +362,18 @@ export function GlobalSearchModal({ open, onClose }: Props) {
   )
 }
 
+/** 「素」 kbd: mono 11, 18px tall, `--radius-xs`, hairline, paper fill, tertiary ink. */
+const KEYCAP_CLASS = 'inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-[var(--radius-xs)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-1 font-mono text-[11px] leading-none text-[var(--color-text-tertiary)]'
+
 function Keycap({ children }: { children: ReactNode }) {
+  return <kbd className={KEYCAP_CLASS}>{children}</kbd>
+}
+
+function SectionTitle({ children }: { children: ReactNode }) {
   return (
-    <kbd className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface-container)] px-1.5 py-px font-mono text-[11px] font-medium text-[var(--color-text-secondary)]">
+    <div className="px-4 pb-1 pt-2.5 text-[11px] font-semibold text-[var(--color-text-tertiary)]">
       {children}
-    </kbd>
+    </div>
   )
 }
 
@@ -349,6 +387,9 @@ type RowProps = {
 }
 
 function ResultRow({ row, index, active, onActivate, onOpen, t }: RowProps) {
+  const project = projectLabel(row)
+  const time = formatRelativeTime(row.modifiedAt, t)
+  const meta = [project, time].filter(Boolean).join(' · ')
   return (
     <button
       type="button"
@@ -357,35 +398,37 @@ function ResultRow({ row, index, active, onActivate, onOpen, t }: RowProps) {
       aria-selected={active}
       onMouseEnter={() => onActivate(index)}
       onClick={() => onOpen(row)}
-      className={`flex w-full flex-col gap-0.5 rounded-[var(--radius-md)] px-4 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none ${
-        active ? 'bg-[var(--color-surface-hover)]' : ''
+      className={`mx-1.5 flex w-[calc(100%-12px)] flex-col rounded-[var(--radius-md)] px-2.5 text-left transition-colors focus-visible:outline-none ${
+        active ? 'bg-[var(--color-surface-selected)]' : 'hover:bg-[var(--color-surface-hover)]'
       }`}
     >
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-[14.5px] font-medium text-[var(--color-text-primary)]">
+      <div className="flex h-9 w-full min-w-0 items-center gap-2.5">
+        <MessageSquare size={14} strokeWidth={1.75} className="shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--color-text-primary)]">
           {row.title}
         </span>
-        <span className="shrink-0 text-[12px] tabular-nums text-[var(--color-text-tertiary)]">
-          {formatRelativeTime(row.modifiedAt, t)}
-        </span>
-      </div>
-      <div className="flex items-center gap-1.5 text-[12.5px] text-[var(--color-text-tertiary)]">
-        <span className="min-w-0 truncate">{projectLabel(row)}</span>
         {row.matchCount > 0 && (
-          <>
-            <span aria-hidden="true">·</span>
-            <span className="shrink-0">{t('search.global.matchCount', { count: row.matchCount })}</span>
-          </>
-        )}
-      </div>
-      {row.matches.slice(0, MATCH_PREVIEW_PER_SESSION).map((m, j) => (
-        <div key={`${m.lineNumber}-${j}`} className="mt-0.5 flex items-start gap-2">
-          <RoleBadge role={m.role} t={t} />
-          <span className="min-w-0 flex-1 truncate text-[12px] text-[var(--color-text-secondary)]">
-            {renderHighlighted(m.snippet, m.highlights)}
+          <span className="shrink-0 text-[12px] tabular-nums text-[var(--color-text-tertiary)]">
+            {t('search.global.matchCount', { count: row.matchCount })}
           </span>
+        )}
+        <span className="max-w-[45%] shrink-0 truncate text-[12px] tabular-nums text-[var(--color-text-tertiary)]">
+          {meta}
+        </span>
+        {active && <Keycap>↵</Keycap>}
+      </div>
+      {row.matches.length > 0 && (
+        <div className="-mt-1 flex w-full flex-col gap-1 pb-2 pl-6">
+          {row.matches.slice(0, MATCH_PREVIEW_PER_SESSION).map((m, j) => (
+            <div key={`${m.lineNumber}-${j}`} className="flex min-w-0 items-center gap-2">
+              <RoleBadge role={m.role} t={t} />
+              <span className="min-w-0 flex-1 truncate text-[12px] text-[var(--color-text-secondary)]">
+                {renderHighlighted(m.snippet, m.highlights)}
+              </span>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </button>
   )
 }
@@ -398,8 +441,9 @@ function RoleBadge({
   t: (key: TranslationKey, params?: Record<string, string | number>) => string
 }) {
   const isUser = role === 'user'
+  // A speaker label, not a state: neutral either way, the words tell them apart.
   return (
-    <Badge tone={isUser ? 'brand' : 'neutral'} pill={false} className="mt-px leading-none">
+    <Badge tone="neutral" size="xs" pill={false} className="shrink-0 leading-none">
       {isUser ? t('search.global.roleUser') : t('search.global.roleAssistant')}
     </Badge>
   )
@@ -420,7 +464,7 @@ function renderHighlighted(
     parts.push(
       <mark
         key={`${start}-${end}`}
-        className="rounded-[var(--radius-sm)] bg-[var(--color-brand-soft)] px-0.5 text-[var(--color-on-brand-soft)]"
+        className="rounded-[var(--radius-xs)] bg-[var(--color-search-highlight)] px-px text-[var(--color-on-search-highlight)]"
       >
         {snippet.slice(start, end)}
       </mark>,

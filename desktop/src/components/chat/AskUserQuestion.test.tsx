@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 
 const { sendMock } = vi.hoisted(() => ({
@@ -30,6 +30,8 @@ import { AskUserQuestion } from './AskUserQuestion'
 import { useChatStore, type PerSessionState } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useTabStore } from '../../stores/tabStore'
+import { useTeamStore } from '../../stores/teamStore'
+import { teamMemberSessionId } from '../../types/team'
 
 const ACTIVE_TAB = 'active-tab'
 
@@ -370,6 +372,122 @@ describe('AskUserQuestion', () => {
     })
   })
 
+  // Issue #1839. A member page shows the member's transcript under a synthetic
+  // `team-member:` tab id, which has no connection of its own. The member CLI's
+  // request reaches the desktop only on the lead session (the server forwards
+  // it there under the member's name), so a card that looked for it under the
+  // page's id stayed disabled forever while the member waited on it.
+  describe('on a team member page', () => {
+    const LEAD = 'lead-session'
+    const MEMBER_AGENT = 'asker@greeting-team'
+    const MEMBER_TAB = teamMemberSessionId(MEMBER_AGENT, 'incarnation-1')
+    const TOOL_USE = 'call_00_CZuupwJXaiJ3WbFdBMt31342'
+    const QUESTION = {
+      questions: [{
+        question: 'Which greeting should go into hello.txt?',
+        header: 'Greeting',
+        options: [
+          { label: 'Hello', description: 'Write "Hello" into hello.txt' },
+          { label: 'Hi', description: 'Write "Hi" into hello.txt' },
+        ],
+        multiSelect: false,
+      }],
+    }
+
+    function openMemberPage(leadRequest: { displayName?: string }) {
+      useTabStore.setState({
+        activeTabId: MEMBER_TAB,
+        tabs: [
+          { sessionId: LEAD, title: 'Lead', type: 'session', status: 'idle' },
+          {
+            sessionId: MEMBER_TAB,
+            title: 'asker',
+            type: 'team-member',
+            status: 'idle',
+            sourceSessionId: LEAD,
+            teamLeadSessionId: LEAD,
+            teamMemberAgentId: MEMBER_AGENT,
+            teamIncarnationId: 'incarnation-1',
+          },
+        ],
+      })
+      useTeamStore.setState({
+        memberTeamBySession: {
+          [MEMBER_TAB]: {
+            name: 'greeting-team',
+            incarnationId: 'incarnation-1',
+            leadSessionId: LEAD,
+            members: [{
+              agentId: MEMBER_AGENT,
+              name: 'asker',
+              role: 'general-purpose',
+              status: 'running',
+              sessionId: 'member-cli-session',
+            }],
+          },
+        },
+      })
+      const base = useChatStore.getState().sessions[ACTIVE_TAB]!
+      useChatStore.setState({
+        askUserQuestionDrafts: {},
+        sessions: {
+          // The member is mid-turn: blocked inside its AskUserQuestion call.
+          [MEMBER_TAB]: { ...base, chatState: 'thinking', pendingPermission: null, pendingPermissions: {} },
+          [LEAD]: {
+            ...base,
+            chatState: 'permission_pending',
+            pendingPermission: null,
+            pendingPermissions: {
+              'member-request': {
+                requestId: 'member-request',
+                toolName: 'AskUserQuestion',
+                toolUseId: TOOL_USE,
+                input: QUESTION,
+                ...leadRequest,
+              },
+            },
+          },
+        },
+      })
+    }
+
+    afterEach(() => {
+      act(() => useTeamStore.setState({ memberTeamBySession: {} }))
+    })
+
+    it('answers the member through the lead session that holds its live request', () => {
+      openMemberPage({ displayName: 'asker' })
+      render(<AskUserQuestion sessionId={MEMBER_TAB} toolUseId={TOOL_USE} input={QUESTION} />)
+
+      const submit = screen.getByRole('button', { name: /^submit$/i })
+      expect(screen.getByRole('button', { name: /chat about this/i }).hasAttribute('disabled')).toBe(false)
+      fireEvent.click(screen.getByRole('button', { name: /^Hello/ }))
+      expect(submit.hasAttribute('disabled')).toBe(false)
+      fireEvent.click(submit)
+
+      expect(sendMock.mock.calls).toEqual([
+        [LEAD, { type: 'ask_user_question_activity', requestId: 'member-request' }],
+        [LEAD, {
+          type: 'permission_response',
+          requestId: 'member-request',
+          allowed: true,
+          updatedInput: { ...QUESTION, answers: { 'Which greeting should go into hello.txt?': 'Hello' } },
+        }],
+      ])
+      expect(screen.getByText(/Hello/, { selector: 'strong' })).toBeTruthy()
+    })
+
+    it("leaves another agent's request alone when it reuses the tool id", () => {
+      openMemberPage({ displayName: 'reviewer' })
+      render(<AskUserQuestion sessionId={MEMBER_TAB} toolUseId={TOOL_USE} input={QUESTION} />)
+
+      fireEvent.click(screen.getByRole('button', { name: /^Hello/ }))
+
+      expect(screen.getByRole('button', { name: /^submit$/i }).hasAttribute('disabled')).toBe(true)
+      expect(sendMock).not.toHaveBeenCalled()
+    })
+  })
+
   it('keeps custom responses scoped to each question tab', () => {
     const input = {
       questions: [
@@ -702,7 +820,7 @@ describe('AskUserQuestion', () => {
       fireEvent.click(screen.getByRole('button', { name: /^Tabs$/ }))
       fireEvent.click(screen.getByRole('button', { name: /chat about this/i }))
 
-      expect(screen.getByText(/Handed back to EchoFlow/)).toBeTruthy()
+      expect(screen.getByText(/Handed back to Claude/)).toBeTruthy()
       expect(screen.queryByText(/Answered:/)).toBeNull()
       expect(screen.queryByRole('button', { name: /chat about this/i })).toBeNull()
     })
@@ -919,8 +1037,7 @@ describe('AskUserQuestion', () => {
       expect((screen.getByPlaceholderText('Type your answer...') as HTMLTextAreaElement).value)
         .toBe('custom q2')
       fireEvent.click(screen.getByRole('button', { name: /Q1$/ }))
-      expect(screen.getByRole('button', { name: /^A1$/ }).getAttribute('class'))
-        .toContain('border-[var(--color-secondary)]')
+      expect(screen.getByRole('button', { name: /^A1$/ }).getAttribute('aria-pressed')).toBe('true')
     })
 
     it('does not resurrect the form once the question was submitted', () => {

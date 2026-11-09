@@ -6,7 +6,7 @@ const reference = (kind: 'skill' | 'plugin', id: string, source: string): Compos
 
 describe('withdrawn managed packages in composer discovery', () => {
   it.each(['frontend-design', 'canvas-design', 'algorithmic-art', 'webapp-testing', 'mcp-builder'])('hides %s through references, plugin entries and CLI slash namespaces', name => {
-    const id = `office-${name}@echoflow-connectors`
+    const id = `office-${name}@haha-connectors`
     expect(isComposerPluginVisible(id)).toBe(false)
     expect(isComposerReferenceVisible(reference('plugin', id, id))).toBe(false)
     expect(isComposerReferenceVisible(reference('skill', `office-${name}:${name}`, id))).toBe(false)
@@ -19,7 +19,7 @@ describe('withdrawn managed packages in composer discovery', () => {
   })
 
   it('does not hide unrelated packages, similar namespaces or personal namespaced skills', () => {
-    for (const id of ['office-hyperframes@echoflow-connectors', 'office-drawio@echoflow-connectors', 'office-obsidian@echoflow-connectors', 'office-frontend-design@another-market']) {
+    for (const id of ['office-hyperframes@haha-connectors', 'office-drawio@haha-connectors', 'office-obsidian@haha-connectors', 'office-frontend-design@another-market']) {
       expect(isComposerReferenceVisible(reference('plugin', id, id))).toBe(true)
     }
     for (const name of ['frontend-design', 'office-frontend-design-extra:design', 'office-frontend-design']) {

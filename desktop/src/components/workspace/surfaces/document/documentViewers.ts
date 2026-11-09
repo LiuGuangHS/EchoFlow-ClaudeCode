@@ -1,6 +1,20 @@
+import type { DocumentAnnotationSelection } from './DocumentAnnotation'
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 import type { WorkspaceDocumentPreviewType } from '@/api/sessions'
+import type { WorkspaceReveal } from '@/lib/workspace/types'
 import type { WorkspaceFileView } from '@/stores/workspaceContentStore'
+import type { WorkspaceTextSelection } from '../textSelection'
+
+/**
+ * What a document that is really text needs to show its source and take comments on it,
+ * the same way the panel does for any other text file.
+ */
+export type DocumentSourceActions = {
+  reveal?: WorkspaceReveal
+  revealScroll?: boolean
+  onAddLineComment: (lineStart: number, lineEnd: number, note: string, quote: string) => void
+  onAddSelection: (selection: WorkspaceTextSelection) => void
+}
 
 /**
  * What every document viewer is handed. `DocumentSurface` owns fetching the bytes
@@ -8,6 +22,7 @@ import type { WorkspaceFileView } from '@/stores/workspaceContentStore'
  * turn a `Blob` into pixels and report the zoom the reader chose.
  */
 export type DocumentViewerProps = {
+  onAnnotate?: (selection: DocumentAnnotationSelection) => void
   /** The path as the workspace knows it (relative to the workdir when it is inside). */
   path: string
   /** Where the file lives on disk, for handing it to the operating system. */
@@ -39,6 +54,8 @@ export type DocumentViewerProps = {
    * position but leaves restoring it to you.
    */
   initialView: WorkspaceFileView | undefined
+  /** For a document that is text underneath (`.csv`): how to show and annotate its source. */
+  source?: DocumentSourceActions
 }
 
 export type DocumentViewer = LazyExoticComponent<ComponentType<DocumentViewerProps>>

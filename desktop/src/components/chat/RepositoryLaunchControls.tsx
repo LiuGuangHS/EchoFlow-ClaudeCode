@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   AlertCircle,
@@ -6,6 +6,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Folder,
+  FolderGit2,
   GitBranch,
   GitFork,
   Loader2,
@@ -19,8 +21,10 @@ import {
 } from '../../api/sessions'
 import { useTranslation } from '../../i18n'
 import { useUIStore } from '../../stores/uiStore'
+import { desktopUiPreferencesApi } from '@/api/desktopUiPreferences'
 import { setProjectDisplayName, useProjectDisplayName } from '../../stores/projectDisplayNameStore'
 import { RecentProjectsPanel } from '@/components/composite/DirectoryPicker'
+import { resolveVerticalPlacement } from '@/lib/verticalPlacement'
 import {
   ProjectEditorModal,
   type ProjectEditorSubmission,
@@ -48,10 +52,60 @@ type Props = {
    * touch. Both render the same single pill — only the metrics differ.
    */
   placement?: 'toolbar' | 'outside'
+  /**
+   * Whether the page holding these controls is on screen. Coming back re-reads
+   * the repository: a retained draft may have been hidden while the checkout
+   * moved on.
+   */
+  visible?: boolean
+  /**
+   * Whether `branch` is one these controls chose on their own, for a parent that
+   * keeps the launch target outside them and mounts them again later (the
+   * composer of an empty chat). Without it a branch handed back after a remount
+   * would read as the user's pick and be launched as it was.
+   */
+  branchAutomatic?: boolean
+  /** Reports whether the branch now held is one chosen on its own, so a parent can keep `branchAutomatic`. */
+  onBranchAutomaticChange?: (automatic: boolean) => void
+}
+
+export type RepositoryLaunchControlsHandle = {
+  /**
+   * The branch to launch on, decided now. A branch the user picked or created
+   * (or one the parent handed in) is their intent and is returned as is. One
+   * these controls chose on their own is read again: the server switches the
+   * checkout to a launch branch that is not the current one, so a stale choice
+   * would quietly put the repository back where it was. `null` launches in
+   * the folder as it is.
+   */
+  resolveLaunchBranch: () => Promise<string | null>
+}
+
+/**
+ * A detached HEAD has no branch to follow, and launching "on" the default one
+ * would switch the user off the commit they are standing on (or be refused when
+ * that branch is checked out in another worktree). Nothing is chosen for it:
+ * the session launches in the folder as it is. An isolated worktree needs a
+ * base though, and takes the default branch.
+ */
+function launchesDetachedInPlace(context: RepositoryContextResult, useWorktree: boolean): boolean {
+  return !context.currentBranch && context.headCommit !== null && !useWorktree
+}
+
+/** The branch chosen for the user: the checkout, else the default, else any. */
+function automaticLaunchBranch(context: RepositoryContextResult, useWorktree: boolean): string | null {
+  if (launchesDetachedInPlace(context, useWorktree)) return null
+  return [
+    context.currentBranch,
+    context.defaultBranch,
+    context.branches[0]?.name,
+  ].find((name) => name && context.branches.some((candidate) => candidate.name === name)) || null
 }
 
 const MENU_WIDTH = 400
 const VIEWPORT_GUTTER = 12
+/** Shortest the menu is squeezed to; below this a window is too small to use it in anyway. */
+const MENU_MIN_HEIGHT = 160
 
 /**
  * `root` lists directory, branch and the worktree modes; `directory` and
@@ -81,44 +135,27 @@ const BRANCH_CREATE_ERROR_KEYS = {
   REPOSITORY_NO_COMMITS: 'repoLaunch.newBranchErrorNoCommits',
 } as const
 
-const GIT_MARK_PATH = 'M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z'
-
-/**
- * Git mark for a repo, plain folder otherwise. The folder glyph reads smaller
- * than the mark at the same nominal size, hence the separate `folderSize`.
- */
-function RepoIcon({ isGit, size, folderSize = size }: { isGit: boolean; size: number; folderSize?: number }) {
-  if (isGit) {
-    return (
-      <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]">
-        <path d={GIT_MARK_PATH} />
-      </svg>
-    )
-  }
-  return (
-    <span
-      aria-hidden="true"
-      className="material-symbols-outlined shrink-0 text-[var(--color-text-tertiary)]"
-      style={{ fontSize: folderSize }}
-    >
-      folder
-    </span>
-  )
+/** A folder with the git mark for a repo, a plain folder otherwise. */
+function RepoIcon({ isGit, size }: { isGit: boolean; size: number }) {
+  const Icon = isGit ? FolderGit2 : Folder
+  return <Icon size={size} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />
 }
 
 /**
- * Decorative dot for the worktree cards. The cards carry `aria-checked`
- * already, so this is hidden from the accessibility tree rather than announced
- * a second time.
+ * Decorative 16px radio for the worktree cards: a 1.5px ring at rest that fills
+ * to a terracotta dot when picked. The cards carry `aria-checked` already, so
+ * this is hidden from the accessibility tree rather than announced twice.
  */
 function WorktreeRadio({ selected }: { selected: boolean }) {
   return (
     <span
       aria-hidden="true"
-      className="mt-px flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border-[1.5px] border-[var(--color-outline)]"
-    >
-      {selected && <span className="h-[9px] w-[9px] rounded-full bg-[var(--color-brand)]" />}
-    </span>
+      className={`mt-0.5 h-4 w-4 shrink-0 rounded-full transition-shadow duration-150 ${
+        selected
+          ? 'shadow-[inset_0_0_0_5px_var(--color-brand)]'
+          : 'shadow-[inset_0_0_0_1.5px_var(--color-outline)]'
+      }`}
+    />
   )
 }
 
@@ -135,7 +172,7 @@ function stateMessage(context: RepositoryContextResult | null, error: string | n
   return null
 }
 
-export function RepositoryLaunchControls({
+export const RepositoryLaunchControls = forwardRef<RepositoryLaunchControlsHandle, Props>(function RepositoryLaunchControls({
   workDir,
   onWorkDirChange,
   branch,
@@ -145,7 +182,10 @@ export function RepositoryLaunchControls({
   onLaunchReadyChange,
   disabled = false,
   placement = 'outside',
-}: Props) {
+  visible = true,
+  branchAutomatic = false,
+  onBranchAutomaticChange,
+}, ref) {
   const t = useTranslation()
   const addToast = useUIStore((state) => state.addToast)
   const isMobileBrowser = useMobileViewport() && !isDesktopRuntime()
@@ -169,7 +209,7 @@ export function RepositoryLaunchControls({
   const [createBranchError, setCreateBranchError] = useState<string | null>(null)
   const [projectCreateOpen, setProjectCreateOpen] = useState(false)
   const [projectCreateFolder, setProjectCreateFolder] = useState('')
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number; direction: 'up' | 'down' } | null>(null)
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; direction: 'up' | 'down'; maxHeight: number } | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const pillRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -178,6 +218,22 @@ export function RepositoryLaunchControls({
   /** Read after an await to tell whether the directory moved on under us. */
   const latestWorkDirRef = useRef(workDir)
   latestWorkDirRef.current = workDir
+  const latestBranchRef = useRef(branch)
+  latestBranchRef.current = branch
+  const latestUseWorktreeRef = useRef(useWorktree)
+  latestUseWorktreeRef.current = useWorktree
+  /**
+   * The branch these controls last chose on their own. Only that one follows
+   * the repository when it is read again; a branch the user picked or
+   * created, or one the parent handed in, is the launch intent and stays.
+   */
+  const automaticBranchRef = useRef<string | null>(null)
+  /**
+   * Orders every write to `context`. Opening the branch list re-reads the
+   * repository in the background; a slower read must not land on top of a
+   * newer one, a directory change, or a branch the user just created.
+   */
+  const contextRequestRef = useRef(0)
   /**
    * Creating a branch updates this component's context and the parent-owned
    * launch target together. An external store can publish the target first,
@@ -201,15 +257,19 @@ export function RepositoryLaunchControls({
   const updateMenuPos = useCallback((forView: MenuView) => {
     if (!pillRef.current) return
     const rect = pillRef.current.getBoundingClientRect()
-    const height = VIEW_HEIGHTS[forView]
-    const spaceAbove = rect.top
-    const spaceBelow = window.innerHeight - rect.bottom
-    const direction = spaceBelow >= height || spaceBelow >= spaceAbove ? 'down' : 'up'
+    const { direction, edge, maxHeight } = resolveVerticalPlacement(rect, {
+      viewportHeight: window.innerHeight,
+      preferredHeight: VIEW_HEIGHTS[forView],
+      gap: 6,
+      margin: VIEWPORT_GUTTER,
+      minHeight: MENU_MIN_HEIGHT,
+    })
     const maxLeft = Math.max(VIEWPORT_GUTTER, window.innerWidth - MENU_WIDTH - VIEWPORT_GUTTER)
     setMenuPos({
-      top: direction === 'down' ? rect.bottom + 6 : rect.top - 6,
+      top: edge,
       left: Math.min(Math.max(rect.left, VIEWPORT_GUTTER), maxLeft),
       direction,
+      maxHeight,
     })
   }, [])
 
@@ -225,6 +285,7 @@ export function RepositoryLaunchControls({
 
     const requestedWorkDir = workDir
     let cancelled = false
+    contextRequestRef.current += 1
     setContextSourceWorkDir(null)
     setLoading(true)
     setError(null)
@@ -249,8 +310,103 @@ export function RepositoryLaunchControls({
     }
   }, [workDir, onBranchChange])
 
+  /**
+   * Re-reads the repository so branches created outside the app show up (#1533).
+   * Unlike the load above this is silent: the list already on screen stays put
+   * while it runs and if it fails, so a flaky read cannot blank a working
+   * picker or hold up sending.
+   */
+  const refreshContext = useCallback(() => {
+    if (!workDir) return
+    const requestedWorkDir = workDir
+    const request = ++contextRequestRef.current
+    sessionsApi.getRepositoryContext(requestedWorkDir)
+      .then((result) => {
+        if (request !== contextRequestRef.current) return
+        if (latestWorkDirRef.current !== requestedWorkDir) return
+        // A failed read reports itself as `state: 'error'` and would clear the
+        // selected branch; the list we already have is the better answer.
+        if (result.state === 'error') return
+        setContext(result)
+        setContextSourceWorkDir(requestedWorkDir)
+        setError(null)
+      })
+      .catch(() => {})
+  }, [workDir])
+
+  // Back on screen after a while: the checkout may have moved in the meantime.
+  const wasVisibleRef = useRef(visible)
+  useEffect(() => {
+    const cameBack = visible && !wasVisibleRef.current
+    wasVisibleRef.current = visible
+    if (cameBack) refreshContext()
+  }, [visible, refreshContext])
+
+  // The same when the window comes back to the front (switching to a terminal
+  // and running `git switch` is the usual way the checkout moves under a draft
+  // that never left the screen). Focus and visibility fire together on some
+  // platforms, so a second one right behind the first is dropped.
+  const lastReturnRefreshRef = useRef(0)
+  useEffect(() => {
+    if (!visible || !workDir) return
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'hidden') return
+      const now = Date.now()
+      if (now - lastReturnRefreshRef.current < 1000) return
+      lastReturnRefreshRef.current = now
+      refreshContext()
+    }
+    window.addEventListener('focus', refreshOnReturn)
+    document.addEventListener('visibilitychange', refreshOnReturn)
+    return () => {
+      window.removeEventListener('focus', refreshOnReturn)
+      document.removeEventListener('visibilitychange', refreshOnReturn)
+    }
+  }, [visible, workDir, refreshContext])
+
+  /** Remembers which branch these controls chose on their own, and tells a parent that keeps it. */
+  const setAutomaticBranch = useCallback((next: string | null) => {
+    automaticBranchRef.current = next
+    onBranchAutomaticChange?.(next !== null)
+  }, [onBranchAutomaticChange])
+
+  useImperativeHandle(ref, () => ({
+    resolveLaunchBranch: async () => {
+      const requestedWorkDir = latestWorkDirRef.current
+      const chosen = latestBranchRef.current
+      if (!requestedWorkDir || chosen === null || chosen !== automaticBranchRef.current) return chosen
+      const request = ++contextRequestRef.current
+      // Unreadable now: launch in the folder as it is. Only an isolated
+      // worktree keeps the branch — it never moves this checkout, and dropping
+      // the branch would drop the worktree the user asked for.
+      const unreadable = latestUseWorktreeRef.current ? chosen : null
+      let result: RepositoryContextResult
+      try {
+        result = await sessionsApi.getRepositoryContext(requestedWorkDir)
+      } catch {
+        return unreadable
+      }
+      if (result.state !== 'ok') return unreadable
+      const next = automaticLaunchBranch(result, latestUseWorktreeRef.current)
+      if (request === contextRequestRef.current && latestWorkDirRef.current === requestedWorkDir) {
+        setContext(result)
+        setContextSourceWorkDir(requestedWorkDir)
+        setError(null)
+        setAutomaticBranch(next)
+        if (next !== latestBranchRef.current) onBranchChange(next)
+      }
+      return next
+    },
+  }), [onBranchChange, setAutomaticBranch])
+
+  // A new directory starts over. A parent that keeps the launch target and
+  // mounts these controls again later says which branch was chosen for the
+  // user (see `branchAutomatic`); that choice is still followed, not kept.
   useEffect(() => {
     createdBranchTransitionRef.current = null
+    automaticBranchRef.current = branchAutomatic ? latestBranchRef.current : null
+    // Only the directory: the flag is read when it changes, not followed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workDir])
 
   useEffect(() => {
@@ -272,16 +428,15 @@ export function RepositoryLaunchControls({
     }
 
     const branchExists = branch && context.branches.some((candidate) => candidate.name === branch)
-    if (branchExists) return
+    // A picked (or handed-in) branch stays while it exists. One chosen here
+    // follows the repository as it reads now, so a draft that waited while
+    // the checkout moved does not launch on the branch it used to be on.
+    if (branchExists && branch !== automaticBranchRef.current) return
 
-    const fallbackBranch = [
-      context.currentBranch,
-      context.defaultBranch,
-      context.branches[0]?.name,
-    ].find((name) => name && context.branches.some((candidate) => candidate.name === name))
-
-    onBranchChange(fallbackBranch || null)
-  }, [branch, context, onBranchChange, workDir])
+    const fallbackBranch = automaticLaunchBranch(context, useWorktree)
+    setAutomaticBranch(fallbackBranch)
+    if (fallbackBranch !== branch) onBranchChange(fallbackBranch)
+  }, [branch, context, onBranchChange, setAutomaticBranch, useWorktree, workDir])
 
   const closeMenu = useCallback(() => {
     setMenuOpen(false)
@@ -323,7 +478,7 @@ export function RepositoryLaunchControls({
 
   useEffect(() => {
     const activeItem = menuOpen && view === 'branch' ? itemRefs.current[selectedIndex] : null
-    activeItem?.scrollIntoView({ block: 'nearest' })
+    activeItem?.scrollIntoView?.({ block: 'nearest' })
   }, [menuOpen, view, selectedIndex])
 
   const selectedBranch = useMemo(() => {
@@ -366,6 +521,8 @@ export function RepositoryLaunchControls({
   }, [context, selectedBranch, t, useWorktree])
 
   const selectBranch = (candidate: RepositoryBranchInfo) => {
+    // Picked by the user, even when it is the branch chosen for them before.
+    setAutomaticBranch(null)
     onBranchChange(candidate.name)
     setView('root')
     setBranchFilter('')
@@ -406,6 +563,9 @@ export function RepositoryLaunchControls({
       // repo's branch list and selection under another repo's path — the same
       // reason the `workDir` effect carries a `cancelled` flag.
       if (latestWorkDirRef.current !== requestWorkDir) return
+      // Drop any background refresh still in flight: it read the repository
+      // before this branch existed and would take it out of the list again.
+      contextRequestRef.current += 1
       // The response carries the context the branch was created against, so the
       // list is correct without a second round trip.
       createdBranchTransitionRef.current = {
@@ -415,6 +575,7 @@ export function RepositoryLaunchControls({
       }
       setContext(result.context)
       setError(null)
+      setAutomaticBranch(null)
       onBranchChange(result.branch)
       addToast({
         type: 'success',
@@ -454,14 +615,16 @@ export function RepositoryLaunchControls({
   }
 
   const handleWorkDirChange = (path: string) => {
-    onWorkDirChange(path)
     if (path === workDir) {
-      // Re-picking the current directory fires no context request, so there is
-      // nothing to wait for.
+      // Re-picking the current directory changes nothing and fires no context
+      // request, so there is nothing to wait for. The parent is not told either:
+      // one that resets its launch state on every pick would then wait for a
+      // readiness report these controls have no reason to send again.
       if (isGitReady) setView('root')
       else closeMenu()
       return
     }
+    onWorkDirChange(path)
     // Hold the menu open on the root view. If the new directory turns out to
     // be a repo, its branch and worktree rows appear right where the eye
     // already is; if it does not, `revealAfterPick` closes the menu instead.
@@ -479,10 +642,12 @@ export function RepositoryLaunchControls({
   }
 
   const handleProjectCreateSubmit = async (submission: ProjectEditorSubmission) => {
-    await setProjectDisplayName(submission.sourceFolder, submission.name)
+    const project = await desktopUiPreferencesApi.updateProjectDirectories(submission.sourceFolder, submission.additionalDirectories)
+    await setProjectDisplayName(project.projectKey, submission.name)
     invalidateRecentProjectsCache()
     setProjectCreateOpen(false)
-    onWorkDirChange(submission.sourceFolder)
+    // Naming the folder already in use only renames it.
+    if (submission.sourceFolder !== workDir) onWorkDirChange(submission.sourceFolder)
   }
 
   const handleBranchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -516,7 +681,9 @@ export function RepositoryLaunchControls({
     (
       context?.state !== 'ok' ||
       context.branches.length === 0 ||
-      !!selectedBranch
+      !!selectedBranch ||
+      // Nothing to wait for: no branch is chosen for a detached HEAD.
+      launchesDetachedInPlace(context, useWorktree)
     )
   )
 
@@ -543,13 +710,24 @@ export function RepositoryLaunchControls({
   const displayName = useProjectDisplayName(projectKey)
   const repoLabel = displayName || context?.repoName || basename(context?.repoRoot) || basename(workDir)
   const selectedBranchName = isGitReady ? (selectedBranch?.name ?? null) : null
-  // The worktree cards name the branch their changes would land on.
-  const branchLabel = selectedBranch?.name ?? context?.currentBranch ?? t('repoLaunch.noBranch')
+  // A detached HEAD has no branch to name and none is chosen for it (that would
+  // switch the user off their commit); the commit says where the checkout is.
+  const detachedCommit = context?.state === 'ok' && !selectedBranch && !context.currentBranch && context.headCommit
+    ? context.headCommit.slice(0, 7)
+    : null
+  const branchPillName = selectedBranchName ?? (detachedCommit ? `HEAD ${detachedCommit}` : null)
+  // The worktree cards name where their changes would land. Working in place on
+  // a detached HEAD lands on that commit; an isolated worktree is based on the
+  // default branch when none is chosen.
+  const branchLabel = selectedBranch?.name ?? context?.currentBranch ?? (detachedCommit ? `HEAD ${detachedCommit}` : t('repoLaunch.noBranch'))
+  const isolatedBaseLabel = selectedBranch?.name ?? (context?.state === 'ok' ? automaticLaunchBranch(context, true) : null) ?? t('repoLaunch.noBranch')
   const worktreeLabel = useWorktree ? t('repoLaunch.worktreeIsolated') : t('repoLaunch.worktreeCurrent')
-  const summary = [repoLabel, selectedBranchName].filter(Boolean).join(' / ')
+  const summary = [repoLabel, branchPillName].filter(Boolean).join(' / ')
   const pillTitle = [
     workDir,
-    selectedBranchName ? `${t('repoLaunch.branch')}: ${selectedBranchName}` : null,
+    selectedBranchName
+      ? `${t('repoLaunch.branch')}: ${selectedBranchName}`
+      : detachedCommit ? `${t('repoLaunch.detachedHead')}: ${detachedCommit}` : null,
     useWorktree ? worktreeLabel : null,
   ].filter(Boolean).join('\n')
 
@@ -563,43 +741,49 @@ export function RepositoryLaunchControls({
             : t('repoLaunch.localBranch'))
     : t('repoLaunch.noBranch')
 
-  // Outlined pill, per the handoff's launch row: 1px border at rest that firms
-  // up to `--color-outline` on hover. The focus ring uses the opaque focus
-  // token rather than `--color-brand/35`, whose `/N` modifier Safari 15 drops.
+  // A quiet toolbar chip, not an outlined pill: the composer toolbar reads
+  // `folder project / branch` in tertiary text and only fills on hover, the
+  // same as the permission chip and model name beside it. The focus ring uses
+  // the opaque focus token rather than `--color-brand/35`, whose `/N` modifier
+  // Safari 15 drops.
   const pillClassName = [
-    'group inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--radius-lg)]',
-    'border border-[var(--color-border)] bg-[var(--color-surface)] font-medium leading-none',
-    'text-[var(--color-text-primary)] transition-[background-color,color,border-color] duration-150 ease-out',
-    'hover:border-[var(--color-outline)] hover:bg-[var(--color-surface-hover)]',
+    'group inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--radius-sm)] px-1.5',
+    'text-xs leading-none text-[var(--color-text-tertiary)]',
+    'transition-[background-color,color] duration-150 ease-out',
+    'hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]',
     'focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]',
     'disabled:cursor-not-allowed disabled:opacity-50',
-    isToolbar ? 'h-9 px-3 text-[13.5px]' : 'h-10 px-3.5 text-[13.5px]',
+    // 28px in the toolbar, matching its other controls; on its own line below
+    // the composer the H5 layout needs a 40px touch target.
+    isToolbar || !isMobileBrowser ? 'h-7' : 'h-10',
   ].join(' ')
 
   const rowClassName = [
-    'flex w-full items-center gap-3 rounded-[var(--radius-lg)] px-3 text-left',
-    'transition-[background-color,border-color] duration-150 ease-out',
+    'flex w-full items-center gap-2.5 rounded-[var(--radius-sm)] px-2 text-left',
+    'transition-[background-color] duration-150 ease-out',
     'hover:bg-[var(--color-surface-hover)]',
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)]',
-    isMobileBrowser ? 'min-h-[56px] py-3' : 'py-2.5',
+    'focus-visible:outline-none focus-visible:bg-[var(--color-surface-hover)]',
+    isMobileBrowser ? 'min-h-[56px] py-3' : 'min-h-8 py-1.5',
   ].join(' ')
 
   // Both drill-downs head back the same way. The dropdown labels the crumb
   // after the view you are in; the sheet, which has its own title bar, labels
   // it after the view you are going to.
-  const dropdownBackClassName = 'inline-flex items-center gap-1 rounded-[var(--radius-sm)] px-1 py-0.5 text-[10px] font-bold uppercase tracking-widest text-[var(--color-outline)] transition-colors hover:text-[var(--color-text-secondary)]'
-  const sheetBackClassName = 'inline-flex items-center gap-1 self-start rounded-[var(--radius-md)] px-2 py-1 text-[12px] font-semibold text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)]'
+  const dropdownBackClassName = 'inline-flex h-7 items-center gap-1 rounded-[var(--radius-sm)] px-1.5 text-xs font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]'
+  const sheetBackClassName = 'inline-flex items-center gap-1 self-start rounded-[var(--radius-sm)] px-2 py-1 text-xs font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)]'
 
   // The two modes are a single choice, so they read as radio cards rather than
-  // a menu list: 1.5px edge that turns terracotta on the selected one.
+  // a menu list: a hairline at rest, a 1.5px terracotta edge on a faint
+  // terracotta wash once picked. Inset shadows rather than borders so the edge
+  // can thicken without nudging the content.
   const worktreeCardClassName = (selected: boolean) => [
-    'flex w-full items-start gap-3 rounded-[var(--radius-lg)] border-[1.5px] px-[15px] py-3 text-left',
-    'transition-[background-color,border-color] duration-150 ease-out',
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)]',
+    'flex w-full items-start gap-2.5 rounded-[var(--radius-md)] px-3 py-2.5 text-left',
+    'transition-[background-color,box-shadow] duration-150 ease-out',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]',
     selected
-      ? 'border-[var(--color-primary-fixed-dim)] bg-[var(--color-brand-soft)]'
-      : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-outline)] hover:bg-[var(--color-surface-hover)]',
+      ? 'bg-[var(--color-brand-soft)] shadow-[inset_0_0_0_1.5px_var(--color-brand)]'
+      : 'bg-[var(--color-surface-container-lowest)] shadow-[inset_0_0_0_1px_var(--color-border)] hover:shadow-[inset_0_0_0_1px_var(--color-outline)]',
   ].join(' ')
 
   const branchList = (
@@ -607,7 +791,7 @@ export function RepositoryLaunchControls({
       id={listboxId}
       role="listbox"
       aria-label={t('repoLaunch.selectBranch')}
-      className={isMobileBrowser ? 'py-1' : 'max-h-[280px] overflow-y-auto py-1'}
+      className={isMobileBrowser ? 'p-1.5' : 'max-h-[280px] overflow-y-auto'}
     >
       {filteredBranches.length === 0 ? (
         <div className="px-4 py-8 text-center text-xs text-[var(--color-text-tertiary)]">
@@ -625,19 +809,18 @@ export function RepositoryLaunchControls({
             aria-selected={isSelected}
             onMouseEnter={() => setSelectedIndex(index)}
             onClick={() => selectBranch(candidate)}
-            className={`flex w-full items-center gap-3 px-4 text-left transition-[background-color] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)] ${
-              isMobileBrowser ? 'min-h-[56px] py-3' : 'py-3'
+            className={`flex w-full items-center gap-2.5 rounded-[var(--radius-sm)] px-2 text-left transition-[background-color] duration-150 ease-out focus-visible:outline-none focus-visible:bg-[var(--color-surface-hover)] ${
+              isMobileBrowser ? 'min-h-[56px] py-3' : 'min-h-8 py-1.5'
             } ${
               index === selectedIndex || isSelected ? 'bg-[var(--color-surface-hover)]' : 'hover:bg-[var(--color-surface-hover)]'
             }`}
           >
-            <span className={`h-8 w-1 rounded-full ${isSelected ? 'bg-[var(--color-brand)]' : 'bg-transparent'}`} />
-            <GitBranch size={17} className="shrink-0 text-[var(--color-text-secondary)]" />
+            <GitBranch size={16} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-semibold text-[var(--color-text-primary)]">
+              <span className="block truncate font-mono text-[13px] text-[var(--color-text-primary)]">
                 {candidate.name}
               </span>
-              <span className="block truncate text-[11px] text-[var(--color-text-tertiary)]">
+              <span className="block truncate text-xs text-[var(--color-text-tertiary)]">
                 {candidate.current
                   ? t('repoLaunch.currentBranch')
                   : candidate.checkedOut
@@ -647,7 +830,7 @@ export function RepositoryLaunchControls({
                       : t('repoLaunch.localBranch')}
               </span>
             </span>
-            {isSelected && <Check size={17} className="shrink-0 text-[var(--color-brand)]" />}
+            {isSelected && <Check size={14} strokeWidth={2} aria-hidden="true" className="shrink-0 text-[var(--color-brand)]" />}
           </button>
         )
       })}
@@ -672,8 +855,8 @@ export function RepositoryLaunchControls({
       onClick={openNewBranchView}
       className={rowClassName}
     >
-      <Plus size={17} className="shrink-0 text-[var(--color-text-tertiary)]" />
-      <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-[var(--color-text-primary)]">
+      <Plus size={16} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />
+      <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--color-text-primary)]">
         {t('repoLaunch.newBranch')}
       </span>
     </button>
@@ -681,7 +864,7 @@ export function RepositoryLaunchControls({
 
   const newBranchForm = (
     <form
-      className="flex flex-col gap-3 p-3"
+      className="flex flex-col gap-3 p-2"
       onSubmit={(event) => {
         event.preventDefault()
         void createBranch()
@@ -718,9 +901,11 @@ export function RepositoryLaunchControls({
     </form>
   )
 
+  // The menu-search row: a bare field on the menu, set off by the hairline its
+  // host draws under it — not a boxed input inside a box.
   const branchSearch = (
-    <div className="flex items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 py-2">
-      <Search size={15} className="shrink-0 text-[var(--color-text-tertiary)]" />
+    <div className="flex h-8 items-center gap-2 px-2">
+      <Search size={14} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />
       <input
         id={searchInputId}
         ref={searchRef}
@@ -730,7 +915,7 @@ export function RepositoryLaunchControls({
         aria-controls={listboxId}
         aria-activedescendant={filteredBranches[selectedIndex] ? `${listboxId}-option-${selectedIndex}` : undefined}
         placeholder={t('repoLaunch.searchBranch')}
-        className="min-w-0 flex-1 bg-transparent text-sm text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-tertiary)]"
+        className="min-w-0 flex-1 bg-transparent text-[13px] text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-tertiary)]"
       />
     </div>
   )
@@ -740,15 +925,15 @@ export function RepositoryLaunchControls({
   // pixels taller the moment the context lands.
   const revealSkeleton = (
     <div aria-hidden="true" className="flex animate-pulse flex-col gap-1">
-      <div className="h-[52px] rounded-[var(--radius-lg)] bg-[var(--color-surface-container-low)]" />
-      <div className="mx-1.5 my-1 h-px bg-[var(--color-border-separator)]" />
-      <div className="h-[74px] rounded-[var(--radius-lg)] bg-[var(--color-surface-container-low)]" />
-      <div className="h-[74px] rounded-[var(--radius-lg)] bg-[var(--color-surface-container-low)]" />
+      <div className="h-11 rounded-[var(--radius-sm)] bg-[var(--color-surface-container)]" />
+      <div className="mx-1 my-1 h-px bg-[var(--color-border-separator)]" />
+      <div className="h-16 rounded-[var(--radius-md)] bg-[var(--color-surface-container)]" />
+      <div className="h-16 rounded-[var(--radius-md)] bg-[var(--color-surface-container)]" />
     </div>
   )
 
   const rootView = (
-    <div role="menu" aria-label={t('repoLaunch.launchLocation')} className="flex flex-col gap-1 p-1.5">
+    <div role="menu" aria-label={t('repoLaunch.launchLocation')} className={`flex flex-col gap-0.5 ${isMobileBrowser ? 'p-1.5' : ''}`}>
       <button
         type="button"
         role="menuitem"
@@ -756,16 +941,16 @@ export function RepositoryLaunchControls({
         title={workDir || undefined}
         className={rowClassName}
       >
-        <RepoIcon isGit={isGitReady} size={18} />
+        <RepoIcon isGit={isGitReady} size={16} />
         <span className="min-w-0 flex-1">
-          <span className="block text-[13px] font-semibold text-[var(--color-text-primary)]">
+          <span className="block text-[13px] font-medium text-[var(--color-text-primary)]">
             {t('dirPicker.directory')}
           </span>
-          <span className="block truncate text-[11px] text-[var(--color-text-tertiary)]">
+          <span className="block truncate text-xs text-[var(--color-text-tertiary)]">
             {workDir ? repoLabel : t('dirPicker.selectProject')}
           </span>
         </span>
-        <ChevronRight size={16} className="shrink-0 text-[var(--color-text-tertiary)]" />
+        <ChevronRight size={14} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />
       </button>
 
       {revealAfterPick && revealSkeleton}
@@ -774,25 +959,30 @@ export function RepositoryLaunchControls({
         <button
           type="button"
           role="menuitem"
-          onClick={() => setView('branch')}
+          onClick={() => {
+            refreshContext()
+            setView('branch')
+          }}
           className={rowClassName}
         >
-          <GitBranch size={18} className="shrink-0 text-[var(--color-text-tertiary)]" />
+          <GitBranch size={16} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />
           <span className="min-w-0 flex-1">
-            <span className="block text-[13.5px] font-semibold text-[var(--color-text-primary)]">
+            <span className="block text-[13px] font-medium text-[var(--color-text-primary)]">
               {t('repoLaunch.branch')}
             </span>
-            <span className="block truncate text-[12px] text-[var(--color-text-tertiary)]">
-              {selectedBranchName ? `${selectedBranchName} · ${branchSubtitle}` : t('repoLaunch.noBranch')}
+            <span className="block truncate text-xs text-[var(--color-text-tertiary)]">
+              {selectedBranchName
+                ? `${selectedBranchName} · ${branchSubtitle}`
+                : detachedCommit ? `${detachedCommit} · ${t('repoLaunch.detachedHead')}` : t('repoLaunch.noBranch')}
             </span>
           </span>
-          <ChevronRight size={16} className="shrink-0 text-[var(--color-text-tertiary)]" />
+          <ChevronRight size={14} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />
         </button>
       )}
 
       {isGitReady && (
         <>
-          <div className="mx-1.5 my-1 h-px bg-[var(--color-border-separator)]" />
+          <div className="mx-1 my-1 h-px bg-[var(--color-border-separator)]" />
           <button
             type="button"
             role="menuitemradio"
@@ -803,10 +993,10 @@ export function RepositoryLaunchControls({
           >
             <WorktreeRadio selected={!useWorktree} />
             <span className="min-w-0 flex-1">
-              <span id={worktreeCurrentLabelId} className="block text-[14.5px] font-bold text-[var(--color-text-primary)]">
+              <span id={worktreeCurrentLabelId} className="block text-[13px] font-medium text-[var(--color-text-primary)]">
                 {t('repoLaunch.worktreeCurrent')}
               </span>
-              <span className="mt-[3px] block text-[12.5px] leading-[1.6] text-[var(--color-text-secondary)]">
+              <span className="mt-0.5 block text-xs leading-[1.55] text-[var(--color-text-tertiary)]">
                 {t('repoLaunch.worktreeCurrentDesc', { branch: branchLabel })}
               </span>
             </span>
@@ -822,11 +1012,11 @@ export function RepositoryLaunchControls({
           >
             <WorktreeRadio selected={useWorktree} />
             <span className="min-w-0 flex-1">
-              <span id={worktreeIsolatedLabelId} className="block text-[14.5px] font-bold text-[var(--color-text-primary)]">
+              <span id={worktreeIsolatedLabelId} className="block text-[13px] font-medium text-[var(--color-text-primary)]">
                 {t('repoLaunch.worktreeIsolated')}
               </span>
-              <span className="mt-[3px] block text-[12.5px] leading-[1.6] text-[var(--color-text-secondary)]">
-                {t('repoLaunch.worktreeIsolatedDesc', { branch: branchLabel })}
+              <span className="mt-0.5 block text-xs leading-[1.55] text-[var(--color-text-tertiary)]">
+                {t('repoLaunch.worktreeIsolatedDesc', { branch: isolatedBaseLabel })}
               </span>
             </span>
           </button>
@@ -874,15 +1064,16 @@ export function RepositoryLaunchControls({
       }}
       className={pillClassName}
     >
-      <RepoIcon isGit={isGitReady} size={15} folderSize={17} />
+      <Folder size={14} strokeWidth={1.75} aria-hidden="true" className="shrink-0" />
 
       <span className="min-w-[1.75rem] shrink truncate">
         {repoLabel || t('dirPicker.selectProject')}
       </span>
 
-      {selectedBranchName && (
+      {branchPillName && (
         <>
-          <span aria-hidden="true" className="shrink-0 text-[var(--color-outline-variant)]">/</span>
+          <span aria-hidden="true" className="shrink-0 text-[var(--color-outline)]">/</span>
+          <GitBranch size={14} strokeWidth={1.75} aria-hidden="true" className="shrink-0" />
           {/*
             `dir="rtl"` puts the ellipsis at the *start*, so a truncated branch
             keeps its tail: `…use-native-on-main` rather than `feature/comp…`.
@@ -890,29 +1081,30 @@ export function RepositoryLaunchControls({
             prefixes carry no information. `<bdi>` isolates the name so the RTL
             container cannot reorder its own neutral characters (the slashes).
           */}
-          <span dir="rtl" className="min-w-0 shrink truncate text-left text-[var(--color-text-secondary)]">
-            <bdi>{selectedBranchName}</bdi>
+          <span dir="rtl" className="min-w-0 shrink truncate text-left">
+            <bdi>{branchPillName}</bdi>
           </span>
         </>
       )}
 
       {useWorktree && isGitReady && (
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--color-brand-soft)] px-1.5 py-1 text-[10px] font-bold leading-none text-[var(--color-brand)]">
-          <GitFork size={11} aria-hidden="true" />
+        <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-[var(--radius-xs)] bg-[var(--color-surface-container)] px-1.5 text-[11px] font-medium leading-none text-[var(--color-text-secondary)]">
+          <GitFork size={12} strokeWidth={2} aria-hidden="true" />
           {t('repoLaunch.worktreeBadge')}
         </span>
       )}
 
       {loading && workDir
-        ? <Loader2 size={15} className="shrink-0 animate-spin text-[var(--color-text-tertiary)]" />
-        : <ChevronDown size={15} className="shrink-0 text-[var(--color-text-tertiary)]" />}
+        ? <Loader2 size={14} aria-hidden="true" className="shrink-0 animate-spin text-[var(--color-text-tertiary)]" />
+        : <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />}
     </button>
   )
 
-  const menuClassName = 'w-[400px] overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-overlay)]'
+  const menuClassName = 'flex w-[400px] flex-col overflow-y-auto rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] p-1 shadow-[var(--shadow-dropdown)]'
   const menuStyle = {
     position: 'fixed' as const,
     left: menuPos?.left,
+    maxHeight: menuPos?.maxHeight,
     ...(menuPos?.direction === 'down'
       ? { top: menuPos.top }
       : { bottom: window.innerHeight - (menuPos?.top ?? 0) }),
@@ -934,9 +1126,9 @@ export function RepositoryLaunchControls({
               role="status"
               aria-label={warning.message}
               title={warning.message}
-              className="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[var(--radius-md)] bg-[var(--color-warning-container)] px-2 text-[11px] font-medium text-[var(--color-on-warning-container)]"
+              className="inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[var(--radius-sm)] bg-[var(--color-warning-container)] px-1.5 text-[11px] font-medium text-[var(--color-on-warning-container)]"
             >
-              <AlertCircle size={13} aria-hidden="true" className="shrink-0 text-[var(--color-warning)]" />
+              <AlertCircle size={12} strokeWidth={2} aria-hidden="true" className="shrink-0" />
               <span className="hidden 2xl:inline">{warning.compactLabel}</span>
             </div>
           )}
@@ -944,8 +1136,8 @@ export function RepositoryLaunchControls({
       ) : pill}
 
       {message && workDir && (
-        <div className="flex items-center gap-2 px-1 text-[11px] text-[var(--color-text-tertiary)]">
-          <AlertCircle size={13} className="shrink-0" />
+        <div className="flex items-center gap-1.5 px-1.5 text-xs text-[var(--color-text-tertiary)]">
+          <AlertCircle size={12} strokeWidth={2} aria-hidden="true" className="shrink-0" />
           <span>{message === 'missing' ? t('repoLaunch.missingWorkdir') : message}</span>
         </div>
       )}
@@ -954,9 +1146,9 @@ export function RepositoryLaunchControls({
         <div
           role="status"
           aria-label={warning.message}
-          className="flex items-center gap-2 px-1 text-[11px] text-[var(--color-warning)]"
+          className="flex items-center gap-1.5 px-1.5 text-xs text-[var(--color-on-warning-container)]"
         >
-          <AlertCircle size={13} aria-hidden="true" className="shrink-0" />
+          <AlertCircle size={12} strokeWidth={2} aria-hidden="true" className="shrink-0 text-[var(--color-warning)]" />
           <span>{warning.message}</span>
         </div>
       )}
@@ -986,7 +1178,7 @@ export function RepositoryLaunchControls({
                   onClick={() => setView('root')}
                   className={sheetBackClassName}
                 >
-                  <ChevronLeft size={14} />
+                  <ChevronLeft size={14} strokeWidth={1.75} aria-hidden="true" />
                   {t('repoLaunch.launchLocation')}
                 </button>
                 {branchSearch}
@@ -997,7 +1189,7 @@ export function RepositoryLaunchControls({
                 onClick={leaveNewBranchView}
                 className={sheetBackClassName}
               >
-                <ChevronLeft size={14} />
+                <ChevronLeft size={14} strokeWidth={1.75} aria-hidden="true" />
                 {t('repoLaunch.selectBranch')}
               </button>
             ) : view === 'directory' && directoryBackLabel ? (
@@ -1006,7 +1198,7 @@ export function RepositoryLaunchControls({
                 onClick={() => setView('root')}
                 className={sheetBackClassName}
               >
-                <ChevronLeft size={14} />
+                <ChevronLeft size={14} strokeWidth={1.75} aria-hidden="true" />
                 {t('repoLaunch.launchLocation')}
               </button>
             ) : undefined}
@@ -1021,31 +1213,31 @@ export function RepositoryLaunchControls({
           <div ref={menuRef} id={menuId} className={menuClassName} style={menuStyle}>
             {view === 'branch' ? (
               <>
-                <div className="border-b border-[var(--color-border)] p-3">
+                <div className="mb-1 border-b border-[var(--color-border)]">
                   <button
                     type="button"
                     onClick={() => setView('root')}
-                    className={`mb-2 ${dropdownBackClassName}`}
+                    className={dropdownBackClassName}
                   >
-                    <ChevronLeft size={13} />
+                    <ChevronLeft size={14} strokeWidth={1.75} aria-hidden="true" />
                     {t('repoLaunch.selectBranch')}
                   </button>
                   {branchSearch}
                 </div>
                 {branchList}
-                <div className="border-t border-[var(--color-border-separator)] p-1.5">
+                <div className="mt-1 border-t border-[var(--color-border-separator)] pt-1">
                   {branchCreateRow}
                 </div>
               </>
             ) : view === 'newBranch' ? (
               <>
-                <div className="border-b border-[var(--color-border)] px-3 py-2.5">
+                <div className="border-b border-[var(--color-border)] pb-1">
                   <button
                     type="button"
                     onClick={leaveNewBranchView}
                     className={dropdownBackClassName}
                   >
-                    <ChevronLeft size={13} />
+                    <ChevronLeft size={14} strokeWidth={1.75} aria-hidden="true" />
                     {t('repoLaunch.newBranchTitle')}
                   </button>
                 </div>
@@ -1054,13 +1246,13 @@ export function RepositoryLaunchControls({
             ) : view === 'directory' ? (
               <>
                 {directoryBackLabel && (
-                  <div className="border-b border-[var(--color-border)] px-3 py-2.5">
+                  <div className="border-b border-[var(--color-border)] pb-1">
                     <button
                       type="button"
                       onClick={() => setView('root')}
                       className={dropdownBackClassName}
                     >
-                      <ChevronLeft size={13} />
+                      <ChevronLeft size={14} strokeWidth={1.75} aria-hidden="true" />
                       {directoryBackLabel}
                     </button>
                   </div>
@@ -1069,7 +1261,7 @@ export function RepositoryLaunchControls({
               </>
             ) : (
               <>
-                <div className="px-4 pb-1 pt-3 text-[10px] font-bold uppercase tracking-widest text-[var(--color-outline)]">
+                <div className="px-2 pb-1 pt-2 text-[11px] font-semibold text-[var(--color-text-tertiary)]">
                   {t('repoLaunch.launchLocation')}
                 </div>
                 {rootView}
@@ -1090,4 +1282,4 @@ export function RepositoryLaunchControls({
       />
     </div>
   )
-}
+})

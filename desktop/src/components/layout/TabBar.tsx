@@ -1,46 +1,43 @@
 import { forwardRef, useMemo, useRef, useState, useEffect, useLayoutEffect, useCallback, useId } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
-  SCHEDULED_TAB_ID,
-  SETTINGS_TAB_ID,
-  MARKET_TAB_ID,
-  CONNECTORS_TAB_ID,
-  DEEPSEEK_HARNESS_TAB_ID,
-  RUNTIME_SETTINGS_TAB_ID,
-  SUBAGENT_TAB_PREFIX,
-  TEAM_MEMBER_TAB_PREFIX,
-  TEAM_TAB_PREFIX,
-  TERMINAL_TAB_PREFIX,
-  TRACE_LIST_TAB_ID,
-  TRACE_TAB_PREFIX,
-  WORKBENCH_TAB_PREFIX,
   useTabStore,
   type Tab,
   type TabType,
 } from '../../stores/tabStore'
+import {
+  closeTabsWithPolicy,
+  getRunningSessionIds,
+  isSessionTab,
+  isSessionTabId,
+  reopenClosedSessionTab,
+} from '../../stores/tabClose'
 import { useChatStore } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
-import { isPlaceholderSessionTitle } from '../../lib/sessionTitle'
+import { useUIStore } from '../../stores/uiStore'
+import type { UIMessage } from '../../types/chat'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
-import { releaseWorkspaceSession } from '../../lib/workspace/releaseSession'
 import { useCLITaskStore } from '../../stores/cliTaskStore'
 import { teamTaskWindowsForSnapshot, useTeamStore } from '../../stores/teamStore'
 import { StatusDot } from '@/components/ui/Badge'
 import { IconButton } from '@/components/ui/IconButton'
+import { tabChipClass, tabChipLabelClass } from '@/components/ui/tabChip'
 import { useDismissable } from '@/hooks/useDismissable'
 import { useTranslation } from '../../i18n'
 import { getDesktopHost } from '../../lib/desktopHost'
-import { hasRunningBackgroundTasks, listRunningBackgroundTasks } from '../../lib/backgroundTasks'
+import { hasRunningBackgroundTasks } from '../../lib/backgroundTasks'
+import { useTeamRunningSessionIds } from '../../hooks/useTeamRunningSessionIds'
 import { collectAttentionIds, nextAttentionSessionId } from '../../lib/sessionAttention'
 import { SessionAttentionMark } from './SessionAttentionMark'
 import { TabAttentionJump } from './TabAttentionJump'
 import { WindowControls, showWindowControls } from './WindowControls'
 import { OpenProjectMenu } from './OpenProjectMenu'
-import { SquareTerminal } from 'lucide-react'
+import { AppWindow, Bot, CalendarClock, ChevronLeft, ChevronRight, Link, Network, PanelRight, Settings, SquareTerminal, Store, X, type LucideIcon } from 'lucide-react'
 import { WorkspaceLayoutControls } from './WorkspaceLayoutControls'
 import { useWorkspaceHeaderHost } from './WorkspaceHeaderContext'
 import { ActionDialog } from '@/components/ui/ActionDialog'
-import { buildMainSessionActivityModel, hasVisibleSessionActivity } from '../activity/sessionActivityModel'
+import { getMainSessionActivityModel, hasVisibleSessionActivity } from '../activity/sessionActivityModel'
+import { EMPTY_DELEGATED_SESSION_ROWS, useSessionDelegationStore } from '../../stores/sessionDelegationStore'
 import { SessionActivityButton } from '../activity/SessionActivityButton'
 import { useActivityPanelStore } from '../../stores/activityPanelStore'
 import { getSessionBrowsablePath } from '../../lib/sessionWorkspace'
@@ -86,62 +83,37 @@ function clippedSide(
 // One glyph per *non-chat* tab kind: the glyph says "this tab is not a
 // conversation". Chat tabs deliberately have none — a bubble on every tab in a
 // strip that is mostly chats is pure noise, and the slot it occupied is worth
-// more as title. `trace` and `traces` share the Settings rail's glyph on
-// purpose — a trace tab should read as that section, not as another chat.
-const TAB_TYPE_ICON: Partial<Record<TabType, string>> = {
-  settings: 'settings',
-  scheduled: 'schedule',
-  market: 'storefront',
-  connectors: 'link',
-  'deepseek-harness': 'memory',
-  terminal: 'terminal',
-  trace: 'account_tree',
-  traces: 'account_tree',
-  workbench: 'view_sidebar',
-  subagent: 'smart_toy',
-  team: 'account_tree',
-  'team-member': 'smart_toy',
+// more as title.
+//
+// The sidebar draws the same sections with the same glyphs (settings,
+// scheduled, market), so a tab and the nav item that opened it read as one.
+const TAB_TYPE_ICON: Partial<Record<TabType, LucideIcon>> = {
+  settings: Settings,
+  scheduled: CalendarClock,
+  market: Store,
+  connectors: Link,
+  terminal: SquareTerminal,
+  workbench: PanelRight,
+  subagent: Bot,
+  team: Network,
+  'team-member': Bot,
 }
-const TAB_TYPE_ICON_FALLBACK = 'tab'
+const TAB_TYPE_ICON_FALLBACK: LucideIcon = AppWindow
 const desktopHost = getDesktopHost()
 const isDesktopRuntime = desktopHost.isDesktop
 const EMPTY_DISMISSED_BACKGROUND_TASK_KEYS: readonly string[] = []
+const EMPTY_ACTIVITY_MESSAGES: UIMessage[] = []
 
 type PendingCloseRequest = {
   tabs: Tab[]
   runningSessionIds: string[]
 }
 
-function isSessionTab(tab: Tab | null) {
-  if (!tab) return false
-  const tabType = (tab as Partial<Tab>).type
-  if (tabType === 'session') return true
-  if (tabType) return false
-  return isSessionTabId(tab.sessionId)
-}
-
-function isSessionTabId(tabId: string | null) {
-  if (!tabId) return false
-  return tabId !== SETTINGS_TAB_ID &&
-    tabId !== SCHEDULED_TAB_ID &&
-    tabId !== MARKET_TAB_ID &&
-    tabId !== CONNECTORS_TAB_ID &&
-    tabId !== DEEPSEEK_HARNESS_TAB_ID &&
-    tabId !== RUNTIME_SETTINGS_TAB_ID &&
-    tabId !== TRACE_LIST_TAB_ID &&
-    !tabId.startsWith(TERMINAL_TAB_PREFIX) &&
-    !tabId.startsWith(TRACE_TAB_PREFIX) &&
-    !tabId.startsWith(WORKBENCH_TAB_PREFIX) &&
-    !tabId.startsWith(SUBAGENT_TAB_PREFIX) &&
-    !tabId.startsWith(TEAM_TAB_PREFIX) &&
-    !tabId.startsWith(TEAM_MEMBER_TAB_PREFIX)
-}
-
 export function TabBar() {
   const tabs = useTabStore((s) => s.tabs)
   const activeTabId = useTabStore((s) => s.activeTabId)
   const setActiveTab = useTabStore((s) => s.setActiveTab)
-  const closeTab = useTabStore((s) => s.closeTab)
+  const canReopenClosedTab = useTabStore((s) => s.closedSessionTabs.length > 0)
   const sessionTabIds = useMemo(
     () => tabs.filter((tab) => isSessionTab(tab)).map((tab) => tab.sessionId),
     [tabs],
@@ -153,6 +125,8 @@ export function TabBar() {
         (sessionState.chatState !== 'idle' || hasRunningBackgroundTasks(sessionState.backgroundAgentTasks))
     })
   ))
+  // A lead whose own turn is idle while its teammates still work (#1524).
+  const teamRunningSessionIds = useTeamRunningSessionIds(sessionTabIds)
   // Tabs that are stopped on a decision only the user can make. Read from the
   // outstanding requests rather than from `chatState` (see
   // `sessionNeedsAttention`), and `useShallow` for the same reason as above: a
@@ -162,15 +136,22 @@ export function TabBar() {
   // The waiting tabs other than the one on screen: the places a jump can take
   // you, and so the number on the button that offers it.
   const otherAttentionCount = attentionList.filter((sessionId) => sessionId !== activeTabId).length
-  const disconnectSession = useChatStore((s) => s.disconnectSession)
   const activeTab = tabs.find((tab) => tab.sessionId === activeTabId) ?? null
   const isActiveSessionTab = isSessionTab(activeTab) || isSessionTabId(activeTabId)
+  const newSessionDraft = useUIStore((state) => state.newSessionDraft)
+  // The desktop's new-session page is a draft: no tab is active and no server
+  // session exists until the first send (see `startNewSessionDraft`).
+  const isDraftHome = !activeTabId && !!newSessionDraft
+  const requestDraftWorkspace = useUIStore((state) => state.requestDraftWorkspace)
+  const activeView = useUIStore((state) => state.activeView)
   const activeSession = useSessionStore((state) =>
     activeTabId ? state.sessions.find((session) => session.id === activeTabId) : undefined,
   )
   const openProjectPath = isActiveSessionTab
     ? getSessionBrowsablePath(activeSession) ?? null
-    : null
+    : isDraftHome
+      ? newSessionDraft?.workDir || null
+      : null
   const workspaceLayout = useWorkspaceStore((state) =>
     activeTabId && isActiveSessionTab ? state.bySession[activeTabId]?.layout ?? 'hidden' : 'hidden',
   )
@@ -205,32 +186,56 @@ export function TabBar() {
     () => new Set(dismissedBackgroundTaskKeyList),
     [dismissedBackgroundTaskKeyList],
   )
-  const activityState = useChatStore(useShallow((state) => {
-    if (!activeTabId || !isActiveSessionTab) {
-      return { hasVisibleActivity: false }
-    }
-    const sessionState = state.sessions[activeTabId]
-    const includeCliTasks = cliTasksSessionId === activeTabId
-    const teamTaskWindows = teamTaskWindowsForSnapshot(agentTeamsSnapshot, activeTeamStartedAt)
-
-    const model = buildMainSessionActivityModel({
-      sessionId: activeTabId,
-      messages: sessionState?.messages ?? [],
+  // Select the on-screen session's inputs, not the model: a selector runs on
+  // every store update of every session, and the model walks the whole
+  // transcript. Deriving it inside one cost a full pass per streamed token of
+  // any background session (#1480).
+  const activitySessionId = activeTabId && isActiveSessionTab ? activeTabId : null
+  const activityMessages = useChatStore((state) =>
+    activitySessionId ? state.sessions[activitySessionId]?.messages ?? EMPTY_ACTIVITY_MESSAGES : EMPTY_ACTIVITY_MESSAGES)
+  const activityTurnActive = useChatStore((state) => {
+    const sessionState = activitySessionId ? state.sessions[activitySessionId] : undefined
+    return Boolean(sessionState && sessionState.chatState !== 'idle')
+  })
+  const activityBackgroundTaskRecord = useChatStore((state) =>
+    activitySessionId ? state.sessions[activitySessionId]?.backgroundAgentTasks : undefined)
+  const activityNotificationRecord = useChatStore((state) =>
+    activitySessionId ? state.sessions[activitySessionId]?.agentTaskNotifications : undefined)
+  const activityDelegatedSessions = useSessionDelegationStore((state) =>
+    activitySessionId ? state.bySession[activitySessionId]?.rows ?? EMPTY_DELEGATED_SESSION_ROWS : EMPTY_DELEGATED_SESSION_ROWS)
+  const hasVisibleActivity = useMemo(() => {
+    if (!activitySessionId) return false
+    const includeCliTasks = cliTasksSessionId === activitySessionId
+    return hasVisibleSessionActivity(getMainSessionActivityModel({
+      sessionId: activitySessionId,
+      messages: activityMessages,
       tasks: includeCliTasks ? cliTasks : [],
-      teamTaskWindows,
+      teamTaskWindows: teamTaskWindowsForSnapshot(agentTeamsSnapshot, activeTeamStartedAt),
       completedAndDismissed: includeCliTasks ? cliTasksCompletedAndDismissed : false,
-      isForegroundTurnActive: Boolean(sessionState && sessionState.chatState !== 'idle'),
-      backgroundTasks: Object.values(sessionState?.backgroundAgentTasks ?? {}),
+      isForegroundTurnActive: activityTurnActive,
+      backgroundTasks: Object.values(activityBackgroundTaskRecord ?? {}),
       dismissedBackgroundTaskKeys,
-      agentNotifications: Object.values(sessionState?.agentTaskNotifications ?? {}),
+      agentNotifications: Object.values(activityNotificationRecord ?? {}),
       workflowRuns,
-    })
-    return {
-      hasVisibleActivity: hasVisibleSessionActivity(model),
-    }
-  }))
+      delegatedSessions: activityDelegatedSessions,
+    }))
+  }, [
+    activeTeamStartedAt,
+    activityBackgroundTaskRecord,
+    activityDelegatedSessions,
+    activityMessages,
+    activityNotificationRecord,
+    activitySessionId,
+    activityTurnActive,
+    agentTeamsSnapshot,
+    cliTasks,
+    cliTasksCompletedAndDismissed,
+    cliTasksSessionId,
+    dismissedBackgroundTaskKeys,
+    workflowRuns,
+  ])
   const showActivityButton = activeTabId &&
-    activityState.hasVisibleActivity &&
+    hasVisibleActivity &&
     !isWorkbenchOpen
 
   const moveTab = useTabStore((s) => s.moveTab)
@@ -270,8 +275,11 @@ export function TabBar() {
     for (const sessionId of activeChatSessionIds) {
       ids.add(sessionId)
     }
+    for (const sessionId of teamRunningSessionIds) {
+      ids.add(sessionId)
+    }
     return ids
-  }, [activeChatSessionIds, tabs])
+  }, [activeChatSessionIds, teamRunningSessionIds, tabs])
 
   const updateScrollState = useCallback(() => {
     const el = scrollRef.current
@@ -280,10 +288,13 @@ export function TabBar() {
     setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
     // scrollWidth is at least clientWidth even with only one tab. Measure
     // layout offsets (not transformed drag previews) to preserve empty chrome.
-    const first = el.firstElementChild as HTMLElement | null
+    // The mask starts at the strip's left edge, so it has to reach the last
+    // tab's right edge from there, padding included: measured from the first
+    // tab instead, it stopped 4px short and the last tab's edge dragged the
+    // window rather than taking the click.
     const last = el.lastElementChild as HTMLElement | null
-    const contentWidth = first && last ? last.offsetLeft + last.offsetWidth - first.offsetLeft : 0
-    setTabHitWidth(Math.max(0, Math.min(el.clientWidth, contentWidth - el.scrollLeft)))
+    const tabsRight = last ? last.offsetLeft + last.offsetWidth : 0
+    setTabHitWidth(Math.max(0, Math.min(el.clientWidth, tabsRight - el.scrollLeft)))
 
     // Only the waiting tabs are measured, so a scroll costs a few rect reads
     // rather than one per tab. State is left alone when nothing changed: this
@@ -412,65 +423,6 @@ export function TabBar() {
     el.scrollBy({ left: direction === 'left' ? -step : step, behavior: 'smooth' })
   }
 
-  const closeTabWithCleanup = useCallback((tab: Tab) => {
-    if (isSessionTab(tab)) {
-      releaseWorkspaceSession(tab.sessionId)
-    }
-    closeTab(tab.sessionId)
-  }, [closeTab])
-
-  const getRunningSessionIds = useCallback((targetTabs: Tab[]) => {
-    const chatSessions = useChatStore.getState().sessions
-    return targetTabs
-      .filter((tab) => isSessionTab(tab))
-      .filter((tab) => {
-        const sessionState = chatSessions[tab.sessionId]
-        return !!sessionState &&
-          (sessionState.chatState !== 'idle' || hasRunningBackgroundTasks(sessionState.backgroundAgentTasks))
-      })
-      .map((tab) => tab.sessionId)
-  }, [])
-
-  const closeTabsWithPolicy = useCallback((targetTabs: Tab[], runningSessionIds: string[], stopRunning: boolean) => {
-    const runningSessionSet = new Set(runningSessionIds)
-
-    for (const tab of targetTabs) {
-      if (isSessionTab(tab)) {
-        const isRunning = runningSessionSet.has(tab.sessionId)
-        if (isRunning && stopRunning) {
-          const chat = useChatStore.getState()
-          const runningTasks = listRunningBackgroundTasks(chat.sessions[tab.sessionId]?.backgroundAgentTasks)
-          chat.stopGeneration(tab.sessionId)
-          // The dialog counts background tasks as the session running, but
-          // stopGeneration only reaches the foreground turn and Agent tasks (and
-          // marks the latter as stopping, which stopBackgroundTask skips). A shell
-          // command would outlive "Stop & Close" and keep the reopened session
-          // running. Both must go out before disconnectSession closes the socket.
-          for (const task of runningTasks) {
-            chat.stopBackgroundTask(tab.sessionId, task.taskId)
-          }
-        }
-        if (!isRunning || stopRunning) {
-          // Auto-delete only when both server metadata and the loaded transcript
-          // confirm this is an empty placeholder. Missing state can mean a timed-out
-          // recovery load, so treating it as empty risks deleting a real session.
-          const sessionEntry = useSessionStore.getState().sessions.find((s) => s.id === tab.sessionId)
-          const chatEntry = useChatStore.getState().sessions[tab.sessionId]
-          if (
-            sessionEntry?.messageCount === 0 &&
-            isPlaceholderSessionTitle(sessionEntry.title) &&
-            chatEntry?.historyStatus === 'ready' &&
-            chatEntry.messages.length === 0
-          ) {
-            void useSessionStore.getState().deleteSession(tab.sessionId)
-          }
-          disconnectSession(tab.sessionId)
-        }
-      }
-      closeTabWithCleanup(tab)
-    }
-  }, [closeTabWithCleanup, disconnectSession])
-
   const requestCloseTabs = useCallback((targetTabs: Tab[]) => {
     if (targetTabs.length === 0) return
     const runningSessionIds = getRunningSessionIds(targetTabs)
@@ -481,7 +433,7 @@ export function TabBar() {
     }
 
     closeTabsWithPolicy(targetTabs, [], false)
-  }, [closeTabsWithPolicy, getRunningSessionIds])
+  }, [])
 
   const handleClose = (sessionId: string) => {
     const tab = tabs.find((t) => t.sessionId === sessionId)
@@ -645,8 +597,8 @@ export function TabBar() {
   ) : null
 
   const rightScrollControl = canScrollRight && (
-        <button type="button" onClick={() => scroll('right')} aria-label={t('tabs.scrollRight')} aria-describedby={attentionOffscreen.right ? `${attentionHintId}-right` : undefined} title={attentionOffscreen.right ? t('sidebar.sessionNeedsAttention') : undefined} className="relative flex h-[52px] w-7 flex-shrink-0 items-center justify-center text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)]">
-          <span className="material-symbols-outlined text-[16px]">chevron_right</span>
+        <button type="button" onClick={() => scroll('right')} aria-label={t('tabs.scrollRight')} aria-describedby={attentionOffscreen.right ? `${attentionHintId}-right` : undefined} title={attentionOffscreen.right ? t('sidebar.sessionNeedsAttention') : undefined} className="relative flex h-[52px] w-7 flex-shrink-0 items-center justify-center text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-sidebar-item-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)]">
+          <ChevronRight size={16} strokeWidth={1.75} aria-hidden="true" />
           {attentionHint('right')}
         </button>
       )
@@ -676,8 +628,8 @@ export function TabBar() {
 
       <div data-testid="workspace-session-header" className={hasWorkspaceHeader ? 'flex min-w-0 flex-1 overflow-hidden' : 'contents'}>
       {canScrollLeft && (
-        <button type="button" onClick={() => scroll('left')} aria-label={t('tabs.scrollLeft')} aria-describedby={attentionOffscreen.left ? `${attentionHintId}-left` : undefined} title={attentionOffscreen.left ? t('sidebar.sessionNeedsAttention') : undefined} className="relative flex h-[52px] w-7 flex-shrink-0 items-center justify-center text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)]">
-          <span className="material-symbols-outlined text-[16px]">chevron_left</span>
+        <button type="button" onClick={() => scroll('left')} aria-label={t('tabs.scrollLeft')} aria-describedby={attentionOffscreen.left ? `${attentionHintId}-left` : undefined} title={attentionOffscreen.left ? t('sidebar.sessionNeedsAttention') : undefined} className="relative flex h-[52px] w-7 flex-shrink-0 items-center justify-center text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-sidebar-item-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)]">
+          <ChevronLeft size={16} strokeWidth={1.75} aria-hidden="true" />
           {attentionHint('left')}
         </button>
       )}
@@ -688,18 +640,17 @@ export function TabBar() {
         data-testid="tab-bar-scroll-region"
         data-desktop-drag-region={isDesktopRuntime ? true : undefined}
         /*
-          `pt-[6px]` is the shoulder: 52px strip minus 6px leaves the 46px tab,
-          and those 6px are what makes the rounded top read as rounded rather
-          than as a corner clipped by the window frame. The strip, not the tab,
-          owns the giveback, so it stays inside the window drag region.
+          The 28px chips sit centred in the 52px strip, as the workspace's
+          resource tabs do. The space around them stays inside the scroll
+          region, which carries the window drag region; the chips do not.
         */
-        className="tab-strip-scroll flex-1 flex items-stretch gap-[2px] overflow-x-hidden pt-[6px]"
+        className="tab-strip-scroll flex flex-1 items-center gap-0.5 overflow-x-hidden px-1"
         onDragOver={(e) => e.preventDefault()}
       >
         {tabs.map((tab, index) => {
           const displayTitle = tab.type === 'settings'
             ? t('settings.title')
-            : tab.type === 'market' || tab.type === 'connectors' ? t('sidebar.extensions') : (tab.title && !isPlaceholderSessionTitle(tab.title) ? tab.title : t('tabs.untitled'))
+            : tab.type === 'market' || tab.type === 'connectors' ? t('sidebar.extensions') : (tab.title || t('tabs.untitled'))
           return (
             <TabItem
               key={tab.sessionId}
@@ -729,7 +680,7 @@ export function TabBar() {
         <div
           data-testid="tab-bar-hit-region"
           aria-hidden="true"
-          className="tab-strip-hit-region pointer-events-none absolute bottom-0 left-0 top-[6px]"
+          className="tab-strip-hit-region pointer-events-none absolute bottom-[12px] left-0 top-[12px]"
           style={{ width: tabHitWidth }}
         />
       )}
@@ -747,17 +698,18 @@ export function TabBar() {
         which left the toolbar looking welded to the last tab.
       */}
       {/*
-        The frame owns the paper, not the header inside it. The drag gutter —
+        The frame owns the ground, not the header inside it. The drag gutter —
         and, on Windows, the window controls — are the header's siblings in
-        here, and they are transparent: while the workspace is closed that is
-        invisible, because the whole strip is the sidebar's ground. Next to an
-        open panel it showed as a 16px strip of trough welded to the window's
-        top-right corner. One ground for everything above the panel.
+        here, and they are transparent, so whichever element paints has to
+        contain them. With the panel open the workspace's own tab strip sits in
+        this frame, and in 「素」 that strip is a trough like the session tabs:
+        the sidebar's ground, with the active resource tab as the paper sheet
+        that runs into the panel below. One ground for everything above it.
       */}
       <div
         data-testid="workspace-header-frame"
         style={hasWorkspaceHeader ? { width: workspaceHeader.width, maxWidth: '100%' } : undefined}
-        className={`flex min-w-0 shrink-0 items-stretch ${hasWorkspaceHeader ? 'bg-[var(--color-surface)]' : ''}`}
+        className={`flex min-w-0 shrink-0 items-stretch ${hasWorkspaceHeader ? 'bg-[var(--color-surface-sidebar)]' : ''}`}
       >
       <div
         data-testid="workspace-window-header"
@@ -790,6 +742,9 @@ export function TabBar() {
         {isDesktopRuntime && isActiveSessionTab && !isWorkbenchOpen && (
           <OpenProjectMenu path={openProjectPath} />
         )}
+        {isDesktopRuntime && isDraftHome && !isWorkbenchOpen && (
+          <OpenProjectMenu path={openProjectPath} />
+        )}
         {isActiveSessionTab && activeTabId ? (
           <WorkspaceLayoutControls
             layout={workspaceLayout}
@@ -801,12 +756,20 @@ export function TabBar() {
             )}
             onToggleWorkspace={() => useWorkspaceStore.getState().toggleWorkspace(activeTabId)}
           />
+        ) : isDesktopRuntime && isDraftHome ? (
+          <WorkspaceLayoutControls
+            layout="hidden"
+            bottomOpen={false}
+            onToggleFullscreen={() => requestDraftWorkspace('toggle-fullscreen', activeTabId, activeView)}
+            onToggleBottom={() => requestDraftWorkspace('toggle-bottom', activeTabId, activeView)}
+            onToggleWorkspace={() => requestDraftWorkspace('toggle-side', activeTabId, activeView)}
+          />
         ) : (
           <IconButton
-            icon={<SquareTerminal size={17} strokeWidth={1.9} />}
+            icon={<SquareTerminal size={16} strokeWidth={1.75} aria-hidden="true" />}
             label={t('tabs.openTerminal')}
             onClick={() => useTabStore.getState().openTerminalTab()}
-            size="md"
+            size="sm"
             tone="muted"
           />
         )}
@@ -829,39 +792,47 @@ export function TabBar() {
       {contextMenu && (
         <div
           ref={contextMenuRef}
-          className="fixed z-[var(--z-dropdown)] min-w-[180px] overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] py-2 shadow-[var(--shadow-dropdown)]"
+          className="fixed z-[var(--z-dropdown)] min-w-[180px] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] p-1 shadow-[var(--shadow-dropdown)]"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           <button
             onClick={() => { handleClose(contextMenu.sessionId); setContextMenu(null) }}
-            className="w-full px-4 py-2 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
+            className="flex h-8 w-full items-center rounded-[var(--radius-sm)] px-2.5 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('tabs.close')}
           </button>
           <button
             onClick={() => handleCloseOthers(contextMenu.sessionId)}
-            className="w-full px-4 py-2 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
+            className="flex h-8 w-full items-center rounded-[var(--radius-sm)] px-2.5 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('tabs.closeOthers')}
           </button>
           <button
             onClick={() => handleCloseLeft(contextMenu.sessionId)}
-            className="w-full px-4 py-2 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
+            className="flex h-8 w-full items-center rounded-[var(--radius-sm)] px-2.5 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('tabs.closeLeft')}
           </button>
           <button
             onClick={() => handleCloseRight(contextMenu.sessionId)}
-            className="w-full px-4 py-2 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
+            className="flex h-8 w-full items-center rounded-[var(--radius-sm)] px-2.5 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('tabs.closeRight')}
           </button>
-          <div className="my-1.5 border-t border-[var(--color-border)]" />
+          <div className="mx-1 my-1 border-t border-[var(--color-border)]" />
           <button
             onClick={handleCloseAll}
-            className="w-full px-4 py-2 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
+            className="flex h-8 w-full items-center rounded-[var(--radius-sm)] px-2.5 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('tabs.closeAll')}
+          </button>
+          <div className="mx-1 my-1 border-t border-[var(--color-border)]" />
+          <button
+            disabled={!canReopenClosedTab}
+            onClick={() => { setContextMenu(null); void reopenClosedSessionTab() }}
+            className="flex h-8 w-full items-center rounded-[var(--radius-sm)] px-2.5 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)] disabled:cursor-default disabled:text-[var(--color-text-tertiary)] disabled:hover:bg-transparent"
+          >
+            {t('tabs.reopenClosed')}
           </button>
         </div>
       )}
@@ -935,15 +906,12 @@ const TabItem = forwardRef<HTMLDivElement, {
     ? (needsAttention
       ? <SessionAttentionMark label={attentionLabel} />
       : isRunning
-        ? <StatusDot tone="brand" pulse label={runningLabel} />
+        // Running is `info` everywhere in the app; the brand never marks a state.
+        ? <StatusDot tone="info" pulse label={runningLabel} />
         : tab.status === 'error'
           ? <StatusDot tone="danger" />
           : null)
-    : (
-      <span className="material-symbols-outlined text-[14px] leading-none text-[var(--color-text-tertiary)]">
-        {TAB_TYPE_ICON[tab.type] ?? TAB_TYPE_ICON_FALLBACK}
-      </span>
-    )
+    : <TabTypeIcon type={tab.type} />
 
   return (
     <div
@@ -954,39 +922,13 @@ const TabItem = forwardRef<HTMLDivElement, {
       onClick={onClick}
       onMouseDown={onMouseDown}
       onContextMenu={onContextMenu}
+      // The same chip as the workspace's resource tabs (`ui/tabChip`): one tab
+      // style for both strips. The tiers and why hover shares paper with the
+      // active tab are documented there.
       className={`
-        tab-bar-interactive tab-strip-item group relative flex min-h-[46px] flex-shrink-0 items-center rounded-t-[8px] border border-b-0 px-3
-        ${tab.type === 'settings' ? 'min-w-[195px] max-w-[195px]' : 'min-w-[140px] max-w-[200px]'}
-        ${isDragging ? 'z-[var(--z-sticky)] cursor-grabbing' : 'cursor-grab'}
-        transition-[background-color,border-color,box-shadow,opacity,transform] duration-150 ease-out
-        ${isActive || isDragging
-          // A document tab, still not a pill: the bottom edge stays square and
-          // borderless so paper runs unbroken from the tab into the view below.
-          // What a pill would add — a full radius, a drop shadow, and clearance
-          // from the content — stays banned; only the top two corners round.
-          //
-          // The border is load-bearing, not decoration. The strip is the
-          // sidebar's own ground, which puts this fill at 1.05–1.10:1 against
-          // it in all six themes: without an outline the corners are invisible
-          // and there is nothing to see. `--color-border` cannot stand in — it
-          // is calibrated against paper and lands at 1.12:1 on the trough.
-          ? 'border-[var(--color-tab-edge)] bg-[var(--color-surface)]'
-          // Hover rises toward paper, it does not fall away from it. The
-          // obvious `--color-surface-hover` is wrong here: it is tuned for
-          // hovering *on* paper, so on the two ink themes it lands brighter
-          // than paper itself (dark #2B271F vs #201D17) and a hovered tab
-          // outshines the selected one. Sharing paper with the active tab and
-          // letting the outline plus the label weight carry selection makes
-          // the active state strictly stronger in all six themes.
-          //
-          // It gets the weaker of the two outlines rather than none: the same
-          // 1.05–1.10:1 that hides the selected tab's corners hides a hovered
-          // tab's too, so without it hover is a fill with no discernible
-          // shape. Three legible tiers — no outline, hairline, full edge.
-          : 'border-transparent bg-transparent hover:border-[var(--color-tab-separator)] hover:bg-[var(--color-surface)]'
-        }
-        ${isDragging ? 'opacity-95 shadow-[var(--shadow-overlay)]' : ''}
-        ${isDragOver ? 'before:absolute before:left-0 before:top-[4px] before:bottom-[4px] before:w-[3px] before:bg-[var(--color-brand)] before:rounded-full' : ''}
+        ${tabChipClass(isActive || isDragging)} tab-strip-item
+        ${isDragging ? 'z-[var(--z-sticky)] cursor-grabbing opacity-95' : 'cursor-grab'}
+        ${isDragOver ? 'before:absolute before:-left-[3px] before:top-[4px] before:bottom-[4px] before:w-[2px] before:bg-[var(--color-brand)] before:rounded-full' : ''}
       `}
       style={{
         transform: isDragging ? `translateX(${dragOffsetX}px) scale(1.02)` : undefined,
@@ -1008,7 +950,7 @@ const TabItem = forwardRef<HTMLDivElement, {
         {leadingGlyph}
       </span>
 
-      <span className={`min-w-0 flex-1 truncate text-xs ${isActive ? 'text-[var(--color-text-primary)] font-medium' : 'text-[var(--color-text-secondary)]'}`}>
+      <span className={tabChipLabelClass(isActive)}>
         {displayTitle}
       </span>
 
@@ -1017,13 +959,15 @@ const TabItem = forwardRef<HTMLDivElement, {
         `transition-colors`, which does not cover opacity, and a competing
         `transition-[…]` in `className` would resolve by stylesheet order.
       */}
-      <span className="-mr-1 ml-1.5 flex-shrink-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
+      {/* The active tab keeps its close button in sight, as Chrome does; the
+          rest reveal it on hover so an idle row stays all title. */}
+      <span className={`ml-1.5 flex-shrink-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 ${isActive ? 'opacity-100' : 'opacity-0'}`}>
         <IconButton
-          icon="close"
+          icon={<X size={12} strokeWidth={2} aria-hidden="true" />}
           label={closeLabel}
           onMouseDown={(e) => { e.stopPropagation() }}
           onClick={(e) => { e.stopPropagation(); onClose() }}
-          size="xs"
+          size="2xs"
           tone="muted"
           showTooltip={false}
         />
@@ -1032,3 +976,16 @@ const TabItem = forwardRef<HTMLDivElement, {
   )
 })
 TabItem.displayName = 'TabItem'
+
+function TabTypeIcon({ type }: { type: TabType }) {
+  const Icon = TAB_TYPE_ICON[type] ?? TAB_TYPE_ICON_FALLBACK
+  return (
+    <Icon
+      size={14}
+      strokeWidth={1.75}
+      aria-hidden="true"
+      data-tab-type-icon={type}
+      className="text-[var(--color-text-tertiary)]"
+    />
+  )
+}

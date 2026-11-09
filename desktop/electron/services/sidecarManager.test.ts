@@ -24,6 +24,7 @@ import {
   createAdapterPlan,
   createServerPlan,
   electronHostDiagnosticsFile,
+  formatStartupError,
   httpToWebSocketUrl,
   HOST_DIAGNOSTICS_BYTE_LIMIT,
   HOST_DIAGNOSTICS_LINE_LIMIT,
@@ -76,19 +77,19 @@ function close(server: http.Server): Promise<void> {
 
 describe('Electron sidecar manager', () => {
   it('places the Electron host log in the active server diagnostics directory', () => {
-    const portableDir = path.join(tmpdir(), 'echoflow-code-portable-diagnostics')
+    const portableDir = path.join(tmpdir(), 'cc-haha-portable-diagnostics')
 
     expect(electronHostDiagnosticsFile(
       { CLAUDE_CONFIG_DIR: portableDir },
       path.join(tmpdir(), 'unused-home'),
-    )).toBe(path.join(portableDir, 'echoflow-code', 'diagnostics', 'electron-host.log'))
+    )).toBe(path.join(portableDir, 'cc-haha', 'diagnostics', 'electron-host.log'))
   })
 
   it('resolves the default Electron host log without consulting real user state', () => {
-    const isolatedHome = path.resolve(path.sep, '__echoflow_injected_test_home__')
+    const isolatedHome = path.resolve(path.sep, '__cc_haha_injected_test_home__')
 
     expect(electronHostDiagnosticsFile({}, isolatedHome)).toBe(
-      path.join(isolatedHome, '.claude', 'echoflow-code', 'diagnostics', 'electron-host.log'),
+      path.join(isolatedHome, '.claude', 'cc-haha', 'diagnostics', 'electron-host.log'),
     )
   })
 
@@ -141,7 +142,7 @@ describe('Electron sidecar manager', () => {
   })
 
   it('passes the packaged ripgrep path to the server and its CLI children', () => {
-    const desktopRoot = mkdtempSync(path.join(tmpdir(), 'echoflow-code-ripgrep-plan-'))
+    const desktopRoot = mkdtempSync(path.join(tmpdir(), 'cc-haha-ripgrep-plan-'))
     try {
       const bundledRipgrep = resolveBundledRipgrepExecutable(desktopRoot)
       mkdirSync(path.dirname(bundledRipgrep), { recursive: true })
@@ -175,7 +176,7 @@ describe('Electron sidecar manager', () => {
   })
 
   it('preserves an explicit ripgrep override', () => {
-    const customDir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-custom-ripgrep-'))
+    const customDir = mkdtempSync(path.join(tmpdir(), 'cc-haha-custom-ripgrep-'))
     try {
       const customRipgrep = path.join(customDir, 'rg')
       writeFileSync(customRipgrep, 'fixture')
@@ -194,7 +195,7 @@ describe('Electron sidecar manager', () => {
   })
 
   it('passes portable config and adapter server URL through the sidecar env', () => {
-    const configDir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-config-'))
+    const configDir = mkdtempSync(path.join(tmpdir(), 'cc-haha-config-'))
     try {
       const env = buildSidecarEnv({ CLAUDE_CONFIG_DIR: configDir }, '/app/dist')
       expect(env.CLAUDE_CONFIG_DIR).toBe(configDir)
@@ -334,7 +335,7 @@ describe('Electron sidecar manager', () => {
   })
 
   it('appends only a bounded sanitized Electron host-log tail', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-'))
+    const dir = mkdtempSync(path.join(tmpdir(), 'cc-haha-electron-host-'))
     const logPath = path.join(dir, 'electron-host.log')
     const homeDir = path.join(dir, 'private-home')
     try {
@@ -373,10 +374,34 @@ describe('Electron sidecar manager', () => {
     }
   })
 
+  it('redacts JSON and escaped multiline adapter credentials before writing the host log', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'cc-haha-feishu-host-'))
+    const logPath = path.join(dir, 'electron-host.log')
+    const credentials = {
+      app_id: 'fixture-app-id', AppSecret: 'fixture-app-secret',
+      nested: { TOKEN: 'fixture-token', api_key: 'fixture-api-key', Password: 'fixture-password', Authorization: 'Basic fixture-auth' },
+    }
+    const json = JSON.stringify(credentials)
+    const error = `AxiosError: Request failed with status code 400\n  method: 'post', status: 400,\n  url: '/open-apis/auth/v3/tenant_access_token/internal',\n  data: ${JSON.stringify(json)}\n  at request (adapter.ts:42:7)`
+    try {
+      appendHostDiagnostic(logPath, `[claude-adapters:feishu] [stdout] ${json}`)
+      appendHostDiagnostic(logPath, `[claude-adapters:feishu] [stderr] ${error}`)
+      const contents = readFileSync(logPath, 'utf-8')
+      for (const secret of ['fixture-app-id', 'fixture-app-secret', 'fixture-token', 'fixture-api-key', 'fixture-password', 'fixture-auth']) {
+        expect(contents).not.toContain(secret)
+      }
+      for (const safe of ['[stdout]', '[stderr]', 'AxiosError', 'post', '400', '/open-apis/auth/v3/tenant_access_token/internal', 'adapter.ts:42:7']) {
+        expect(contents).toContain(safe)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('creates the Electron diagnostics directory with private permissions', () => {
     if (process.platform === 'win32') return
-    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-mode-'))
-    const diagnosticsDir = path.join(dir, 'echoflow-code', 'diagnostics')
+    const dir = mkdtempSync(path.join(tmpdir(), 'cc-haha-electron-host-mode-'))
+    const diagnosticsDir = path.join(dir, 'cc-haha', 'diagnostics')
     const logPath = path.join(diagnosticsDir, 'electron-host.log')
     try {
       appendHostDiagnostic(logPath, 'private mode probe')
@@ -390,8 +415,8 @@ describe('Electron sidecar manager', () => {
 
   it('rejects a symlinked Electron diagnostics directory without changing its target', () => {
     if (process.platform === 'win32') return
-    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-symlink-dir-'))
-    const diagnosticsDir = path.join(dir, 'echoflow-code', 'diagnostics')
+    const dir = mkdtempSync(path.join(tmpdir(), 'cc-haha-electron-host-symlink-dir-'))
+    const diagnosticsDir = path.join(dir, 'cc-haha', 'diagnostics')
     const unrelatedDir = path.join(dir, 'unrelated')
     const unrelatedLog = path.join(unrelatedDir, 'electron-host.log')
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -415,16 +440,16 @@ describe('Electron sidecar manager', () => {
 
   it('rejects an ancestor symlink before creating Electron diagnostics outside the config root', () => {
     if (process.platform === 'win32') return
-    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-symlink-parent-'))
+    const dir = mkdtempSync(path.join(tmpdir(), 'cc-haha-electron-host-symlink-parent-'))
     const configDir = path.join(dir, 'config')
     const unrelatedDir = path.join(dir, 'unrelated')
-    const diagnosticsDir = path.join(configDir, 'echoflow-code', 'diagnostics')
+    const diagnosticsDir = path.join(configDir, 'cc-haha', 'diagnostics')
     const unrelatedDiagnosticsDir = path.join(unrelatedDir, 'diagnostics')
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     try {
       mkdirSync(configDir)
       mkdirSync(unrelatedDiagnosticsDir, { recursive: true, mode: 0o755 })
-      symlinkSync(unrelatedDir, path.join(configDir, 'echoflow-code'), 'dir')
+      symlinkSync(unrelatedDir, path.join(configDir, 'cc-haha'), 'dir')
 
       appendHostDiagnostic(path.join(diagnosticsDir, 'electron-host.log'), 'must not escape')
 
@@ -439,8 +464,8 @@ describe('Electron sidecar manager', () => {
 
   it('rejects a symlinked Electron diagnostics file without copying its target', () => {
     if (process.platform === 'win32') return
-    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-symlink-file-'))
-    const diagnosticsDir = path.join(dir, 'echoflow-code', 'diagnostics')
+    const dir = mkdtempSync(path.join(tmpdir(), 'cc-haha-electron-host-symlink-file-'))
+    const diagnosticsDir = path.join(dir, 'cc-haha', 'diagnostics')
     const logPath = path.join(diagnosticsDir, 'electron-host.log')
     const unrelatedLog = path.join(dir, 'unrelated.log')
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -463,7 +488,7 @@ describe('Electron sidecar manager', () => {
   })
 
   it('bounds and re-sanitizes an oversized pre-existing host diagnostics file', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-existing-'))
+    const dir = mkdtempSync(path.join(tmpdir(), 'cc-haha-electron-host-existing-'))
     const logPath = path.join(dir, 'electron-host.log')
     const homeDir = path.join(dir, 'private-home')
     try {
@@ -488,7 +513,7 @@ describe('Electron sidecar manager', () => {
   })
 
   it('does not crash Electron when the host diagnostics destination cannot be written', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-failure-'))
+    const dir = mkdtempSync(path.join(tmpdir(), 'cc-haha-electron-host-failure-'))
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     try {
       expect(() => appendHostDiagnostic(dir, 'sidecar failed')).not.toThrow()
@@ -621,6 +646,40 @@ describe('Electron sidecar manager', () => {
     })
   })
 
+  it.each(['EFTYPE', 'UNKNOWN'])('explains a sidecar that exists but cannot be executed after a broken install (%s)', code => {
+    const plan = {
+      command: 'C:\\Program Files\\Claude Code Haha\\resources\\claude-sidecar-x86_64-pc-windows-msvc.exe',
+      args: ['server', '--port', '49321'],
+      env: {},
+    }
+    const badExe = Object.assign(new Error(`spawn ${code}`), { code, syscall: 'spawn' })
+    const spawnFn = vi.fn(() => { throw badExe })
+
+    let thrown: unknown
+    try {
+      spawnSidecar(plan, { existsSyncFn: () => true, spawnFn: spawnFn as never })
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain(`Electron sidecar could not be executed (${code})`)
+    expect((thrown as Error).message).toContain(plan.command)
+    expect((thrown as Error).message).toContain('Reinstall Claude Code Haha with the full installer')
+    expect((thrown as Error).cause).toBe(badExe)
+    expect(formatStartupError((thrown as Error).message, [])).not.toContain('timeout')
+  })
+
+  it('rethrows unrelated sidecar spawn failures unchanged', () => {
+    const plan = { command: '/app/claude-sidecar', args: ['server'], env: {} }
+    const failure = Object.assign(new Error('spawn ENOMEM'), { code: 'ENOMEM' })
+
+    expect(() => spawnSidecar(plan, {
+      existsSyncFn: () => true,
+      spawnFn: (() => { throw failure }) as never,
+    })).toThrow(failure)
+  })
+
   it('forwards a PowerShell shell choice to the sidecar only on Windows', () => {
     expect(windowsPowerShellOverride('pwsh.exe', 'win32')).toBe('pwsh.exe')
     expect(windowsPowerShellOverride('powershell.exe', 'win32')).toBe('powershell.exe')
@@ -653,7 +712,7 @@ describe('Electron sidecar manager', () => {
   })
 
   it('persists and prioritizes preferred server ports from the config dir', () => {
-    const configDir = mkdtempSync(path.join(tmpdir(), 'echoflow-server-state-'))
+    const configDir = mkdtempSync(path.join(tmpdir(), 'cchh-server-state-'))
     const env = { CLAUDE_CONFIG_DIR: configDir } as NodeJS.ProcessEnv
     try {
       // Nothing stored yet: no preferred ports.
@@ -674,9 +733,9 @@ describe('Electron sidecar manager', () => {
       expect(preferredServerPorts(env)).toEqual([50123])
 
       // An explicit fixed port wins over the sticky port.
-      mkdirSync(path.join(configDir, 'echoflow-code'), { recursive: true })
+      mkdirSync(path.join(configDir, 'cc-haha'), { recursive: true })
       writeFileSync(
-        path.join(configDir, 'echoflow-code', 'settings.json'),
+        path.join(configDir, 'cc-haha', 'settings.json'),
         JSON.stringify({ h5Access: { fixedPort: 28670 } }),
         'utf-8',
       )
@@ -756,19 +815,29 @@ describe('Electron sidecar manager', () => {
     const port = await listen(server)
 
     try {
+      // The port is open, so the failure is a busy event loop rather than a
+      // missing bind; the message has to say which one (#1746).
       await expect(waitForServer('127.0.0.1', port, 300)).rejects.toThrow(
-        /desktop server did not report healthy at http:\/\/127\.0\.0\.1:\d+\/health/,
+        /is listening on 127\.0\.0\.1:\d+ but did not answer/,
       )
     } finally {
       await close(server)
     }
   })
 
+  it('reports a never-bound port as not listening instead of unhealthy', async () => {
+    const port = await reserveLocalPort('127.0.0.1')
+
+    await expect(waitForServer('127.0.0.1', port, 300)).rejects.toThrow(
+      /never started listening on 127\.0\.0\.1:\d+/,
+    )
+  })
+
   it('isolates health probes from the shared HTTP connection pool', async () => {
-    const connections = new Set<http.IncomingMessage['socket']>()
+    const connections = new Set<number>()
     const connectionHeaders: string[] = []
     const server = http.createServer((request, response) => {
-      connections.add(request.socket)
+      connections.add(request.socket.remotePort!)
       connectionHeaders.push(request.headers.connection ?? '')
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ status: 'ok' }))

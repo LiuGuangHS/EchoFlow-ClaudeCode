@@ -5,13 +5,16 @@ import {
 } from './workspace/storageKey'
 import {
   APP_ZOOM_STORAGE_KEY,
+  LEGACY_UI_ZOOM_STORAGE_KEY,
   isValidStoredAppZoomLevel,
+  normalizeAppZoomLevel,
 } from './appZoom'
 
 import { CHAT_APPEARANCE_STORAGE_KEY, migrateChatAppearance } from './chatAppearance'
+import { PREVENT_SLEEP_STORAGE_KEY } from './preventSleepPreference'
 
-export const CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION = 5
-export const DESKTOP_PERSISTENCE_VERSION_KEY = 'echoflow-code.persistence.schemaVersion'
+export const CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION = 7
+export const DESKTOP_PERSISTENCE_VERSION_KEY = 'cc-haha.persistence.schemaVersion'
 
 type DesktopMigrationReport = {
   migratedKeys: string[]
@@ -19,26 +22,28 @@ type DesktopMigrationReport = {
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
-const TAB_STORAGE_KEY = 'echoflow-code-open-tabs'
-const SESSION_RUNTIME_STORAGE_KEY = 'echoflow-code-session-runtime'
-const THEME_STORAGE_KEY = 'echoflow-code-theme'
-const FOLLOW_SYSTEM_THEME_STORAGE_KEY = 'echoflow-code-follow-system-theme'
-const LIGHT_THEME_STORAGE_KEY = 'echoflow-code-light-theme'
-const DARK_THEME_STORAGE_KEY = 'echoflow-code-dark-theme'
-const LOCALE_STORAGE_KEY = 'echoflow-code-locale'
-const LEGACY_STORAGE_RULES = [
-  { targetKey: APP_ZOOM_STORAGE_KEY, sourceKeys: ['echoflow-code-ui-zoom'] },
-] as const
+const TAB_STORAGE_KEY = 'cc-haha-open-tabs'
+const SESSION_RUNTIME_STORAGE_KEY = 'cc-haha-session-runtime'
+const THEME_STORAGE_KEY = 'cc-haha-theme'
+const FOLLOW_SYSTEM_THEME_STORAGE_KEY = 'cc-haha-follow-system-theme'
+const LIGHT_THEME_STORAGE_KEY = 'cc-haha-light-theme'
+const DARK_THEME_STORAGE_KEY = 'cc-haha-dark-theme'
+const LOCALE_STORAGE_KEY = 'cc-haha-locale'
+const ACTIVE_SETTINGS_TAB_STORAGE_KEY = 'cc-haha-active-settings-tab'
+// Schema 6 retired the standalone Trace page: its list tab, its per-session
+// tabs and its Settings rail entry. Per-session traces now live in the chat's
+// 轨迹 view, so a trace tab reopens as that session's chat tab.
+const LEGACY_TRACE_LIST_TAB_ID = '__traces__'
+const LEGACY_TRACE_TAB_PREFIX = '__trace__'
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
-const PERSISTED_SPECIAL_TAB_TYPES = ['settings', 'scheduled', 'market', 'connectors', 'traces'] as const
+const PERSISTED_SPECIAL_TAB_TYPES = ['settings', 'scheduled', 'market', 'connectors'] as const
 const PERSISTED_SPECIAL_TAB_IDS: Record<(typeof PERSISTED_SPECIAL_TAB_TYPES)[number], string> = {
   settings: '__settings__',
   scheduled: '__scheduled__',
   market: '__market__',
   connectors: '__connectors__',
-  traces: '__traces__',
 }
-const VALID_LOCALES = ['en', 'zh', 'zh-TW', 'jp', 'kr']
+const SUPPORTED_LOCALES = ['en', 'zh', 'zh-TW', 'jp', 'kr']
 const WORKSPACE_PERSISTED_TAB_KINDS = ['file', 'browser', 'review', 'terminal']
 
 function readJson(storage: StorageLike, key: string): unknown {
@@ -60,24 +65,29 @@ function getPersistedSpecialTabType(tab: Record<string, unknown>): (typeof PERSI
   if (tab.sessionId === '__scheduled__') return 'scheduled'
   if (tab.sessionId === '__connectors__') return 'market'
   if (tab.sessionId === '__market__') return 'market'
-  if (tab.sessionId === '__traces__') return 'traces'
   return isPersistedSpecialTabType(tab.type) ? tab.type === 'connectors' ? 'market' : tab.type : null
+}
+
+function isLegacyTraceListTab(tab: Record<string, unknown>): boolean {
+  return tab.sessionId === LEGACY_TRACE_LIST_TAB_ID || tab.type === 'traces'
+}
+
+function isLegacyTraceTab(tab: Record<string, unknown>): boolean {
+  return tab.type === 'trace' || String(tab.sessionId).startsWith(LEGACY_TRACE_TAB_PREFIX)
+}
+
+/** The session a retired per-session trace tab pointed at, or null. */
+function getLegacyTraceSessionId(tab: Record<string, unknown>): string | null {
+  if (!isLegacyTraceTab(tab)) return null
+  const sessionId = String(tab.sessionId)
+  const traced = typeof tab.traceSessionId === 'string' && tab.traceSessionId
+    ? tab.traceSessionId
+    : sessionId.slice(LEGACY_TRACE_TAB_PREFIX.length)
+  return traced && !traced.startsWith(LEGACY_TRACE_TAB_PREFIX) ? traced : null
 }
 
 function writeJson(storage: StorageLike, key: string, value: unknown): void {
   storage.setItem(key, JSON.stringify(value))
-}
-
-function copyLegacyStorage(storage: StorageLike, report: DesktopMigrationReport): void {
-  for (const rule of LEGACY_STORAGE_RULES) {
-    if (storage.getItem(rule.targetKey) !== null) continue
-    const sourceKey = rule.sourceKeys.find(key => storage.getItem(key) !== null)
-    if (!sourceKey) continue
-    const value = storage.getItem(sourceKey)
-    if (value === null) continue
-    storage.setItem(rule.targetKey, value)
-    report.migratedKeys.push(rule.targetKey)
-  }
 }
 
 function migrateTabs(storage: StorageLike, report: DesktopMigrationReport): void {
@@ -95,10 +105,15 @@ function migrateTabs(storage: StorageLike, report: DesktopMigrationReport): void
       .filter((tab): tab is Record<string, unknown> => isRecord(tab))
       .filter((tab) => typeof tab.sessionId === 'string' && typeof tab.title === 'string')
       .filter((tab) => tab.type !== 'terminal' && !String(tab.sessionId).startsWith('__terminal__'))
+      .filter((tab) => !isLegacyTraceListTab(tab))
+      .filter((tab) => !isLegacyTraceTab(tab) || getLegacyTraceSessionId(tab) !== null)
       .map((tab) => {
         const specialType = getPersistedSpecialTabType(tab)
+        const tracedSessionId = getLegacyTraceSessionId(tab)
         return {
-          sessionId: specialType ? PERSISTED_SPECIAL_TAB_IDS[specialType] : tab.sessionId as string,
+          sessionId: specialType
+            ? PERSISTED_SPECIAL_TAB_IDS[specialType]
+            : tracedSessionId ?? tab.sessionId as string,
           title: tab.title as string,
           type: specialType ?? 'session',
         }
@@ -106,7 +121,12 @@ function migrateTabs(storage: StorageLike, report: DesktopMigrationReport): void
       .filter((tab, index, tabs) => tabs.findIndex(other => other.sessionId === tab.sessionId) === index)
     const legacyActive = isRecord(parsed) ? rawTabs.find(tab => isRecord(tab) && tab.sessionId === parsed.activeTabId) : undefined
     const activeType = isRecord(legacyActive) ? getPersistedSpecialTabType(legacyActive) : null
-    const normalizedActive = activeType ? PERSISTED_SPECIAL_TAB_IDS[activeType] : isRecord(parsed) ? parsed.activeTabId : null
+    const activeTracedSessionId = isRecord(parsed) && typeof parsed.activeTabId === 'string'
+      ? getLegacyTraceSessionId(isRecord(legacyActive) ? legacyActive : { sessionId: parsed.activeTabId })
+      : null
+    const normalizedActive = activeType
+      ? PERSISTED_SPECIAL_TAB_IDS[activeType]
+      : activeTracedSessionId ?? (isRecord(parsed) ? parsed.activeTabId : null)
     const activeTabId =
       isRecord(parsed) &&
       typeof normalizedActive === 'string' &&
@@ -125,6 +145,13 @@ function migrateTabs(storage: StorageLike, report: DesktopMigrationReport): void
   report.migratedKeys.push(TAB_STORAGE_KEY)
 }
 
+function migrateActiveSettingsTab(storage: StorageLike, report: DesktopMigrationReport): void {
+  // The Trace rail entry is gone; its capture toggle lives under General.
+  if (storage.getItem(ACTIVE_SETTINGS_TAB_STORAGE_KEY) !== 'trace') return
+  storage.setItem(ACTIVE_SETTINGS_TAB_STORAGE_KEY, 'general')
+  report.migratedKeys.push(ACTIVE_SETTINGS_TAB_STORAGE_KEY)
+}
+
 function migrateSessionRuntime(storage: StorageLike, report: DesktopMigrationReport): void {
   const raw = storage.getItem(SESSION_RUNTIME_STORAGE_KEY)
   if (!raw) return
@@ -141,7 +168,6 @@ function migrateSessionRuntime(storage: StorageLike, report: DesktopMigrationRep
       Object.entries(parsed).filter(([, selection]) => (
         isRecord(selection) &&
         typeof selection.modelId === 'string' &&
-        selection.modelId.trim().length > 0 &&
         (selection.providerId === null || typeof selection.providerId === 'string') &&
         (
           selection.effortLevel === undefined ||
@@ -290,6 +316,17 @@ function normalizeAppZoomKey(storage: StorageLike, report: DesktopMigrationRepor
     storage.removeItem(APP_ZOOM_STORAGE_KEY)
     report.migratedKeys.push(APP_ZOOM_STORAGE_KEY)
   }
+
+  const currentValue = storage.getItem(APP_ZOOM_STORAGE_KEY)
+  const legacyValue = storage.getItem(LEGACY_UI_ZOOM_STORAGE_KEY)
+  if (currentValue === null && legacyValue !== null && isValidStoredAppZoomLevel(legacyValue)) {
+    storage.setItem(APP_ZOOM_STORAGE_KEY, String(normalizeAppZoomLevel(legacyValue)))
+    report.migratedKeys.push(APP_ZOOM_STORAGE_KEY)
+  }
+  if (legacyValue !== null) {
+    storage.removeItem(LEGACY_UI_ZOOM_STORAGE_KEY)
+    report.migratedKeys.push(LEGACY_UI_ZOOM_STORAGE_KEY)
+  }
 }
 
 function runMigrationStep(
@@ -316,8 +353,8 @@ export function runDesktopPersistenceMigrations(storage: StorageLike | null = ge
   const report: DesktopMigrationReport = { migratedKeys: [] }
   if (!storage) return report
 
-  runMigrationStep(report, TAB_STORAGE_KEY, () => copyLegacyStorage(storage, report))
   runMigrationStep(report, TAB_STORAGE_KEY, () => migrateTabs(storage, report))
+  runMigrationStep(report, ACTIVE_SETTINGS_TAB_STORAGE_KEY, () => migrateActiveSettingsTab(storage, report))
   runMigrationStep(report, SESSION_RUNTIME_STORAGE_KEY, () => migrateSessionRuntime(storage, report))
   runMigrationStep(report, THEME_STORAGE_KEY, () =>
     migrateThemeKey(storage, THEME_STORAGE_KEY, THEME_MODES, report))
@@ -329,11 +366,20 @@ export function runDesktopPersistenceMigrations(storage: StorageLike | null = ge
     migrateThemeKey(storage, LIGHT_THEME_STORAGE_KEY, LIGHT_THEME_MODES, report))
   runMigrationStep(report, DARK_THEME_STORAGE_KEY, () =>
     migrateThemeKey(storage, DARK_THEME_STORAGE_KEY, DARK_THEME_MODES, report))
-  runMigrationStep(report, LOCALE_STORAGE_KEY, () => normalizeEnumKey(storage, LOCALE_STORAGE_KEY, VALID_LOCALES, report))
+  runMigrationStep(report, LOCALE_STORAGE_KEY, () => normalizeEnumKey(storage, LOCALE_STORAGE_KEY, SUPPORTED_LOCALES, report))
   runMigrationStep(report, APP_ZOOM_STORAGE_KEY, () => normalizeAppZoomKey(storage, report))
   runMigrationStep(report, WORKSPACE_STORAGE_KEY, () => migrateWorkspaceState(storage, report))
   runMigrationStep(report, CHAT_APPEARANCE_STORAGE_KEY, () => {
     if (migrateChatAppearance(storage)) report.migratedKeys.push(CHAT_APPEARANCE_STORAGE_KEY)
+  })
+  // Schema 7 adds an opt-in power preference. Old installs stay off; upgrades
+  // preserve either explicit choice and normalize incomplete/invalid values.
+  runMigrationStep(report, PREVENT_SLEEP_STORAGE_KEY, () => {
+    const stored = storage.getItem(PREVENT_SLEEP_STORAGE_KEY)
+    if (stored !== '0' && stored !== '1') {
+      storage.setItem(PREVENT_SLEEP_STORAGE_KEY, '0')
+      report.migratedKeys.push(PREVENT_SLEEP_STORAGE_KEY)
+    }
   })
   try {
     storage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, String(CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION))

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   sessionsApi,
@@ -11,6 +11,7 @@ import { useMobileViewport } from '../../hooks/useMobileViewport'
 import { useDismissable } from '../../hooks/useDismissable'
 import { isDesktopRuntime } from '../../lib/desktopRuntime'
 import { deriveSessionUsageMetrics } from '../../lib/sessionUsageMetrics'
+import { useContextUsageStore, type ContextUsageRevision } from '@/stores/contextUsageStore'
 import { MobileBottomSheet } from '@/components/ui/MobileBottomSheet'
 import {
   ContextUsageDetails,
@@ -22,6 +23,8 @@ type Props = {
   sessionId?: string
   chatState: ChatState
   messageCount: number
+  /** Changes with session content even when a bounded history keeps its display count unchanged. */
+  contentRevision?: number
   runtimeSelectionKey?: string
   fallbackModelLabel?: string
   draft?: boolean
@@ -32,14 +35,19 @@ type Props = {
    * and after a replacement runtime confirms it has started.
    */
   refreshNonce?: number
+  /**
+   * Keep the indicator mounted (it still tracks the session) but draw no
+   * trigger: the phone composer opens the breakdown from its + sheet instead
+   * of spending a 44px toolbar slot on it.
+   */
+  hideTrigger?: boolean
+}
+
+export type ContextUsageIndicatorHandle = {
+  open: () => void
 }
 
 const ACTIVE_REFRESH_MS = 30_000
-// The server bounds the CLI control request at 20s. Keep the HTTP deadline
-// comfortably later so the server can return a transcript estimate instead of
-// racing a client abort that can strand loopback sockets on Windows.
-const CONTEXT_REQUEST_TIMEOUT_MS = 30_000
-const AUTO_REFRESH_MIN_INTERVAL_MS = 10_000
 // Lifetime totals only change when a turn completes, but a turn can run for minutes and the
 // user is staring at the panel while it does. Polling is scoped to the open popover/sheet —
 // a closed panel costs nothing — and the request it makes is the single-control `usageOnly`
@@ -98,6 +106,53 @@ function isDocumentVisible() {
   return typeof document === 'undefined' || document.visibilityState !== 'hidden'
 }
 
+/**
+ * The toolbar's context ring: an outline-colored track with an arc drawn to
+ * `percentage`. `null` means no reading yet (track only); `loading` swaps the
+ * arc for a quarter-turn spinner on the same track, so the control keeps its
+ * footprint while the first inspection is in flight.
+ */
+function ContextRing({
+  size,
+  loading,
+  percentage,
+  color,
+}: {
+  size: number
+  loading: boolean
+  percentage: number | null
+  color: string
+}) {
+  const radius = 6.25
+  const circumference = 2 * Math.PI * radius
+  const arc = loading ? 0.25 : percentage === null ? 0 : Math.max(0, Math.min(100, percentage)) / 100
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      data-testid="context-usage-ring"
+      className={`shrink-0 -rotate-90 ${loading ? 'motion-safe:animate-spin' : ''}`}
+    >
+      <circle cx="8" cy="8" r={radius} fill="none" stroke="var(--color-outline)" strokeWidth="2.5" />
+      {arc > 0 && (
+        <circle
+          cx="8"
+          cy="8"
+          r={radius}
+          fill="none"
+          stroke={loading ? 'var(--color-text-tertiary)' : color}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeDasharray={`${circumference} ${circumference}`}
+          strokeDashoffset={circumference * (1 - arc)}
+        />
+      )}
+    </svg>
+  )
+}
+
 function shouldFetchContext(
   sessionId: string | undefined,
   draft: boolean,
@@ -107,16 +162,18 @@ function shouldFetchContext(
   return Boolean(sessionId) && !draft && (messageCount > 0 || chatState !== 'idle')
 }
 
-export function ContextUsageIndicator({
+export const ContextUsageIndicator = forwardRef<ContextUsageIndicatorHandle, Props>(function ContextUsageIndicator({
   sessionId,
   chatState,
   messageCount,
+  contentRevision = 0,
   runtimeSelectionKey = '',
   fallbackModelLabel,
   draft = false,
   compact = false,
   refreshNonce = 0,
-}: Props) {
+  hideTrigger = false,
+}, handleRef) {
   const t = useTranslation()
   // `compact` also fires for the desktop composer, which narrows for the right
   // panel rather than for touch, so the phone touch target keys off the
@@ -126,103 +183,32 @@ export function ContextUsageIndicator({
   // presentation so the breakdown is never clipped by chat-column overflow.
   const preferSheet = compact || isMobileBrowser
   const contextEnabled = shouldFetchContext(sessionId, draft, messageCount, chatState)
-  const [context, setContext] = useState<SessionContextSnapshot | null>(null)
-  const [contextSource, setContextSource] = useState<'live' | 'estimate' | null>(null)
-  const [loading, setLoading] = useState(contextEnabled)
-  const [error, setError] = useState<string | null>(null)
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null)
-  const [inspectionModel, setInspectionModel] = useState<string | null>(null)
+  const cached = useContextUsageStore((state) => sessionId ? state.bySession[sessionId] : undefined)
+  const context = contextEnabled ? cached?.context ?? null : null
+  const contextSource = cached?.source ?? null
+  const loading = contextEnabled && (!cached || cached.inFlight !== null)
+  const error = cached?.error ?? null
+  const updatedAt = cached?.updatedAt ?? null
+  const inspectionModel = cached?.model ?? null
   const [usage, setUsage] = useState<SessionUsageSnapshot | null>(null)
   const usageSessionIdRef = useRef<string | undefined>(undefined)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [popoverPosition, setPopoverPosition] = useState<PopoverPosition | null>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
-  const requestSeq = useRef(0)
-  const contextIdentityRef = useRef('')
-  const contextDataSessionIdRef = useRef<string | undefined>(undefined)
-  const inFlightRequestRef = useRef<Promise<boolean> | null>(null)
-  const inFlightIdentityRef = useRef<string | null>(null)
-  const lastAutoRefreshAtRef = useRef(0)
   const contextEnabledRef = useRef(contextEnabled)
   contextEnabledRef.current = contextEnabled
+  const revisionRef = useRef<ContextUsageRevision>({ runtimeSelectionKey, refreshNonce, messageCount, contentRevision, chatState })
+  revisionRef.current = { runtimeSelectionKey, refreshNonce, messageCount, contentRevision, chatState }
 
   const closeDetails = useCallback(() => {
     setDetailsOpen(false)
   }, [])
 
-  const refresh = useCallback(async (mode: 'auto' | 'manual' | 'force' = 'manual'): Promise<boolean> => {
-    if (!contextEnabledRef.current || !sessionId) {
-      setLoading(false)
-      return false
-    }
-    if (mode === 'auto' && !isDocumentVisible()) {
-      setLoading(false)
-      return false
-    }
-    if (mode === 'auto' && Date.now() - lastAutoRefreshAtRef.current < AUTO_REFRESH_MIN_INTERVAL_MS) {
-      return inFlightRequestRef.current ?? false
-    }
-    if (typeof sessionsApi.getInspection !== 'function') {
-      setLoading(false)
-      return false
-    }
-    const activeSessionId = sessionId
-    const activeContextIdentity = `${activeSessionId}:${runtimeSelectionKey}`
-    // 'force' must not reuse an in-flight request: one started just before a
-    // compact boundary would resolve with the pre-compact context.
-    if (mode !== 'force' && inFlightRequestRef.current && inFlightIdentityRef.current === activeContextIdentity) {
-      return inFlightRequestRef.current
-    }
-    const seq = requestSeq.current + 1
-    requestSeq.current = seq
-    if (mode === 'auto') lastAutoRefreshAtRef.current = Date.now()
-    setLoading(true)
-    setError(null)
-    const request = sessionsApi.getInspection(activeSessionId, {
-      includeContext: true,
-      contextOnly: true,
-      timeout: CONTEXT_REQUEST_TIMEOUT_MS,
-    })
-      .then((inspection) => {
-        if (seq !== requestSeq.current || activeContextIdentity !== contextIdentityRef.current) return false
-        const nextContext = inspection.context ?? inspection.contextEstimate ?? null
-        const nextSource = inspection.context ? 'live' : inspection.contextEstimate ? 'estimate' : null
-        const usageModel = inspection.usage?.models.find((model) => firstNonEmpty(model.displayName, model.model)) ?? null
-        setInspectionModel(firstNonEmpty(
-          inspection.context?.model,
-          inspection.contextEstimate?.model,
-          inspection.status?.model,
-          usageModel?.displayName,
-          usageModel?.model,
-        ) ?? null)
-        if (nextContext) {
-          contextDataSessionIdRef.current = activeSessionId
-          setContext(nextContext)
-          setContextSource(nextSource)
-          setError(null)
-          setUpdatedAt(Date.now())
-        } else {
-          setError(inspection.errors?.context ?? null)
-        }
-        return nextContext !== null
-      })
-      .catch((err) => {
-        if (seq !== requestSeq.current || activeContextIdentity !== contextIdentityRef.current) return false
-        setError(err instanceof Error ? err.message : String(err))
-        return false
-      })
-      .finally(() => {
-        if (inFlightRequestRef.current === request) {
-          inFlightRequestRef.current = null
-          inFlightIdentityRef.current = null
-        }
-        if (seq === requestSeq.current) setLoading(false)
-      })
-    inFlightRequestRef.current = request
-    inFlightIdentityRef.current = activeContextIdentity
-    return request
-  }, [runtimeSelectionKey, sessionId])
+  const refresh = useCallback(async (mode: 'restore' | 'auto' | 'manual' | 'force' = 'manual'): Promise<boolean> => {
+    if (!contextEnabledRef.current || !sessionId) return false
+    return useContextUsageStore.getState().refresh(sessionId, revisionRef.current, mode, isDocumentVisible())
+  }, [sessionId])
 
   const forceRefreshWithRetry = useCallback(() => {
     if (!contextEnabledRef.current) return () => {}
@@ -240,80 +226,44 @@ export function ContextUsageIndicator({
     }
   }, [refresh])
 
-  // Compaction and runtime replacement both change context outside the normal
-  // message flow. Their completion signals bump this nonce so the meter reads
-  // the authoritative process.
-  const lastRefreshNonceRef = useRef(refreshNonce)
-  useEffect(() => {
-    if (refreshNonce === lastRefreshNonceRef.current) return
-    lastRefreshNonceRef.current = refreshNonce
-    return forceRefreshWithRetry()
-  }, [forceRefreshWithRetry, refreshNonce])
+  const cancelBoundaryRetryRef = useRef<(() => void) | null>(null)
+  const cancelBoundaryRetry = useCallback(() => {
+    cancelBoundaryRetryRef.current?.()
+    cancelBoundaryRetryRef.current = null
+  }, [])
+  // A normal streaming frame or history hydration must not cancel recovery
+  // for the boundary being inspected. Identity changes and unmount still do.
+  useEffect(() => cancelBoundaryRetry, [cancelBoundaryRetry, contextEnabled, runtimeSelectionKey, sessionId])
 
-  // A new session usually mounts while its first turn is already running.
-  // The eager inspection then races the CLI, and message-count refreshes can
-  // be swallowed by the auto-refresh throttle. The terminal idle transition
-  // is the first reliable point to request that session's real context.
-  const lastChatStateRef = useRef(chatState)
+  const previousRef = useRef<(ContextUsageRevision & { sessionId?: string; enabled: boolean }) | null>(null)
   useEffect(() => {
-    const previousChatState = lastChatStateRef.current
-    lastChatStateRef.current = chatState
-    if (chatState !== 'idle' || previousChatState === 'idle') return
-    return forceRefreshWithRetry()
-  }, [chatState, forceRefreshWithRetry])
-
-  useEffect(() => {
-    const contextIdentity = `${sessionId}:${runtimeSelectionKey}`
-    const identityChanged = contextIdentityRef.current !== contextIdentity
-    contextIdentityRef.current = contextIdentity
-    if (identityChanged) {
-      requestSeq.current += 1
-      lastAutoRefreshAtRef.current = 0
-      setError(null)
-      setInspectionModel(null)
-      if (contextDataSessionIdRef.current !== sessionId) {
-        contextDataSessionIdRef.current = undefined
-        setContext(null)
-        setContextSource(null)
-        setUpdatedAt(null)
-      }
-    }
-    void refresh('auto')
-  }, [refresh, runtimeSelectionKey, sessionId])
-
-  const lastContextEnabledRef = useRef(contextEnabled)
-  useEffect(() => {
-    const wasEnabled = lastContextEnabledRef.current
-    lastContextEnabledRef.current = contextEnabled
-    if (contextEnabled) {
-      if (!wasEnabled) void refresh('auto')
+    const previous = previousRef.current
+    previousRef.current = { sessionId, enabled: contextEnabled, ...revisionRef.current }
+    if (!contextEnabled) {
+      if (sessionId) useContextUsageStore.getState().clearSession(sessionId)
       return
     }
-    requestSeq.current += 1
-    inFlightRequestRef.current = null
-    inFlightIdentityRef.current = null
-    lastAutoRefreshAtRef.current = 0
-    contextDataSessionIdRef.current = undefined
-    setContext(null)
-    setContextSource(null)
-    setInspectionModel(null)
-    setUpdatedAt(null)
-    setError(null)
-    setLoading(false)
-  }, [contextEnabled, refresh])
-
-  const lastMessageCountRef = useRef(messageCount)
-  useEffect(() => {
-    if (lastMessageCountRef.current === messageCount) return
-    lastMessageCountRef.current = messageCount
-    void refresh('auto')
-  }, [messageCount, refresh])
+    // A tab switch restores that session's reading/request. Counters from two
+    // different sessions must never be compared as compaction or turn events.
+    if (!previous || previous.sessionId !== sessionId || !previous.enabled) {
+      void refresh('restore')
+    } else if (previous.refreshNonce !== refreshNonce || (previous.chatState !== 'idle' && chatState === 'idle')) {
+      // Turn completion, compaction and replacement-runtime readiness bypass
+      // both the throttle and requests issued before the boundary.
+      cancelBoundaryRetry()
+      cancelBoundaryRetryRef.current = forceRefreshWithRetry()
+    } else if (previous.runtimeSelectionKey !== runtimeSelectionKey) {
+      void refresh('restore')
+    } else if (previous.messageCount !== messageCount || previous.contentRevision !== contentRevision) {
+      void refresh('auto')
+    }
+  }, [cancelBoundaryRetry, chatState, contextEnabled, contentRevision, forceRefreshWithRetry, messageCount, refresh, refreshNonce, runtimeSelectionKey, sessionId])
 
   useEffect(() => {
     if (typeof document === 'undefined') return
     const refreshIfVisible = () => {
       if (!isDocumentVisible()) return
-      void refresh('auto')
+      void refresh('restore')
     }
     document.addEventListener('visibilitychange', refreshIfVisible)
     return () => document.removeEventListener('visibilitychange', refreshIfVisible)
@@ -380,7 +330,7 @@ export function ContextUsageIndicator({
     return pickUsedContextCategory(context)
   }, [context])
 
-  const displayContext = contextEnabled && contextDataSessionIdRef.current === sessionId ? context : null
+  const displayContext = context
   const hasPlaceholderContext = !displayContext && (
     draft || (!loading && messageCount === 0 && (!error || isCliNotRunningError(error)))
   )
@@ -388,21 +338,15 @@ export function ContextUsageIndicator({
   const percentage = displayContext ? Math.max(0, Math.min(100, displayContext.percentage)) : 0
   const usedTokens = displayContext?.totalTokens ?? 0
   const maxTokens = displayContext?.rawMaxTokens ?? 0
+  // Neutral ink until the window is genuinely tight; only then does the ring
+  // borrow a status color (warning near the limit, error at it).
   const strokeColor = percentage >= 90
     ? 'var(--color-error)'
     : percentage >= 75
       ? 'var(--color-warning)'
-      : 'var(--color-secondary)'
-  const ringStyle = {
-    background: displayContext
-      ? `conic-gradient(${strokeColor} ${percentage * 3.6}deg, var(--color-surface-container-high) 0deg)`
-      : 'var(--color-surface-container-high)',
-  }
+      : 'var(--color-text-tertiary)'
   const displayPercent = displayContext ? formatPercent(percentage) : '--'
-  const displayInspectionModel = !context || contextDataSessionIdRef.current === sessionId
-    ? inspectionModel
-    : null
-  const displayModel = firstNonEmpty(displayContext?.model, displayInspectionModel, fallbackModelLabel)
+  const displayModel = firstNonEmpty(displayContext?.model, inspectionModel, fallbackModelLabel)
   const modelLabel = displayModel ?? t('contextIndicator.modelUnknown')
   const ariaLabel = displayContext
     ? t('contextIndicator.ariaLabel', { percent: formatPercent(percentage) })
@@ -462,6 +406,9 @@ export function ContextUsageIndicator({
       categories={details}
       sessionStats={sessionStats}
       updatedAtLabel={displayContext ? formatUpdatedAt(updatedAt, t) : undefined}
+      autoCompactLabel={displayContext?.autoCompactThreshold
+        ? t('contextIndicator.autoCompactAt', { tokens: new Intl.NumberFormat().format(displayContext.autoCompactThreshold) })
+        : undefined}
       estimate={contextSource === 'estimate'}
       status={detailsStatus}
       labels={detailLabels}
@@ -531,42 +478,48 @@ export function ContextUsageIndicator({
     void refresh('manual')
   }
 
+  useImperativeHandle(handleRef, () => ({
+    open: () => {
+      setDetailsOpen(true)
+      void refresh('manual')
+    },
+  }), [refresh])
+
   return (
     <div className="relative pointer-events-auto">
       <button
         ref={triggerRef}
         type="button"
+        // No reading yet (a draft, or a session before its first turn): a "--"
+        // says nothing and costs a toolbar slot, so the ring appears with data.
+        hidden={hideTrigger || isPendingContext}
         aria-label={ariaLabel}
         aria-expanded={detailsOpen}
         aria-haspopup="dialog"
         onClick={handleTriggerClick}
         title={t('contextIndicator.title')}
         data-testid="context-usage-indicator"
-        className={`group grid shrink-0 place-items-center rounded-full bg-transparent text-[var(--color-text-secondary)] transition-[background-color,color] duration-150 ease-out hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface-container-lowest)] ${
-          isMobileBrowser ? 'h-11 w-11' : 'h-8 w-8'
-        } ${detailsOpen ? 'bg-[var(--color-surface-hover)] text-[var(--color-text-primary)]' : ''}`}
+        // Desktop: a 28px toolbar control showing the ring and the percentage
+        // side by side. The phone shell keeps a 44px square touch target and
+        // leaves the number to the accessible name — it sits between two
+        // other 44px buttons and has no width to spare.
+        className={`inline-flex shrink-0 items-center rounded-[var(--radius-sm)] bg-transparent transition-colors duration-150 ease-out hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] ${
+          isMobileBrowser ? 'h-11 w-11 justify-center' : 'h-7 gap-1.5 px-1.5'
+        } ${detailsOpen ? 'bg-[var(--color-surface-hover)]' : ''}`}
       >
-        <span className={`relative grid shrink-0 place-items-center rounded-full ${isMobileBrowser ? 'h-[22px] w-[22px]' : 'h-5 w-5'}`}>
-          {loading && !displayContext ? (
-            <span className="absolute inset-[2px] rounded-full border-2 border-[var(--color-text-tertiary)] border-t-transparent motion-safe:animate-spin" />
-          ) : (
-            <span
-              className={`relative grid place-items-center rounded-full ${isMobileBrowser ? 'h-[22px] w-[22px]' : 'h-5 w-5'}`}
-              style={ringStyle}
-            >
-              <span className={`absolute inset-[3.5px] rounded-full transition-colors duration-150 ${
-                detailsOpen
-                  ? 'bg-[var(--color-surface-hover)]'
-                  : 'bg-[var(--color-surface-container-lowest)] group-hover:bg-[var(--color-surface-hover)]'
-              }`} />
-              <span
-                className="relative h-1.5 w-1.5 rounded-full"
-                style={{ backgroundColor: displayContext ? strokeColor : 'var(--color-text-tertiary)' }}
-              />
-            </span>
-          )}
+        <ContextRing
+          size={isMobileBrowser ? 18 : 16}
+          loading={loading && !displayContext}
+          percentage={displayContext ? percentage : null}
+          color={strokeColor}
+        />
+        <span
+          className={isMobileBrowser
+            ? 'sr-only'
+            : 'font-mono text-[11px] tabular-nums text-[var(--color-text-tertiary)]'}
+        >
+          {displayPercent}
         </span>
-        <span className="sr-only">{displayPercent}</span>
       </button>
 
       {!preferSheet && detailsOpen && popoverPosition && createPortal(
@@ -575,7 +528,7 @@ export function ContextUsageIndicator({
           role="dialog"
           aria-label={t('contextIndicator.title')}
           data-testid="context-usage-popover"
-          className="fixed z-[var(--z-popover)] overflow-y-auto rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-[22px] py-5 text-left shadow-[var(--shadow-overlay)]"
+          className="fixed z-[var(--z-popover)] overflow-y-auto rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] p-4 text-left shadow-[var(--shadow-dropdown)]"
           style={{
             top: popoverPosition.top,
             bottom: popoverPosition.bottom,
@@ -598,7 +551,7 @@ export function ContextUsageIndicator({
           ariaLabel={t('contextIndicator.title')}
           testId="context-usage-sheet"
           headerExtra={(
-            <div className="truncate text-base font-semibold text-[var(--color-text-primary)]">
+            <div className="truncate font-mono text-[13px] text-[var(--color-text-secondary)]">
               {modelLabel}
             </div>
           )}
@@ -609,4 +562,4 @@ export function ContextUsageIndicator({
       )}
     </div>
   )
-}
+})

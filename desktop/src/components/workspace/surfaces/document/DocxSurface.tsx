@@ -1,3 +1,5 @@
+import { FloatingSelectionMenu } from '@/components/workspace/surfaces/FloatingSelectionMenu'
+import { usePageAnnotation } from '@/components/workspace/surfaces/document/usePageAnnotation'
 import {
   useCallback,
   useEffect,
@@ -63,6 +65,7 @@ export default function DocxSurface({
   absolutePath,
   zoom,
   onZoomChange,
+  onAnnotate,
   initialView,
   engine = defaultDocxEngine,
 }: DocxSurfaceProps) {
@@ -89,6 +92,8 @@ export default function DocxSurface({
     handlersRef,
     layoutRef,
   })
+
+  const annotation = usePageAnnotation({ rootRef: hostRef, frame: current?.frame, identity: blob, path, onAnnotate })
 
   // `null` until there is both a document and a panel to fit it to.
   const fit = current && viewport
@@ -244,6 +249,7 @@ export default function DocxSurface({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
+      <FloatingSelectionMenu selection={annotation.selection} popoverRef={annotation.popoverRef} onAdd={annotation.add} />
       {current ? (
         <DocumentToolbar
           absolutePath={absolutePath}
@@ -281,12 +287,12 @@ export default function DocxSurface({
               onRetry={error.kind === 'unavailable' ? retry : undefined}
             />
           ) : (
-            <PanelMessage icon="progress_activity" message={t('workspace.document.loading')} />
+            <PanelMessage busy message={t('workspace.document.loading')} />
           )}
         </div>
       )}
       {current && error ? (
-        <p role="status" className="shrink-0 border-t border-[var(--color-border)] px-3 py-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+        <p role="status" className="shrink-0 border-t border-[var(--color-border)] px-3 py-1.5 text-[12px] text-[var(--color-text-tertiary)]">
           {t('workspace.files.refreshFailed', { reason: failureMessage(error, t) })}
         </p>
       ) : null}

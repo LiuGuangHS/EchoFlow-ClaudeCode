@@ -1,24 +1,10 @@
-import { PublicAccessManager } from './services/publicAccess'
-import {
-  EchoFlowLoginSession,
-  ECHOFLOW_LOGIN_PROFILES,
-  readDedicatedCredential,
-  readPageIdentity,
-  siteCookieHeader,
-  type EchoFlowLoginCredential,
-  type EchoFlowLoginEndpoint,
-  type EchoFlowLoginVerification,
-  type EchoFlowLoginWindow,
-  type SiteCookie,
-} from './services/echoFlowLogin'
-import { resolveSiteIdentity, type EchoFlowLoginIdentity } from './services/echoFlowSiteIdentity'
-import { readStoredDedicatedCredential } from './services/echoFlowDedicatedRestore'
-import { readStoredSiteCredential } from './services/echoFlowSiteRestore'
-import { startSiteNetworkBridge, type SiteNetworkBridge } from './services/siteNetworkBridge'
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, session, systemPreferences, WebContentsView } from 'electron'
+import { PublicAccessManager, readPublicAccessControlResponse } from './services/publicAccess'
+import { configureP2PSessionPermissions, P2P_PARTITION, p2pEndpointUrl, p2pHostWanted, P2PTerminator } from './services/p2pTerminator'
+import type { DesktopPublicAccessConfiguration, DesktopPublicAccessStatus } from '../src/lib/desktopHost/types'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, screen, session, systemPreferences, WebContentsView, webContents } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import path from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { ELECTRON_EVENT_CHANNELS, ELECTRON_INTERNAL_CHANNELS, ELECTRON_IPC_CHANNELS, type ElectronIpcChannel } from './ipc/channels'
 import {
   isElectronIpcChannel,
@@ -26,19 +12,12 @@ import {
   validateElectronIpcPayload,
 } from './ipc/capabilities'
 import { ElectronServerRuntime } from './services/serverRuntime'
-import {
-  claudeCodeRuntimeConfigPath,
-  claudeCodeRuntimeStatus,
-  getClaudeCodeRuntimeConfig,
-  setClaudeCodeRuntimeConfig,
-  type ClaudeCodeRuntimeConfig,
-} from './services/claudeCodeRuntime'
-import { DeepSeekHarnessRuntime } from './services/deepseekHarnessRuntime'
-import { discoverRuntimes, probeRuntimePath } from './services/runtimeDiscovery'
-import { DeepLinkHandler, extractDeepLinkFromArgs } from './services/deepLinkHandler'
+import { DataMigration } from './services/dataMigration'
+import { areStorageWritesFrozen, setStorageWritesFrozen } from './services/storageMaintenance'
+import { resolveRelocatedAttachmentPath } from '../../src/utils/storageRelocations'
 import { appendHostDiagnostic, electronHostDiagnosticsFile, sanitizeHostDiagnostic } from './services/sidecarManager'
 import { openDialog, saveDialog } from './services/dialogs'
-import { openExternalUrl, openSystemPath, openSystemSettingsUrl, showItemInFolder } from './services/shell'
+import { openExternalUrl, openSystemPath, openSystemSettingsUrl } from './services/shell'
 import {
   notificationPermissionState,
   requestNotificationPermission,
@@ -48,22 +27,25 @@ import { installApplicationMenu, installRendererContextMenu } from './services/m
 import { saveWorkspaceBrowserPdf } from './services/workspaceBrowserPdf'
 import { workspaceBrowserMenuPosition } from './services/workspaceBrowserMenu'
 import type { WorkspaceBrowserMenuOptions } from '../src/lib/desktopHost/types'
+import { DeepLinkHandler, extractDeepLinkFromArgs } from './services/deepLinkHandler'
 import { acquireSingleInstanceLock } from './services/singleInstance'
 import { installTray, shouldInstallTray, type TrayController } from './services/tray'
 import { ElectronUpdaterService, updaterSessionProxyConfig } from './services/updater'
-import { wrapDifferentialHttpExecutor } from './services/differentialHttpExecutor'
-import { resolveDifferentialDownloadRequest, resolveDownloadFeedUrls, resolveUpdateFeedConfig } from './services/updateFeed'
 import { createUpdateSmokeUpdaterFromEnv } from './services/updateSmoke'
 import { ElectronTerminalService, type TerminalSpawnInput } from './services/terminal'
 import { ElectronPreviewService, type PreviewBounds } from './services/preview'
 import {
   ElectronWorkspaceBrowserService,
   WORKSPACE_BROWSER_PARTITION,
-  type WorkspaceBrowserBounds,
   type WorkspaceBrowserCaptureKind,
   type WorkspaceBrowserCreateOptions,
   type WorkspaceBrowserFindOptions,
+  type WorkspaceBrowserWebContentsLike,
 } from './services/workspaceBrowser'
+import {
+  installWorkspaceBrowserGuestPolicy,
+  resolveWorkspaceBrowserGuest,
+} from './services/workspaceBrowserGuest'
 import {
   configureLocalServerRequestAuth,
   configurePreviewSessionPermissions,
@@ -73,13 +55,14 @@ import {
 } from './services/previewSession'
 import {
   applyStartupPortableMode,
+  clearAppManagedPortableEnv,
   getAppMode,
   setAppMode,
 } from './services/appMode'
 import { installMacOsChromiumKeychainPromptGuard } from './services/keychain'
 import { installStdioWriteFailureGuards } from './services/stdioGuards'
-import { applyWindowsAppUserModelId } from './services/appIdentity'
-import { installMainWindowNavigationGuards, installPreviewNavigationGuards, isHttpUrl } from './services/navigationGuards'
+import { applyWindowsAppUserModelId, applyWindowsTaskbarIdentity, resolveWindowsWindowIcon } from './services/appIdentity'
+import { installMainWindowNavigationGuards, installPreviewNavigationGuards } from './services/navigationGuards'
 import { installPreviewCleanupOnRendererNavigation } from './services/previewLifecycle'
 import { logNotificationSmokeRendererAck, scheduleNotificationSmoke } from './services/notificationSmoke'
 import { normalizeZoomFactor } from './services/zoom'
@@ -92,8 +75,11 @@ import {
 } from './services/nativeAppearance'
 import { createRendererUrlMatcher, installMicrophonePermissions } from './services/microphonePermissions'
 import { resolveRendererEntry } from './services/rendererEntry'
-import { installRendererLifecycle } from './services/rendererLifecycle'
-import { applyDefaultEchoFlowDataRoot } from './services/echoFlowDataRoot'
+import { installRendererLifecycle, showRendererRecoveryFailure } from './services/rendererLifecycle'
+import type { IdlePowerSettings } from '../src/lib/idlePower'
+import { IdlePowerService, readIdlePowerActivity } from './services/idlePower'
+import { createIdlePowerHost, installIdlePowerLifecycle } from './services/idlePowerHost'
+import { installPreventSleepLifecycle, PreventSleepService, readPreventSleepActivity } from './services/preventSleep'
 import { writeWindowSmokeSnapshot } from './services/windowSmoke'
 import { loadAndRevealMainWindow } from './services/windowStartup'
 import {
@@ -106,8 +92,7 @@ import {
   readLocalePreference,
   writeLocalePreference,
 } from './services/localePreference'
-import type { Locale } from '../src/i18n/locale'
-import { ECHOFLOW_SIHUB_NAME } from '../src/constants/brand'
+import { resolveSupportedLocale, type Locale } from '../src/i18n/locale'
 import {
   createCustomPetCatalogLoader,
   createCustomPetFromAtlas,
@@ -119,6 +104,7 @@ import {
   readCustomPetSourceImage,
 } from './services/pets'
 import {
+  installFullScreenKey,
   installWindowLifecycle,
   readWindowState,
   refreshWindowsDragHitTest,
@@ -133,31 +119,61 @@ import {
 
 let mainWindow: BrowserWindow | null = null
 let serverRuntime: ElectronServerRuntime | null = null
-let echoFlowLoginSession: EchoFlowLoginSession | null = null
-let siteNetworkBridge: SiteNetworkBridge | null = null
-let deepSeekHarnessRuntime: DeepSeekHarnessRuntime | null = null
-let deepSeekHarnessWindow: BrowserWindow | null = null
+let dataMigration: DataMigration | null = null
+const hostOperations = new Set<Promise<unknown>>()
 let publicAccessManager: PublicAccessManager | null = null
+/** The WebRTC endpoint phones upgrade to; runs only while remote access is wanted (see p2pHostWanted). */
+let p2pTerminator: P2PTerminator | null = null
+let p2pSessionConfigured = false
 let updaterService: ElectronUpdaterService | null = null
 let terminalService: ElectronTerminalService | null = null
 let previewService: ElectronPreviewService | null = null
 let workspaceBrowserService: ElectronWorkspaceBrowserService | null = null
+let workspaceBrowserSessionConfigured = false
 let petWindowController: PetWindowController | null = null
-const traceWindows = new Map<string, BrowserWindow>()
 let isQuitting = false
 let quitCleanupStarted = false
 let quitCleanupFinished = false
 let trayController: TrayController | null = null
-// Wakes the renderer, which pulls the pending import itself; see DeepLinkHandler.
 const deepLinkHandler = new DeepLinkHandler(() => mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.deepLink))
+let idlePowerRendererGeneration = 0
+let idlePowerService: IdlePowerService | null = null
+let idlePowerInitialization: Promise<IdlePowerService> | null = null
+async function getIdlePowerService(): Promise<IdlePowerService> {
+  const rendererGeneration = idlePowerRendererGeneration
+  idlePowerInitialization ??= createIdlePowerHost({
+    app, blocker: powerSaveBlocker, monitor: powerMonitor, screen, NotificationClass: Notification,
+    locale: () => readLocalePreference(app) ?? resolveSupportedLocale(app.getPreferredSystemLanguages()),
+    readActivity: signal => {
+      if (isQuitting || dataMigration?.running || areStorageWritesFrozen()) throw new Error('Desktop is unavailable')
+      return readIdlePowerActivity(resolveMainRendererServerAccess(), signal)
+    },
+    onChange: state => {
+      const window = mainWindow
+      if (isQuitting || !window || window.isDestroyed()) return
+      const contents = window.webContents
+      // WebContents is destroyed before its owning window during shutdown.
+      // stop() still emits so live renderers can clear a cancelled countdown.
+      if (!contents.isDestroyed()) contents.send(ELECTRON_EVENT_CHANNELS.powerIdleActionState, state)
+    },
+  }).then(service => { idlePowerService = service; return service }).catch(error => { idlePowerInitialization = null; throw error })
+  const service = await idlePowerInitialization
+  if (isQuitting) { service.dispose(); throw new Error('Application is quitting') }
+  if (rendererGeneration !== idlePowerRendererGeneration) { service.stop(); throw new Error('Desktop window changed') }
+  service.start()
+  return service
+}
+const preventSleepService = new PreventSleepService({
+  blocker: powerSaveBlocker,
+  readActivity: signal => readPreventSleepActivity(resolveMainRendererServerAccess(), signal),
+  onError: () => console.warn('[desktop] failed to refresh prevent-sleep activity'),
+  beforeIdleRelease: () => idlePowerService?.prepareIdleHandoff(),
+})
 
 // Must run before anything logs: a Finder/Dock launch inherits unreadable
 // stdio, and an unguarded write failure there surfaces as a crash dialog.
 installStdioWriteFailureGuards()
 installMacOsChromiumKeychainPromptGuard(app)
-
-const echoFlowDataRoot = applyDefaultEchoFlowDataRoot(process.env)
-app.setPath('userData', echoFlowDataRoot)
 
 function appRoot() {
   return app.isPackaged ? app.getAppPath() : process.cwd()
@@ -226,10 +242,7 @@ function installSystemAppearanceWatch() {
     const current = currentAppearance()
     if (current && !current.followSystem) return
     const background = startupWindowBackground(current, nativeTheme.shouldUseDarkColors)
-    for (const window of [mainWindow, ...traceWindows.values()]) {
-      if (!window || window.isDestroyed()) continue
-      window.setBackgroundColor(background)
-    }
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBackgroundColor(background)
   })
 }
 
@@ -249,359 +262,87 @@ async function loadRendererEntry(
   }
 }
 
-async function openTraceWindow(sessionId: string) {
-  const existing = traceWindows.get(sessionId)
-  if (existing && !existing.isDestroyed()) {
-    showMainWindow(existing, app)
-    return
-  }
-
-  const traceWindow = new BrowserWindow({
-    width: 1180,
-    height: 780,
-    minWidth: 860,
-    minHeight: 560,
-    title: 'Trace',
-    autoHideMenuBar: true,
-    show: false,
-    backgroundColor: resolveStartupWindowBackground(),
-    webPreferences: {
-      preload: preloadPath(),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  })
-  traceWindows.set(sessionId, traceWindow)
-  traceWindow.on('closed', () => {
-    traceWindows.delete(sessionId)
-  })
-  installMainWindowNavigationGuards(traceWindow.webContents, { openExternal: openExternalUrl })
-  await loadRendererEntry(traceWindow, {
-    traceWindow: '1',
-    traceSessionId: sessionId,
-  })
-  showMainWindow(traceWindow, app)
-}
-
 function getServerRuntime() {
   serverRuntime ??= new ElectronServerRuntime({
     onServerUnavailable: () => { void publicAccessManager?.serverUnavailable() },
     onServerReady: () => {
       void publicAccessManager?.serverChanged()
-      echoFlowRestore = rehydrateEchoFlowSiteSession()
+      void p2pTerminator?.refresh()
     },
     desktopRoot: unpackedRoot(),
     appRoot: appRoot(),
-    appVersion: app.getVersion(),
-    claudeCodeRuntimeConfigPath: claudeCodeRuntimeConfigPath(app.getPath('userData')),
     h5DistDir: path.join(unpackedRoot(), 'dist'),
+    diagnosticsFile: electronHostDiagnosticsFile(process.env),
     resolveSystemProxy: (url) => session.defaultSession.resolveProxy(url),
   })
   return serverRuntime
 }
 
-
-async function readEchoFlowSiteCookies(endpoint: EchoFlowLoginEndpoint): Promise<SiteCookie[]> {
-  const profile = ECHOFLOW_LOGIN_PROFILES[endpoint]
-  return await session.fromPartition(profile.partition).cookies.get({ url: profile.origin })
-}
-
-async function clearEchoFlowSiteCookies(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
-  const profile = ECHOFLOW_LOGIN_PROFILES[endpoint]
-  const cookies = session.fromPartition(profile.partition).cookies
-  const existing = await cookies.get({ url: profile.origin })
-  await Promise.all(existing.map(cookie => cookies.remove(
-    `${profile.origin}${cookie.path && cookie.path.startsWith('/') ? cookie.path : `/${cookie.path || ''}`}`,
-    cookie.name,
-  )))
-}
-
-async function clearEchoFlowSiteStorage(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
-  // The dedicated gateway keeps its JWT in localStorage, and Electron persists
-  // that partition to disk. Without this, signing out and signing in again
-  // would hand back the old account with no input.
-  const profile = ECHOFLOW_LOGIN_PROFILES[endpoint]
-  await session.fromPartition(profile.partition).clearStorageData({ storages: ['localstorage'] })
-}
-
-async function readStoredEchoFlowAccountIdentity(
-  endpoint: EchoFlowLoginEndpoint,
-): Promise<EchoFlowLoginIdentity | null> {
-  try {
-    const serverUrl = await getServerRuntime().getServerUrl()
-    const response = await fetch(`${serverUrl}/api/echoflow`, { signal: AbortSignal.timeout(10_000) })
-    if (!response.ok) return null
-    const body = await response.json() as {
-      accounts?: Record<string, { userId?: unknown; username?: unknown } | null>
-    }
-    const account = body.accounts?.[endpoint]
-    if (!account || typeof account.userId !== 'string') return null
-    return {
-      userId: account.userId,
-      username: typeof account.username === 'string' ? account.username : '',
-    }
-  } catch {
-    return null
-  }
-}
-
-async function readEchoFlowLoginCredential(
-  endpoint: EchoFlowLoginEndpoint,
-  window: EchoFlowLoginWindow | null,
-): Promise<EchoFlowLoginCredential | null> {
-  if (endpoint === 'dedicated') {
-    // The gateway keeps its JWT in page storage. We never copy it into the
-    // account file; sign-out wipes that storage (clearEchoFlowSiteStorage) so
-    // the next login cannot replay it.
-    const credential = window
-      ? await readDedicatedCredential(window, ECHOFLOW_LOGIN_PROFILES.dedicated.origin)
-      : await readStoredDedicatedCredential(
-          ECHOFLOW_LOGIN_PROFILES.dedicated.partition,
-          ECHOFLOW_LOGIN_PROFILES.dedicated.origin,
-        ).catch(() => null)
-    console.info('[echoFlowLogin] credential-read:', JSON.stringify({ endpoint, present: Boolean(credential) }))
-    return credential
-  }
-  const profile = ECHOFLOW_LOGIN_PROFILES.main
-  // The gateway binds the session to the client that created it and refuses to
-  // recognise it from any other one, so every identity probe leaves through the
-  // sign-in window's own partition; the restore after a restart has no window
-  // to fall back on.
-  if (!window) {
-    // The gateway account call needs New-Api-User — the identity itself — so the
-    // restore reads the identity the sign-in stored and keeps the network out of
-    // it; the verification in bootstrapEchoFlowAccount confirms the pair.
-    const identity = await readStoredEchoFlowAccountIdentity(endpoint)
-    return await readStoredSiteCredential(profile.partition, profile.origin, app.getLocale(), identity)
-  }
-  const cookies = await readEchoFlowSiteCookies(endpoint)
-  const cookie = siteCookieHeader(cookies)
-  if (!cookie) return null
-  const partitionFetch: typeof fetch = (input, init) =>
-    session.fromPartition(profile.partition).fetch(String(input), init)
-  let identity = await resolveSiteIdentity(cookie, partitionFetch, {
-    userAgent: session.fromPartition(profile.partition).getUserAgent(),
-    acceptLanguage: app.getLocale(),
-  })
-  if (!identity) identity = await readPageIdentity(window, profile.origin)
-  if (!identity) return null
-  return {
-    kind: 'session',
-    userId: identity.userId,
-    username: identity.username,
-    cookie,
-    userAgent: session.fromPartition(profile.partition).getUserAgent(),
-    acceptLanguage: app.getLocale(),
-  }
-}
-
-async function bootstrapEchoFlowAccount(
-  endpoint: EchoFlowLoginEndpoint,
-  credential: EchoFlowLoginCredential,
-): Promise<EchoFlowLoginVerification> {
-  // Each endpoint accepts exactly the credential its own page produces.
-  if (credential.kind === 'session' && endpoint !== 'main') return 'rejected'
-  if (credential.kind === 'bearer' && endpoint !== 'dedicated') return 'rejected'
-  try {
-    const runtime = getServerRuntime()
-    const serverUrl = await runtime.getServerUrl()
-    const bridgeToken = runtime.getSiteSessionBridgeToken()
-    console.info('[echoFlowLogin] credential-verify:', JSON.stringify({
-      endpoint,
-      kind: credential.kind,
-      serverUrl,
-      bridgeTokenPresent: Boolean(bridgeToken),
-    }))
-    // No server to ask yet: the credential is unverified, not rejected.
-    if (!bridgeToken) return 'unavailable'
-    const response = await fetch(`${serverUrl}/api/echoflow/account/credential`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-echoflow-site-session-bridge': bridgeToken,
-      },
-      body: JSON.stringify(credential.kind === 'session'
-        ? {
-            endpoint,
-            kind: 'session',
-            cookie: credential.cookie,
-            userId: credential.userId,
-            ...(credential.userAgent ? { userAgent: credential.userAgent } : {}),
-            ...(credential.acceptLanguage ? { acceptLanguage: credential.acceptLanguage } : {}),
-          }
-        : { endpoint, kind: 'bearer', accessToken: credential.accessToken, userId: credential.userId }),
-      signal: AbortSignal.timeout(15_000),
-    })
-    if (response.ok) {
-      console.info('[echoFlowLogin] credential-verified:', JSON.stringify({ endpoint, kind: credential.kind }))
-      return 'ok'
-    }
-    const body = await response.json().catch(() => null) as { error?: unknown; detail?: unknown } | null
-    console.warn('[echoFlowLogin] verification-response:', JSON.stringify({
-      endpoint,
-      kind: credential.kind,
-      status: response.status,
-      code: typeof body?.error === 'string' ? body.error : 'unreadable',
-      detail: typeof body?.detail === 'string' ? body.detail : undefined,
-    }))
-    // Only the site saying the credential is bad is a verdict; a bridge or
-    // upstream failure is the server not answering and keeps the window open.
-    if (response.status === 400) {
-      if (body?.error === 'token_invalid') return 'rejected'
-    }
-    return 'unavailable'
-  } catch {
-    return 'unavailable'
-  }
-}
-
-function getEchoFlowLoginSession(): EchoFlowLoginSession {
-  echoFlowLoginSession ??= new EchoFlowLoginSession({
-    createWindow(partition): EchoFlowLoginWindow {
-      const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
-      const loginWindow = new BrowserWindow({
-        title: `${ECHOFLOW_SIHUB_NAME} 账号登录`,
-        width: 520,
-        height: 720,
-        show: true,
-        autoHideMenuBar: true,
-        // The site login page is a heavy SPA bundle; without a background the
-        // window sits white and reads as hung while it downloads.
-        backgroundColor: resolveStartupWindowBackground(),
-        ...(parent ? { parent, modal: true } : {}),
-        webPreferences: {
-          partition,
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-        },
-      })
-
-      // Electron exposes BrowserWindow.webContents as a getter-only accessor.
-      // Assigning to it (for example with Object.assign) throws after the
-      // window has already been shown, leaving an orphan modal window that
-      // never loads. The session reads the account from the site's own
-      // session, so the window needs no extra fields.
-      return loginWindow as unknown as EchoFlowLoginWindow
+function getDataMigration() {
+  dataMigration ??= new DataMigration(app, {
+    preview: () => getServerRuntime().getMigrationPreview(),
+    async quiesce() {
+      await Promise.allSettled([...hostOperations])
+      if (mainWindow && !mainWindow.isDestroyed()) saveWindowState(app, mainWindow)
+      petWindowController?.dispose()
+      petWindowController = null
+      await p2pTerminator?.dispose()
+      await publicAccessManager?.dispose()
+      publicAccessManager = null
+      setStorageWritesFrozen(true)
+      await getServerRuntime().quiesceForMigration()
     },
-    profiles: ECHOFLOW_LOGIN_PROFILES,
-    readCredential: readEchoFlowLoginCredential,
-    verifySession: bootstrapEchoFlowAccount,
-    clearCookies: clearEchoFlowSiteCookies,
-    clearStorage: clearEchoFlowSiteStorage,
-  })
-  return echoFlowLoginSession
-}
-
-const ECHOFLOW_LOGIN_ENDPOINTS: EchoFlowLoginEndpoint[] = ['main', 'dedicated']
-
-// The renderer reads the account list as soon as it mounts, which can be before
-// the restore has put the credential back into the server. Exposing the promise
-// lets the account card re-read the list once that answer exists instead of
-// showing a restored account as signed out.
-let echoFlowRestore: Promise<boolean> = Promise.resolve(false)
-
-async function rehydrateEchoFlowSiteSession(): Promise<boolean> {
-  const login = getEchoFlowLoginSession()
-  // Each line keeps its own partition and stored account, so one line failing
-  // to rehydrate must not stop the other from coming back.
-  const restored = await Promise.all(ECHOFLOW_LOGIN_ENDPOINTS.map(endpoint => login.rehydrate(endpoint)))
-  return restored.some(Boolean)
-}
-
-async function signOutEchoFlowSiteSession(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
-  const runtime = getServerRuntime()
-  const serverUrl = await runtime.getServerUrl()
-  const response = await fetch(`${serverUrl}/api/echoflow/account`, {
-    method: 'DELETE',
-    headers: {
-      Authorization: `Bearer ${runtime.getLocalAccessToken()}`,
-      'Content-Type': 'application/json',
+    async resume() {
+      setStorageWritesFrozen(false)
+      await getServerRuntime().resumeAfterMigration()
+      await getPublicAccessManager().restore().catch(() => {})
     },
-    body: JSON.stringify({ endpoint }),
-    signal: AbortSignal.timeout(10_000),
-  })
-  if (!response.ok) throw new Error('Could not sign out of the EchoFlow account.')
-  // Clearing only this partition leaves the other endpoint signed in.
-  await getEchoFlowLoginSession().clear(endpoint)
-}
-
-function getDeepSeekHarnessRuntime() {
-  deepSeekHarnessRuntime ??= new DeepSeekHarnessRuntime({
-    userDataPath: app.getPath('userData'),
-  })
-  return deepSeekHarnessRuntime
-}
-
-async function openDeepSeekHarnessWindow() {
-  const runtime = getDeepSeekHarnessRuntime()
-  const status = await runtime.getStatus()
-  if (status.state !== 'running' || !status.url) {
-    throw new Error('Start DeepSeek Harness before opening it')
-  }
-  if (deepSeekHarnessWindow && !deepSeekHarnessWindow.isDestroyed()) {
-    deepSeekHarnessWindow.focus()
-    return
-  }
-
-  const targetUrl = runtime.getOpenUrl() ?? status.url
-  const serviceUrl = new URL(status.url)
-  const window = new BrowserWindow({
-    title: 'DeepSeek Harness',
-    width: 1280,
-    height: 860,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      partition: 'persist:deepseek-harness',
+    restart() {
+      isQuitting = true
+      app.relaunch()
+      app.quit()
+    },
+    progress(status) {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send(ELECTRON_EVENT_CHANNELS.migrationProgress, status)
+      }
     },
   })
-  deepSeekHarnessWindow = window
-  window.on('closed', () => {
-    if (deepSeekHarnessWindow === window) deepSeekHarnessWindow = null
+  return dataMigration
+}
+
+function getP2PTerminator() {
+  p2pTerminator ??= new P2PTerminator({
+    createWindow: options => {
+      if (!p2pSessionConfigured) {
+        configureP2PSessionPermissions(session.fromPartition(P2P_PARTITION))
+        p2pSessionConfigured = true
+      }
+      return new BrowserWindow(options)
+    },
+    hostScript: () => readFileSync(path.join(__dirname, 'p2p-host.js'), 'utf8'),
+    endpoint: () => {
+      const runtime = getServerRuntime()
+      const serverUrl = runtime.getActiveServerUrl()
+      // The hidden window gets only its own endpoint capability, never the local API token.
+      return serverUrl ? p2pEndpointUrl(serverUrl, runtime.getP2PEndpointToken()) : null
+    },
   })
-  configurePreviewSessionPermissions(window.webContents.session)
-  const isHarnessUrl = (url: string) => {
-    try {
-      const candidate = new URL(url)
-      return candidate.origin === serviceUrl.origin && (candidate.pathname === serviceUrl.pathname || candidate.pathname.startsWith(`${serviceUrl.pathname}/`))
-    } catch {
-      return false
-    }
-  }
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (isHttpUrl(url)) openExternalUrl(url)
-    return { action: 'deny' }
-  })
-  window.webContents.on('will-navigate', (event, url) => {
-    if (isHarnessUrl(url)) return
-    event.preventDefault()
-    if (isHttpUrl(url)) openExternalUrl(url)
-  })
-  window.webContents.on('will-redirect', (event, url) => {
-    if (isHarnessUrl(url)) return
-    event.preventDefault()
-    if (isHttpUrl(url)) openExternalUrl(url)
-  })
-  window.webContents.on('did-navigate', (_event, url) => {
-    if (isHarnessUrl(url) && !new URL(url).searchParams.has('token')) runtime.clearLaunchUrl()
-  })
-  try {
-    await window.loadURL(targetUrl)
-  } catch {
-    runtime.clearLaunchUrl()
-    window.close()
-    throw new Error('Could not open DeepSeek Harness. Restart it and try again.')
-  }
+  return p2pTerminator
+}
+
+/** What the settings page reads: the connection, plus the direct-connection host's own state. */
+function publicAccessStatus(status: DesktopPublicAccessStatus): DesktopPublicAccessStatus {
+  return { ...status, p2pState: p2pTerminator?.state ?? 'off' }
 }
 
 function getPublicAccessManager() {
   if (publicAccessManager) return publicAccessManager
   let queue: Promise<unknown> = Promise.resolve()
   publicAccessManager = new PublicAccessManager({
-    directory: path.join(getAppMode(app).activeConfigDir ?? app.getPath('userData'), 'echoflow-code', 'public-access'),
+    desktopRoot: unpackedRoot(),
+    onState: status => { void getP2PTerminator().update(p2pHostWanted(status)) },
+    directory: path.join(getAppMode(app).activeConfigDir ?? app.getPath('userData'), 'cc-haha', 'public-access'),
     backend: {
       request<T>(route: string, method: string, body?: unknown): Promise<T> {
         const operation = queue.catch(() => {}).then(async () => {
@@ -615,8 +356,7 @@ function getPublicAccessManager() {
             body: body === undefined ? undefined : JSON.stringify(body),
             signal: AbortSignal.timeout(10_000),
           })
-          if (!response.ok) throw new Error('Public access configuration failed')
-          return await response.json() as T
+          return await readPublicAccessControlResponse<T>(response)
         })
         queue = operation
         return operation
@@ -646,32 +386,12 @@ function getUpdaterService() {
   const smokeUpdater = createUpdateSmokeUpdaterFromEnv(process.env)
   updaterService ??= new ElectronUpdaterService(smokeUpdater ?? autoUpdater, {
     async apply(proxy) {
+      // Update traffic runs on electron-updater's own session partition;
+      // configuring app/defaultSession proxies never reaches it.
       await autoUpdater.netSession.setProxy(updaterSessionProxyConfig(proxy))
     },
   }, {
     updateConfigPath: !smokeUpdater && app.isPackaged ? path.join(process.resourcesPath, 'app-update.yml') : undefined,
-    ...(smokeUpdater
-      ? { feedUrls: [] }
-      : (() => {
-          const feedConfig = resolveUpdateFeedConfig(process.env)
-          const differentialDownload = resolveDifferentialDownloadRequest(
-            process.env,
-            feedConfig,
-            process.platform,
-            feedConfig.differentialDownloadFeedUrls[0],
-          )
-          if (differentialDownload) {
-            wrapDifferentialHttpExecutor(autoUpdater as typeof autoUpdater & { httpExecutor?: unknown })
-          }
-          return {
-            metadataFeedUrl: feedConfig.metadataUrl,
-            metadataFallbackUrls: feedConfig.metadataFallbackUrls,
-            downloadFeedUrls: resolveDownloadFeedUrls(feedConfig, differentialDownload),
-            differentialDownload,
-            differentialDownloadFeedUrls: feedConfig.differentialDownloadFeedUrls,
-            differentialDownloadContracts: feedConfig.differentialDownloadContracts,
-          }
-        })()),
   })
   return updaterService
 }
@@ -733,7 +453,10 @@ function getPetWindowController() {
         window.webContents.session.webRequest,
         resolvePetServerAccess,
       )
-      installMainWindowNavigationGuards(window.webContents, { openExternal: openExternalUrl })
+      installMainWindowNavigationGuards(window.webContents, {
+        openExternal: openExternalUrl,
+        rendererEntry: rendererEntry(),
+      })
     },
     load: window => loadRendererEntry(window, { petWindow: '1' }),
     onPanelPlacementChanged: (window, placement) => {
@@ -767,10 +490,6 @@ function getWorkspaceBrowserService() {
     emit: event => {
       mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.workspaceBrowserEvent, event)
     },
-    resolveScaleFactor: parent => {
-      const bounds = parent.getBounds?.()
-      return bounds ? screen.getDisplayMatching(bounds).scaleFactor : 1
-    },
     writePdf: async ({ data, filename }) => {
       return saveWorkspaceBrowserPdf(data, async () => {
         if (!mainWindow || mainWindow.isDestroyed()) return null
@@ -781,29 +500,35 @@ function getWorkspaceBrowserService() {
         return result.canceled ? null : result.filePath ?? null
       })
     },
-    createView: () => {
-      const view = new WebContentsView({
-        webPreferences: {
-          preload: previewPreloadPath(),
-          // One shared persistent partition for every workspace page: a login in
-          // one tab has to still be there in the next one. Per-tab partitions
-          // would turn every new tab into a fresh, logged-out browser.
-          partition: WORKSPACE_BROWSER_PARTITION,
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-        },
-      })
-      // Same boundary as the singleton preview: OS permissions are denied, and
-      // `configureLocalServerRequestAuth` is deliberately NOT installed here.
-      // These pages render arbitrary remote sites, so attaching the desktop's
-      // local access token to their loopback requests would hand any visited
-      // site the local API.
-      configurePreviewSessionPermissions(view.webContents.session)
-      return view
-    },
+    // Pages are `<webview>` guests the renderer creates; their preferences are
+    // fixed by `installWorkspaceBrowserGuestPolicy` on the main window. The id
+    // the renderer reports is only adopted if it names one of those guests.
+    resolveGuest: webContentsId => resolveWorkspaceBrowserGuest<Electron.WebContents>(webContentsId, {
+      fromId: id => webContents.fromId(id),
+      host: mainWindow?.webContents,
+      session: workspaceBrowserSession(),
+    }) as WorkspaceBrowserWebContentsLike,
   })
   return workspaceBrowserService
+}
+
+/**
+ * One shared persistent partition for every workspace page: a login in one
+ * tab has to still be there in the next one. Per-tab partitions would turn
+ * every new tab into a fresh, logged-out browser.
+ */
+function workspaceBrowserSession() {
+  const browserSession = session.fromPartition(WORKSPACE_BROWSER_PARTITION)
+  // Same boundary as the singleton preview: OS permissions are denied, and
+  // `configureLocalServerRequestAuth` is deliberately NOT installed here.
+  // These pages render arbitrary remote sites, so attaching the desktop's
+  // local access token to their loopback requests would hand any visited
+  // site the local API.
+  if (!workspaceBrowserSessionConfigured) {
+    workspaceBrowserSessionConfigured = true
+    configurePreviewSessionPermissions(browserSession)
+  }
+  return browserSession
 }
 
 async function listCustomPets() {
@@ -822,12 +547,6 @@ function currentWindow(event: Electron.IpcMainInvokeEvent) {
   return window
 }
 
-function requireMainWindow(event: Electron.IpcMainInvokeEvent) {
-  if (currentWindow(event) !== mainWindow) {
-    throw new Error('Update IPC is only available to the main window')
-  }
-}
-
 function registerHandler<T>(
   channel: ElectronIpcChannel,
   handler: (event: Electron.IpcMainInvokeEvent, payload: unknown) => T | Promise<T>,
@@ -837,11 +556,18 @@ function registerHandler<T>(
       throw new Error(`Invalid Electron IPC payload for ${channel}`)
     }
     const senderWindow = BrowserWindow.fromWebContents(event.sender)
-    if (
-      (channel.startsWith('desktop:public-access:') || channel.startsWith('desktop:echoflow:') || channel === ELECTRON_IPC_CHANNELS.runtimeGetLocalAccessToken)
-      && (senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame)
-    ) {
-      throw new Error('This desktop host action requires the main application frame')
+    if (channel.startsWith('desktop:power:') && (senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame || isQuitting)) {
+      throw new Error('Power settings require the main desktop window')
+    }
+    const migrationControl = channel.startsWith('desktop:app-mode:migration:')
+    if (migrationControl && (senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame)) {
+      throw new Error('Data migration requires the main desktop window')
+    }
+    if ((dataMigration?.running || areStorageWritesFrozen()) && !migrationControl && channel !== ELECTRON_IPC_CHANNELS.shellOpenPath) {
+      throw new Error('Data migration is in progress')
+    }
+    if (channel.startsWith('desktop:public-access:') && (senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame)) {
+      throw new Error('Public access management requires the main desktop window')
     }
     if (
       petWindowController?.owns(senderWindow) &&
@@ -849,28 +575,15 @@ function registerHandler<T>(
     ) {
       throw new Error(`Electron IPC channel ${channel} is not available to the pet window`)
     }
-    return handler(event, payload)
+    if (migrationControl) return handler(event, payload)
+    const operation = Promise.resolve().then(() => handler(event, payload))
+    hostOperations.add(operation)
+    try { return await operation } finally { hostOperations.delete(operation) }
   })
 }
 
 function unsupported(name: string): never {
   throw new Error(`${name} is not implemented in the Electron host yet`)
-}
-
-function getClaudeCodeRuntimeStatus() {
-  return claudeCodeRuntimeStatus(getClaudeCodeRuntimeConfig(app.getPath('userData')))
-}
-
-function setClaudeCodeRuntime(runtimeId: ClaudeCodeRuntimeConfig['defaultRuntimeId']) {
-  return claudeCodeRuntimeStatus(
-    setClaudeCodeRuntimeConfig(
-      app.getPath('userData'),
-      {
-        ...getClaudeCodeRuntimeConfig(app.getPath('userData')),
-        defaultRuntimeId: runtimeId,
-      },
-    ),
-  )
 }
 
 function emitNotificationAction(payload: unknown) {
@@ -912,34 +625,34 @@ async function handleCommandInvoke(payload: unknown): Promise<unknown> {
 }
 
 function registerIpcHandlers() {
+  registerHandler(ELECTRON_IPC_CHANNELS.configImportTake, event =>
+    BrowserWindow.fromWebContents(event.sender) === mainWindow ? deepLinkHandler.take() : null)
+  registerHandler(ELECTRON_IPC_CHANNELS.configImportAck, event => {
+    if (BrowserWindow.fromWebContents(event.sender) === mainWindow) deepLinkHandler.ack()
+  })
   ipcMain.on(ELECTRON_INTERNAL_CHANNELS.previewMessageFromView, (event, raw) => {
     // Workspace pages and the legacy singleton preview share one preload, so the
     // owner of the sender decides which service receives the message.
     if (getWorkspaceBrowserService().handleMessageFromView(event.sender, raw)) return
     void getPreviewService().sendMessageToRenderer(event.sender, raw, mainWindow?.webContents)
   })
-  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, async (_event, payload) => {
-    const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
-    return await getEchoFlowLoginSession().open(requested === 'dedicated' ? 'dedicated' : 'main')
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowSignOut, async (_event, payload) => {
-    const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
-    await signOutEchoFlowSiteSession(requested === 'dedicated' ? 'dedicated' : 'main')
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored, () => echoFlowRestore)
-  // Only the main window shows the import dialog; trace windows mount the same App.
-  registerHandler(ELECTRON_IPC_CHANNELS.configImportTake, event =>
-    BrowserWindow.fromWebContents(event.sender) === mainWindow ? deepLinkHandler.take() : null)
-  registerHandler(ELECTRON_IPC_CHANNELS.configImportAck, event => {
-    if (BrowserWindow.fromWebContents(event.sender) === mainWindow) deepLinkHandler.ack()
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessGetStatus, () => getPublicAccessManager().getStatus())
-  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessSaveCredential, (_event, payload) => getPublicAccessManager().saveCredential(payload as string))
-  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessDeleteCredential, () => getPublicAccessManager().deleteCredential())
-  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessStart, (_event, payload) => getPublicAccessManager().start(payload as number))
-  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessStop, () => getPublicAccessManager().stop())
-  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessSetAutoStart, (_event, payload) => getPublicAccessManager().setAutoStart(payload as boolean))
+  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessGetStatus, () => publicAccessStatus(getPublicAccessManager().getStatus()))
+  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessConfigure, async (_event, payload) => publicAccessStatus(await getPublicAccessManager().configure(payload as DesktopPublicAccessConfiguration)))
+  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessStart, async (_event, payload) => publicAccessStatus(await getPublicAccessManager().start(payload as number)))
+  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessStop, async () => publicAccessStatus(await getPublicAccessManager().stop()))
+  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessSetAutoStart, (_event, payload) => publicAccessStatus(getPublicAccessManager().setAutoStart(payload as boolean)))
+  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessSetP2PEnabled, (_event, payload) => publicAccessStatus(getPublicAccessManager().setP2PEnabled(payload as boolean)))
   registerHandler(ELECTRON_IPC_CHANNELS.appGetVersion, () => app.getVersion())
+  registerHandler(ELECTRON_IPC_CHANNELS.powerGetIdleActionState, async () => (await getIdlePowerService()).getState())
+  registerHandler(ELECTRON_IPC_CHANNELS.powerConfigureIdleAction, async (_event, payload) => (await getIdlePowerService()).configure(payload as IdlePowerSettings))
+  registerHandler(ELECTRON_IPC_CHANNELS.powerCancelIdleAction, async () => { (await getIdlePowerService()).cancel() })
+  registerHandler(ELECTRON_IPC_CHANNELS.powerSetPreventSleepWhileRunning, (event, payload) => {
+    if (currentWindow(event) !== mainWindow || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error('Prevent-sleep settings require the main desktop window')
+    }
+    if (isQuitting) throw new Error('Application is quitting')
+    preventSleepService.setEnabled(payload as boolean)
+  })
   registerHandler(
     ELECTRON_IPC_CHANNELS.appGetLocalePreference,
     () => readLocalePreference(app),
@@ -965,46 +678,11 @@ function registerIpcHandlers() {
     ELECTRON_IPC_CHANNELS.runtimeGetPetAccessToken,
     () => getServerRuntime().getPetAccessToken(),
   )
-  registerHandler(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, (event, payload) => {
-    requireMainWindow(event)
-    return discoverRuntimes({
-      includeWsl: (payload as { includeWsl?: boolean } | undefined)?.includeWsl === true,
-      bundledVersion: app.getVersion(),
-    })
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath, async (event, payload) => {
-    requireMainWindow(event)
-    return probeRuntimePath(String(payload))
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode, (event) => {
-    requireMainWindow(event)
-    return getClaudeCodeRuntimeStatus()
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode, async (event) => {
-    requireMainWindow(event)
-    const selectedPath = await openDialog(currentWindow(event), {
-      title: 'Choose Claude Code executable',
-      multiple: false,
-    })
-    if (typeof selectedPath !== 'string') return null
-    const current = getClaudeCodeRuntimeConfig(app.getPath('userData'))
-    return claudeCodeRuntimeStatus(setClaudeCodeRuntimeConfig(app.getPath('userData'), {
-      ...current,
-      defaultRuntimeId: 'installed',
-      installedPath: selectedPath,
-    }))
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode, (event, payload) => {
-    requireMainWindow(event)
-    return setClaudeCodeRuntime(payload as ClaudeCodeRuntimeConfig['defaultRuntimeId'])
-  })
   registerHandler(ELECTRON_IPC_CHANNELS.commandInvoke, (_event, payload) => handleCommandInvoke(payload))
   registerHandler(ELECTRON_IPC_CHANNELS.clipboardReadText, () => clipboard.readText())
   registerHandler(ELECTRON_IPC_CHANNELS.clipboardWriteText, (_event, payload) => clipboard.writeText(String(payload)))
   registerHandler(ELECTRON_IPC_CHANNELS.shellOpen, (_event, payload) => openExternalUrl(String(payload)))
-  registerHandler(ELECTRON_IPC_CHANNELS.shellOpenPath, (_event, payload) => openSystemPath(String(payload)))
-  registerHandler(ELECTRON_IPC_CHANNELS.shellShowItemInFolder, (_event, payload) => showItemInFolder(String(payload)))
-  registerHandler(ELECTRON_IPC_CHANNELS.traceOpenWindow, (_event, payload) => openTraceWindow(String(payload)))
+  registerHandler(ELECTRON_IPC_CHANNELS.shellOpenPath, (_event, payload) => openSystemPath(resolveRelocatedAttachmentPath(String(payload))))
   registerHandler(ELECTRON_IPC_CHANNELS.petsList, () => listCustomPets())
   registerHandler(ELECTRON_IPC_CHANNELS.petsCreateFromImage, async (event, payload) => {
     const input = payload as {
@@ -1152,36 +830,38 @@ function registerIpcHandlers() {
     openDialog(currentWindow(event), payload as Parameters<typeof openDialog>[1]))
   registerHandler(ELECTRON_IPC_CHANNELS.dialogSave, (event, payload) =>
     saveDialog(currentWindow(event), payload as Parameters<typeof saveDialog>[1]))
-  registerHandler(ELECTRON_IPC_CHANNELS.updateCheck, (event, payload) => {
-    requireMainWindow(event)
-    return getUpdaterService().checkForUpdates(payload as Parameters<ElectronUpdaterService['checkForUpdates']>[0])
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.updateDownload, (event) => {
-    requireMainWindow(event)
-    return getUpdaterService().downloadUpdate(progress => {
-      mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.updateDownloadEvent, progress)
-    })
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.updateInstall, (event) => {
-    requireMainWindow(event)
-    return getUpdaterService().stageDownloadedUpdate()
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.updatePrepareInstall, async (event) => {
-    requireMainWindow(event)
+  registerHandler(ELECTRON_IPC_CHANNELS.updateCheck, (_event, payload) =>
+    getUpdaterService().checkForUpdates(payload as Parameters<ElectronUpdaterService['checkForUpdates']>[0]))
+  registerHandler(ELECTRON_IPC_CHANNELS.updateDownload, () => getUpdaterService().downloadUpdate(event => {
+    mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.updateDownloadEvent, event)
+  }))
+  registerHandler(ELECTRON_IPC_CHANNELS.updateInstall, () => getUpdaterService().stageDownloadedUpdate())
+  registerHandler(ELECTRON_IPC_CHANNELS.updatePrepareInstall, async () => {
     await publicAccessManager?.stop()
-    getServerRuntime().stopAll()
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.updateCancelInstall, (event) => {
-    requireMainWindow(event)
-    return getUpdaterService().cancelInstall()
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.updateRelaunch, (event) => {
-    requireMainWindow(event)
-    if (!getUpdaterService().hasDownloadedUpdate()) {
-      throw new Error('No downloaded update is ready to relaunch')
+    // stopAll() hands the runtime's children off without tracking them, so the
+    // before-quit stopAllAndWait() finds nothing left to wait for and the app
+    // can quit, and quitAndInstall start the installer, while the sidecar and
+    // its CLI children are still shutting down. Wait here, before the renderer
+    // asks for the relaunch. If they do not exit, fail the install so the
+    // renderer keeps the update retryable and brings the runtime back.
+    try {
+      await getServerRuntime().stopAllAndWait()
+    } catch (error) {
+      throw new Error(
+        'The local runtime is still shutting down, so the update was not installed. Wait a moment and try again. ' +
+          `(${error instanceof Error ? error.message : String(error)})`,
+      )
     }
-    isQuitting = true
-    getUpdaterService().quitAndInstallDownloadedUpdate()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.updateCancelInstall, () => getUpdaterService().cancelInstall())
+  registerHandler(ELECTRON_IPC_CHANNELS.updateRelaunch, () => {
+    if (getUpdaterService().hasStagedUpdate()) {
+      isQuitting = true
+      getUpdaterService().quitAndInstallDownloadedUpdate()
+      return
+    }
+    app.relaunch()
+    app.quit()
   })
   registerHandler(ELECTRON_IPC_CHANNELS.notificationPermissionState, () => notificationPermissionState(Notification))
   registerHandler(ELECTRON_IPC_CHANNELS.notificationRequestPermission, () => requestNotificationPermission(Notification))
@@ -1230,11 +910,10 @@ function registerIpcHandlers() {
   registerHandler(ELECTRON_IPC_CHANNELS.previewClose, () => getPreviewService().close())
   registerHandler(ELECTRON_IPC_CHANNELS.previewMessage, (event, payload) => getPreviewService().message(payload, event.sender))
   registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserCreate, (event, payload) => {
-    // The service keeps a single parent window, so whichever renderer calls
-    // `create` last owns where every page is attached and detached. Trace and
-    // pet windows load the same preload, so without this a secondary window
-    // could adopt the pages and strand them as unremovable children of the main
-    // window. Same guard shape as `appSetLocalePreference`.
+    // Pages are guests of the main window's renderer. Trace and pet windows
+    // load the same preload, so without this a secondary window could register
+    // pages it does not host — and own the menu parent of every page. Same
+    // guard shape as `appSetLocalePreference`.
     if (!mainWindow || currentWindow(event) !== mainWindow) {
       throw new Error('Only the main window can host workspace browser pages')
     }
@@ -1264,10 +943,6 @@ function registerIpcHandlers() {
   })
   registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserStop, (_event, payload) =>
     getWorkspaceBrowserService().stop((payload as { tabId: string }).tabId))
-  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserSetBounds, (_event, payload) => {
-    const { tabId, bounds } = payload as { tabId: string, bounds: WorkspaceBrowserBounds }
-    return getWorkspaceBrowserService().setBounds(tabId, bounds)
-  })
   registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserSetVisible, (_event, payload) => {
     const { tabId, visible } = payload as { tabId: string, visible: boolean }
     return getWorkspaceBrowserService().setVisible(tabId, visible)
@@ -1290,8 +965,6 @@ function registerIpcHandlers() {
     const { tabId, kind } = payload as { tabId: string, kind: WorkspaceBrowserCaptureKind }
     return getWorkspaceBrowserService().capture(tabId, kind)
   })
-  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserSnapshot, (_event, payload) =>
-    getWorkspaceBrowserService().snapshot((payload as { tabId: string }).tabId))
   registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserMessage, (_event, payload) => {
     const { tabId, payload: message } = payload as { tabId: string, payload: unknown }
     return getWorkspaceBrowserService().message(tabId, message)
@@ -1301,6 +974,10 @@ function registerIpcHandlers() {
   registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserClose, (_event, payload) =>
     getWorkspaceBrowserService().close((payload as { tabId: string }).tabId))
   registerHandler(ELECTRON_IPC_CHANNELS.appModeGet, () => getAppMode(app))
+  registerHandler(ELECTRON_IPC_CHANNELS.migrationPrepare, (_event, payload) => getDataMigration().prepare((payload as { targetDir: string }).targetDir))
+  registerHandler(ELECTRON_IPC_CHANNELS.migrationStart, (_event, payload) => getDataMigration().start((payload as { id: string }).id))
+  registerHandler(ELECTRON_IPC_CHANNELS.migrationStatus, () => getDataMigration().status)
+  registerHandler(ELECTRON_IPC_CHANNELS.migrationCancel, (_event, payload) => getDataMigration().cancel((payload as { id: string }).id))
   registerHandler(ELECTRON_IPC_CHANNELS.appModeSet, (_event, payload) => setAppMode(app, payload as Parameters<typeof setAppMode>[1]))
   registerHandler(ELECTRON_IPC_CHANNELS.appModePrepareRestart, () => getServerRuntime().stopAll(true))
   registerHandler(ELECTRON_IPC_CHANNELS.appModeRestart, () => {
@@ -1309,38 +986,20 @@ function registerIpcHandlers() {
     app.quit()
   })
   registerHandler(ELECTRON_IPC_CHANNELS.adaptersRestartSidecar, () => getServerRuntime().restartAdaptersSidecars())
-  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessGetStatus, event => {
-    requireMainWindow(event)
-    return getDeepSeekHarnessRuntime().getStatus()
+  registerHandler(ELECTRON_IPC_CHANNELS.zoomSet, (event, payload) => {
+    const window = currentWindow(event)
+    window.webContents.setZoomFactor(normalizeZoomFactor(payload))
+    // Electron pushes the embedder's zoom into every browser guest; app zoom
+    // must not change the pages' own zoom.
+    if (window === mainWindow) workspaceBrowserService?.restorePageZoom()
   })
-  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessStart, event => {
-    requireMainWindow(event)
-    return getDeepSeekHarnessRuntime().start()
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessStop, event => {
-    requireMainWindow(event)
-    return getDeepSeekHarnessRuntime().stop()
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessRestart, event => {
-    requireMainWindow(event)
-    return getDeepSeekHarnessRuntime().restart()
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessUpdate, event => {
-    requireMainWindow(event)
-    return getDeepSeekHarnessRuntime().update()
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessOpen, async event => {
-    requireMainWindow(event)
-    await openDeepSeekHarnessWindow()
-  })
-  registerHandler(ELECTRON_IPC_CHANNELS.zoomSet, (event, payload) => currentWindow(event).webContents.setZoomFactor(normalizeZoomFactor(payload)))
   registerHandler(ELECTRON_IPC_CHANNELS.appearanceSetApplied, (_event, payload) => {
     if (!isAppliedAppearance(payload)) return
     lastAppliedAppearance = payload
     applyAppliedAppearance(payload, {
       app,
       // The pet window is deliberately transparent, so it stays out of this.
-      windows: () => [mainWindow, ...traceWindows.values()].filter((window): window is BrowserWindow => !!window),
+      windows: () => mainWindow ? [mainWindow] : [],
     })
   })
 }
@@ -1348,8 +1007,10 @@ function registerIpcHandlers() {
 async function createMainWindow() {
   const restoredState = readWindowState(app, screen.getAllDisplays())
   const bounds = windowOptionsFromState(restoredState)
+  const identityPaths = { desktopRoot: appRoot(), resourcesPath: process.resourcesPath }
   mainWindow = new BrowserWindow({
     ...bounds,
+    icon: resolveWindowsWindowIcon(identityPaths),
     minWidth: MIN_WINDOW_WIDTH,
     minHeight: MIN_WINDOW_HEIGHT,
     show: false,
@@ -1362,8 +1023,20 @@ async function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Only for the workspace browser, whose pages must be composited with
+      // the DOM. Every attach is decided by the guest policy installed below.
+      webviewTag: true,
     },
   })
+  applyWindowsTaskbarIdentity(mainWindow, {
+    ...identityPaths,
+    isPackaged: app.isPackaged,
+    executablePath: process.execPath,
+  })
+  // Before any guest can exist: its session denies OS permissions, and its
+  // preferences are replaced with the sandboxed set the policy pins.
+  workspaceBrowserSession()
+  installWorkspaceBrowserGuestPolicy(mainWindow.webContents, { preload: previewPreloadPath() })
   configureLocalServerRequestAuth(
     mainWindow.webContents.session.webRequest,
     resolveMainRendererServerAccess,
@@ -1384,8 +1057,16 @@ async function createMainWindow() {
     isAppUrl: createRendererUrlMatcher(rendererEntry()),
     systemPreferences,
   })
-  installMainWindowNavigationGuards(mainWindow.webContents, { openExternal: openExternalUrl })
-  await installRendererContextMenu(mainWindow)
+  installMainWindowNavigationGuards(mainWindow.webContents, {
+    openExternal: openExternalUrl,
+    rendererEntry: rendererEntry(),
+  })
+  installPreventSleepLifecycle(mainWindow.webContents, preventSleepService)
+  installIdlePowerLifecycle(mainWindow.webContents, () => idlePowerService, () => { idlePowerRendererGeneration += 1 })
+  await installRendererContextMenu(
+    mainWindow,
+    () => readLocalePreference(app) ?? resolveSupportedLocale(app.getPreferredSystemLanguages()),
+  )
   installPreviewCleanupOnRendererNavigation(mainWindow.webContents, () => {
     previewService?.close()
     // A renderer reload discards every workspace tab, so the pages behind them
@@ -1398,6 +1079,7 @@ async function createMainWindow() {
     window: mainWindow,
     shouldQuit: () => isQuitting,
   })
+  installFullScreenKey(mainWindow, process.platform)
 
   const window = mainWindow
   const diagnosticsFile = electronHostDiagnosticsFile(process.env)
@@ -1421,10 +1103,8 @@ async function createMainWindow() {
     },
     onRecoveryExhausted: detail => {
       console.error(`[desktop] Electron renderer recovery exhausted: ${detail}`)
-      dialog.showErrorBox(
-        '界面恢复失败 / Interface Recovery Failed',
-        `桌面界面意外退出或持续无响应，自动恢复未能解决问题。请重启应用；如果问题持续存在，请附上诊断日志反馈。\n\nThe desktop interface exited unexpectedly or remained unresponsive, and automatic recovery did not resolve it. Restart the app and include diagnostics when reporting the problem.\n\n${detail}`,
-      )
+      void showRendererRecoveryFailure({ window, isQuitting: () => isQuitting, dialog, app, detail })
+        .catch(error => recordRendererDiagnostic(`[recovery-dialog-failed] ${String(error)}`))
     },
   })
   writeWindowSmokeSnapshot(mainWindow, 'after-create')
@@ -1451,7 +1131,6 @@ if (!acquireSingleInstanceLock(app, () => mainWindow, url => deepLinkHandler.han
   process.exit(0)
 }
 
-// Register protocol for deep links
 if (process.defaultApp) {
   if (process.argv.length >= 2 && process.argv[1]) {
     app.setAsDefaultProtocolClient('echoflowcode', process.execPath, [path.resolve(process.argv[1])])
@@ -1459,15 +1138,11 @@ if (process.defaultApp) {
 } else {
   app.setAsDefaultProtocolClient('echoflowcode')
 }
-
-// Handle deep link on macOS (open-url event)
 app.on('open-url', (event, url) => {
   event.preventDefault()
   deepLinkHandler.handle(url)
   showMainWindow(mainWindow, app)
 })
-
-// Handle deep link on Windows/Linux (command line args)
 const deepLinkUrl = extractDeepLinkFromArgs(process.argv)
 if (deepLinkUrl) deepLinkHandler.handle(deepLinkUrl)
 
@@ -1475,34 +1150,54 @@ registerIpcHandlers()
 
 app.whenReady().then(async () => {
   applyWindowsAppUserModelId(app)
-  applyStartupPortableMode(app)
+  clearAppManagedPortableEnv()
+  let validation = false
+  try {
+    validation = await getDataMigration().recover() === 'validate'
+    applyStartupPortableMode(app)
+  } catch (error) {
+    setStorageWritesFrozen(true)
+    dialog.showErrorBox('数据目录不可用 / Data directory unavailable', error instanceof Error ? error.message : 'Migration recovery failed')
+    await createMainWindow()
+    return
+  }
+  if (validation) process.env.CC_HAHA_MIGRATION_VALIDATION = '1'
+  powerMonitor.on('suspend', () => idlePowerService?.stop())
+  powerMonitor.on('resume', () => { if (!isQuitting) idlePowerService?.start() })
+  powerMonitor.on('lock-screen', () => { if (idlePowerService?.getState().countdown) idlePowerService.cancel('user-activity') })
   installSystemAppearanceWatch()
   screen.on('display-metrics-changed', (_event, _display, changedMetrics) => {
     if (changedMetrics.includes('scaleFactor') || changedMetrics.includes('bounds')) {
       previewService?.refreshBounds()
-      workspaceBrowserService?.refreshBounds()
     }
   })
-  // The site refuses a session used from any client but the one that created
-  // it, so session calls leave through Chromium instead of the server's fetch.
-  // It must start before the server sidecar so the child inherits the address.
   try {
-    siteNetworkBridge = await startSiteNetworkBridge({
-      token: randomBytes(32).toString('base64url'),
-      allowedOrigins: [ECHOFLOW_LOGIN_PROFILES.main.origin, ECHOFLOW_LOGIN_PROFILES.dedicated.origin],
-      forward: (url, init) => {
-        const endpoint = new URL(url).origin === ECHOFLOW_LOGIN_PROFILES.dedicated.origin ? 'dedicated' : 'main'
-        return session.fromPartition(ECHOFLOW_LOGIN_PROFILES[endpoint].partition).fetch(url, init)
-      },
-    })
-    getServerRuntime().setSiteNetworkBridge(siteNetworkBridge.url, siteNetworkBridge.token)
+    await getServerRuntime().startServer()
+    if (validation) {
+      await getServerRuntime().validateMigrationStartup()
+      await getDataMigration().completeValidation()
+      validation = false
+      await getServerRuntime().activateAfterMigrationValidation()
+      delete process.env.CC_HAHA_MIGRATION_VALIDATION
+    }
   } catch (error) {
-    console.error('[desktop] failed to start the site network bridge', error)
+    if (validation) {
+      try {
+        await getServerRuntime().stopAllAndWait()
+        await getDataMigration().failValidation(error)
+        delete process.env.CC_HAHA_MIGRATION_VALIDATION
+        clearAppManagedPortableEnv()
+        applyStartupPortableMode(app)
+        serverRuntime = null
+        await getServerRuntime().startServer().catch(startError => console.error('[desktop] original directory restart failed', startError))
+      } catch (recoveryError) {
+        setStorageWritesFrozen(true)
+        dialog.showErrorBox('数据目录不可用 / Data directory unavailable', recoveryError instanceof Error ? recoveryError.message : 'Migration recovery failed')
+        await createMainWindow()
+        return
+      }
+    } else console.error('[desktop] failed to start Electron server sidecar', error)
   }
-  await getServerRuntime().startServer().catch(error => {
-    console.error('[desktop] failed to start Electron server sidecar', error)
-  })
-  await getPublicAccessManager().restore().catch(() => {})
   await installApplicationMenu(app, () => mainWindow)
   if (shouldInstallTray(process.platform)) {
     trayController = await installTray({
@@ -1519,7 +1214,6 @@ app.whenReady().then(async () => {
     })
   }
   await createMainWindow()
-
   scheduleNotificationSmoke({
     env: process.env,
     NotificationClass: Notification,
@@ -1533,6 +1227,10 @@ app.whenReady().then(async () => {
     }
     void createMainWindow()
   })
+
+  // A saved tunnel can wait on cloudflared and public network verification.
+  // Finish local startup first so its settings and stop controls stay available.
+  if (!isQuitting) void getPublicAccessManager().restore().catch(() => {})
 })
 
 app.on('window-all-closed', () => {
@@ -1541,11 +1239,19 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', event => {
   isQuitting = true
+  if (dataMigration?.running) {
+    event.preventDefault()
+    dataMigration.cancelActive()
+    void dataMigration.wait().then(() => app.quit())
+    return
+  }
   if (quitCleanupFinished) return
   event.preventDefault()
   if (quitCleanupStarted) return
   quitCleanupStarted = true
   const cleanupSteps = {
+    preventSleep: () => preventSleepService.dispose(),
+    idlePower: () => idlePowerService?.dispose(),
     window: () => { if (mainWindow) saveWindowState(app, mainWindow) },
     tray: () => { trayController?.dispose() },
     terminal: () => { terminalService?.killAll() },
@@ -1564,15 +1270,21 @@ app.on('before-quit', event => {
   }
   trayController = null
   petWindowController = null
-  deepSeekHarnessWindow?.close()
-  deepSeekHarnessWindow = null
-  void deepSeekHarnessRuntime?.stop(true)
   // Keep Electron (and the server's stdout/stderr pipes) alive until the server
   // has waited for its CLI children to finish their graceful cleanup. The CLI
   // owns the launchd-reparented Computer Use helper, so exiting the host first
   // can strand its active turn across an immediate app restart.
   void (async () => {
     try {
+      // Phones get a closed direct connection instead of a dead one. The host
+      // bounds its own goodbye, and the tunnel shuts down meanwhile.
+      const directConnectionsClosed = (async () => {
+        try {
+          await p2pTerminator?.dispose()
+        } catch {
+          console.error('[desktop] direct connection cleanup failed during quit')
+        }
+      })()
       try {
         await publicAccessManager?.dispose()
       } catch {
@@ -1580,6 +1292,7 @@ app.on('before-quit', event => {
         // must never bypass the sidecar's graceful shutdown.
         console.error('[desktop] public access cleanup failed during quit')
       }
+      await directConnectionsClosed
       await getServerRuntime().stopAllAndWait()
     } catch (error) {
       console.error('[desktop] graceful server shutdown failed', error)

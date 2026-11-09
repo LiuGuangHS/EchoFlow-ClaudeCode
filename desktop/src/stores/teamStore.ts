@@ -7,6 +7,7 @@ import type {
   TeamDetail,
   TeamMember,
   TeamMemberActivity,
+  TeamMemberAutoRetry,
   AgentColor,
   TeamWorkbenchSnapshot,
   TeamWorkbenchTimeline,
@@ -19,6 +20,7 @@ import type {
 } from '../types/chat'
 import {
   useChatStore,
+  extractVisibleTeammateMessages,
   mapHistoryMessagesToUiMessages,
   mergeReconstructedRunActivity,
   reconstructRunActivityFromTranscript,
@@ -27,11 +29,13 @@ import { useTabStore } from './tabStore'
 import { releaseWorkspaceSession } from '../lib/workspace/releaseSession'
 import { useActivityPanelStore } from './activityPanelStore'
 import type { MessageEntry } from '../types/session'
+import type { RuntimeSelection } from '../types/runtime'
 
 const MEMBER_POLL_INTERVAL_MS = 1500
 const MEMBER_TRANSCRIPT_MATCH_WINDOW_MS = 120_000
 const WORKBENCH_HISTORY_LIMIT = 200
 const TEAM_DISCOVERY_TTL_MS = 5_000
+const ABSENT_WORKBENCH_TTL_MS = 60_000
 
 /** Generate a synthetic sessionId for team member tabs */
 export const memberSessionId = teamMemberSessionId
@@ -63,11 +67,19 @@ type AwaitingMemberReply = {
   content: string
   sentAt: number
   baselineMessageKeys: Set<string>
+  /**
+   * The failure on record when the message went to a failed member (`null`
+   * when it had no reason). The message answers that failure, which stays on
+   * record until the runtime delivers the message, so only a different one
+   * ends the wait.
+   */
+  failureAtSend?: string | null
 }
 const awaitingMemberReplies = new Map<string, AwaitingMemberReply[]>()
 const teamLifecycleGenerations = new Map<string, number>()
 const teamDiscoveryGenerations = new Map<string, number>()
 const teamDiscoveryCompletedAt = new Map<string, number>()
+const absentWorkbenchCheckedAt = new Map<string, number>()
 const deletedTeamNames = new Set<string>()
 const deletedTeamIncarnations = new Set<string>()
 const deletedTeamLifecycles = new Map<string, {
@@ -115,7 +127,8 @@ function createMemberSessionState() {
 }
 
 function normalizeMemberStatus(status: string | undefined): TeamMember['status'] {
-  if (status === 'running' || status === 'idle' || status === 'completed') {
+  // The watcher reports a failed member as `error`, the REST roster as `failed`.
+  if (status === 'running' || status === 'idle' || status === 'completed' || status === 'error') {
     return status
   }
   return status === 'failed' ? 'error' : 'idle'
@@ -125,8 +138,23 @@ function normalizeMemberActivity(activity: unknown): TeamMemberActivity | undefi
   return activity === 'active' ||
     activity === 'idle' ||
     activity === 'exited' ||
+    activity === 'stopped' ||
     activity === 'unknown'
     ? activity
+    : undefined
+}
+
+function normalizeMemberLastError(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function normalizeMemberAutoRetry(value: unknown): TeamMemberAutoRetry | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const { attempt, max, nextAt } = value as Record<string, unknown>
+  return typeof attempt === 'number' && Number.isFinite(attempt) &&
+    typeof max === 'number' && Number.isFinite(max) &&
+    typeof nextAt === 'number' && Number.isFinite(nextAt)
+    ? { attempt, max, nextAt }
     : undefined
 }
 
@@ -142,12 +170,16 @@ function toTeamMember(raw: Record<string, unknown>): TeamMember {
       '',
     status: normalizeMemberStatus(raw.status as string | undefined),
     activity: normalizeMemberActivity(raw.activity),
+    // The roster omits both once they clear, so a fresh read always replaces them.
+    lastError: normalizeMemberLastError(raw.lastError),
+    autoRetry: normalizeMemberAutoRetry(raw.autoRetry),
     currentTask: raw.currentTask as string | undefined,
     color: raw.color as AgentColor | undefined,
     sessionId: raw.sessionId as string | undefined,
     model: typeof raw.model === 'string' ? raw.model : undefined,
     providerId: raw.providerId === null || typeof raw.providerId === 'string' ? raw.providerId : undefined,
     providerName: typeof raw.providerName === 'string' ? raw.providerName : undefined,
+    effortLevel: typeof raw.effortLevel === 'string' ? raw.effortLevel : undefined,
   }
 }
 
@@ -244,6 +276,14 @@ function mergeTeamMemberStatuses(
       // The watcher omits whatever it could not determine from the roster
       // alone, so an absent field must not erase what a full team read knew.
       activity: normalizeMemberActivity(member.activity) ?? existing.activity,
+      // The failure fields are always sent, as `null` once they clear; only a
+      // server that predates them leaves them out.
+      lastError: member.lastError === undefined
+        ? existing.lastError
+        : normalizeMemberLastError(member.lastError),
+      autoRetry: member.autoRetry === undefined
+        ? existing.autoRetry
+        : normalizeMemberAutoRetry(member.autoRetry),
       currentTask: member.currentTask ?? existing.currentTask,
       color: existing.color ?? AGENT_COLORS[index % AGENT_COLORS.length]!,
     }
@@ -276,6 +316,26 @@ function teamMatchesLifecycle(
   }
   if (leadSessionId) return team.leadSessionId === leadSessionId
   return true
+}
+
+/**
+ * Applies a member's new runtime to `team` only when it is the same incarnation
+ * as `target`, so the patch never lands on a later team that reuses the name.
+ */
+function withMemberRuntime(
+  team: TeamDetail,
+  target: TeamDetail,
+  agentId: string,
+  runtime: Pick<TeamMember, 'model' | 'providerId' | 'providerName' | 'effortLevel'>,
+): TeamDetail {
+  if (team.name !== target.name || teamIdentityKey(team) !== teamIdentityKey(target)) return team
+  if (!team.members.some((member) => member.agentId === agentId)) return team
+  return {
+    ...team,
+    members: team.members.map((member) => (
+      member.agentId === agentId ? { ...member, ...runtime } : member
+    )),
+  }
 }
 
 function teamIsDeleted(team: TeamDetail): boolean {
@@ -378,23 +438,68 @@ function isMemberSessionWatched(memberTabId: string): boolean {
   return useTabStore.getState().activeTabId === memberTabId
 }
 
+// What the server delivers to a member's CLI as a command rather than a message.
+const MEMBER_COMMAND_SEND = /^\/[a-z0-9][\w:.-]*(?:\s|$)/i
+
+function isMemberCommandSend(content: string): boolean {
+  return MEMBER_COMMAND_SEND.test(content.trim())
+}
+
 function isPendingMemberMessage(message: UIMessage): message is Extract<UIMessage, { type: 'user_text' }> & { pending: true } {
   return message.type === 'user_text' && message.pending === true
+}
+
+type MemberUserEcho = {
+  content: string
+  timestamp: number
+  mailbox: boolean
+  key: string
+}
+
+/** One mailbox prompt may contain several user sends mixed with peer traffic. */
+function memberUserEchoes(message: UIMessage): MemberUserEcho[] {
+  if (message.type !== 'user_text') return []
+  const key = memberMessageKey(message)
+  const envelopes = message.modelContent
+    ? extractVisibleTeammateMessages(message.modelContent)
+    : []
+  if (envelopes.length > 0) {
+    return envelopes.flatMap((envelope, index) => envelope.from === 'user' ? [{
+      content: envelope.content,
+      timestamp: message.timestamp,
+      mailbox: true,
+      key: `${key}:mailbox:${index}`,
+    }] : [])
+  }
+  if (message.teammateFrom && message.teammateFrom !== 'user') return []
+  return [{
+    content: message.content,
+    timestamp: message.timestamp,
+    mailbox: message.teammateFrom === 'user',
+    key,
+  }]
+}
+
+/**
+ * Mailbox echoes can arrive minutes later, but cannot predate their send.
+ * Direct-persisted rows keep the existing near-send timestamp window.
+ */
+function echoMatchesSend(echo: MemberUserEcho, content: string, sentAt: number): boolean {
+  return echo.content === content && (echo.mailbox
+    ? echo.timestamp >= sentAt
+    : Math.abs(echo.timestamp - sentAt) <= MEMBER_TRANSCRIPT_MATCH_WINDOW_MS)
 }
 
 function pendingMessagesWithoutTranscriptEcho(
   pendingMessages: Array<Extract<UIMessage, { type: 'user_text' }> & { pending: true }>,
   transcriptMessages: UIMessage[],
 ): UIMessage[] {
-  const availableEchoes = transcriptMessages.filter((message): message is Extract<UIMessage, { type: 'user_text' }> => (
-    message.type === 'user_text' &&
-    message.pending !== true &&
-    !message.teammateFrom
-  ))
+  const availableEchoes = transcriptMessages
+    .filter(message => !isPendingMemberMessage(message))
+    .flatMap(memberUserEchoes)
   return pendingMessages.filter((pendingMessage) => {
-    const matchIndex = availableEchoes.findIndex((message) => (
-      message.content === pendingMessage.content &&
-      Math.abs(message.timestamp - pendingMessage.timestamp) <= MEMBER_TRANSCRIPT_MATCH_WINDOW_MS
+    const matchIndex = availableEchoes.findIndex(echo => (
+      echoMatchesSend(echo, pendingMessage.content, pendingMessage.timestamp)
     ))
     if (matchIndex < 0) return true
     availableEchoes.splice(matchIndex, 1)
@@ -406,6 +511,9 @@ export function mergeMemberTranscriptMessages(
   existingMessages: UIMessage[],
   transcriptMessages: UIMessage[],
 ): UIMessage[] {
+  const existingDurableIds = new Set(
+    existingMessages.filter(message => !isPendingMemberMessage(message)).map(message => message.id),
+  )
   const seenIds = new Set<string>()
   const durableMessages = transcriptMessages.filter((message) => {
     if (seenIds.has(message.id)) return false
@@ -414,7 +522,9 @@ export function mergeMemberTranscriptMessages(
   })
   const pendingMessages = pendingMessagesWithoutTranscriptEcho(
     existingMessages.filter(isPendingMemberMessage),
-    durableMessages,
+    // Replaying a full transcript must not spend an already seen echo again
+    // on a later identical send (or on the second of two queued sends).
+    durableMessages.filter(message => !existingDurableIds.has(message.id)),
   )
 
   return pendingMessages.length > 0
@@ -471,12 +581,15 @@ function latestWorkbenchSnapshotForTeam(
  * This needs positive evidence, unlike the workbench figure: an unresolved
  * activity would leave a spinner running forever, and a member that really is
  * mid-turn still reads as busy through its unsettled replies.
+ *
+ * A failed member is not excluded: a member whose failure is still on record
+ * while it is active is already working on the message that answers it.
  */
 function memberIsWorking(
   member: TeamMember,
   snapshot: TeamWorkbenchSnapshot | undefined,
 ): boolean {
-  if (member.status === 'completed' || member.status === 'error' || snapshot?.deletedAt) {
+  if (member.status === 'completed' || snapshot?.deletedAt) {
     return false
   }
   return member.activity === 'active'
@@ -514,31 +627,32 @@ function isMemberTurnMessage(message: UIMessage): boolean {
     message.type === 'error'
 }
 
-function memberReplySettlement(
+export function memberReplySettlement(
   messages: UIMessage[],
   awaiting: AwaitingMemberReply,
 ): { settled: boolean; promptKey?: string } {
   let promptIndex = -1
+  let promptKey: string | undefined
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index]!
-    if (
-      message.type === 'user_text' &&
-      message.pending !== true &&
-      !message.teammateFrom &&
-      !awaiting.baselineMessageKeys.has(memberMessageKey(message)) &&
-      message.content === awaiting.content &&
-      Math.abs(message.timestamp - awaiting.sentAt) <= MEMBER_TRANSCRIPT_MATCH_WINDOW_MS
-    ) {
+    if (isPendingMemberMessage(message) || awaiting.baselineMessageKeys.has(memberMessageKey(message))) continue
+    const echo = memberUserEchoes(message).find(candidate => (
+      !awaiting.baselineMessageKeys.has(candidate.key) &&
+      echoMatchesSend(candidate, awaiting.content, awaiting.sentAt)
+    ))
+    if (echo) {
       promptIndex = index
+      promptKey = echo.key
       break
     }
   }
   if (promptIndex < 0) return { settled: false }
 
   let turnEnd = messages.length
-  const nextPromptOffset = messages.slice(promptIndex + 1).findIndex((message) => (
-    message.type === 'user_text' &&
-    !message.teammateFrom
+  // All envelopes in one durable prompt share its reply. Only another row
+  // starts a new turn; individual occurrences still settle distinct sends.
+  const nextPromptOffset = messages.slice(promptIndex + 1).findIndex(message => (
+    memberUserEchoes(message).length > 0
   ))
   if (nextPromptOffset >= 0) {
     turnEnd = promptIndex + 1 + nextPromptOffset
@@ -549,7 +663,7 @@ function memberReplySettlement(
   const lastMessage = turnMessages.at(-1)
   return {
     settled: lastMessage?.type === 'assistant_text' || lastMessage?.type === 'error',
-    promptKey: memberMessageKey(messages[promptIndex]!),
+    promptKey,
   }
 }
 
@@ -782,9 +896,8 @@ function syncMemberSessionMessages(
   requestedTaskUpdatedAt?: Map<string, number>,
   requestedStreamRevision?: number,
 ) {
-  const isTerminal = member.status === 'completed' ||
-    member.status === 'error' ||
-    Boolean(snapshot?.deletedAt)
+  const isTerminal = member.status === 'completed' || Boolean(snapshot?.deletedAt)
+  const failure = member.status === 'error' ? member.lastError ?? null : undefined
   const awaitingReplies = awaitingMemberReplies.get(sessionId) ?? []
   const unsettledReplies: AwaitingMemberReply[] = []
   if (!isTerminal) {
@@ -795,7 +908,14 @@ function syncMemberSessionMessages(
           awaitingReplies[laterIndex]!.baselineMessageKeys.add(settlement.promptKey)
         }
       }
-      if (!settlement.settled) unsettledReplies.push(reply)
+      // A failure recorded after the message went out ends the wait: the turn
+      // that would have answered it is over.
+      const failedSince = failure !== undefined && failure !== reply.failureAtSend
+      // A command runs in the member's own CLI and often answers with no reply
+      // at all (/compact records only its summary). Once the transcript shows
+      // it ran, the member's own activity says whether it is still busy.
+      const commandRan = settlement.promptKey !== undefined && isMemberCommandSend(reply.content)
+      if (!settlement.settled && !commandRan && !failedSince) unsettledReplies.push(reply)
     })
   }
   if (unsettledReplies.length === 0) {
@@ -803,10 +923,7 @@ function syncMemberSessionMessages(
   } else if (unsettledReplies.length !== awaitingReplies.length) {
     awaitingMemberReplies.set(sessionId, unsettledReplies)
   }
-  const isActive = !isTerminal && (
-    memberIsWorking(member, snapshot) ||
-    unsettledReplies.length > 0
-  )
+  const isActive = memberIsWorking(member, snapshot) || unsettledReplies.length > 0
   useChatStore.getState().applyBoundedUpdate((state) => {
     const existing = state.sessions[sessionId]
     const nextState = existing ?? createMemberSessionState()
@@ -988,6 +1105,8 @@ type TeamStore = {
     snapshot?: TeamWorkbenchSnapshot,
   ) => void
   sendMessageToMember: (sessionId: string, content: string) => Promise<void>
+  /** Switches a member's model through the team runtime; rejects with the server's error. */
+  updateMemberRuntime: (sessionId: string, selection: RuntimeSelection) => Promise<void>
   startMemberPolling: (sessionId: string, force?: boolean) => void
   stopMemberPolling: () => void
   clearTeam: () => void
@@ -1080,6 +1199,11 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
   },
 
   fetchTeamForSession: async (sessionId, options) => {
+    const absentAt = absentWorkbenchCheckedAt.get(sessionId)
+    // Re-entering an ordinary session should not repeat a confirmed missing
+    // lookup. Reconnect forces a fresh read; expiry also recovers missed events.
+    if (!options?.force && absentAt !== undefined && Date.now() - absentAt < ABSENT_WORKBENCH_TTL_MS) return
+    absentWorkbenchCheckedAt.delete(sessionId)
     const known = get().workbenchesBySession[sessionId]
     if (known?.snapshots.length) {
       const latest = known.snapshots.at(-1)!
@@ -1097,12 +1221,6 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
         Date.now() - lastDurableDiscovery < TEAM_DISCOVERY_TTL_MS
       ) return
     }
-
-    if (
-      !options?.force &&
-      !known?.snapshots.length &&
-      Date.now() - (teamDiscoveryCompletedAt.get(sessionId) ?? 0) < TEAM_DISCOVERY_TTL_MS
-    ) return
 
     const storeGeneration = teamStoreGeneration
     const discoveryGeneration = (teamDiscoveryGenerations.get(sessionId) ?? 0) + 1
@@ -1211,18 +1329,22 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
       syncTeamMemberSessions(detail, latest)
       teamDiscoveryCompletedAt.set(sessionId, Date.now())
     } catch (err) {
-      // Workbench discovery supplements the session; an ordinary conversation
-      // or a legacy sidecar must still open without an error surface. A 404 is
-      // the authoritative "no team yet" answer, so remember it for the TTL
-      // instead of repeating the full discovery on every poll.
+      // Only this endpoint's explicit absence is cacheable. Other 404s, server
+      // failures and timeouts retain their API diagnostics and remain retryable.
       if (
+        teamStoreGeneration === storeGeneration &&
+        teamDiscoveryGenerations.get(sessionId) === discoveryGeneration &&
+        get().workbenchesBySession[sessionId] === known &&
         err instanceof ApiError &&
         err.status === 404 &&
-        teamStoreGeneration === storeGeneration &&
-        teamDiscoveryGenerations.get(sessionId) === discoveryGeneration
+        err.body !== null &&
+        typeof err.body === 'object' &&
+        'error' in err.body && err.body.error === 'NOT_FOUND' &&
+        'message' in err.body && err.body.message === `No Agent Teams workbench for session: ${sessionId}`
       ) {
-        teamDiscoveryCompletedAt.set(sessionId, Date.now())
+        absentWorkbenchCheckedAt.set(sessionId, Date.now())
       }
+      // Discovery is supplementary; a failure must not prevent chat from opening.
     }
   },
 
@@ -1259,6 +1381,7 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
       const snapshot: TeamWorkbenchSnapshot = { ...raw, team }
       const sessionId = team.leadSessionId
       if (!sessionId) return
+      absentWorkbenchCheckedAt.delete(sessionId)
 
       set((state) => ({
         activeTeam: team,
@@ -1632,6 +1755,7 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
           .filter((message) => message.id !== optimisticMessage?.id)
           .map(memberMessageKey),
       ),
+      ...(member.status === 'error' ? { failureAtSend: member.lastError ?? null } : {}),
     }
     awaitingMemberReplies.set(sessionId, [
       ...(awaitingMemberReplies.get(sessionId) ?? []),
@@ -1646,11 +1770,12 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
         ? latestWorkbenchSnapshotForTeam(get().workbenchesBySession, currentTeam) ??
           get().memberSnapshotBySession[sessionId]
         : undefined
+      // A message is what brings a failed member back, so its conversation
+      // keeps following the transcript like any other member's.
       const sessionIsAvailable = Boolean(currentTeam && currentMember) &&
         memberIncarnationKey(currentTeam!, currentMember!) === incarnationKey &&
         currentMember?.agentId === member.agentId &&
         currentMember.status !== 'completed' &&
-        currentMember.status !== 'error' &&
         !snapshot?.deletedAt
       if (!sessionIsAvailable) {
         removeAwaitingMemberReply(sessionId, awaitingReply)
@@ -1662,6 +1787,51 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
       removeAwaitingMemberReply(sessionId, awaitingReply)
       throw error
     }
+  },
+
+  updateMemberRuntime: async (sessionId, selection) => {
+    const team = get().getTeamByMemberSessionId(sessionId)
+    const member = get().getMemberBySessionId(sessionId)
+    if (!team || !member) {
+      throw new Error('Team member session is no longer available')
+    }
+    const { member: updated } = await teamsApi.updateMemberRuntime(team.name, member.agentId, {
+      providerId: selection.providerId,
+      modelId: selection.modelId,
+      ...(selection.effortLevel ? { effortLevel: selection.effortLevel } : {}),
+    })
+    // The picker shows the member's own entry; patch it now rather than leave
+    // the old model on screen until the next workbench read lands.
+    const runtime = {
+      model: updated?.model ?? selection.modelId,
+      providerId: updated?.providerId !== undefined ? updated.providerId : selection.providerId,
+      providerName: updated?.providerName ?? member.providerName,
+      effortLevel: selection.effortLevel,
+    }
+    set((state) => ({
+      activeTeam: state.activeTeam
+        ? withMemberRuntime(state.activeTeam, team, member.agentId, runtime)
+        : state.activeTeam,
+      memberTeamBySession: Object.fromEntries(
+        Object.entries(state.memberTeamBySession).map(([memberSessionId, memberTeam]) => [
+          memberSessionId,
+          memberTeam ? withMemberRuntime(memberTeam, team, member.agentId, runtime) : memberTeam,
+        ]),
+      ),
+      workbenchesBySession: Object.fromEntries(
+        Object.entries(state.workbenchesBySession).map(([leadSessionId, timeline]) => {
+          const latest = timeline?.snapshots.at(-1)
+          if (!timeline || !latest) return [leadSessionId, timeline]
+          const patched = withMemberRuntime(latest.team, team, member.agentId, runtime)
+          if (patched === latest.team) return [leadSessionId, timeline]
+          return [leadSessionId, {
+            ...timeline,
+            snapshots: [...timeline.snapshots.slice(0, -1), { ...latest, team: patched }],
+          }]
+        }),
+      ),
+    }))
+    void get().fetchWorkbench(team.name)
   },
 
   startMemberPolling: (sessionId, force = false) => {
@@ -1712,6 +1882,7 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
     teamLifecycleGenerations.clear()
     teamDiscoveryGenerations.clear()
     teamDiscoveryCompletedAt.clear()
+    absentWorkbenchCheckedAt.clear()
     deletedTeamNames.clear()
     deletedTeamIncarnations.clear()
     deletedTeamLifecycles.clear()
@@ -1771,6 +1942,7 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
       (teamDiscoveryGenerations.get(leadSessionId) ?? 0) + 1,
     )
     teamDiscoveryCompletedAt.delete(leadSessionId)
+    absentWorkbenchCheckedAt.delete(leadSessionId)
     clearTeamRetryTimers(teamName)
     set((s) => ({
       teams: [
@@ -2009,6 +2181,7 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
         (teamDiscoveryGenerations.get(leadSessionId) ?? 0) + 1,
       )
       teamDiscoveryCompletedAt.delete(leadSessionId)
+      absentWorkbenchCheckedAt.delete(leadSessionId)
     }
     const affectedMemberSessionIds = new Set(matchingTeams.flatMap((team) => (
       team.members.map((member) => memberSessionIdForTeam(team, member))

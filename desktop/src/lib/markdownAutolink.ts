@@ -1,6 +1,7 @@
 import type { MarkedExtension, Tokens } from 'marked'
 import { isBareUrlOnly, matchBareUrl } from './urlBoundary'
 import { parseFilePathRef, splitTextByFilePaths, type FilePathRef } from './filePathBoundary'
+import type { PreviewFileRef } from './previewLinkRouter'
 
 /**
  * Replace marked's built-in GFM `url` tokenizer with a CJK-aware one.
@@ -72,19 +73,49 @@ export function unwrapFileLinks(container: HTMLElement): void {
 }
 
 /**
- * Rebuild the `path:line` reference an anchor stands for.
- *
- * Since the target travels in `data-*`, this is how it gets back to a string —
- * and re-serializing to the reference syntax keeps `classifyPreviewLink` the
- * single parser for both these anchors and hand-written markdown destinations.
+ * Marks a file link the author wrote as a Markdown link (`[app.ts](src/app.ts)`).
+ * Every other file link is a guess — a code span or a stretch of prose that looks
+ * like a path — and a guess is only worth a link once the file is known to exist.
  */
-export function fileRefFromElement(element: HTMLElement | null | undefined): string | null {
+export const AUTHORED_FILE_LINK_ATTRIBUTE = 'data-file-authored'
+
+/** Answers which guessed file links point at nothing. */
+export type FileLinkVerifier = {
+  /** Paths known missing, when every path is already known; otherwise undefined. */
+  peekMissing(paths: string[]): ReadonlySet<string> | undefined
+  /** Paths known missing. A path that could not be checked is not missing. */
+  findMissing(paths: string[]): Promise<ReadonlySet<string>>
+}
+
+const GUESSED_FILE_LINK_SELECTOR = `a.${FILE_LINK_CLASS}:not([${AUTHORED_FILE_LINK_ATTRIBUTE}])`
+
+export function guessedFileLinkPaths(container: ParentNode): string[] {
+  return [...container.querySelectorAll<HTMLAnchorElement>(GUESSED_FILE_LINK_SELECTOR)]
+    .map((anchor) => anchor.dataset.filePath ?? '')
+    .filter(Boolean)
+}
+
+/** Undo the guessed file links `keep` turns down, leaving their code or text behind. */
+export function unwrapGuessedFileLinks(container: ParentNode, keep: (path: string) => boolean): void {
+  container.querySelectorAll<HTMLAnchorElement>(GUESSED_FILE_LINK_SELECTOR).forEach((anchor) => {
+    if (!keep(anchor.dataset.filePath ?? '')) anchor.replaceWith(...anchor.childNodes)
+  })
+}
+
+/**
+ * Read the already-parsed filesystem reference an anchor stands for. Keep it
+ * structured: turning it back into an href would decode literal `%20` again.
+ */
+export function fileRefFromElement(element: HTMLElement | null | undefined): PreviewFileRef | null {
   const path = element?.dataset.filePath
   if (!path) return null
-  const line = element?.dataset.fileLine
-  const column = element?.dataset.fileColumn
-  if (!line) return path
-  return column ? `${path}:${line}:${column}` : `${path}:${line}`
+  const line = Number(element?.dataset.fileLine)
+  const column = Number(element?.dataset.fileColumn)
+  return {
+    path,
+    ...(Number.isSafeInteger(line) && line > 0 ? { line } : {}),
+    ...(Number.isSafeInteger(column) && column > 0 ? { column } : {}),
+  }
 }
 
 /**

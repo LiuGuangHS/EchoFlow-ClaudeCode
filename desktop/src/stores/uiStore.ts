@@ -24,12 +24,12 @@ import {
   subscribeThemeStorageChanges,
 } from '../theme/systemAppearance'
 
-const ACTIVE_SETTINGS_TAB_STORAGE_KEY = 'echoflow-code-active-settings-tab'
-const SIDEBAR_WIDTH_STORAGE_KEY = 'echoflow-code-sidebar-width'
+const ACTIVE_SETTINGS_TAB_STORAGE_KEY = 'cc-haha-active-settings-tab'
+const SIDEBAR_WIDTH_STORAGE_KEY = 'cc-haha-sidebar-width'
 
 export const SIDEBAR_MIN_WIDTH = 240
 export const SIDEBAR_MAX_WIDTH = 480
-export const SIDEBAR_DEFAULT_WIDTH = 320
+export const SIDEBAR_DEFAULT_WIDTH = 280
 
 export function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)))
@@ -43,13 +43,10 @@ function getStoredSidebarWidth(): number {
   return SIDEBAR_DEFAULT_WIDTH
 }
 
-export const SETTINGS_TABS = [
+const SETTINGS_TABS = [
   'providers',
   'activity',
   'general',
-  'network',
-  'data',
-  'runtime',
   'voice',
   'h5Access',
   'adapters',
@@ -61,7 +58,6 @@ export const SETTINGS_TABS = [
   'plugins',
   'pets',
   'computerUse',
-  'trace',
   'diagnostics',
   'about',
 ] as const
@@ -113,6 +109,9 @@ function getStoredSettingsTab(): SettingsTab {
   try {
     const stored = localStorage.getItem(ACTIVE_SETTINGS_TAB_STORAGE_KEY)
     if (isSettingsTab(stored)) return stored
+    // The retired Trace entry; its capture toggle now lives under General.
+    // persistenceMigrations rewrites it at startup — this is the second guard.
+    if (stored === 'trace') return 'general'
   } catch { /* localStorage unavailable */ }
   return 'providers'
 }
@@ -179,9 +178,9 @@ export function initializeTheme() {
   stopSystemAppearanceWatch?.()
   stopSystemAppearanceWatch = subscribeSystemAppearance((appearance) => {
     // Read the preference from storage rather than this window's store. The
-    // pet and trace windows run the same bootstrap with their own store
-    // instance over one shared localStorage, so after the main window changes
-    // the setting their in-memory copy is stale — and acting on it here would
+    // pet window runs the same bootstrap with its own store instance over one
+    // shared localStorage, so after the main window changes the setting its
+    // in-memory copy is stale — and acting on it here would
     // write the user's choice straight back out.
     if (!readStoredFollowSystemTheme()) return
     const lightTheme = readStoredLightTheme()
@@ -232,11 +231,60 @@ export type Toast = {
   type: 'success' | 'error' | 'warning' | 'info'
   message: string
   duration?: number
+  /** One follow-up, such as undo. Running it also dismisses the toast. */
+  action?: { label: string; onClick: () => void }
 }
 
-export type SettingsTab = typeof SETTINGS_TABS[number]
+export type MarketTarget = {
+  section: 'plugins' | 'skills'
+  /** Open this connector's detail once the catalog loads. */
+  connectorId?: string
+}
+
+export type SettingsTab =
+  | 'providers'
+  | 'activity'
+  | 'general'
+  | 'voice'
+  | 'h5Access'
+  | 'adapters'
+  | 'terminal'
+  | 'mcp'
+  | 'agents'
+  | 'skills'
+  | 'memory'
+  | 'plugins'
+  | 'pets'
+  | 'computerUse'
+  | 'diagnostics'
+  | 'about'
 
 type ActiveView = 'code' | 'scheduled' | 'terminal' | 'history' | 'settings'
+
+/** The desktop's retained new-session composer. Memory only, never persisted. */
+export type NewSessionDraft = {
+  workDir: string
+  /** Identifies one composer mount; a new draft gets a new one. */
+  revision: number
+  /**
+   * Unsent text or attachments, as reported by the composer. Only an empty
+   * draft may be moved to the project a "New session" entry asks for; picking
+   * a project, model or mode alone is not content.
+   */
+  hasContent: boolean
+}
+
+/** A workspace action the draft composer should perform after it assigns a session. */
+export type DraftWorkspaceAction = 'toggle-side' | 'toggle-bottom' | 'toggle-fullscreen'
+
+export type DraftWorkspaceRequest = {
+  action: DraftWorkspaceAction
+  /** Only the draft revision that asked for it may consume the request. */
+  revision: number
+  nonce: number
+  originatingTabId: string | null
+  originatingView: ActiveView
+}
 
 type UIStore = {
   /** The theme currently on `<html>` — resolved, not necessarily the manual pick. */
@@ -254,6 +302,17 @@ type UIStore = {
   activeSettingsTab: SettingsTab
   pendingSettingsTab: SettingsTab | null
   pendingMemoryPath: string | null
+  /** Where the extension market should open next (set by the composer + menu). */
+  pendingMarketTarget: MarketTarget | null
+  /**
+   * Bumped by Cmd+N. The sidebar's "New session" item answers it, so the
+   * shortcut it advertises does exactly what clicking it does.
+   */
+  newSessionRequest: number
+  /** Ephemeral composer seed. No server session exists until the first send. */
+  newSessionDraft: NewSessionDraft | null
+  /** Set when a workspace control is used before the draft owns a session. */
+  draftWorkspaceRequest: DraftWorkspaceRequest | null
   activeModal: string | null
   toasts: Toast[]
 
@@ -267,6 +326,17 @@ type UIStore = {
   setActiveSettingsTab: (tab: SettingsTab) => void
   setPendingSettingsTab: (tab: SettingsTab | null) => void
   setPendingMemoryPath: (path: string | null) => void
+  setPendingMarketTarget: (target: MarketTarget | null) => void
+  requestNewSession: () => void
+  /**
+   * Opens the retained draft for `workDir`. An empty draft moves there; one
+   * with unsent content keeps its project. No `workDir` keeps the draft as is.
+   */
+  startNewSessionDraft: (workDir?: string) => void
+  /** The composer of draft `revision` reports whether it holds unsent content. */
+  setNewSessionDraftContent: (revision: number, hasContent: boolean) => void
+  requestDraftWorkspace: (action: DraftWorkspaceAction, originatingTabId?: string | null, originatingView?: ActiveView) => void
+  clearDraftWorkspaceRequest: (nonce: number) => void
   openModal: (id: string) => void
   closeModal: () => void
   addToast: (toast: Omit<Toast, 'id'>) => void
@@ -274,6 +344,8 @@ type UIStore = {
 }
 
 let toastCounter = 0
+let newSessionDraftRevision = 0
+let draftWorkspaceRequestNonce = 0
 
 export const useUIStore = create<UIStore>((set) => ({
   theme: getInitialAppliedTheme(),
@@ -286,6 +358,10 @@ export const useUIStore = create<UIStore>((set) => ({
   activeSettingsTab: getStoredSettingsTab(),
   pendingSettingsTab: null,
   pendingMemoryPath: null,
+  pendingMarketTarget: null,
+  newSessionRequest: 0,
+  newSessionDraft: null,
+  draftWorkspaceRequest: null,
   activeModal: null,
   toasts: [],
 
@@ -359,6 +435,42 @@ export const useUIStore = create<UIStore>((set) => ({
   },
   setPendingSettingsTab: (tab) => set({ pendingSettingsTab: tab }),
   setPendingMemoryPath: (path) => set({ pendingMemoryPath: path }),
+  setPendingMarketTarget: (target) => set({ pendingMarketTarget: target }),
+  startNewSessionDraft: (workDir) => set(state => {
+    const draft = state.newSessionDraft
+    if (!draft) {
+      return {
+        activeView: 'code',
+        newSessionDraft: { workDir: workDir ?? '', revision: ++newSessionDraftRevision, hasContent: false },
+        draftWorkspaceRequest: null,
+      }
+    }
+    // New-chat navigation returns to the retained composer and never replaces
+    // its revision: that would unmount it and silently discard unsent input,
+    // attachments and the mode picked in it. An empty one is moved in place;
+    // unsent content keeps the project it was written for.
+    if (workDir === undefined || draft.hasContent || draft.workDir === workDir) return { activeView: 'code' }
+    return { activeView: 'code', newSessionDraft: { ...draft, workDir } }
+  }),
+  setNewSessionDraftContent: (revision, hasContent) => set(state => (
+    state.newSessionDraft?.revision === revision && state.newSessionDraft.hasContent !== hasContent
+      ? { newSessionDraft: { ...state.newSessionDraft, hasContent } }
+      : state
+  )),
+  requestDraftWorkspace: (action, originatingTabId = null, originatingView = 'code') => set(state => state.newSessionDraft
+    ? {
+        draftWorkspaceRequest: {
+          action,
+          revision: state.newSessionDraft.revision,
+          nonce: ++draftWorkspaceRequestNonce,
+          originatingTabId,
+          originatingView,
+        },
+      }
+    : state),
+  clearDraftWorkspaceRequest: (nonce) => set(state =>
+    state.draftWorkspaceRequest?.nonce === nonce ? { draftWorkspaceRequest: null } : state),
+  requestNewSession: () => set((state) => ({ newSessionRequest: state.newSessionRequest + 1 })),
   openModal: (id) => set({ activeModal: id }),
   closeModal: () => set({ activeModal: null }),
 

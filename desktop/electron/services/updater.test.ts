@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
 import { ElectronUpdaterService, normalizeUpdateInfo, updaterSessionProxyConfig, type ElectronUpdaterLike } from './updater'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -9,15 +10,14 @@ function fakeUpdater(): ElectronUpdaterLike & {
   checkForUpdates: ReturnType<typeof vi.fn>
   downloadUpdate: ReturnType<typeof vi.fn>
   quitAndInstall: ReturnType<typeof vi.fn>
-  setFeedURL: ReturnType<typeof vi.fn>
 } {
   let progressHandler: ((progress: { transferred?: number, total?: number }) => void) | null = null
   const updater = {
     autoDownload: true,
+    autoInstallOnAppQuit: true,
     checkForUpdates: vi.fn(),
     downloadUpdate: vi.fn(),
     quitAndInstall: vi.fn(),
-    setFeedURL: vi.fn(),
     on: vi.fn((_event, handler) => {
       progressHandler = handler
       return updater
@@ -34,7 +34,6 @@ function fakeUpdater(): ElectronUpdaterLike & {
     checkForUpdates: ReturnType<typeof vi.fn>
     downloadUpdate: ReturnType<typeof vi.fn>
     quitAndInstall: ReturnType<typeof vi.fn>
-    setFeedURL: ReturnType<typeof vi.fn>
   }
   return updater
 }
@@ -63,7 +62,7 @@ describe('Electron updater service', () => {
     const service = new ElectronUpdaterService(updater)
     const events: unknown[] = []
 
-    await expect(service.checkForUpdates()).resolves.toMatchObject({ version: '1.2.3', body: 'Fixes' })
+    await expect(service.checkForUpdates()).resolves.toEqual({ version: '1.2.3', body: 'Fixes' })
     await service.downloadUpdate(event => events.push(event))
 
     expect(updater.autoDownload).toBe(false)
@@ -88,7 +87,7 @@ describe('Electron updater service', () => {
 
   it('skips electron-updater when packaged update config is absent', async () => {
     const localUpdater = fakeUpdater()
-    const tempDir = mkdtempSync(join(tmpdir(), 'echoflow-code-updater-'))
+    const tempDir = mkdtempSync(join(tmpdir(), 'cc-haha-updater-'))
     try {
       const service = new ElectronUpdaterService(localUpdater, undefined, {
         updateConfigPath: join(tempDir, 'app-update.yml'),
@@ -105,7 +104,7 @@ describe('Electron updater service', () => {
   it('treats missing GitHub channel metadata as no update', async () => {
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockRejectedValueOnce(Object.assign(
-      new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
+      new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/NanmiCoder/cc-haha/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
       { code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' },
     ))
 
@@ -115,7 +114,7 @@ describe('Electron updater service', () => {
   it('treats missing GitHub channel metadata as no update even without an error code', async () => {
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockRejectedValueOnce(
-      new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
+      new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/NanmiCoder/cc-haha/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
     )
 
     await expect(service.checkForUpdates()).resolves.toBeNull()
@@ -124,7 +123,7 @@ describe('Electron updater service', () => {
   it('treats stringified missing GitHub channel metadata as no update', async () => {
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockRejectedValueOnce(
-      'Error: Cannot find latest-mac.yml in the latest release artifacts (https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.3.2/latest-mac.yml): HttpError: 404',
+      'Error: Cannot find latest-mac.yml in the latest release artifacts (https://github.com/NanmiCoder/cc-haha/releases/download/v0.3.2/latest-mac.yml): HttpError: 404',
     )
 
     await expect(service.checkForUpdates()).resolves.toBeNull()
@@ -148,35 +147,7 @@ describe('Electron updater service', () => {
     expect(localUpdater.checkForUpdates).toHaveBeenCalledTimes(3)
   })
 
-  it('enables differential download only for a verified requested feed', () => {
-    const directFeed = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'
-    const contract = { version: 'range-v1', fingerprint: '06c65fc3422243ebb7f83089cc304009c4cfcb43407c4877e2c07f2521b5b379' }
-    const localUpdater = fakeUpdater()
-
-    void new ElectronUpdaterService(localUpdater, undefined, {
-      differentialDownload: true,
-      downloadFeedUrls: [directFeed],
-      differentialDownloadFeedUrls: [directFeed],
-      differentialDownloadContracts: { [directFeed]: contract },
-    })
-
-    expect(localUpdater.disableDifferentialDownload).toBe(false)
-  })
-
-  it('keeps differential download disabled for an unverified feed', () => {
-    const localUpdater = fakeUpdater()
-
-    void new ElectronUpdaterService(localUpdater, undefined, {
-      differentialDownload: true,
-      downloadFeedUrls: ['https://gh-proxy.org/https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'],
-      differentialDownloadFeedUrls: [],
-      differentialDownloadContracts: {},
-    })
-
-    expect(localUpdater.disableDifferentialDownload).toBe(true)
-  })
-
-  it('disables differential download by default', () => {
+  it('disables differential download so update downloads run at full bandwidth', () => {
     const localUpdater = fakeUpdater()
 
     void new ElectronUpdaterService(localUpdater)
@@ -199,6 +170,34 @@ describe('Electron updater service', () => {
     await expect(service.checkForUpdates()).rejects.toThrow('feed unavailable')
   })
 
+  it('does not offer metadata that electron-updater marks unavailable', async () => {
+    const localUpdater = fakeUpdater()
+    // A release can be newer but unavailable due to its minimum OS version
+    // or staged rollout. electron-updater still returns its metadata.
+    localUpdater.checkForUpdates.mockResolvedValue({
+      isUpdateAvailable: false,
+      updateInfo: { version: '9.9.9', body: 'Not eligible for this installation' },
+    })
+    const service = new ElectronUpdaterService(localUpdater)
+
+    await expect(service.checkForUpdates()).resolves.toBeNull()
+    await expect(service.downloadUpdate(() => {})).rejects.toThrow('No Electron update')
+    expect(localUpdater.downloadUpdate).not.toHaveBeenCalled()
+  })
+
+  it('offers metadata that electron-updater explicitly marks available', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates.mockResolvedValue({
+      isUpdateAvailable: true,
+      updateInfo: { version: '1.2.4', body: 'Eligible update' },
+    })
+    const service = new ElectronUpdaterService(localUpdater)
+
+    await expect(service.checkForUpdates()).resolves.toEqual({ version: '1.2.4', body: 'Eligible update' })
+    await service.downloadUpdate(() => {})
+    expect(localUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
+  })
+
   it('stages then installs through quitAndInstall only after an update has downloaded', async () => {
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.4' } })
@@ -214,17 +213,103 @@ describe('Electron updater service', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
   })
 
+  it('keeps ordinary quits and cached-download restarts from installing an update', async () => {
+    const install = vi.fn()
+    const cache = { downloaded: false }
+    for (let restart = 0; restart < 3; restart += 1) {
+      const app = new EventEmitter()
+      const localUpdater = fakeUpdater()
+      localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.4' } })
+      localUpdater.downloadUpdate.mockImplementation(async () => {
+        cache.downloaded = true
+        // BaseUpdater registers this after either a fresh or cached download.
+        app.once('quit', () => {
+          if (localUpdater.autoInstallOnAppQuit && cache.downloaded) install()
+        })
+      })
+      const service = new ElectronUpdaterService(localUpdater)
+      await service.checkForUpdates()
+      await service.downloadUpdate(() => {})
+      app.emit('quit')
+    }
+
+    expect(cache.downloaded).toBe(true)
+    expect(install).not.toHaveBeenCalled()
+  })
+
+  it('requires an explicit install request before the downloaded update may restart into installation', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.4' } })
+    localUpdater.downloadUpdate.mockResolvedValue(undefined)
+    const service = new ElectronUpdaterService(localUpdater)
+    await service.checkForUpdates()
+    await service.downloadUpdate(() => {})
+
+    expect(service.hasStagedUpdate()).toBe(false)
+    expect(() => service.quitAndInstallDownloadedUpdate({})).toThrow('has not been requested')
+    expect(localUpdater.quitAndInstall).not.toHaveBeenCalled()
+
+    service.stageDownloadedUpdate()
+    expect(service.hasStagedUpdate()).toBe(true)
+    service.quitAndInstallDownloadedUpdate({})
+
+    expect(localUpdater.quitAndInstall).toHaveBeenCalledTimes(1)
+    expect(localUpdater.quitAndInstall).toHaveBeenCalledWith(false, true)
+    expect(localUpdater.autoInstallOnAppQuit).toBe(false)
+  })
+
+  it('disarms canceled installs while keeping the download available for an explicit retry', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.4' } })
+    localUpdater.downloadUpdate.mockResolvedValue(undefined)
+    const service = new ElectronUpdaterService(localUpdater)
+    await service.checkForUpdates()
+    await service.downloadUpdate(() => {})
+    service.stageDownloadedUpdate()
+    service.cancelInstall()
+
+    expect(service.hasDownloadedUpdate()).toBe(true)
+    expect(service.hasStagedUpdate()).toBe(false)
+    expect(() => service.quitAndInstallDownloadedUpdate({})).toThrow('has not been requested')
+
+    await service.downloadUpdate(() => {})
+    service.stageDownloadedUpdate()
+    service.quitAndInstallDownloadedUpdate({})
+
+    expect(localUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
+    expect(localUpdater.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not carry install consent over to a newly checked version', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockResolvedValueOnce({ updateInfo: { version: '1.2.4' } })
+      .mockResolvedValueOnce({ updateInfo: { version: '1.2.5' } })
+    localUpdater.downloadUpdate.mockResolvedValue(undefined)
+    const service = new ElectronUpdaterService(localUpdater)
+    await service.checkForUpdates()
+    await service.downloadUpdate(() => {})
+    service.stageDownloadedUpdate()
+    await service.checkForUpdates()
+    await service.downloadUpdate(() => {})
+
+    expect(service.hasStagedUpdate()).toBe(false)
+    expect(() => service.quitAndInstallDownloadedUpdate({})).toThrow('has not been requested')
+    expect(localUpdater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
   it('hands the spawned installer an environment without the app-managed portable selection', async () => {
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.4' } })
     updater.downloadUpdate.mockResolvedValue(undefined)
     await service.checkForUpdates()
     await service.downloadUpdate(() => {})
+    service.stageDownloadedUpdate()
 
     const env: NodeJS.ProcessEnv = {
-      CLAUDE_CONFIG_DIR: 'E:\\echoflow-data',
-      ECHOFLOW_APP_PORTABLE_DIR: '1',
-      WEBVIEW2_USER_DATA_FOLDER: 'E:\\echoflow-data\\EBWebView',
+      CLAUDE_CONFIG_DIR: 'E:\\cc-haha-data',
+      CC_HAHA_APP_PORTABLE_DIR: '1',
+      WEBVIEW2_USER_DATA_FOLDER: 'E:\\cc-haha-data\\EBWebView',
       APPDATA: 'C:\\Users\\someone\\AppData\\Roaming',
     }
     service.quitAndInstallDownloadedUpdate(env)
@@ -239,230 +324,12 @@ describe('Electron updater service', () => {
     updater.downloadUpdate.mockResolvedValue(undefined)
     await service.checkForUpdates()
     await service.downloadUpdate(() => {})
+    service.stageDownloadedUpdate()
 
     const env: NodeJS.ProcessEnv = { CLAUDE_CONFIG_DIR: 'E:\\external-data' }
     service.quitAndInstallDownloadedUpdate(env)
 
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
     expect(env).toEqual({ CLAUDE_CONFIG_DIR: 'E:\\external-data' })
-  })
-})
-
-const METADATA_FEED = 'https://code.echoflow.cn/update/'
-const FALLBACK_FEED = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'
-
-function channelMetadataMissing(feedUrl: string): Error {
-  return Object.assign(
-    new Error(`Cannot find latest-mac.yml in the latest release artifacts (${feedUrl}latest-mac.yml): HttpError: 404`),
-    { code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' },
-  )
-}
-
-describe('Electron updater metadata fallback chain', () => {
-  it('falls back to the GitHub metadata feed when the own-domain mirror is missing', async () => {
-    const localUpdater = fakeUpdater()
-    localUpdater.checkForUpdates
-      .mockRejectedValueOnce(channelMetadataMissing(METADATA_FEED))
-      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0', body: 'Notes' } })
-    const service = new ElectronUpdaterService(localUpdater, undefined, {
-      metadataFeedUrl: METADATA_FEED,
-      metadataFallbackUrls: [FALLBACK_FEED],
-    })
-
-    const update = await service.checkForUpdates()
-
-    expect(update).toMatchObject({ version: '2.0.0', feedUrl: FALLBACK_FEED })
-    expect(localUpdater.setFeedURL.mock.calls).toEqual([[METADATA_FEED], [FALLBACK_FEED]])
-    expect(service.getLastFeedAttempts()).toEqual([
-      { feedUrl: METADATA_FEED, result: 'missing-metadata', error: expect.any(String) },
-      { feedUrl: FALLBACK_FEED, result: 'selected' },
-    ])
-  })
-
-  it('falls back after a plain network error on the primary feed instead of swallowing the check', async () => {
-    const localUpdater = fakeUpdater()
-    localUpdater.checkForUpdates
-      .mockRejectedValueOnce(new Error('feed unavailable'))
-      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
-    const service = new ElectronUpdaterService(localUpdater, undefined, {
-      metadataFeedUrl: METADATA_FEED,
-      metadataFallbackUrls: [FALLBACK_FEED],
-    })
-
-    await expect(service.checkForUpdates()).resolves.toMatchObject({ version: '2.0.0', feedUrl: FALLBACK_FEED })
-    expect(service.getLastFeedAttempts()).toEqual([
-      { feedUrl: METADATA_FEED, result: 'error', error: 'feed unavailable' },
-      { feedUrl: FALLBACK_FEED, result: 'selected' },
-    ])
-  })
-
-  it('queries the fallback feed when the primary feed reports no update', async () => {
-    const localUpdater = fakeUpdater()
-    localUpdater.checkForUpdates
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
-    const service = new ElectronUpdaterService(localUpdater, undefined, {
-      metadataFeedUrl: METADATA_FEED,
-      metadataFallbackUrls: [FALLBACK_FEED],
-    })
-
-    await expect(service.checkForUpdates()).resolves.toMatchObject({ version: '2.0.0', feedUrl: FALLBACK_FEED })
-    expect(service.getLastFeedAttempts()).toEqual([
-      { feedUrl: METADATA_FEED, result: 'no-update' },
-      { feedUrl: FALLBACK_FEED, result: 'selected' },
-    ])
-  })
-
-  it('stays silent when every metadata feed is missing', async () => {
-    const localUpdater = fakeUpdater()
-    localUpdater.checkForUpdates
-      .mockRejectedValueOnce(channelMetadataMissing(METADATA_FEED))
-      .mockRejectedValueOnce(channelMetadataMissing(FALLBACK_FEED))
-    const service = new ElectronUpdaterService(localUpdater, undefined, {
-      metadataFeedUrl: METADATA_FEED,
-      metadataFallbackUrls: [FALLBACK_FEED],
-    })
-
-    await expect(service.checkForUpdates()).resolves.toBeNull()
-    expect(service.getLastFeedAttempts().map(attempt => attempt.result)).toEqual([
-      'missing-metadata',
-      'missing-metadata',
-    ])
-  })
-
-  it('reports every attempted feed when all of them fail with plain errors', async () => {
-    const localUpdater = fakeUpdater()
-    localUpdater.checkForUpdates
-      .mockRejectedValueOnce(new Error('mirror down'))
-      .mockRejectedValueOnce(new Error('github down'))
-    const service = new ElectronUpdaterService(localUpdater, undefined, {
-      metadataFeedUrl: METADATA_FEED,
-      metadataFallbackUrls: [FALLBACK_FEED],
-    })
-
-    const error = await service.checkForUpdates().then(() => null, (thrown: unknown) => thrown as Error)
-    expect(error).toBeInstanceOf(Error)
-    expect(error?.message).toContain('mirror down')
-    expect(error?.message).toContain('github down')
-    expect(service.getLastFeedAttempts().map(attempt => attempt.result)).toEqual(['error', 'error'])
-  })
-
-  it('rejects a download when every download feed serves mismatched metadata', async () => {
-    const localUpdater = fakeUpdater()
-    const updateInfo = { version: '2.0.0', files: [{ url: 'EchoFlow-Code-2.0.0-mac-arm64.dmg', sha512: 'meta-sha' }] }
-    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo })
-    const service = new ElectronUpdaterService(localUpdater, undefined, {
-      metadataFeedUrl: METADATA_FEED,
-      downloadFeedUrls: ['https://dl1.test/feed/', 'https://dl2.test/feed/'],
-    })
-    await service.checkForUpdates()
-    localUpdater.checkForUpdates.mockResolvedValue({
-      updateInfo: { version: '2.0.0', files: [{ url: 'EchoFlow-Code-2.0.0-mac-arm64.dmg', sha512: 'other-sha' }] },
-    })
-
-    await expect(service.downloadUpdate(() => {})).rejects.toThrow('Update download failed')
-    expect(localUpdater.downloadUpdate).not.toHaveBeenCalled()
-    expect(service.getLastFeedAttempts().map(attempt => attempt.result)).toEqual([
-      'selected',
-      'mismatched-metadata',
-      'mismatched-metadata',
-    ])
-  })
-
-  it('does not mark a failed download as finished or installable', async () => {
-    const localUpdater = fakeUpdater()
-    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '2.0.0' } })
-    localUpdater.downloadUpdate.mockRejectedValueOnce(new Error('range request failed'))
-    const service = new ElectronUpdaterService(localUpdater)
-    const events: unknown[] = []
-    await service.checkForUpdates()
-
-    await expect(service.downloadUpdate(event => events.push(event))).rejects.toThrow('range request failed')
-
-    expect(events).not.toContainEqual({ event: 'Finished' })
-    expect(service.hasDownloadedUpdate()).toBe(false)
-    expect(() => service.quitAndInstallDownloadedUpdate()).toThrow('has not finished downloading')
-  })
-
-  it('tries the next download feed after the primary source fails', async () => {
-    const firstFeed = 'https://dl1.test/feed/'
-    const secondFeed = 'https://dl2.test/feed/'
-    const localUpdater = fakeUpdater()
-    localUpdater.checkForUpdates
-      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
-      .mockResolvedValue({ updateInfo: { version: '2.0.0' } })
-    localUpdater.downloadUpdate
-      .mockRejectedValueOnce(new Error('first source failed'))
-      .mockResolvedValueOnce(undefined)
-    const service = new ElectronUpdaterService(localUpdater, undefined, {
-      metadataFeedUrl: METADATA_FEED,
-      downloadFeedUrls: [firstFeed, secondFeed],
-    })
-    await service.checkForUpdates()
-
-    await expect(service.downloadUpdate(() => {})).resolves.toBeUndefined()
-
-    expect(localUpdater.downloadUpdate).toHaveBeenCalledTimes(2)
-    expect(localUpdater.setFeedURL).toHaveBeenNthCalledWith(1, METADATA_FEED)
-    expect(localUpdater.setFeedURL).toHaveBeenNthCalledWith(2, firstFeed)
-    expect(localUpdater.setFeedURL).toHaveBeenNthCalledWith(3, secondFeed)
-    expect(service.hasDownloadedUpdate()).toBe(true)
-  })
-
-  it('reports every download source failure with feed diagnostics', async () => {
-    const firstFeed = 'https://dl1.test/feed/'
-    const secondFeed = 'https://dl2.test/feed/'
-    const localUpdater = fakeUpdater()
-    localUpdater.checkForUpdates
-      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
-      .mockResolvedValue({ updateInfo: { version: '2.0.0' } })
-    localUpdater.downloadUpdate
-      .mockRejectedValueOnce(new Error('first source failed'))
-      .mockRejectedValueOnce(new Error('second source failed'))
-    const service = new ElectronUpdaterService(localUpdater, undefined, {
-      metadataFeedUrl: METADATA_FEED,
-      downloadFeedUrls: [firstFeed, secondFeed],
-    })
-    await service.checkForUpdates()
-
-    const error = await service.downloadUpdate(() => {}).then(() => null, thrown => thrown as Error)
-
-    expect(error).toBeInstanceOf(Error)
-    expect(error?.message).toContain(firstFeed)
-    expect(error?.message).toContain(secondFeed)
-    expect(service.hasDownloadedUpdate()).toBe(false)
-  })
-
-  it('emits Finished again without downloading after a successful download', async () => {
-    const localUpdater = fakeUpdater()
-    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '2.0.0' } })
-    localUpdater.downloadUpdate.mockResolvedValue(undefined)
-    const service = new ElectronUpdaterService(localUpdater)
-    const events: unknown[] = []
-
-    await service.checkForUpdates()
-    await service.downloadUpdate(event => events.push(event))
-    await service.downloadUpdate(event => events.push(event))
-
-    expect(localUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
-    expect(events.filter(event => event && typeof event === 'object' && 'event' in event && event.event === 'Finished')).toHaveLength(2)
-  })
-
-  it('rechecks for an update after canceling an installed download', async () => {
-    const localUpdater = fakeUpdater()
-    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '2.0.0' } })
-    localUpdater.downloadUpdate.mockResolvedValue(undefined)
-    const service = new ElectronUpdaterService(localUpdater)
-
-    await service.checkForUpdates()
-    await service.downloadUpdate(() => {})
-    expect(service.hasDownloadedUpdate()).toBe(true)
-
-    service.cancelInstall()
-    expect(service.hasDownloadedUpdate()).toBe(false)
-    await service.downloadUpdate(() => {})
-
-    expect(localUpdater.checkForUpdates).toHaveBeenCalledTimes(2)
-    expect(localUpdater.downloadUpdate).toHaveBeenCalledTimes(2)
   })
 })

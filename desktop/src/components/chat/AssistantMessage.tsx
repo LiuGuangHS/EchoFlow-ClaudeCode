@@ -6,6 +6,7 @@ import { buildOpenWithMenuItemsForHref } from '../../lib/openWithMenuItems'
 import { fileRefFromElement } from '../../lib/markdownAutolink'
 import type { OpenWithItem } from '../../lib/openWithItems'
 import { MessageActionBar, type MessageBranchAction } from './MessageActionBar'
+import { useMessageActionMenu } from './useMessageActionMenu'
 import { TurnCompletionStamp } from './TurnCompletionStamp'
 import type { TurnCompletion } from '../../lib/turnCompletion'
 import { ImageGalleryModal } from './ImageGalleryModal'
@@ -13,7 +14,7 @@ import { InlineImageGallery } from './InlineImageGallery'
 import { InlineVideoGallery } from './InlineVideoGallery'
 import { AssistantOutputTargetCard } from './AssistantOutputTargetCard'
 import { openPreviewLink } from '../../lib/openPreviewLink'
-import { extractAssistantOutputTargets } from '../../lib/assistantOutputTargets'
+import { extractAssistantOutputTargets, type TurnOutputEvidence } from '../../lib/assistantOutputTargets'
 import { resolveAssistantFileHref } from '@/lib/assistantFileContext'
 import { createAssistantMarkdownImageResolver, localPathFromMarkdownImageUrl } from '../../lib/markdownImages'
 import type { MarkdownImageClick } from '../markdown/MarkdownRenderer'
@@ -21,6 +22,10 @@ import { getServerBaseUrl } from '../../lib/desktopRuntime'
 import { isManagedGeneratedImagePath } from '../../lib/attachmentImages'
 import { useWorkspaceContentStore } from '../../stores/workspaceContentStore'
 import { useTranslation, type TranslationKey } from '../../i18n'
+import { useDiskConfirmedTargets } from '../../hooks/useDiskConfirmedTargets'
+import { useTurnWrittenTargets } from '../../hooks/useTurnWrittenTargets'
+import { createWorkspaceFileLinkVerifier } from '../../lib/workspaceFileStats'
+import type { PreviewLinkTarget } from '@/lib/previewLinkRouter'
 
 type Props = {
   content: string
@@ -30,6 +35,11 @@ type Props = {
   /** This turn's real changed files (absolute), used to anchor output chips onto
    *  files that were actually written instead of guessing from the prose. */
   turnChangedFiles?: string[]
+  /**
+   * What the turn's checkpoint says it could have written. Absent while it is
+   * still loading, so no card is shown on a guess that the checkpoint then drops.
+   */
+  turnOutputEvidence?: TurnOutputEvidence
   /** Only one assistant message per turn owns fallback cards for unmentioned changed files. */
   isTurnOutputOwner?: boolean
   /** Set only on the last reply of a finished turn: when it ended and how long it took. */
@@ -44,6 +54,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   branchAction,
   sessionId,
   turnChangedFiles,
+  turnOutputEvidence,
   isTurnOutputOwner = true,
   turnCompletion,
 }: Props) {
@@ -54,13 +65,23 @@ export const AssistantMessage = memo(function AssistantMessage({
   const [viewer, setViewer] = useState<{ images: Array<{ src: string; name: string; path?: string }>; index: number } | null>(null)
 
   const handleLinkClick = useCallback(
-    (href: string, event: ReactMouseEvent<HTMLDivElement>): boolean => {
+    (href: PreviewLinkTarget, event: ReactMouseEvent<HTMLDivElement>): boolean => {
       if (!sessionId) return false
       const handled = openPreviewLink(resolveAssistantFileHref(href, content), sessionId)
       if (handled) event.preventDefault()
       return handled
     },
     [content, sessionId],
+  )
+
+  // A reference guessed from a code span or prose links only once its file is
+  // known to exist, judged as the click would resolve it — so a name quoted from
+  // a commit message never looks openable.
+  const fileLinkVerifier = useMemo(
+    () => isStreaming || !sessionId
+      ? undefined
+      : createWorkspaceFileLinkVerifier(sessionId, (path) => resolveAssistantFileHref(path, content)),
+    [content, isStreaming, sessionId],
   )
 
   // Right-clicking a reference in the prose opens the same menu the output cards
@@ -90,7 +111,7 @@ export const AssistantMessage = memo(function AssistantMessage({
     [content, sessionId, t, workDir],
   )
 
-  const outputTargets = useMemo(
+  const extractedTargets = useMemo(
     () =>
       isStreaming || !sessionId
         ? []
@@ -99,11 +120,20 @@ export const AssistantMessage = memo(function AssistantMessage({
             workDir,
             changedFiles: turnChangedFiles,
             includeChangedFileFallback: isTurnOutputOwner,
+            // Confirmed against the disk by useDiskConfirmedTargets before showing.
+            includeUnconfirmedNames: true,
+            // A card says the turn produced the file; until the checkpoint says
+            // what could have written one, nothing unproven is.
+            outputEvidence: { unlistedWrites: turnOutputEvidence?.unlistedWrites ?? false },
           }).filter(
             (target) => target.kind !== 'image' && target.kind !== 'video',
           ),
-    [content, isStreaming, isTurnOutputOwner, sessionId, workDir, turnChangedFiles],
+    [content, isStreaming, isTurnOutputOwner, sessionId, workDir, turnChangedFiles, turnOutputEvidence?.unlistedWrites],
   )
+  // A bare name the text could not bound is settled against the workspace listing,
+  // then a file no changed file accounts for must show it was written this turn.
+  const settledTargets = useDiskConfirmedTargets(sessionId, extractedTargets)
+  const outputTargets = useTurnWrittenTargets(sessionId, settledTargets, turnOutputEvidence?.startedAt)
   const resolveAssistantImageSrc = useMemo(
     () => {
       if (isStreaming || !sessionId) return undefined
@@ -120,42 +150,52 @@ export const AssistantMessage = memo(function AssistantMessage({
   )
 
   // A click on a picture in the prose opens it, and its neighbours in the reply, in
-  // the viewer. Each one that is a file on disk carries its path, which is read back
-  // from the URL it was served under rather than from anything on the element.
+  // the viewer. Use the resolved original URL so the viewer owns authenticated
+  // fallback loads independently of a row that virtual scrolling may unmount.
+  // File paths still have to pass the local-server URL validation.
   const handleImageClick = useCallback(
     ({ images, index }: MarkdownImageClick) => {
       const baseUrl = getServerBaseUrl()
       setViewer({
         index,
         images: images.map((image) => {
-          const path = localPathFromMarkdownImageUrl(image.src, { baseUrl, workDir }) ?? undefined
+          const src = image.originalSrc ?? image.src
+          const path = localPathFromMarkdownImageUrl(src, { baseUrl, workDir }) ?? undefined
           const name = image.alt.trim() || path?.split(/[\\/]/).filter(Boolean).pop() || t('assistantOutputs.kind.image')
-          return { src: image.src, name, ...(path ? { path } : {}) }
+          return { src, name, ...(path ? { path } : {}) }
         }),
       })
     },
     [t, workDir],
   )
 
+  const showTurnCompletion = !isStreaming && Boolean(turnCompletion)
+  // On a phone any finished reply can be held for copy and select; branching
+  // stays with the reply that closes a turn, as on the desktop bar.
+  const actionMenu = useMessageActionMenu({
+    copyText: isStreaming ? undefined : content,
+    branchAction: showTurnCompletion ? branchAction : undefined,
+  })
+
   if (!content.trim()) return null
 
   const documentLayout = shouldUseDocumentLayout(content)
-  const showTurnCompletion = !isStreaming && Boolean(turnCompletion)
 
   return (
     <div className="flex justify-start">
       <div
         data-message-shell="assistant"
         data-layout={documentLayout ? 'document' : 'bubble'}
+        {...actionMenu.pressProps}
         // Always the full column. A reply that hugs its text turns every short
         // answer into a differently-shaped block, so a scrolled transcript reads
         // as a ragged pile; one width makes the replies a single column the eye
         // can run down. The user bubble stays hugged — that asymmetry is what
         // says which side is speaking, so it does not need width to say it too.
-        className="group flex w-full min-w-0 max-w-full flex-col items-start"
+        className={`group flex w-full min-w-0 max-w-full flex-col items-start ${actionMenu.pressClassName}`}
       >
         <div
-          onContextMenu={sessionId ? handleContextMenu : undefined}
+          onContextMenu={sessionId && !actionMenu.enabled ? handleContextMenu : undefined}
           // No card. Left-aligned, full-column prose against the page is already
           // unmistakably the reply — the hugged, tinted bubble on the right is
           // what says who is speaking (see the note above), so a border here
@@ -172,6 +212,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             onLinkClick={sessionId ? handleLinkClick : undefined}
             resolveImageSrc={resolveAssistantImageSrc}
             onImageClick={resolveAssistantImageSrc ? handleImageClick : undefined}
+            fileLinkVerifier={fileLinkVerifier}
           />
           {!isStreaming && (
             <InlineImageGallery
@@ -238,14 +279,15 @@ export const AssistantMessage = memo(function AssistantMessage({
         */}
         {showTurnCompletion && (
           <MessageActionBar
-            copyText={content}
+            copyText={actionMenu.enabled ? undefined : content}
             copyLabel={t('chat.copyReply')}
-            branchAction={branchAction}
+            branchAction={actionMenu.enabled ? undefined : branchAction}
             align="start"
             alwaysVisible
             metadata={<TurnCompletionStamp completion={turnCompletion!} />}
           />
         )}
+        {actionMenu.sheet}
       </div>
     </div>
   )

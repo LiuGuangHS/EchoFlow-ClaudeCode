@@ -16,6 +16,29 @@ describe('chat blocks', () => {
     useChatStore.setState({ sessions: {} })
   })
 
+  it.each(['card', 'row'] as const)('marks a located %s by its tool id, on the chrome the highlight style keys off', (chrome) => {
+    const { container, rerender } = render(
+      <ToolCallBlock chrome={chrome} toolName="Bash" input={{ command: 'ls' }} result={{ content: 'a', isError: false }} toolUseId="toolu_mark" navigationHighlighted />,
+    )
+    const root = container.querySelector('[data-tool-use-id="toolu_mark"]')!
+    expect(root.getAttribute('data-tool-call-chrome')).toBe(chrome)
+    expect(root.className).toContain('chat-tool-navigation-target')
+
+    rerender(<ToolCallBlock chrome={chrome} toolName="Bash" input={{ command: 'ls' }} result={{ content: 'a', isError: false }} toolUseId="toolu_mark" />)
+    expect(container.querySelector('[data-tool-use-id="toolu_mark"]')!.className).not.toContain('chat-tool-navigation-target')
+  })
+
+  it.each(['card', 'row'] as const)('names the %s output copy action in the interface language', (chrome) => {
+    // Regression: tool output copy buttons fell back to CopyButton's English "Copy".
+    useSettingsStore.setState({ locale: 'zh' })
+    const { container } = render(
+      <ToolCallBlock chrome={chrome} toolName="Bash" input={{ command: 'ls' }} result={{ content: 'a.txt', isError: false }} />,
+    )
+    fireEvent.click(container.querySelector('[data-chat-disclosure="true"]')!)
+    expect(screen.getAllByRole('button', { name: '复制' }).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull()
+  })
+
   it('keeps thinking collapsed by default', () => {
     const { container } = render(<ThinkingBlock content="this is a long internal reasoning trace" isActive />)
 
@@ -397,7 +420,10 @@ describe('chat blocks', () => {
       />,
     )
 
-    expect(container.textContent).toContain('Bash')
+    // A described command is named by its description; the raw tool name and
+    // the command stay in the tooltip.
+    expect(container.textContent).toContain('List files')
+    expect(screen.getByRole('button').getAttribute('title')).toBe('Bash · ls -la')
     expect(container.textContent).not.toContain('file-a')
 
     fireEvent.click(screen.getByRole('button'))
@@ -691,7 +717,8 @@ describe('chat blocks', () => {
       />,
     )
 
-    expect(container.textContent).toContain('Write')
+    expect(container.textContent).toContain('Create')
+    expect(screen.getByRole('button').getAttribute('title')).toContain('Write')
     expect(container.textContent).toContain('ai-code-novel.md')
     expect(container.textContent).toContain('Generating content')
   })
@@ -817,8 +844,9 @@ describe('chat blocks', () => {
       />,
     )
 
-    expect(container.textContent).toContain('Bash')
+    expect(container.textContent).toContain('Show full diff of latest commit')
     expect(container.textContent).toContain('fatal: unrecognized argument: --no-stat')
+    expect(container.querySelector('[data-tool-status]')?.getAttribute('data-tool-status')).toBe('error')
   })
 
   it('shows full bash error output when the tool block is expanded', () => {
@@ -841,7 +869,9 @@ describe('chat blocks', () => {
 
     fireEvent.click(screen.getByRole('button'))
 
-    expect(container.textContent).toContain('Error Output')
+    // A failed command reads as failed in the terminal head — no exit code is
+    // recoverable from this payload, so the pill says so instead of guessing 1.
+    expect(container.querySelector('[data-shell-exit]')?.textContent).toBe('Failed')
     expect(container.textContent).toContain('detail line 8')
     expect(container.textContent).toContain('final remediation hint')
   })
@@ -905,7 +935,7 @@ describe('chat blocks', () => {
         toolName="mcp__computer-use__left_click"
         input={{ coordinate: [120, 220] }}
         result={{
-          content: '"EchoFlow-ClaudeCode" is not in the allowed applications and is currently in front. Take a new screenshot — it may have appeared since your last one.',
+          content: '"Claude Code Haha" is not in the allowed applications and is currently in front. Take a new screenshot — it may have appeared since your last one.',
           isError: true,
         }}
       />,

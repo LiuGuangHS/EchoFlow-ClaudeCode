@@ -36,18 +36,6 @@ describe('selectableProviderPresets', () => {
   })
 })
 
-describe('EchoFlow preset copy', () => {
-  it('presents EchoFlow SiHub as recommended access instead of an official or region-locked service', () => {
-    const echoflow = BUNDLED_PROVIDER_PRESETS.filter((preset) => preset.id === 'echoflowai')
-
-    expect(echoflow).toHaveLength(1)
-    const copy = `${echoflow[0]!.name} ${echoflow[0]!.promoText ?? ''}`
-    expect(copy).toContain('EchoFlow SiHub')
-    expect(copy).toMatch(/推荐|recommended/i)
-    expect(copy).not.toMatch(/官方|official|공식|公式|清雲|청운|国内|中国|china/i)
-  })
-})
-
 describe('bundled provider presets', () => {
   it('contains only approved official, local, EchoFlow, and custom entries', () => {
     const bundledIds = BUNDLED_PROVIDER_PRESETS.map((preset) => preset.id)
@@ -77,13 +65,15 @@ describe('bundled provider presets', () => {
       expect(bundledIds).not.toContain(presetId)
     }
     for (const preset of BUNDLED_PROVIDER_PRESETS) {
+      expect(preset.deprecated).not.toBe(true)
       expect(`${preset.websiteUrl} ${preset.apiKeyUrl ?? ''} ${preset.promoText ?? ''}`).not.toMatch(
-        /teamorouter|jiekou|shengsuanyun|xuanshuapi|fennoai|qiniuai|atlas|[?&](?:ref|referral|invite|source|utm_[^=]+)=/i,
+        /teamorouter|jiekou|shengsuanyun|xuanshuapi|fennoai|qiniuai|atlas|aruhub|modelflare|apismart|openrouter|magpie|[?&](?:ref|referral|invite|code|aff|source|utm_[^=]+)=/i,
       )
     }
   })
 
-  it('defaults MiniMax to China while retaining the official global endpoint', () => {
+
+  it('defaults MiniMax to the China endpoint while retaining the global endpoint', () => {
     const minimax = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'minimax')
 
     expect(minimax?.baseUrl).toBe('https://api.minimaxi.com/anthropic')
@@ -91,10 +81,16 @@ describe('bundled provider presets', () => {
       { region: 'cn_zh', baseUrl: 'https://api.minimaxi.com/anthropic' },
       { region: 'global_en', baseUrl: 'https://api.minimax.io/anthropic' },
     ])
-    expect(minimax && presetMatchesBaseUrl(minimax, 'https://api.minimax.io/anthropic')).toBe(true)
   })
 
-  it('defaults Zhipu GLM to China while retaining the official global endpoint', () => {
+  it('matches the MiniMax preset for either regional endpoint', () => {
+    const minimax = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'minimax')
+
+    expect(minimax && presetMatchesBaseUrl(minimax, 'https://api.minimax.io/anthropic')).toBe(true)
+    expect(minimax && presetMatchesBaseUrl(minimax, 'https://api.minimaxi.com/anthropic')).toBe(true)
+  })
+
+  it('defaults Zhipu GLM to China while retaining its official global endpoint', () => {
     const zhipu = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'zhipuglm')
 
     expect(zhipu?.baseUrl).toBe('https://open.bigmodel.cn/api/anthropic')
@@ -119,5 +115,26 @@ describe('bundled provider presets', () => {
 
     expect(kimi?.baseUrl).toBe('https://api.kimi.com/coding/')
     expect(kimi?.regionalEndpoints).toBeUndefined()
+  })
+
+  // The bundle ships the same JSON the server parses, so a field the desktop type
+  // forgot to mirror would be invisible in the form while still steering requests.
+  it('bundles the OpenCode Go rules the server resolves from', () => {
+    const preset = BUNDLED_PROVIDER_PRESETS.find((candidate) => candidate.id === 'opencode-go')
+
+    expect(preset?.baseUrl).toBe('https://opencode.ai/zen/go/v1')
+    expect(preset?.apiFormat).toBe('openai_chat')
+    expect(preset?.authStrategy).toBe('api_key')
+    expect(preset?.modelApiFormats).toEqual([
+      { prefixes: ['grok-', 'gpt-', 'muse-spark-'], apiFormat: 'openai_responses' },
+      { prefixes: ['minimax-', 'qwen', 'union-alpha'], apiFormat: 'anthropic' },
+      { prefixes: ['gemini-'], apiFormat: 'gemini', baseUrl: '/inference/go/google/v1beta' },
+    ])
+    expect(preset?.upstreamHeaders).toEqual({
+      'User-Agent': 'echoflow-code/$VERSION',
+      'x-opencode-session': '$SESSION_ID',
+    })
+    expect(selectableProviderPresets(BUNDLED_PROVIDER_PRESETS).map((candidate) => candidate.id))
+      .toContain('opencode-go')
   })
 })

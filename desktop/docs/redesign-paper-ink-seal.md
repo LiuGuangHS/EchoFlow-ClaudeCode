@@ -1,6 +1,6 @@
 # 「纸 · 墨 · 印」重设计规范
 
-本文是「纸·墨·印」重设计时的历史交接稿，不是当前桌面端整体视觉规范。当前视觉方向以仓库根目录 [`DESIGN.md`](../../DESIGN.md) 为准；组件、token、无障碍和测试的可执行约束以 [`desktop/src/components/AGENTS.md`](../src/components/AGENTS.md) 及 `desktop/src/theme/globals.css` 为准。下文保留当时的设计意图与决策背景，其中具体数值和实现清单可能已过期，不应用作新工作的现行规格。
+本文是桌面端整体视觉重构的执行标准。配套阅读 [`desktop/src/components/AGENTS.md`](../src/components/AGENTS.md)（组件与 token 硬约束，冲突时以那份为准）。
 
 ## 唯一边界：只换皮，不动功能
 
@@ -60,7 +60,7 @@
 - `Button` — `primary` 已是墨色实心 + hover 转陶土 + 上浮 1px + `active:scale(.97)`；禁用态是不透明的 `--s1`/`--t3`。
 - `Card` — 新增 `shadow`（`none`/`card`/`composer`）与 `lift`（hover 抬起 2px）两个 prop，以及 `radius="2xl"`。**`lift` 与 `shadow` 不要同时传**，两个 `shadow-[…]` 不会叠加。
 - `IconButton` / `Badge` / `Modal`（圆角已是 24）/ `SegmentedControl` / `Switch` / `Progress` — 都已走 token，跟随主题。
-- `composite/BrandSeal` — 品牌标记 echoflow-code（原 app-icon 的矢量重建），`sm`24 / `md`32 / `lg`38 / `xl`80，随尺寸减件（星芒只在 `xl`，光标到 `sm` 去掉）。
+- `composite/BrandSeal` — 品牌标记 cc-haha（原 app-icon 的矢量重建），`sm`24 / `md`32 / `lg`38 / `xl`80，随尺寸减件（星芒只在 `xl`，光标到 `sm` 去掉）。
 
 焦点态统一：`focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]`。
 
@@ -94,4 +94,4 @@
 
 ## 参考原型
 
-设计交接目录中的原型 HTML 是高保真交互原型，README.md 是像素级规格。原型可在浏览器中直接打开体验。
+`/Users/nanmi/Downloads/design_handoff_cc_haha_redesign/` 下的 `CC Haha.dc.html` 是高保真交互原型，README.md 是像素级规格。原型用浏览器直接打开可交互。

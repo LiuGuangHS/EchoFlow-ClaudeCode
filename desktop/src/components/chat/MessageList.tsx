@@ -1,19 +1,29 @@
+import { getDisclosure } from '@/lib/disclosureMemory'
+import { ScheduledTaskCard } from '@/components/tasks/ScheduledTaskCard'
+import { ScheduledTaskTrigger } from '@/components/tasks/ScheduledTaskTrigger'
+import { parseScheduledTaskResult } from '@/lib/scheduledTask'
 import { openSideChat } from '@/lib/workspace/openSideChat'
-import { useRef, useEffect, useMemo, memo, useState, useCallback, useDeferredValue, useLayoutEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { ConversationImageGalleryContext } from '@/components/chat/conversationImageGallery'
+import { resolveConversationImages } from '@/components/chat/conversationImages'
+import { getServerBaseUrl } from '@/lib/desktopRuntime'
+import { useWorkspaceContentStore } from '@/stores/workspaceContentStore'
+import { Component, useRef, useEffect, useMemo, memo, useState, useCallback, useDeferredValue, useLayoutEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { ArrowDown, BookMarked, Bot, CheckCircle2, ChevronDown, ChevronRight, CircleStop, FileStack, LoaderCircle, Settings, Target, Undo2, XCircle } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import { sessionsApi, type SessionRewindMode, type SessionTurnCheckpoint, type WorkspaceChangedFile } from '../../api/sessions'
 import { listPendingPermissions, useChatStore } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
+import { useSideChatStore } from '../../stores/sideChatStore'
 import { useWorkspaceChatContextStore } from '../../stores/workspaceChatContextStore'
 import { useWorkspaceStore, type WorkspaceOrigin } from '../../stores/workspaceStore'
-import { useWorkspaceReviewStore } from '../../stores/workspaceReviewStore'
 import { SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
 import { teamTaskWindowsForSnapshot, useTeamStore } from '../../stores/teamStore'
+import { interruptedTeamNameOf, useTeamPlanStore } from '../../stores/teamPlanStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useChatAppearanceStore } from '../../stores/chatAppearanceStore'
-import { useTranslation } from '../../i18n'
+import { t as translateNow, useTranslation } from '../../i18n'
+import { prefersSelectionMenuAbove } from '../../stores/selectionMenuPlacementStore'
 import type { TranslationKey } from '../../i18n/locales/en'
 import { UserMessage } from './UserMessage'
 import { AssistantMessage } from './AssistantMessage'
@@ -27,15 +37,20 @@ import {
 import type { ActivityStep } from './activityGroupModel'
 import { ToolResultBlock } from './ToolResultBlock'
 import { PermissionDialog } from './PermissionDialog'
+import { MagpieConnectionHint, isCliApiErrorText } from './MagpieConnectionHint'
 import { AskUserQuestion } from './AskUserQuestion'
 import { RenderItemBoundary } from './RenderItemBoundary'
 import { StreamingIndicator } from './StreamingIndicator'
 import { InlineTaskSummary } from './InlineTaskSummary'
 import { CurrentTurnChangeCard } from './CurrentTurnChangeCard'
+import { describeRewindResult, getApiErrorMessage, rewindToTurnCheckpoint } from './turnRewind'
+import { useUserMessageEditResend, type EditableTurnCard } from './useUserMessageEditResend'
+import type { UserMessageEditAction } from './UserMessage'
 import { WorkspaceChangesFallback } from '@/components/chat/WorkspaceChangesFallback'
 import { AgentTeamsInlineCard } from '../agentTeams/AgentTeamsSummary'
 import { MEMBER_AVATARS, memberAccentColor } from '../agentTeams/agentTeamsAvatars'
 import {
+  endedPhase,
   getMemberAvatarKey,
   resolveTeamMemberIdentity,
   snapshotWithHistoricalMembers,
@@ -51,7 +66,10 @@ import type { TeamDetail, TeamWorkbenchSnapshot } from '../../types/team'
 import { formatTokenCount } from '../../lib/formatTokenCount'
 import { formatDurationMs, hasRunningBackgroundTasks as hasAnyRunningBackgroundTasks } from '../../lib/backgroundTasks'
 import { buildTurnCompletionByMessageId, type TurnCompletion } from '../../lib/turnCompletion'
+import type { TurnOutputEvidence } from '../../lib/assistantOutputTargets'
 import { isTouchH5Document } from '../../lib/touchH5'
+import { findChatRenderTarget } from '../../lib/trajectory/chatTarget'
+import { useTrajectoryViewStore } from '../../stores/trajectoryViewStore'
 import {
   EMPTY_TEAM_LIFECYCLE_CURSOR,
   isTeamLifecycleScopedAt,
@@ -96,6 +114,8 @@ type RenderItem =
       teamName: string
       startedAt: number
       endedAt?: number
+      /** Its lead deleted it, which it does once the work is done. */
+      deletedByLead?: boolean
       coordinationToolCalls: ToolCall[]
     }
 
@@ -113,6 +133,10 @@ type RenderModel = {
 
 type RewindTurnTarget = {
   messageId: string
+  /** The prompt's own transcript id; a live prompt has none until history reloads. */
+  transcriptMessageId?: string
+  /** The CLI never acknowledged this prompt, so the transcript may not hold it. */
+  awaitingReplay?: boolean
   userMessageIndex: number
   content: string
   expectedContent: string
@@ -146,6 +170,12 @@ type SelectionPointer = {
   clientY: number
 }
 
+// Business errors whose raw message carries evidence worth keeping under the
+// translated explanation (e.g. what the stream received before it was cut).
+const BUSINESS_ERRORS_WITH_RAW_DETAIL: ReadonlySet<string> = new Set([
+  'upstream_stream_interrupted',
+])
+
 const CHAT_SELECTION_MENU_OFFSET = 10
 const CHAT_SELECTION_MENU_WIDTH = 360
 const CHAT_SELECTION_MENU_HEIGHT = 44
@@ -167,6 +197,9 @@ function getChatSelectionPosition(
     offset: CHAT_SELECTION_MENU_OFFSET,
     fallbackPointer: pointer,
     selectionFocus: { node: selection.focusNode, offset: selection.focusOffset },
+    // Read from the store: the settled-selection listener that calls this is not
+    // a render, so there is no hook to subscribe with.
+    preferAbove: prefersSelectionMenuAbove(),
   })
 }
 
@@ -217,7 +250,7 @@ function ChatSelectionMenu({
 }: {
   selection: ChatSelectionState | null
   onAdd: () => void
-  onSideChat: () => void
+  onSideChat?: () => void
   popoverRef: { current: HTMLDivElement | null }
 }) {
   const t = useTranslation()
@@ -228,7 +261,7 @@ function ChatSelectionMenu({
       className="fixed z-[var(--z-popover)] inline-flex max-w-[calc(100vw-24px)] items-center rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] p-1 shadow-[var(--shadow-overlay)]"
       style={{ left: selection.x, top: selection.y }}>
       <Button variant="ghost" onClick={onAdd}>{t('chat.addSelectionToChat')}</Button>
-      <Button variant="ghost" onClick={onSideChat}>{t('chat.askSelectionInSideChat')}</Button>
+      {onSideChat && <Button variant="ghost" onClick={onSideChat}>{t('chat.askSelectionInSideChat')}</Button>}
     </div>, document.body,
   )
 }
@@ -240,6 +273,43 @@ function getCompactSummaryTitle(message: CompactSummaryEvent, t: ReturnType<type
     return t('chat.compactSummary.title')
   }
   return message.title
+}
+
+function formatCompactElapsed(elapsedMs: number) {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000))
+  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, '0')}`
+}
+
+/**
+ * Live meta for a running compaction: time since the divider appeared (its
+ * timestamp is the compaction start) and how much summary has streamed so far.
+ * Without it a slow compaction looks hung for minutes.
+ */
+function CompactingProgressMeta({ startedAt, outputChars }: { startedAt?: number; outputChars?: number }) {
+  const t = useTranslation()
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (startedAt === undefined) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [startedAt])
+
+  const parts = [
+    startedAt !== undefined ? formatCompactElapsed(now - startedAt) : null,
+    outputChars ? t('chat.compactSummary.generated', { count: formatTokenCount(outputChars) }) : null,
+  ].filter((part): part is string => part !== null)
+  if (parts.length === 0) return null
+  return (
+    <span data-testid="compact-progress" className="shrink-0 whitespace-nowrap text-[12px] font-normal tabular-nums text-[var(--color-text-tertiary)]">
+      {parts.map((part) => (
+        <span key={part}>
+          <span aria-hidden="true"> · </span>
+          {part}
+        </span>
+      ))}
+    </span>
+  )
 }
 
 function CompactStatusDivider({ message, state }: { message?: CompactSummaryEvent; state: 'compacting' | 'complete' }) {
@@ -281,6 +351,9 @@ function CompactStatusDivider({ message, state }: { message?: CompactSummaryEven
           <span className="min-w-0 truncate font-medium text-[var(--color-text-primary)]">
             {title}
           </span>
+          {state === 'compacting' && (
+            <CompactingProgressMeta startedAt={message?.timestamp} outputChars={message?.outputChars} />
+          )}
         </button>
         <div className="h-px flex-1 bg-[var(--color-border)]" aria-hidden="true" />
       </div>
@@ -417,7 +490,7 @@ function BackgroundTaskEventCard({ message }: { message: BackgroundTaskEvent }) 
       >
         <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
           {isRunning ? (
-            <LoaderCircle size={15} strokeWidth={2.25} className="animate-spin text-[var(--color-brand)]" aria-hidden="true" />
+            <LoaderCircle size={15} strokeWidth={1.75} className="animate-spin text-[var(--color-info)]" aria-hidden="true" />
           ) : isFailed ? (
             <XCircle size={15} strokeWidth={2.25} className="text-[var(--color-error)]" aria-hidden="true" />
           ) : isStopped ? (
@@ -491,6 +564,7 @@ function SelectableChatMessage({
   content: string
   children: ReactNode
 }) {
+  const isLean = useSessionStore(state => state.sessions.some(session => session.id === sessionId && session.agentProfile === 'lean'))
   const rootRef = useRef<HTMLDivElement>(null)
   const selectionMenuRef = useRef<HTMLDivElement>(null)
   const lastSelectionPointerRef = useRef<SelectionPointer | null>(null)
@@ -499,7 +573,8 @@ function SelectableChatMessage({
   const selectionUpdateAuthorizedRef = useRef(false)
   const selectionUpdateFrameRef = useRef<number | null>(null)
   const addReference = useWorkspaceChatContextStore((state) => state.addReference)
-  const [selectionMenu, setSelectionMenu] = useState<ChatSelectionState | null>(null)
+  const [selectionMenu, setSelectionMenu] = useState<(ChatSelectionState & { sessionId: string }) | null>(null)
+  const currentSelectionMenu = selectionMenu?.sessionId === sessionId ? selectionMenu : null
   const t = useTranslation()
   const sourceName = role === 'assistant'
     ? t('chat.assistantMessageReference')
@@ -513,13 +588,15 @@ function SelectableChatMessage({
     }
   }, [])
 
-  useEffect(() => {
+  // A transcript entry can have the same id and content in multiple sessions.
+  // Invalidate its gesture before another frame can commit into the new session.
+  useLayoutEffect(() => {
     cancelPendingSelectionMenuUpdate()
     setSelectionMenu(null)
     lastSelectionPointerRef.current = null
     selectionStartedInsideRef.current = false
     selectionUpdateAuthorizedRef.current = false
-  }, [cancelPendingSelectionMenuUpdate, content, messageId])
+  }, [cancelPendingSelectionMenuUpdate, content, messageId, sessionId])
 
   const dismissSelectionMenu = useCallback(() => {
     setSelectionMenu(null)
@@ -548,10 +625,11 @@ function SelectableChatMessage({
           clientX: (rootRect?.left ?? 0) + 24,
           clientY: (rootRect?.top ?? 0) + 24,
         }
-        setSelectionMenu(getChatSelectionFromContainer(root, fallbackPointer))
+        const selection = getChatSelectionFromContainer(root, fallbackPointer)
+        setSelectionMenu(selection && sessionId ? { ...selection, sessionId } : null)
       })
     })
-  }, [])
+  }, [sessionId])
 
   useEffect(() => {
     return () => {
@@ -617,34 +695,34 @@ function SelectableChatMessage({
   }, [cancelPendingSelectionMenuUpdate, queueSelectionMenuUpdate])
 
   useSelectionPopoverDismiss({
-    active: Boolean(selectionMenu),
+    active: Boolean(currentSelectionMenu),
     popoverRef: selectionMenuRef,
     onDismiss: dismissSelectionMenu,
   })
 
   const addCurrentSelectionToChat = useCallback(() => {
-    if (!sessionId || !selectionMenu) return
+    if (!sessionId || !currentSelectionMenu) return
     addReference(sessionId, {
       kind: 'chat-selection',
       path: `chat://${role}/${messageId}`,
       name: sourceName,
-      quote: selectionMenu.text,
+      quote: currentSelectionMenu.text,
       sourceRole: role,
       messageId,
     })
     setSelectionMenu(null)
     clearWindowSelection()
-  }, [addReference, messageId, role, selectionMenu, sessionId, sourceName])
+  }, [addReference, messageId, role, currentSelectionMenu, sessionId, sourceName])
 
   const askSelectionInSideChat = useCallback(() => {
-    if (!sessionId || !selectionMenu) return
+    if (!sessionId || !currentSelectionMenu) return
     void openSideChat(sessionId, { reference: {
       kind: 'chat-selection', path: `chat://${role}/${messageId}`,
-      name: sourceName, quote: selectionMenu.text, sourceRole: role, messageId,
+      name: sourceName, quote: currentSelectionMenu.text, sourceRole: role, messageId,
     } })
     setSelectionMenu(null)
     clearWindowSelection()
-  }, [messageId, role, selectionMenu, sessionId, sourceName])
+  }, [messageId, role, currentSelectionMenu, sessionId, sourceName])
 
   return (
     <div
@@ -655,7 +733,7 @@ function SelectableChatMessage({
       }}
     >
       {children}
-      <ChatSelectionMenu selection={selectionMenu} onAdd={addCurrentSelectionToChat} onSideChat={askSelectionInSideChat} popoverRef={selectionMenuRef} />
+      <ChatSelectionMenu selection={currentSelectionMenu} onAdd={addCurrentSelectionToChat} onSideChat={isLean ? undefined : askSelectionInSideChat} popoverRef={selectionMenuRef} />
     </div>
   )
 }
@@ -780,7 +858,7 @@ function teamNameFromCreate(toolCall: ToolCall, result: ToolResult | undefined):
   for (const value of [nestedStringField(result?.content, 'team_name'), input?.team_name]) {
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
-  return 'Agent Teams'
+  return translateNow('agentTeams.name')
 }
 
 function isExplicitTeamAgent(
@@ -956,6 +1034,11 @@ export function buildRenderModel(
         continue
       }
       const toolResult = toolResultMap.get(msg.toolUseId)
+      if (toolResult && parseScheduledTaskResult(msg.toolName, toolResult.content, toolResult.isError)) {
+        flushGroup()
+        items.push({ kind: 'message', message: msg })
+        continue
+      }
       let summarizedTeamDelete = false
       if (options.hideTeamCoordinationTools) {
         if (msg.toolName === 'TeamCreate' && lifecycleToolSucceeded(toolResult)) {
@@ -971,6 +1054,7 @@ export function buildRenderModel(
           const deletedTeamCard = ensureTeamCardForCoordination(msg, toolResult)
           if (deletedTeamCard) {
             deletedTeamCard.endedAt = msg.timestamp
+            deletedTeamCard.deletedByLead = true
             deletedTeamCard.coordinationToolCalls.push(msg)
             summarizedTeamDelete = true
           }
@@ -1038,6 +1122,10 @@ export function buildRenderModel(
         canSummarizeCoordinationResult(toolResult)
       ) {
         flushGroup()
+        // A lead leads one team at a time, so a new team means the previous
+        // one ended, even when the host ended it (a cancelled or ended plan)
+        // and no TeamDelete call here says so.
+        if (activeTeamCard && activeTeamCard.endedAt === undefined) activeTeamCard.endedAt = msg.timestamp
         activeTeamCard = {
           kind: 'team_card',
           id: `team-card-${msg.id}`,
@@ -1129,7 +1217,7 @@ function TeamCoordinationAudit({ toolCalls }: { toolCalls: ToolCall[] }) {
           const summary = coordinationToolSummary(toolCall)
           return (
             <li key={toolCall.toolUseId} className="flex min-w-0 items-start gap-2">
-              <code className="shrink-0 font-mono text-[10px] font-semibold text-[var(--color-text-tertiary)]">
+              <code className="shrink-0 font-mono text-[11px] text-[var(--color-text-tertiary)]">
                 {toolCall.toolName}
               </code>
               {summary ? <span className="min-w-0 break-words">{summary}</span> : null}
@@ -1218,20 +1306,20 @@ function getBranchableMessageTargets(messages: UIMessage[]): Map<string, Brancha
   return branchableTargets
 }
 
-export function getCompletedTurnTargets(messages: UIMessage[]): RewindTurnTarget[] {
+function collectTurnTargets(messages: UIMessage[]): Array<{ target: RewindTurnTarget; answered: boolean }> {
   let userMessageIndex = -1
-  const completedTurns: RewindTurnTarget[] = []
+  const turns: Array<{ target: RewindTurnTarget; answered: boolean }> = []
   let currentTarget: RewindTurnTarget | null = null
   let hasResponseForCurrentTarget = false
 
   for (const message of messages) {
     if (message.type === 'user_text' && !message.pending) {
-      if (currentTarget && hasResponseForCurrentTarget) {
-        completedTurns.push(currentTarget)
-      }
+      if (currentTarget) turns.push({ target: currentTarget, answered: hasResponseForCurrentTarget })
       userMessageIndex += 1
       currentTarget = {
         messageId: message.id,
+        ...(message.transcriptMessageId ? { transcriptMessageId: message.transcriptMessageId } : {}),
+        ...(message.awaitingReplay ? { awaitingReplay: true } : {}),
         userMessageIndex,
         content: message.content,
         expectedContent: message.modelContent ?? message.content,
@@ -1246,11 +1334,25 @@ export function getCompletedTurnTargets(messages: UIMessage[]): RewindTurnTarget
     }
   }
 
-  if (currentTarget && hasResponseForCurrentTarget) {
-    completedTurns.push(currentTarget)
-  }
+  if (currentTarget) turns.push({ target: currentTarget, answered: hasResponseForCurrentTarget })
+  return turns
+}
 
-  return completedTurns
+export function getCompletedTurnTargets(messages: UIMessage[]): RewindTurnTarget[] {
+  return collectTurnTargets(messages).filter((turn) => turn.answered).map((turn) => turn.target)
+}
+
+/**
+ * Prompts that never got a reply — a stop landed before the model answered.
+ * The model has no output to protect there, so these stay editable even though
+ * the server lists no checkpoint for a turn without a response.
+ */
+export function getUnansweredTurnTargets(
+  messages: UIMessage[],
+): Array<{ target: RewindTurnTarget; latest: boolean }> {
+  const turns = collectTurnTargets(messages)
+  return turns.flatMap((turn, index) =>
+    turn.answered ? [] : [{ target: turn.target, latest: index === turns.length - 1 }])
 }
 
 export function getLatestCompletedTurnTarget(messages: UIMessage[]): RewindTurnTarget | null {
@@ -1302,23 +1404,34 @@ function buildTurnCardInsertionMap(
   return cardsByRenderIndex
 }
 
+type TurnFileEvidence = TurnOutputEvidence & { changedFiles: string[] }
+
+const UNKNOWN_TURN_OUTPUT_EVIDENCE: TurnOutputEvidence = { unlistedWrites: true }
+
 /**
- * Map each render item to the REAL changed files of the turn it belongs to, so an
- * assistant message can anchor its output chips on files that were actually
- * written this turn instead of guessing paths from the prose. Items are attributed
- * to the most recent preceding non-pending user message (the turn boundary).
+ * Map each render item to what its turn's checkpoint knows: the REAL changed
+ * files, so an assistant message can anchor its output chips on files that were
+ * actually written this turn instead of guessing paths from the prose, and
+ * whether anything else could have written one. Items are attributed to the
+ * most recent preceding non-pending user message (the turn boundary).
  */
 function buildChangedFilesByRenderIndex(
   renderItems: RenderItem[],
   turnChangeCards: TurnChangeCardModel[],
-): Map<number, string[]> {
-  const filesByTurnId = new Map<string, string[]>()
+): Map<number, TurnFileEvidence> {
+  const filesByTurnId = new Map<string, TurnFileEvidence>()
   for (const card of turnChangeCards) {
-    filesByTurnId.set(card.target.messageId, card.checkpoint.code.filesChanged)
+    const { code, unverifiedChangeSources, startedAt } = card.checkpoint
+    filesByTurnId.set(card.target.messageId, {
+      changedFiles: code.filesChanged,
+      // An older server does not say; assume the worst.
+      unlistedWrites: unverifiedChangeSources === undefined || unverifiedChangeSources.length > 0,
+      ...(typeof startedAt === 'number' ? { startedAt } : {}),
+    })
   }
   if (filesByTurnId.size === 0) return new Map()
 
-  const filesByRenderIndex = new Map<number, string[]>()
+  const filesByRenderIndex = new Map<number, TurnFileEvidence>()
   let activeTurnId: string | null = null
   renderItems.forEach((item, index) => {
     if (item.kind === 'message' && item.message.type === 'user_text' && !item.message.pending) {
@@ -1436,16 +1549,6 @@ export function trailingStreamingRailPosition(positions: TurnRailPosition[]): Tu
   return last === 'start' || last === 'middle' ? 'end' : 'solo'
 }
 
-function getApiErrorMessage(error: unknown) {
-  return error instanceof ApiError
-    ? typeof error.body === 'object' && error.body && 'message' in error.body
-      ? String((error.body as { message: unknown }).message)
-      : error.message
-    : error instanceof Error
-      ? error.message
-      : String(error)
-}
-
 function isCheckpointPreviewBudgetError(error: unknown): boolean {
   return error instanceof ApiError &&
     error.status === 413 &&
@@ -1499,14 +1602,14 @@ function MemoryEventCard({ message }: { message: MemoryEvent }) {
 
   return (
     <div className="mb-3 flex justify-center px-3">
-      <div className="w-full max-w-2xl rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3.5 py-3 text-xs shadow-[var(--shadow-card)]">
+      <div className="w-full max-w-2xl rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-3.5 py-3 text-xs">
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-brand)]">
-            <BookMarked size={15} aria-hidden="true" />
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-surface-container)] text-[var(--color-text-secondary)]">
+            <BookMarked size={15} strokeWidth={1.75} aria-hidden="true" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="font-medium text-[var(--color-text-primary)]">
+              <div className="text-[13px] font-medium text-[var(--color-text-primary)]">
                 {t('chat.memorySavedTitle', { count: message.files.length })}
               </div>
               <Button
@@ -1526,13 +1629,13 @@ function MemoryEventCard({ message }: { message: MemoryEvent }) {
                 <span
                   key={file.path}
                   title={file.path}
-                  className="max-w-full truncate rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-mono text-[10px] text-[var(--color-text-secondary)]"
+                  className="max-w-full truncate rounded-[var(--radius-xs)] bg-[var(--color-surface-container)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--color-text-secondary)]"
                 >
                   {memoryFileLabel(file.path)}
                 </span>
               ))}
               {hiddenCount > 0 ? (
-                <span className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-mono text-[10px] text-[var(--color-text-tertiary)]">
+                <span className="rounded-[var(--radius-xs)] bg-[var(--color-surface-container)] px-1.5 py-0.5 text-[11px] text-[var(--color-text-tertiary)]">
                   {t('chat.memoryMoreFiles', { count: hiddenCount })}
                 </span>
               ) : null}
@@ -1548,6 +1651,12 @@ type MessageListProps = {
   sessionId?: string | null
   compact?: boolean
   mobileLayout?: boolean
+  /**
+   * The host answers waiting requests from an approval bar in the composer's
+   * place (the phone session page). Permission, plan and question cards then
+   * shrink to a marker line here while they wait, so only one live copy exists.
+   */
+  decisionsInComposer?: boolean
   onOpenAgentRun?: (payload: OpenAgentRunPayload) => void
   /**
    * Lets a host that renders the list under a non-session id (an agent run's
@@ -1639,9 +1748,43 @@ export function isRenderItemFullyVisibleInChatScroller(renderItem: HTMLElement) 
     itemRect.right <= scrollerRect.right
 }
 
+type SessionScrollAnchor = {
+  itemKey: string
+  // CSS pixels relative to the scroller, including a partially clipped row.
+  offset: number
+}
+
 type SessionScrollSnapshot = {
   scrollTop: number
   wasAtBottom: boolean
+  anchor?: SessionScrollAnchor
+}
+
+type ScrollSnapshotBoundaryProps = {
+  sessionId: string | null | undefined
+  onLeave: () => void
+  children: ReactNode
+}
+
+// Read the outgoing DOM before React replaces it. A scroll event snapshot can
+// be stale after async layout; hook cleanups on updates run after DOM mutations.
+class ScrollSnapshotBoundary extends Component<ScrollSnapshotBoundaryProps> {
+  getSnapshotBeforeUpdate(previous: ScrollSnapshotBoundaryProps) {
+    if (previous.sessionId !== this.props.sessionId) previous.onLeave()
+    return null
+  }
+
+  componentDidUpdate() {
+    // React requires this lifecycle when getSnapshotBeforeUpdate is used.
+  }
+
+  componentWillUnmount() {
+    this.props.onLeave()
+  }
+
+  render() {
+    return this.props.children
+  }
 }
 
 type VirtualViewport = {
@@ -1694,9 +1837,19 @@ function rememberSessionScroll(sessionId: string, element: HTMLElement, wasAtBot
     }
   }
 
+  const containerTop = element.getBoundingClientRect().top
+  const firstVisibleRow = !wasAtBottom && [...element.querySelectorAll<HTMLElement>('[data-chat-render-item-key]')]
+    .find((row) => {
+      const rect = row.getBoundingClientRect()
+      return rect.height > 0 && rect.bottom > containerTop && rect.top < containerTop + element.clientHeight
+    })
   sessionScrollSnapshots.set(sessionId, {
     scrollTop: element.scrollTop,
     wasAtBottom,
+    anchor: firstVisibleRow ? {
+      itemKey: firstVisibleRow.dataset.chatRenderItemKey!,
+      offset: firstVisibleRow.getBoundingClientRect().top - containerTop,
+    } : undefined,
   })
 }
 
@@ -1782,7 +1935,7 @@ function collectConversationFindRanges(root: Node, query: string) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT
-      if (node.parentElement?.closest('[data-find-bar], script, style, noscript, .material-symbols-outlined')) {
+      if (node.parentElement?.closest('[data-find-bar], script, style, noscript')) {
         return NodeFilter.FILTER_REJECT
       }
       return NodeFilter.FILTER_ACCEPT
@@ -2025,6 +2178,70 @@ function getMessageMetricSignature(message: UIMessage): string {
   }
 }
 
+/**
+ * Move measured heights from rows that disappeared to rows that appeared with
+ * the same reload signature, in order. Rows that kept their key are untouched.
+ *
+ * A transcript reload after a reply, or a checkpoint refresh, can hand the same
+ * messages back under new ids. Heights are keyed by id, so those rows would
+ * fall back to estimates, and in a tool-heavy session the estimates run far
+ * above the collapsed rows that were measured: the same scrollTop then lands
+ * many turns above the tail (#1652, #1662).
+ */
+export function carryMeasuredHeightsToRenamedItems(
+  heights: Map<string, number>,
+  previousKeys: string[],
+  previousSignatures: string[],
+  nextKeys: string[],
+  nextSignatures: string[],
+): number {
+  if (previousKeys.length === 0 || previousKeys === nextKeys) return 0
+  const nextKeySet = new Set(nextKeys)
+  const orphanedHeightsBySignature = new Map<string, number[]>()
+  previousKeys.forEach((key, index) => {
+    if (nextKeySet.has(key)) return
+    const height = heights.get(key)
+    const signature = previousSignatures[index]
+    if (height === undefined || signature === undefined) return
+    const queue = orphanedHeightsBySignature.get(signature)
+    if (queue) queue.push(height)
+    else orphanedHeightsBySignature.set(signature, [height])
+  })
+  if (orphanedHeightsBySignature.size === 0) return 0
+
+  const previousKeySet = new Set(previousKeys)
+  let carried = 0
+  nextKeys.forEach((key, index) => {
+    if (previousKeySet.has(key) || heights.has(key)) return
+    const height = orphanedHeightsBySignature.get(nextSignatures[index] ?? '')?.shift()
+    if (height === undefined) return
+    heights.set(key, height)
+    carried += 1
+  })
+  return carried
+}
+
+// Metric signatures summarize lengths for cheap estimates, not row identity:
+// equal-length Markdown can have different geometry. Include disclosure state
+// because renamed thinking/result rows may remount collapsed after being open.
+function getRenderItemReloadSignature(item: RenderItem): string {
+  if (item.kind !== 'message') return JSON.stringify(item)
+  const message = item.message
+  const expanded = message.type === 'thinking' || message.type === 'tool_result'
+    ? getDisclosure(message.id) ?? false
+    : false
+  return JSON.stringify([{ ...message, id: undefined, timestamp: undefined }, expanded])
+}
+
+function haveSameRenderItemKeys(previous: string[], next: string[]): boolean {
+  if (previous === next) return true
+  if (previous.length !== next.length) return false
+  for (let index = 0; index < next.length; index += 1) {
+    if (previous[index] !== next[index]) return false
+  }
+  return true
+}
+
 function getRenderItemMetricSignature(item: RenderItem): string {
   if (item.kind === 'message') return getMessageMetricSignature(item.message)
   if (item.kind === 'team_card') {
@@ -2119,6 +2336,7 @@ function buildVirtualTranscriptWindow(
   measuredHeights: Map<string, number>,
   viewport: VirtualViewport,
   overscanPx: number,
+  anchor?: SessionScrollAnchor | null,
 ): VirtualTranscriptWindow {
   const offsets = buildVirtualItemOffsets(itemKeys, metrics, measuredHeights)
   const totalHeight = offsets[renderItems.length] ?? 0
@@ -2135,7 +2353,13 @@ function buildVirtualTranscriptWindow(
 
   const viewportHeight = viewport.viewportHeight || VIRTUAL_DEFAULT_VIEWPORT_HEIGHT
   const maxScrollTop = Math.max(0, totalHeight - viewportHeight)
-  const scrollTop = clampNumber(viewport.scrollTop, 0, maxScrollTop)
+  const anchorIndex = anchor ? itemKeys.indexOf(anchor.itemKey) : -1
+  // Keep the saved row mounted even if its async content is temporarily shorter
+  // than the saved intra-row offset. DOM alignment below owns the final pixels.
+  const anchorTop = anchorIndex >= 0
+    ? offsets[anchorIndex]! + Math.min(-anchor!.offset, offsets[anchorIndex + 1]! - offsets[anchorIndex]! - 1)
+    : viewport.scrollTop
+  const scrollTop = clampNumber(anchorTop, 0, maxScrollTop)
   const windowTop = Math.max(0, scrollTop - overscanPx)
   const windowBottom = Math.min(totalHeight, scrollTop + viewportHeight + overscanPx)
   const startIndex = findVirtualStartIndex(offsets, windowTop)
@@ -2181,7 +2405,14 @@ function VirtualSpacer({ height, position }: { height: number; position: 'top' |
   }
 
   return (
-    <div data-virtual-spacer={position} aria-hidden="true">
+    <div
+      data-virtual-spacer={position}
+      aria-hidden="true"
+      className="overflow-hidden"
+      // Fractional zoom rounds each chunk independently. Keep their accumulated
+      // error out of scrollHeight so native scrolling cannot toggle the window.
+      style={{ height }}
+    >
       {chunks.map((chunk) => (
         <div
           key={chunk.key}
@@ -2258,6 +2489,7 @@ export function MessageList({
   sessionId,
   compact = false,
   mobileLayout = false,
+  decisionsInComposer = false,
   onOpenAgentRun,
   resolveAgentActivityTarget,
 }: MessageListProps = {}) {
@@ -2273,7 +2505,6 @@ export function MessageList({
     resolvedSessionId ? s.sessions[resolvedSessionId] : undefined,
   )
   const branchSession = useSessionStore((s) => s.branchSession)
-  const stopGeneration = useChatStore((s) => s.stopGeneration)
   const reloadHistory = useChatStore((s) => s.reloadHistory)
   const loadOlderHistory = useChatStore((s) => s.loadOlderHistory)
   const queueComposerPrefill = useChatStore((s) => s.queueComposerPrefill)
@@ -2286,6 +2517,7 @@ export function MessageList({
     (tab.type === 'subagent' || tab.type === 'team-member')
   )))
   const isDirectAgentSession = isMemberSession || isAgentRunTab
+  const isSideChatSession = useSideChatStore((s) => Boolean(resolvedSessionId && s.entries[resolvedSessionId]))
   const teamWorkbench = useTeamStore((s) =>
     resolvedSessionId ? s.workbenchesBySession[resolvedSessionId] : undefined,
   )
@@ -2295,6 +2527,7 @@ export function MessageList({
   const activeTeamStartedAt = useTeamStore((s) => (
     resolvedSessionId ? s.activeTeamStartedAtBySession[resolvedSessionId] : undefined
   ))
+  const interruptedTeamName = useTeamPlanStore(interruptedTeamNameOf(resolvedSessionId))
   const teamSnapshot = useMemo(() => {
     const snapshots = teamWorkbench?.snapshots
     return snapshots?.length
@@ -2358,13 +2591,15 @@ export function MessageList({
   const messageListRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const scrollContentRef = useRef<HTMLDivElement>(null)
-  const [initialVirtualItemHeights] = useState(() =>
-    resolvedSessionId ? getHeightsForSession(resolvedSessionId, appearanceSignature) : new Map<string, number>(),
-  )
-  const virtualItemHeightsRef = useRef(initialVirtualItemHeights)
-  const virtualItemMetricCacheRef = useRef<Map<string, VirtualRenderItemMetric>>(
-    resolvedSessionId ? getMetricsForSession(resolvedSessionId) : new Map<string, VirtualRenderItemMetric>(),
-  )
+  // Select session caches during render, before child layout effects measure.
+  // Rebinding a shared ref in the parent effect writes the new rows into the
+  // outgoing session's cache and loses their initial measurements.
+  const virtualItemHeights = useMemo(() => resolvedSessionId
+    ? getHeightsForSession(resolvedSessionId)
+    : new Map<string, number>(), [resolvedSessionId])
+  const virtualItemMetricCache = useMemo(() => resolvedSessionId
+    ? getMetricsForSession(resolvedSessionId)
+    : new Map<string, VirtualRenderItemMetric>(), [resolvedSessionId])
   const liveFollowFrameRef = useRef<number | null>(null)
   const navigationHighlightTimerRef = useRef<number | null>(null)
   const workspaceOriginRestoreFrameRef = useRef<number | null>(null)
@@ -2374,6 +2609,8 @@ export function MessageList({
   const lastAutoScrollAtRef = useRef(0)
   const lastContentResizeFollowHeightRef = useRef<number | null>(null)
   const shouldAutoScrollRef = useRef(true)
+  const restoringBottomRef = useRef(false)
+  const restoringScrollAnchorRef = useRef<SessionScrollAnchor | null>(null)
   const isProgrammaticScrollingRef = useRef(false)
   const ignoreProgrammaticScrollUntilRef = useRef(0)
   const ignoreProgrammaticScrollTopRef = useRef<number | null>(null)
@@ -2391,6 +2628,18 @@ export function MessageList({
   // Keep disclosure choices across virtualized row remounts and later turns.
   const [expandedChangeCards, setExpandedChangeCards] = useState<Record<string, boolean>>({})
   const [turnChangeCards, setTurnChangeCards] = useState<TurnChangeCardModel[]>([])
+  // Read the latest history on open without invalidating every image row while
+  // the active response streams.
+  const getConversationImages = useCallback(() => resolvedSessionId ? resolveConversationImages(
+    useChatStore.getState().sessions[resolvedSessionId]?.messages ?? EMPTY_MESSAGES,
+    {
+      sessionId: resolvedSessionId,
+      baseUrl: getServerBaseUrl(),
+      workDir: useWorkspaceContentStore.getState().statusBySession[resolvedSessionId]?.workDir,
+      imageLabel: t('assistantOutputs.kind.image'),
+      changedFilesByTurnId: new Map(turnChangeCards.map((card) => [card.target.messageId, card.checkpoint.code.filesChanged])),
+    },
+  ) : [], [resolvedSessionId, t, turnChangeCards])
   const [turnChangeLoadError, setTurnChangeLoadError] = useState<string | null>(null)
   const [workspaceChangesFallback, setWorkspaceChangesFallback] = useState<{
     sessionId: string
@@ -2408,19 +2657,21 @@ export function MessageList({
   })
   const [measuredItemsVersion, setMeasuredItemsVersion] = useState(0)
   const [highlightedNavigationItemKey, setHighlightedNavigationItemKey] = useState<string | null>(null)
+  /** The tool call inside the highlighted item a jump is about, if any. */
+  const [highlightedNavigationToolUseId, setHighlightedNavigationToolUseId] = useState<string | null>(null)
   const [programmaticNavigationItemId, setProgrammaticNavigationItemId] = useState<string | null>(null)
   const [activeConversationFindMatch, setActiveConversationFindMatch] = useState<ConversationFindMatch | null>(null)
   const conversationFindMatchesRef = useRef<ConversationFindMatch[]>([])
   const [messageListWidth, setMessageListWidth] = useState<number | null>(null)
-  const branchActionsDisabled =
-    isDirectAgentSession ||
+  const turnInProgress =
     isPreparingTurn ||
     chatState !== 'idle' ||
-    hasRunningBackgroundTasks ||
     streamingText.trim().length > 0 ||
     Boolean(activeThinkingId) ||
     Boolean(sessionState?.activeToolUseId) ||
     Boolean(sessionState?.activeToolName)
+  const isLean = useSessionStore(state => state.sessions.some(session => session.id === resolvedSessionId && session.agentProfile === 'lean'))
+  const branchActionsDisabled = isLean || isDirectAgentSession || turnInProgress || hasRunningBackgroundTasks
   const hasCompactingDivider = messages.some((message) =>
     message.type === 'compact_summary' && message.phase === 'compacting')
 
@@ -2479,6 +2730,8 @@ export function MessageList({
   }, [])
 
   const scrollToBottom = useCallback(() => {
+    restoringScrollAnchorRef.current = null
+    restoringBottomRef.current = true
     shouldAutoScrollRef.current = true
     isProgrammaticScrollingRef.current = true
     ignoreProgrammaticScrollUntilRef.current = performance.now() + 250
@@ -2541,20 +2794,35 @@ export function MessageList({
     })
   }, [resolvedSessionId])
 
+  const releaseBottomRestoration = useCallback(() => {
+    restoringBottomRef.current = false
+    // A reader action can arrive between ResizeObserver and its queued frame.
+    // Cancel only idle restoration; live output keeps its existing follow rules.
+    if (!shouldFollowContentResize && liveFollowFrameRef.current !== null) {
+      cancelAnimationFrame(liveFollowFrameRef.current)
+      liveFollowFrameRef.current = null
+    }
+  }, [shouldFollowContentResize])
+
   const flushMeasuredHeightVersion = useCallback(() => {
     setMeasuredItemsVersion((version) => version + 1)
   }, [])
 
   const handleVirtualItemHeightChange = useCallback((itemKey: string, height: number, initial = false) => {
     const measuredHeight = clampNumber(height, VIRTUAL_MIN_ITEM_HEIGHT, VIRTUAL_MAX_ITEM_HEIGHT)
-    const previousHeight = virtualItemHeightsRef.current.get(itemKey)
+    const previousHeight = virtualItemHeights.get(itemKey)
     if (
       previousHeight !== undefined &&
       Math.abs(previousHeight - measuredHeight) <= RESIZE_OBSERVER_JITTER_MAX_DELTA_PX
     ) return
 
-    virtualItemHeightsRef.current.set(itemKey, measuredHeight)
-    if (hasPendingPermissionCard && shouldAutoScrollRef.current) {
+    virtualItemHeights.set(itemKey, measuredHeight)
+    // A row changing height while the reader follows the tail moves the bottom.
+    // Re-pin whatever caused it (a permission card, a reloaded transcript
+    // measuring in after the reply, a tool result settling), not only live
+    // output: content-resize follow is otherwise off in idle reading sessions.
+    // Growth the reader just asked for by opening a block stays theirs (#1177).
+    if (shouldAutoScrollRef.current && performance.now() >= disclosureLayoutUntilRef.current) {
       requestLiveFollow()
     }
 
@@ -2562,13 +2830,19 @@ export function MessageList({
     // offsets and restore the reading anchor in the same frame as the new height.
     if (initial) flushMeasuredHeightVersion()
     else flushSync(flushMeasuredHeightVersion)
-  }, [flushMeasuredHeightVersion, hasPendingPermissionCard, requestLiveFollow])
+  }, [flushMeasuredHeightVersion, requestLiveFollow, virtualItemHeights])
 
   const updateAutoScrollState = useCallback(() => {
     // Ignore scroll events triggered by our own programmatic scrolling to
     // prevent the jump-to-latest button from flickering during auto-scroll.
     const container = scrollContainerRef.current
     if (!container) return
+    if (restoringScrollAnchorRef.current) {
+      // Native anchoring/scroll clamping can emit scroll during remeasurement.
+      // Only an explicit reader action ends restoration, not a timer or resize.
+      syncVirtualViewportFromContainer(container)
+      return
+    }
     const matchesProgrammaticScrollTop =
       ignoreProgrammaticScrollTopRef.current !== null &&
       Math.abs(container.scrollTop - ignoreProgrammaticScrollTopRef.current) < 1
@@ -2587,12 +2861,13 @@ export function MessageList({
     }
     syncVirtualViewportFromContainer(container)
     const isAtBottom = isNearScrollBottom(container)
-    const isPermissionLayoutShift =
-      hasPendingPermissionCard &&
+    const isFollowingLayoutShift =
       shouldAutoScrollRef.current &&
       !isAtBottom &&
-      performance.now() >= userScrollIntentUntilRef.current
-    if (isPermissionLayoutShift) return
+      (restoringBottomRef.current || (
+        hasPendingPermissionCard && performance.now() >= userScrollIntentUntilRef.current
+      ))
+    if (isFollowingLayoutShift) return
 
     shouldAutoScrollRef.current = isAtBottom
     setIsAwayFromLatest(!isAtBottom)
@@ -2618,6 +2893,8 @@ export function MessageList({
     const target = event.target
     if (!(target instanceof Element) || !target.closest(CHAT_DISCLOSURE_SELECTOR)) return
 
+    releaseBottomRestoration()
+    restoringScrollAnchorRef.current = null
     disclosureLayoutUntilRef.current = performance.now() + DISCLOSURE_FOLLOW_SUPPRESS_MS
 
     // Suppression only covers the resize frame. Once the block is open the
@@ -2635,11 +2912,13 @@ export function MessageList({
       setIsAwayFromLatest(!atBottom)
       syncVirtualViewportFromContainer(container)
     })
-  }, [syncVirtualViewportFromContainer])
+  }, [releaseBottomRestoration, syncVirtualViewportFromContainer])
 
   const markUserScrollIntent = useCallback(() => {
+    releaseBottomRestoration()
+    restoringScrollAnchorRef.current = null
     userScrollIntentUntilRef.current = performance.now() + USER_SCROLL_INTENT_WINDOW_MS
-  }, [])
+  }, [releaseBottomRestoration])
 
   const handleWheelScrollIntent = useCallback((event: { deltaY: number }) => {
     markUserScrollIntent()
@@ -2672,15 +2951,12 @@ export function MessageList({
   useLayoutEffect(() => {
     if (lastSessionIdRef.current !== resolvedSessionId) {
       const snapshot = resolvedSessionId ? sessionScrollSnapshots.get(resolvedSessionId) : undefined
+      restoringScrollAnchorRef.current = snapshot?.wasAtBottom ? null : snapshot?.anchor ?? null
       shouldAutoScrollRef.current = snapshot?.wasAtBottom ?? true
+      restoringBottomRef.current = shouldAutoScrollRef.current
       lastSessionIdRef.current = resolvedSessionId
       setProgrammaticNavigationItemId(null)
-      virtualItemHeightsRef.current = resolvedSessionId
-        ? getHeightsForSession(resolvedSessionId, appearanceSignature)
-        : new Map<string, number>()
-      virtualItemMetricCacheRef.current = resolvedSessionId
-        ? getMetricsForSession(resolvedSessionId)
-        : new Map<string, VirtualRenderItemMetric>()
+      if (resolvedSessionId) getHeightsForSession(resolvedSessionId, appearanceSignature)
       lastContentResizeFollowHeightRef.current = null
       if (liveFollowFrameRef.current !== null) {
         cancelAnimationFrame(liveFollowFrameRef.current)
@@ -2690,9 +2966,11 @@ export function MessageList({
 
       const container = scrollContainerRef.current
       if (container && snapshot && !snapshot.wasAtBottom) {
-        ignoreProgrammaticScrollUntilRef.current = performance.now() + 250
-        ignoreProgrammaticScrollTopRef.current = snapshot.scrollTop
-        setScrollTopWithoutLayoutRead(container, snapshot.scrollTop)
+        if (!snapshot.anchor) {
+          ignoreProgrammaticScrollUntilRef.current = performance.now() + 250
+          ignoreProgrammaticScrollTopRef.current = snapshot.scrollTop
+          setScrollTopWithoutLayoutRead(container, snapshot.scrollTop)
+        }
         setVirtualViewport((current) => ({
           scrollTop: snapshot.scrollTop,
           viewportHeight: container.clientHeight || current.viewportHeight || VIRTUAL_DEFAULT_VIEWPORT_HEIGHT,
@@ -2791,7 +3069,16 @@ export function MessageList({
         }
         lastContentResizeFollowHeightRef.current = nextHeight
       }
-      if (!shouldFollowContentResize) return
+      if (restoringScrollAnchorRef.current) {
+        // Non-virtual rows can settle after the switch's layout effect too.
+        // Reapply the saved reading anchor before paint, as measured rows do.
+        flushSync(flushMeasuredHeightVersion)
+        return
+      }
+      // Short lists have no measured-row callback. Keep a restored tail pinned
+      // through late layout, until the reader interacts with the transcript.
+      // Idle disclosures can fetch more content long after their click frame.
+      if (!shouldFollowContentResize && !restoringBottomRef.current) return
       if (!shouldAutoScrollRef.current) return
       // The reader just opened something: the growth is theirs, not the model's.
       if (performance.now() < disclosureLayoutUntilRef.current) return
@@ -2800,7 +3087,7 @@ export function MessageList({
     observer.observe(content)
 
     return () => observer.disconnect()
-  }, [requestLiveFollow, shouldFollowContentResize])
+  }, [flushMeasuredHeightVersion, requestLiveFollow, shouldFollowContentResize])
 
   // Touch-H5 only: the visual-viewport fit (touchH5.ts) shrinks the scroll
   // container when the soft keyboard opens. If the user was reading the tail,
@@ -2876,6 +3163,9 @@ export function MessageList({
     () => buildChangedFilesByRenderIndex(renderItems, turnChangeCards),
     [renderItems, turnChangeCards],
   )
+  // No checkpoint is coming for this view; the disk alone has to vouch for outputs.
+  // While one is still loading, nothing unproven is shown instead.
+  const turnEvidenceUnavailable = isDirectAgentSession || turnChangeLoadError !== null || workspaceChangesFallback !== null
   const turnOutputOwnerIndexes = useMemo(
     () => buildTurnOutputOwnerIndexes(renderItems, turnChangeCards),
     [renderItems, turnChangeCards],
@@ -2925,7 +3215,7 @@ export function MessageList({
     () => renderItems.map((item, index) => {
       const key = renderItemKeys[index]!
       const signature = getRenderItemMetricSignature(item)
-      const cached = virtualItemMetricCacheRef.current.get(key)
+      const cached = virtualItemMetricCache.get(key)
       if (cached?.signature === signature) return cached
 
       const metric = {
@@ -2933,11 +3223,49 @@ export function MessageList({
         contentWeight: getRenderItemContentWeight(item),
         estimatedHeight: estimateRenderItemHeight(item),
       }
-      virtualItemMetricCacheRef.current.set(key, metric)
+      virtualItemMetricCache.set(key, metric)
       return metric
     }),
-    [renderItemKeys, renderItems],
+    [renderItemKeys, renderItems, virtualItemMetricCache],
   )
+  // Compare against the last committed list, so an interrupted render cannot
+  // become the source of measured geometry for a later history reload.
+  const previousRenderItemsRef = useRef<{
+    sessionId: string | null | undefined
+    keys: string[]
+    items: RenderItem[]
+  }>({ sessionId: resolvedSessionId, keys: [], items: [] })
+  useMemo(() => {
+    const previous = previousRenderItemsRef.current
+    if (previous.sessionId !== resolvedSessionId || haveSameRenderItemKeys(previous.keys, renderItemKeys)) return
+    carryMeasuredHeightsToRenamedItems(
+      virtualItemHeights,
+      previous.keys,
+      previous.items.map(getRenderItemReloadSignature),
+      renderItemKeys,
+      renderItems.map(getRenderItemReloadSignature),
+    )
+  }, [renderItemKeys, renderItems, resolvedSessionId, virtualItemHeights])
+  useLayoutEffect(() => {
+    previousRenderItemsRef.current = { sessionId: resolvedSessionId, keys: renderItemKeys, items: renderItems }
+  }, [renderItemKeys, renderItems, resolvedSessionId])
+  // A history reload or checkpoint refresh after a reply rewrites the rows while
+  // the chat is idle, where neither the streaming follow nor the message-count
+  // follow runs. A reader who was at the bottom stays there.
+  const lastFollowedRenderItemKeysRef = useRef<{
+    sessionId: string | null | undefined
+    keys: string[]
+  }>({ sessionId: resolvedSessionId, keys: renderItemKeys })
+  useEffect(() => {
+    const previous = lastFollowedRenderItemKeysRef.current
+    lastFollowedRenderItemKeysRef.current = { sessionId: resolvedSessionId, keys: renderItemKeys }
+    // Same rows under the same keys (a streaming delta, a status tick) are
+    // followed by the live paths above; only rows added, removed or renamed
+    // need this one.
+    if (previous.sessionId !== resolvedSessionId || haveSameRenderItemKeys(previous.keys, renderItemKeys)) return
+    if (!shouldAutoScrollRef.current) return
+    requestLiveFollow()
+  }, [renderItemKeys, requestLiveFollow, resolvedSessionId])
   const conversationNavigationItems = useMemo(() => {
     const sources = renderItems.flatMap((item, renderIndex) => item.kind === 'message'
       ? [{
@@ -2949,17 +3277,47 @@ export function MessageList({
 
     return buildConversationNavigationItems(sources)
   }, [renderItems])
+  const scrollAnchor = lastSessionIdRef.current !== resolvedSessionId
+    ? (resolvedSessionId ? sessionScrollSnapshots.get(resolvedSessionId)?.anchor : null)
+    : restoringScrollAnchorRef.current
   const virtualTranscriptWindow = useMemo(
     () => buildVirtualTranscriptWindow(
       renderItems,
       renderItemKeys,
       renderItemMetrics,
-      virtualItemHeightsRef.current,
+      virtualItemHeights,
       virtualViewport,
       VIRTUAL_OVERSCAN_PX,
+      scrollAnchor,
     ),
-    [measuredItemsVersion, renderItemKeys, renderItemMetrics, renderItems, virtualViewport],
+    [measuredItemsVersion, renderItemKeys, renderItemMetrics, renderItems, scrollAnchor, virtualItemHeights, virtualViewport],
   )
+
+  useLayoutEffect(() => {
+    const anchor = restoringScrollAnchorRef.current
+    const container = scrollContainerRef.current
+    if (!container || !resolvedSessionId || container.clientHeight <= 0) return
+    if (!anchor) {
+      // A large scrollbar jump mounts a different window after its scroll event.
+      // Capture that committed DOM, not the old rows still mounted in onScroll.
+      if (!shouldAutoScrollRef.current) rememberSessionScroll(resolvedSessionId, container, false)
+      return
+    }
+    const row = [...container.querySelectorAll<HTMLElement>('[data-chat-render-item-key]')]
+      .find((node) => node.dataset.chatRenderItemKey === anchor.itemKey)
+    if (!row || row.getBoundingClientRect().height <= 0) return
+    const correction = row.getBoundingClientRect().top - container.getBoundingClientRect().top - anchor.offset
+    if (Math.abs(correction) >= 1) {
+      setScrollTopWithoutLayoutRead(container, container.scrollTop + correction)
+    }
+    ignoreProgrammaticScrollTopRef.current = container.scrollTop
+    // Do not enqueue a layout update on an already aligned render. The render
+    // model can refresh without a geometry change (e.g. checkpoint hydration).
+    if (Math.abs(virtualViewport.scrollTop - container.scrollTop) >= 1 || virtualViewport.viewportHeight !== container.clientHeight) {
+      syncVirtualViewportFromContainer(container)
+    }
+    sessionScrollSnapshots.set(resolvedSessionId, { scrollTop: container.scrollTop, wasAtBottom: false, anchor })
+  }, [measuredItemsVersion, resolvedSessionId, syncVirtualViewportFromContainer, virtualTranscriptWindow, virtualViewport])
 
   useLayoutEffect(() => {
     if (previousAppearanceSignature.current === appearanceSignature) return
@@ -2975,12 +3333,12 @@ export function MessageList({
     const oldScrollTop = virtualViewport.scrollTop
     let anchorIndex = 0
     while (anchorIndex + 1 < renderItemKeys.length && oldOffsets[anchorIndex + 1]! <= oldScrollTop) anchorIndex += 1
-    virtualItemHeightsRef.current.clear()
+    virtualItemHeights.clear()
     for (const node of container.querySelectorAll<HTMLElement>('[data-virtual-message-item]')) {
       const height = node.getBoundingClientRect().height
-      if (height > 0) virtualItemHeightsRef.current.set(node.dataset.virtualMessageItem!, clampNumber(height, VIRTUAL_MIN_ITEM_HEIGHT, VIRTUAL_MAX_ITEM_HEIGHT))
+      if (height > 0) virtualItemHeights.set(node.dataset.virtualMessageItem!, clampNumber(height, VIRTUAL_MIN_ITEM_HEIGHT, VIRTUAL_MAX_ITEM_HEIGHT))
     }
-    const offsets = buildVirtualItemOffsets(renderItemKeys, renderItemMetrics, virtualItemHeightsRef.current)
+    const offsets = buildVirtualItemOffsets(renderItemKeys, renderItemMetrics, virtualItemHeights)
     const intraRowOffset = Math.max(0, oldScrollTop - (oldOffsets[anchorIndex] ?? 0))
     const rowHeight = (offsets[anchorIndex + 1] ?? 0) - (offsets[anchorIndex] ?? 0)
     const nextScrollTop = shouldAutoScrollRef.current
@@ -2991,7 +3349,7 @@ export function MessageList({
     pendingAppearanceScrollTop.current = nextScrollTop
     setVirtualViewport((current) => ({ ...current, scrollTop: nextScrollTop }))
     setMeasuredItemsVersion((version) => version + 1)
-  }, [appearanceSignature, renderItemKeys, renderItemMetrics, resolvedSessionId, virtualTranscriptWindow, virtualViewport.scrollTop])
+  }, [appearanceSignature, renderItemKeys, renderItemMetrics, resolvedSessionId, virtualItemHeights, virtualTranscriptWindow, virtualViewport.scrollTop])
 
   useLayoutEffect(() => {
     const target = pendingAppearanceScrollTop.current
@@ -3026,21 +3384,25 @@ export function MessageList({
     !mobileLayout &&
     !isTouchH5Document() &&
     conversationNavigationItems.length >= CONVERSATION_NAVIGATION_MIN_ITEMS
-  const chatScrollPaddingClass = compact
-    ? showConversationNavigator && conversationNavigationMode === 'full'
-      ? 'pb-5 px-20 py-3'
-      : showConversationNavigator && conversationNavigationMode === 'compact'
-        ? 'pb-5 px-12 py-3'
-        : showConversationNavigator && conversationNavigationMode === 'edge'
-          ? 'pb-5 px-7 py-3'
-          : 'px-3 py-3 pb-5'
-    : showConversationNavigator && conversationNavigationMode === 'full'
-      ? 'px-20 py-4'
-      : showConversationNavigator && conversationNavigationMode === 'compact'
-        ? 'px-12 py-4'
-        : showConversationNavigator && conversationNavigationMode === 'edge'
-          ? 'px-7 py-4'
-          : 'px-4 py-4'
+  // Match the composer/header gutters when no navigation rail is present.
+  // The navigator deliberately reserves extra room outside the reading column.
+  const chatScrollPaddingClass = mobileLayout
+    ? 'px-3 py-4'
+    : compact
+      ? showConversationNavigator && conversationNavigationMode === 'full'
+        ? 'pb-5 px-20 py-3'
+        : showConversationNavigator && conversationNavigationMode === 'compact'
+          ? 'pb-5 px-12 py-3'
+          : showConversationNavigator && conversationNavigationMode === 'edge'
+            ? 'pb-5 px-7 py-3'
+            : 'px-4 py-3 pb-5'
+      : showConversationNavigator && conversationNavigationMode === 'full'
+        ? 'px-20 py-4'
+        : showConversationNavigator && conversationNavigationMode === 'compact'
+          ? 'px-12 py-4'
+          : showConversationNavigator && conversationNavigationMode === 'edge'
+            ? 'px-7 py-4'
+            : 'px-6 py-4'
   const confirmTurnCard = useMemo(
     () => visibleTurnChangeCards.find((card) => card.target.messageId === turnUndoConfirmTargetId) ?? null,
     [turnUndoConfirmTargetId, visibleTurnChangeCards],
@@ -3075,19 +3437,19 @@ export function MessageList({
   useEffect(() => {
     const liveKeys = new Set(renderItemKeys)
     let removed = false
-    for (const key of virtualItemHeightsRef.current.keys()) {
+    for (const key of virtualItemHeights.keys()) {
       if (!liveKeys.has(key)) {
-        virtualItemHeightsRef.current.delete(key)
+        virtualItemHeights.delete(key)
         removed = true
       }
     }
-    for (const key of virtualItemMetricCacheRef.current.keys()) {
+    for (const key of virtualItemMetricCache.keys()) {
       if (!liveKeys.has(key)) {
-        virtualItemMetricCacheRef.current.delete(key)
+        virtualItemMetricCache.delete(key)
       }
     }
     if (removed) setMeasuredItemsVersion((version) => version + 1)
-  }, [renderItemKeys])
+  }, [renderItemKeys, virtualItemHeights, virtualItemMetricCache])
 
   useEffect(() => {
     if (!resolvedSessionId || !checkpointHistoryReady || completedTurnTargets.length === 0 || isDirectAgentSession) {
@@ -3194,45 +3556,17 @@ export function MessageList({
     })
 
     try {
-      if (chatState !== 'idle') {
-        stopGeneration(resolvedSessionId)
-      }
-
-      const checkpointTarget = confirmTurnCard.checkpoint.target
-      const result = await sessionsApi.rewind(resolvedSessionId, {
-        targetUserMessageId: checkpointTarget.targetUserMessageId,
-        userMessageIndex: checkpointTarget.userMessageIndex,
+      const result = await rewindToTurnCheckpoint(resolvedSessionId, {
+        checkpointTarget: confirmTurnCard.checkpoint.target,
         expectedContent: target.expectedContent,
-        mode,
-      })
-
-      useWorkspaceStore.getState().pruneTurnReviewTabs(resolvedSessionId, checkpointTarget.userMessageIndex)
-      useWorkspaceReviewStore.getState().clearTurnReviews(resolvedSessionId, checkpointTarget.userMessageIndex)
+      }, mode)
 
       await reloadHistory(resolvedSessionId)
       queueComposerPrefill(resolvedSessionId, {
         text: target.content,
         attachments: target.attachments,
       })
-
-      // Each branch has to match what actually happened on disk: nothing was
-      // restored in conversation mode, and in `both` mode a turn that also wrote
-      // off-checkpoint left changes behind. A plain success would overstate both.
-      const messageCount = result.conversation.messagesRemoved
-      const leftBehind = mode === 'both' ? result.unverifiedChangeSources ?? [] : []
-      addToast({
-        type: leftBehind.length > 0 ? 'warning' : 'success',
-        message: mode === 'conversation'
-          ? t('chat.rewindSuccessConversationOnly', { count: messageCount })
-          : leftBehind.length > 0
-            ? t('chat.rewindSuccessPartialCoverage', {
-                count: messageCount,
-                sources: leftBehind.join(', '),
-              })
-            : result.code.available
-              ? t('chat.rewindSuccessWithCode', { count: messageCount })
-              : t('chat.rewindSuccessConversationOnly', { count: messageCount }),
-      })
+      addToast(describeRewindResult(result, mode, t))
 
       setTurnUndoConfirmTargetId(null)
     } catch (error) {
@@ -3246,14 +3580,12 @@ export function MessageList({
     }
   }, [
     addToast,
-    chatState,
     confirmTurnCard,
     hasRunningBackgroundTasks,
     queueComposerPrefill,
     reloadHistory,
     resolvedSessionId,
     rewindingTurnId,
-    stopGeneration,
     t,
   ])
 
@@ -3325,6 +3657,83 @@ export function MessageList({
     return result
   }, [branchableMessageTargets, branchingMessageId, handleBranchMessage, t])
 
+  const completedTurnMessageIds = useMemo(
+    () => new Set(completedTurnTargets.map((target) => target.messageId)),
+    [completedTurnTargets],
+  )
+  const unansweredTurnTargets = useMemo(
+    () => getUnansweredTurnTargets(deferredMessages),
+    [deferredMessages],
+  )
+  const checkpointPreviewOverBudget = workspaceChangesFallback !== null &&
+    workspaceChangesFallback.sessionId === resolvedSessionId
+  // Past the preview budget the server lists no checkpoints at all, but one
+  // rewind still resolves a prompt by its transcript id, so those prompts stay
+  // editable. This mode tells the user file undo is unavailable, so the edit
+  // rolls back the conversation only.
+  const completedEditCards = useMemo<EditableTurnCard[]>(
+    () => checkpointPreviewOverBudget
+      ? completedTurnTargets.flatMap((target) => target.transcriptMessageId
+        ? [{
+            target: { messageId: target.messageId, expectedContent: target.expectedContent },
+            checkpoint: {
+              target: { targetUserMessageId: target.transcriptMessageId, userMessageIndex: target.userMessageIndex },
+            },
+            conversationOnly: true,
+          }]
+        : [])
+      : visibleTurnChangeCards,
+    [checkpointPreviewOverBudget, completedTurnTargets, visibleTurnChangeCards],
+  )
+  // A prompt stopped before any reply has no checkpoint but nothing to restore
+  // either, so it rewinds the conversation only. One the CLI never
+  // acknowledged is not in the transcript at all: it is dropped locally.
+  // The prompt still being answered is not a stopped one.
+  const unansweredEditCards = useMemo<EditableTurnCard[]>(
+    () => unansweredTurnTargets.flatMap<EditableTurnCard>(({ target, latest }) => {
+      if (latest && turnInProgress) return []
+      const cardTarget = { messageId: target.messageId, expectedContent: target.expectedContent }
+      if (target.transcriptMessageId) {
+        return [{
+          target: cardTarget,
+          checkpoint: {
+            target: { targetUserMessageId: target.transcriptMessageId, userMessageIndex: target.userMessageIndex },
+          },
+          conversationOnly: true,
+        }]
+      }
+      return latest && target.awaitingReplay ? [{ target: cardTarget, unconfirmed: true as const }] : []
+    }),
+    [turnInProgress, unansweredTurnTargets],
+  )
+  const editTurnCards = useMemo(
+    () => unansweredEditCards.length === 0 ? completedEditCards : [...completedEditCards, ...unansweredEditCards],
+    [completedEditCards, unansweredEditCards],
+  )
+  const editBlockedReason = turnInProgress
+    ? t('chat.editMessageWaitForTurn')
+    : hasRunningBackgroundTasks
+      ? t('chat.editMessageWaitForBackgroundTasks')
+      : null
+  const editPendingReason = !checkpointHistoryReady || isLoadingTurnChangeCards
+    ? t('chat.editMessageCheckingCheckpoints')
+    : turnChangeLoadError !== null
+      ? t('chat.editMessageCheckpointsUnavailable')
+      : null
+
+  const { editActionByMessageId, dialog: editResendDialog } = useUserMessageEditResend({
+    sessionId: resolvedSessionId,
+    messages,
+    turnCards: editTurnCards,
+    completedMessageIds: completedTurnMessageIds,
+    blockedReason: editBlockedReason,
+    pendingReason: editPendingReason,
+    disabled: isDirectAgentSession || isSideChatSession || Boolean(turnUndoConfirmTargetId),
+    rewindingTurnId,
+    setRewindingTurnId,
+    t,
+  })
+
   const toolResultByToolUseId = useMemo(() => {
     if (toolResultMap.size === 0) return new Map<string, { content: unknown; isError: boolean }>()
     const result = new Map<string, { content: unknown; isError: boolean }>()
@@ -3334,14 +3743,21 @@ export function MessageList({
     return result
   }, [toolResultMap])
 
-  const handleNavigateToConversationItem = useCallback((item: ConversationNavigationItem) => {
+  const handleNavigateToConversationItem = useCallback((
+    item: ConversationNavigationItem,
+    options: { toolUseId?: string } = {},
+  ) => {
     const container = scrollContainerRef.current
     if (!container) return
 
     const viewportHeight = container.clientHeight || virtualViewport.viewportHeight || VIRTUAL_DEFAULT_VIEWPORT_HEIGHT
+    restoringScrollAnchorRef.current = null
     userScrollIntentUntilRef.current = 0
     setProgrammaticNavigationItemId(item.id)
     setHighlightedNavigationItemKey(item.renderItemKey)
+    // A tool call inside the item: its group opens onto it and the call itself
+    // takes the highlight, since the item is mostly the rows around it.
+    setHighlightedNavigationToolUseId(options.toolUseId ?? null)
 
     const scheduleHighlightClear = () => {
       if (navigationHighlightTimerRef.current !== null) {
@@ -3374,10 +3790,22 @@ export function MessageList({
     }
     setVirtualViewport({ scrollTop: targetScrollTop, viewportHeight })
 
-    requestAnimationFrame(() => {
-      const targetNode = Array.from(
+    const alignTarget = (retriesLeft: number) => {
+      const itemNode = Array.from(
         scrollContentRef.current?.querySelectorAll<HTMLElement>('[data-chat-render-item-key]') ?? [],
       ).find((node) => node.dataset.chatRenderItemKey === item.renderItemKey)
+      // Align the call itself, not the top of a group that may be thousands of
+      // rows tall. The group opens in the render this navigation triggered, so
+      // give it one more frame if the row is not in the DOM yet.
+      const toolNode = options.toolUseId && itemNode
+        ? Array.from(itemNode.querySelectorAll<HTMLElement>('[data-tool-use-id]'))
+          .find((node) => node.dataset.toolUseId === options.toolUseId)
+        : undefined
+      if (options.toolUseId && itemNode && !toolNode && retriesLeft > 0) {
+        requestAnimationFrame(() => alignTarget(retriesLeft - 1))
+        return
+      }
+      const targetNode = toolNode ?? itemNode
 
       if (targetNode) {
         const targetRect = targetNode.getBoundingClientRect()
@@ -3392,7 +3820,8 @@ export function MessageList({
       }
 
       scheduleHighlightClear()
-    })
+    }
+    requestAnimationFrame(() => alignTarget(1))
   }, [
     syncVirtualViewportFromContainer,
     virtualTranscriptWindow.offsets,
@@ -3412,6 +3841,7 @@ export function MessageList({
       Math.max(0, virtualTranscriptWindow.totalHeight - viewportHeight),
     )
 
+    restoringScrollAnchorRef.current = null
     setActiveConversationFindMatch(match)
     shouldAutoScrollRef.current = false
     setIsAwayFromLatest(true)
@@ -3427,6 +3857,33 @@ export function MessageList({
   const conversationFindStreamingTextRef = useRef(streamingText)
   conversationFindStreamingTextRef.current = streamingText
   const conversationFindControllerRef = useRef<ConversationFindController | null>(null)
+
+  // "Locate in chat" from the trajectory view. The request arrives together
+  // with the switch back to chat, so wait two frames for the list to have real
+  // dimensions again before measuring offsets.
+  const trajectoryNav = useTrajectoryViewStore((state) => (
+    state.nav?.to === 'chat' && state.nav.sessionId === resolvedSessionId ? state.nav : null
+  ))
+  const consumeTrajectoryNav = useTrajectoryViewStore((state) => state.consumeNav)
+  const handleNavigateToConversationItemRef = useRef(handleNavigateToConversationItem)
+  handleNavigateToConversationItemRef.current = handleNavigateToConversationItem
+  useEffect(() => {
+    if (trajectoryNav?.to !== 'chat') return
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        consumeTrajectoryNav(trajectoryNav.nonce)
+        const items = conversationFindRenderItemsRef.current
+        const { index, toolUseId } = findChatRenderTarget(items, trajectoryNav.target)
+        if (index < 0) return
+        const key = getRenderItemKey(items[index]!)
+        handleNavigateToConversationItemRef.current(
+          { id: key, renderItemKey: key, renderIndex: index, turnNumber: 0, preview: '', attachmentCount: 0 },
+          { toolUseId },
+        )
+      })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [consumeTrajectoryNav, trajectoryNav])
 
   useEffect(() => {
     if (!resolvedSessionId || resolvedSessionId !== activeTabId) return
@@ -3501,6 +3958,7 @@ export function MessageList({
     const container = scrollContainerRef.current
     const content = scrollContentRef.current
     if (!container || !content || !resolvedSessionId) return
+    restoringScrollAnchorRef.current = null
 
     const renderItem = [...content.querySelectorAll<HTMLElement>('[data-chat-render-item-key]')]
       .find((node) => node.dataset.chatRenderItemKey === origin.sourceTurnKey)
@@ -3576,6 +4034,13 @@ export function MessageList({
   }, [isWorkspacePanelOpen, resolvedSessionId, restoreWorkspaceOrigin, workspacePanelOrigin])
 
 
+  /** Only the item a jump landed on hears about it, so other memoized items keep their props. */
+  const navigationToolUseIdFor = (item: RenderItem): string | undefined => (
+    highlightedNavigationToolUseId !== null && highlightedNavigationItemKey === getRenderItemKey(item)
+      ? highlightedNavigationToolUseId
+      : undefined
+  )
+
   const renderTranscriptItem = (item: RenderItem, index: number) => {
     const cardsForItem = turnCardsByRenderIndex.get(index) ?? []
 
@@ -3604,6 +4069,8 @@ export function MessageList({
               // whether a run stands open.
               isLive={chatState !== 'idle' && index === renderItems.length - 1 && !hasTrailingStreamingItem}
               disclosureKey={getRenderItemKey(item)}
+              revealToolUseId={navigationToolUseIdFor(item)}
+              activityPresentation={mobileLayout ? 'sheet' : 'inline'}
             />
           ) : item.kind === 'team_card' ? (
             resolvedSessionId ? (() => {
@@ -3613,12 +4080,18 @@ export function MessageList({
                 window.endedAt !== undefined &&
                 item.startedAt <= window.endedAt
               )) ? 'completed' : 'forming'
+              // An ended team's tasks say how it ended. Without its record, a
+              // team its lead deleted is taken as done, and one the host
+              // removed (a cancelled or ended plan) only as ended.
+              const ended = cardSnapshot ? endedPhase(cardSnapshot) : item.deletedByLead ? 'completed' : 'ended'
               return (
               <AgentTeamsInlineCard
                 snapshot={cardSnapshot}
                 teamName={item.teamName}
                 fallbackPhase={fallbackPhase}
-                phaseOverride={item.endedAt !== undefined ? 'completed' : undefined}
+                phaseOverride={item.endedAt !== undefined
+                  ? ended
+                  : cardSnapshot && !cardSnapshot.deletedAt && cardSnapshot.team.name === interruptedTeamName ? 'interrupted' : undefined}
                 onOpen={cardSnapshot
                   ? () => openTeamWorkbench(resolvedSessionId, cardSnapshot.team.name)
                   : undefined}
@@ -3640,10 +4113,17 @@ export function MessageList({
                   : null
               }
               branchAction={branchActionByMessageId.get(item.message.id)}
-              turnChangedFiles={changedFilesByRenderIndex.get(index)}
+              editAction={editActionByMessageId.get(item.message.id)}
+              turnChangedFiles={changedFilesByRenderIndex.get(index)?.changedFiles}
+              turnOutputEvidence={changedFilesByRenderIndex.get(index) ?? (turnEvidenceUnavailable ? UNKNOWN_TURN_OUTPUT_EVIDENCE : undefined)}
               isTurnOutputOwner={turnOutputOwnerIndexes.has(index)}
               turnCompletion={turnCompletionByMessageId.get(item.message.id)}
               supersededAskUserQuestionIds={supersededAskUserQuestionIds}
+              decisionsInComposer={decisionsInComposer}
+              navigationHighlighted={
+                item.message.type === 'tool_use' &&
+                navigationToolUseIdFor(item) === item.message.toolUseId
+              }
             />
           )}
         </RenderItemBoundary>
@@ -3700,6 +4180,15 @@ export function MessageList({
   }
 
   return (
+    <ScrollSnapshotBoundary sessionId={resolvedSessionId} onLeave={() => {
+      const container = scrollContainerRef.current
+      if (resolvedSessionId && container && container.clientHeight > 0) {
+        rememberSessionScroll(resolvedSessionId, container, shouldAutoScrollRef.current)
+      }
+    }}>
+    <ConversationImageGalleryContext.Provider
+      value={getConversationImages}
+    >
     <div ref={messageListRef} data-testid="message-list" className="relative min-h-0 flex-1">
       <div
         ref={scrollContainerRef}
@@ -3711,10 +4200,17 @@ export function MessageList({
         onWheel={handleWheelScrollIntent}
         onPointerDown={markUserScrollIntent}
         onTouchStart={markUserScrollIntent}
+        onFocusCapture={markUserScrollIntent}
         onKeyDown={handleKeyDownScrollIntent}
         className={`${CHAT_SCROLL_AREA_CLASS} h-full overflow-y-auto ${chatScrollPaddingClass}`}
       >
         <div
+          // A malformed/replayed history can contain duplicate row identities.
+          // React can leave those rows outside its tracked child list; replace
+          // the transcript as a unit on session changes so none can follow the
+          // user into another session. Keep the scroller outside this boundary
+          // so its outgoing scroll snapshot is still captured before the swap.
+          key={resolvedSessionId}
           ref={scrollContentRef}
           // The reading measure holds whether or not a right-hand panel is
           // open — `compact` only tightens padding. Dropping to `max-w-full`
@@ -3749,6 +4245,9 @@ export function MessageList({
             const mountKey = groupMountKeys.keys.get(itemKey) ?? itemKey
             const content = renderTranscriptItem(item, index)
             const railPosition = turnRailPositions[index] ?? 'none'
+            // The prompt editor opens its slash and @ menus upward, past the
+            // row's own box; paint containment would cut them off.
+            const paintContained = !(item.kind === 'message' && editActionByMessageId.get(item.message.id)?.editing)
 
             return virtualTranscriptWindow.enabled ? (
               <MeasuredRenderItem
@@ -3765,7 +4264,7 @@ export function MessageList({
                 key={mountKey}
                 data-chat-render-item-key={itemKey}
                 data-turn-rail={railPosition}
-                className={`${CHAT_RENDER_ITEM_CLASS} chat-render-item--cv ${turnRailClass(railPosition)} ${highlightedNavigationItemKey === itemKey ? 'chat-render-item--navigation-target' : ''}`}
+                className={`${CHAT_RENDER_ITEM_CLASS} ${paintContained ? 'chat-render-item--cv ' : ''}${turnRailClass(railPosition)} ${highlightedNavigationItemKey === itemKey ? 'chat-render-item--navigation-target' : ''}`}
               >
                 {content}
               </div>
@@ -3806,7 +4305,7 @@ export function MessageList({
           )}
 
           {!isLoadingTurnChangeCards && visibleTurnChangeCards.length === 0 && turnChangeLoadError && (
-            <div className="mx-auto mb-5 w-full max-w-[var(--chat-content-max-width)] rounded-[var(--radius-lg)] border border-[var(--color-error)] bg-[var(--color-error-container)] px-4 py-3 text-xs text-[var(--color-on-error-container)]">
+            <div className="mx-auto mb-5 w-full max-w-[var(--chat-content-max-width)] rounded-[var(--radius-md)] bg-[var(--color-error-container)] px-3.5 py-2.5 text-xs text-[var(--color-on-error-container)]">
               {turnChangeLoadError}
             </div>
           )}
@@ -3842,7 +4341,7 @@ export function MessageList({
           aria-label={t('chat.jumpToLatest')}
           // `glass-panel` is unlayered CSS, so it wins over the variant's
           // layered background/border utilities without a tailwind-merge.
-          className="glass-panel absolute bottom-4 right-5 z-20 rounded-full text-[13.5px] font-medium hover:-translate-y-px motion-reduce:hover:translate-y-0"
+          className="glass-panel absolute bottom-4 right-5 z-20 rounded-full text-[13px] font-medium hover:-translate-y-px motion-reduce:hover:translate-y-0"
           icon={<ArrowDown size={15} aria-hidden="true" />}
         >
           {t('chat.jumpToLatest')}
@@ -3864,7 +4363,18 @@ export function MessageList({
         width={520}
         loading={Boolean(rewindingTurnId)}
       />
+      <ActionDialog
+        open={editResendDialog.open}
+        onClose={editResendDialog.onClose}
+        title={editResendDialog.title}
+        body={editResendDialog.body}
+        actions={editResendDialog.actions}
+        width={520}
+        loading={editResendDialog.loading}
+      />
     </div>
+    </ConversationImageGalleryContext.Provider>
+    </ScrollSnapshotBoundary>
   )
 }
 
@@ -3876,10 +4386,14 @@ export const MessageBlock = memo(function MessageBlock({
   agentTaskNotifications,
   toolResult,
   branchAction,
+  editAction,
   turnChangedFiles,
+  turnOutputEvidence,
   isTurnOutputOwner,
   turnCompletion,
   supersededAskUserQuestionIds,
+  decisionsInComposer = false,
+  navigationHighlighted = false,
 }: {
   sessionId?: string | null
   message: UIMessage
@@ -3892,10 +4406,15 @@ export const MessageBlock = memo(function MessageBlock({
     loading?: boolean
     onBranch: () => void
   }
+  editAction?: UserMessageEditAction
   turnChangedFiles?: string[]
+  turnOutputEvidence?: TurnOutputEvidence
   isTurnOutputOwner?: boolean
   turnCompletion?: TurnCompletion
   supersededAskUserQuestionIds?: ReadonlySet<string>
+  decisionsInComposer?: boolean
+  /** A "locate in chat" jump landed on this tool call. */
+  navigationHighlighted?: boolean
 }) {
   const t = useTranslation()
   const teammateVisual = message.type === 'user_text' && message.teammateFrom && team
@@ -3913,6 +4432,7 @@ export const MessageBlock = memo(function MessageBlock({
 
   switch (message.type) {
     case 'user_text':
+      if (message.scheduledTask) return <ScheduledTaskTrigger trigger={message.scheduledTask} />
       return (
         <SelectableChatMessage
           sessionId={sessionId}
@@ -3922,10 +4442,12 @@ export const MessageBlock = memo(function MessageBlock({
         >
           <UserMessage
             content={message.content}
+            modelContent={message.modelContent}
             attachments={message.attachments}
             sessionReferences={message.sessionReferences}
             collaboration={message.collaboration}
             branchAction={branchAction}
+            editAction={editAction}
             timestamp={message.timestamp}
             sessionId={sessionId ?? undefined}
             teammateFrom={message.teammateFrom}
@@ -3948,16 +4470,22 @@ export const MessageBlock = memo(function MessageBlock({
             branchAction={branchAction}
             sessionId={sessionId ?? undefined}
             turnChangedFiles={turnChangedFiles}
+            turnOutputEvidence={turnOutputEvidence}
             isTurnOutputOwner={isTurnOutputOwner}
             turnCompletion={turnCompletion}
           />
+          {isCliApiErrorText(message.content) && (
+            <MagpieConnectionHint sessionId={sessionId} errorText={message.content} />
+          )}
         </SelectableChatMessage>
       )
     case 'thinking':
       // No wrapper padding: the row's own `-mx-2 … px-2` already lands its text
       // on the column's left edge, the same as one inside a run.
       return <ThinkingBlock content={message.content} isActive={message.id === activeThinkingId} disclosureKey={message.id} />
-    case 'tool_use':
+    case 'tool_use': {
+      const scheduledResult = toolResult && parseScheduledTaskResult(message.toolName, toolResult.content, toolResult.isError)
+      if (scheduledResult) return <ScheduledTaskCard result={scheduledResult} />
       if (message.toolName === 'AskUserQuestion' && !message.isPending) {
         return (
           <AskUserQuestion
@@ -3966,6 +4494,7 @@ export const MessageBlock = memo(function MessageBlock({
             input={message.input}
             result={toolResult?.content}
             supersededByUserMessage={supersededAskUserQuestionIds?.has(message.toolUseId)}
+            markerWhenPending={decisionsInComposer}
           />
         )
       }
@@ -3983,6 +4512,8 @@ export const MessageBlock = memo(function MessageBlock({
           status={message.status}
           partialInput={message.partialInput}
           disclosureKey={message.toolUseId}
+          toolUseId={message.parentToolUseId ? undefined : message.toolUseId}
+          navigationHighlighted={navigationHighlighted}
           agentTaskNotification={
             message.toolName === 'Agent'
               ? agentTaskNotifications[message.toolUseId]
@@ -3990,6 +4521,7 @@ export const MessageBlock = memo(function MessageBlock({
           }
         />
       )
+    }
     case 'tool_result':
       return (
         <ToolResultBlock
@@ -4008,6 +4540,7 @@ export const MessageBlock = memo(function MessageBlock({
           input={message.input}
           description={message.description}
           displayName={message.displayName}
+          markerWhenPending={decisionsInComposer}
         />
       )
     case 'error': {
@@ -4024,18 +4557,20 @@ export const MessageBlock = memo(function MessageBlock({
             ? errorText
             : message.message
       const showRawDetail =
-        !message.businessErrorCode &&
+        (!message.businessErrorCode ||
+          BUSINESS_ERRORS_WITH_RAW_DETAIL.has(message.businessErrorCode)) &&
         Boolean(message.message) &&
         message.message.trim() !== '' &&
         message.message !== displayMessage
       return (
-        <div className="mb-3 px-4 py-2.5 rounded-[var(--radius-lg)] border border-[var(--color-error)] bg-[var(--color-error-container)] text-sm text-[var(--color-on-error-container)]">
+        <div className="mb-3 rounded-[var(--radius-md)] bg-[var(--color-error-container)] px-3.5 py-2.5 text-[13px] text-[var(--color-on-error-container)]">
           <strong>{t('common.error')}:</strong> {displayMessage}
           {showRawDetail && (
             <div className="mt-1 whitespace-pre-wrap text-xs text-[var(--color-on-error-container)]">
               {message.message}
             </div>
           )}
+          <MagpieConnectionHint sessionId={sessionId} errorText={message.message} />
         </div>
       )
     }

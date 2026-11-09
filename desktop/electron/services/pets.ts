@@ -252,10 +252,10 @@ export function resolveCustomPetsRoot(options: CustomPetsRootOptions = {}): stri
   const env = options.env ?? process.env
   const homeDir = path.resolve(options.homeDir ?? os.homedir())
   const configuredRoot = env.CLAUDE_CONFIG_DIR?.trim()
-  const configRoot = configuredRoot
+  const claudeConfigDir = configuredRoot
     ? path.resolve(resolveHomePath(configuredRoot, homeDir))
     : path.join(homeDir, '.claude')
-  return path.join(configRoot, 'echoflow-code', 'pets')
+  return path.join(claudeConfigDir, 'cc-haha', 'pets')
 }
 
 export async function ensureCustomPetsRoot(options: CustomPetsRootOptions = {}): Promise<string> {

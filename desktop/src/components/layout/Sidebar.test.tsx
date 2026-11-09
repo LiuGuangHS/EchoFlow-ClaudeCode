@@ -1,13 +1,25 @@
-import { useState } from 'react'
+import { ContentRouter } from './ContentRouter'
+vi.mock('../../pages/ActiveSession', () => ({ ActiveSession: () => null }))
+vi.mock('../../pages/Settings', () => ({ Settings: () => null }))
+vi.mock('../../pages/ScheduledTasks', () => ({ ScheduledTasks: () => null }))
+vi.mock('../../pages/ExtensionMarket', () => ({ ExtensionMarket: () => null }))
+vi.mock('../../pages/TerminalSettings', () => ({ TerminalSettings: () => null }))
+vi.mock('../../pages/EmptySession', () => ({
+  EmptySession: () => <input aria-label="Draft text" />,
+}))
+import { Profiler, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import '@testing-library/jest-dom'
+import { resolveAppRegion } from '../../test/appRegion'
 import type {
   DesktopUiPreferencesResponse,
   SidebarProjectPreferences,
 } from '../../api/desktopUiPreferences'
 
 const desktopUiPreferencesApiMock = vi.hoisted(() => ({
+  getProjectDirectories: vi.fn(),
+  updateProjectDirectories: vi.fn(),
   updateSidebarPreferences: vi.fn(),
   updateProjectDisplayName: vi.fn(),
 }))
@@ -61,9 +73,9 @@ vi.mock('../../i18n', () => ({
       'sidebar.scheduled': 'Scheduled',
       'sidebar.extensions': 'Extension Market',
       'sidebar.settings': 'Settings',
+      'settings.tab.h5Access': 'Phone connection',
       'sidebar.searchPlaceholder': 'Search sessions',
       'sidebar.noSessions': 'No sessions',
-      'session.untitled': '未命名会话',
       'sidebar.noMatching': 'No matching sessions',
       'sidebar.sessionListFailed': 'Session list failed',
       'sidebar.refreshSessions': 'Refresh sessions',
@@ -140,6 +152,7 @@ vi.mock('../../i18n', () => ({
       'sidebar.collapse': 'Collapse sidebar',
       'sidebar.expand': 'Expand sidebar',
       'session.lastUpdated': 'last updated {time}',
+      'sidebar.sessionStatus.attention': 'Needs you',
       'session.timeJustNow': 'just now',
       'session.timeMinutes': '{n}m ago',
       'session.timeHours': '{n}h ago',
@@ -231,7 +244,7 @@ vi.mock('./ProjectEditorModal', () => ({
 }))
 
 import { Sidebar } from './Sidebar'
-import { ChatInput } from '../chat/ChatInput'
+import { browserHost } from '@/lib/desktopHost/browserHost'
 import { useChatStore } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useTabStore } from '../../stores/tabStore'
@@ -243,18 +256,12 @@ import {
 import type { SessionListItem } from '../../types/session'
 import type { PerSessionState } from '../../stores/chatStore'
 
-const PROJECT_ORDER_STORAGE_KEY = 'echoflow-code-sidebar-project-order'
-const PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
-const PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
-const PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
-const PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
-const LEGACY_PROJECT_ORDER_STORAGE_KEY = 'echoflow-code-sidebar-project-order'
-const LEGACY_PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
-const LEGACY_PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
-const LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
-const LEGACY_PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
-const realCreateSession = useSessionStore.getInitialState().createSession
-const realFetchSessions = useSessionStore.getInitialState().fetchSessions
+const PROJECT_ORDER_STORAGE_KEY = 'cc-haha-sidebar-project-order'
+const PROJECT_PINNED_STORAGE_KEY = 'cc-haha-sidebar-pinned-projects'
+const PROJECT_HIDDEN_STORAGE_KEY = 'cc-haha-sidebar-hidden-projects'
+const PROJECT_COLLAPSED_STORAGE_KEY = 'cc-haha-sidebar-collapsed-projects'
+const PROJECT_ORGANIZATION_STORAGE_KEY = 'cc-haha-sidebar-project-organization'
+const PROJECT_SORT_STORAGE_KEY = 'cc-haha-sidebar-project-sort'
 
 function makeSession(
   id: string,
@@ -341,8 +348,8 @@ function makeDesktopUiPreferencesResponse({
       sidebar,
       projectDisplayNames,
       profile: {
-        displayName: 'EchoFlow Code',
-        subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
+        displayName: 'cc-haha',
+        subtitle: 'github.com/NanmiCoder/cc-haha',
         avatarFile: null,
         avatarUpdatedAt: null,
       },
@@ -359,7 +366,7 @@ function makeDesktopUiPreferencesResponse({
   }
 }
 
-function SidebarDrawerHarness({ request }: { request: Promise<DesktopUiPreferencesResponse> }) {
+function SidebarRemountHarness({ request }: { request: Promise<DesktopUiPreferencesResponse> }) {
   const [open, setOpen] = useState(true)
   const [preferencesRequest, setPreferencesRequest] = useState<
     Promise<DesktopUiPreferencesResponse> | null
@@ -368,11 +375,10 @@ function SidebarDrawerHarness({ request }: { request: Promise<DesktopUiPreferenc
   return (
     <>
       <button type="button" onClick={() => setOpen((current) => !current)}>
-        {open ? 'Close drawer harness' : 'Open drawer harness'}
+        {open ? 'Unmount sidebar harness' : 'Mount sidebar harness'}
       </button>
       {open && (
         <Sidebar
-          isMobile
           desktopUiPreferencesRequest={preferencesRequest}
           onDesktopUiPreferencesConsumed={(consumedRequest) => {
             setPreferencesRequest((current) => current === consumedRequest ? null : current)
@@ -418,6 +424,8 @@ describe('Sidebar', () => {
   const createSession = vi.fn()
   const deleteSession = vi.fn()
   const deleteSessions = vi.fn()
+  const setSessionArchived = vi.fn()
+  const setSessionsArchived = vi.fn()
   const addToast = vi.fn()
 
   beforeEach(() => {
@@ -427,8 +435,15 @@ describe('Sidebar', () => {
     createSession.mockReset()
     deleteSession.mockReset()
     deleteSessions.mockReset()
+    setSessionArchived.mockReset()
+    setSessionsArchived.mockReset()
+    setSessionsArchived.mockResolvedValue({ successes: [], failures: [] })
     addToast.mockReset()
     desktopUiPreferencesApiMock.updateSidebarPreferences.mockReset()
+    desktopUiPreferencesApiMock.getProjectDirectories.mockReset()
+    desktopUiPreferencesApiMock.updateProjectDirectories.mockReset()
+    desktopUiPreferencesApiMock.getProjectDirectories.mockImplementation(async (workDir: string) => ({ projectKey: workDir, mainDirectory: workDir, additionalDirectories: [] }))
+    desktopUiPreferencesApiMock.updateProjectDirectories.mockImplementation(async (workDir: string, additionalDirectories: string[]) => ({ ok: true, projectKey: workDir, mainDirectory: workDir, additionalDirectories }))
     desktopUiPreferencesApiMock.updateProjectDisplayName.mockReset()
     desktopUiPreferencesApiMock.updateProjectDisplayName.mockImplementation((projectKey: string, displayName: string | null) => Promise.resolve({
       ok: true,
@@ -469,19 +484,17 @@ describe('Sidebar', () => {
     window.localStorage.removeItem(PROJECT_ORDER_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_PINNED_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_HIDDEN_STORAGE_KEY)
+    window.localStorage.removeItem(PROJECT_COLLAPSED_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_ORGANIZATION_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_SORT_STORAGE_KEY)
-    window.localStorage.removeItem(LEGACY_PROJECT_ORDER_STORAGE_KEY)
-    window.localStorage.removeItem(LEGACY_PROJECT_PINNED_STORAGE_KEY)
-    window.localStorage.removeItem(LEGACY_PROJECT_HIDDEN_STORAGE_KEY)
-    window.localStorage.removeItem(LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY)
-    window.localStorage.removeItem(LEGACY_PROJECT_SORT_STORAGE_KEY)
 
     useTabStore.setState({ tabs: [], activeTabId: null })
+    useUIStore.setState({ newSessionDraft: null, activeSettingsTab: 'providers', pendingSettingsTab: null })
     useSessionStore.setState({
       sessions: [],
       projectHistory: {},
       projectSessionTotals: {},
+      projectArchivedTotals: {},
       recentSessionIds: new Set(),
       recentProjectBoundaries: {},
       historicalSessionIds: new Set(),
@@ -495,6 +508,8 @@ describe('Sidebar', () => {
       createSession,
       deleteSession,
       deleteSessions,
+      setSessionArchived,
+      setSessionsArchived,
     })
     useChatStore.setState({
       connectToSession,
@@ -513,19 +528,171 @@ describe('Sidebar', () => {
       hydrateProjectDisplayNames({}, Number.MAX_SAFE_INTEGER)
     })
     useTabStore.setState({ tabs: [], activeTabId: null })
+    useUIStore.setState({ newSessionDraft: null })
     window.localStorage.removeItem(PROJECT_ORDER_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_PINNED_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_HIDDEN_STORAGE_KEY)
+    window.localStorage.removeItem(PROJECT_COLLAPSED_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_ORGANIZATION_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_SORT_STORAGE_KEY)
-    window.localStorage.removeItem(LEGACY_PROJECT_ORDER_STORAGE_KEY)
-    window.localStorage.removeItem(LEGACY_PROJECT_PINNED_STORAGE_KEY)
-    window.localStorage.removeItem(LEGACY_PROJECT_HIDDEN_STORAGE_KEY)
-    window.localStorage.removeItem(LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY)
-    window.localStorage.removeItem(LEGACY_PROJECT_SORT_STORAGE_KEY)
   })
 
-  it('opens a new tab when creating a session from the sidebar', async () => {
+  it('keeps an archive-only project as a quiet row and browses its archive in place of the list', async () => {
+    const archived = { ...makeSession('archived-1', 'Archived conversation', '/workspace/alpha', '2026-01-01'), archived: true }
+    useSessionStore.setState({ sessions: [archived], projectArchivedTotals: { '/workspace/alpha': 1 } })
+    sessionsApiMock.listProjectHistory.mockResolvedValue({ sessions: [archived], nextCursor: null })
+    render(<Sidebar />)
+
+    const group = screen.getByTestId('sidebar-project-group-workspace-alpha')
+    expect(within(group).queryByText('Archived conversation')).not.toBeInTheDocument()
+    expect(within(group).getByText('sidebar.projectAllArchived')).toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-project-count-workspace-alpha')).not.toBeInTheDocument()
+    expect(within(group).queryByRole('button', { name: /sidebar\.archivedSessions/ })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project actions for alpha' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'sidebar.archivedSessions' }))
+
+    const view = screen.getByTestId('sidebar-archive-view')
+    expect(await within(view).findByText('Archived conversation')).toBeInTheDocument()
+    expect(sessionsApiMock.listProjectHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRoot: '/workspace/alpha', archived: true }), expect.anything(),
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-projects-header')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-project-group-workspace-alpha')).not.toBeInTheDocument()
+
+    fireEvent.click(within(view).getByRole('button', { name: 'sidebar.archiveBack' }))
+    expect(screen.queryByTestId('sidebar-archive-view')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-projects-header')).toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-project-group-workspace-alpha')).toBeInTheDocument()
+  })
+
+  it('offers no group selection for an archive-only project in batch mode', () => {
+    useSessionStore.setState({
+      sessions: [makeSession('live-1', 'Live session', '/workspace/beta', '2026-01-02')],
+      projectArchivedTotals: { '/workspace/alpha': 2 },
+      isBatchMode: true,
+    })
+    render(<Sidebar />)
+
+    expect(screen.getByRole('button', { name: 'Select beta' })).toHaveTextContent('Select all')
+    expect(screen.queryByRole('button', { name: 'Select alpha' })).not.toBeInTheDocument()
+    expect(within(screen.getByTestId('sidebar-project-group-workspace-alpha')).getByText('sidebar.projectAllArchived')).toBeInTheDocument()
+  })
+
+  it('does not put an archive entry inside a project that still has sessions', () => {
+    useSessionStore.setState({
+      sessions: [makeSession('live-1', 'Live session', '/workspace/alpha', '2026-01-02')],
+      projectSessionTotals: { '/workspace/alpha': 1 },
+      projectArchivedTotals: { '/workspace/alpha': 5 },
+    })
+    render(<Sidebar />)
+
+    const group = screen.getByTestId('sidebar-project-group-workspace-alpha')
+    expect(within(group).getByText('Live session')).toBeInTheDocument()
+    expect(within(group).queryByText(/sidebar\.archivedSessions/)).not.toBeInTheDocument()
+    expect(within(group).queryByText('sidebar.projectAllArchived')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-project-count-workspace-alpha')).toHaveTextContent('1')
+  })
+
+  it('opens every archived session from the projects menu and leaves batch mode first', async () => {
+    useSessionStore.setState({
+      sessions: [makeSession('live-1', 'Live session', '/workspace/alpha', '2026-01-02')],
+      isBatchMode: true,
+    })
+    sessionsApiMock.list.mockResolvedValue({ sessions: [], total: 0 })
+    render(<Sidebar />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project menu' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'sidebar.archivedSessions' }))
+
+    const view = screen.getByTestId('sidebar-archive-view')
+    expect(within(view).getByText('sidebar.archivedSessions')).toBeInTheDocument()
+    await waitFor(() => expect(sessionsApiMock.list).toHaveBeenCalledWith(
+      expect.objectContaining({ archived: true, offset: 0 }), expect.anything(),
+    ))
+    expect(useSessionStore.getState().isBatchMode).toBe(false)
+    expect(screen.queryByRole('button', { name: 'Cancel batch mode' })).not.toBeInTheDocument()
+  })
+
+  it('archives from the session menu and offers one undo', async () => {
+    useSessionStore.setState({ sessions: [makeSession('archive-target', 'Archive target', '/workspace/alpha', '2026-01-01')] })
+    setSessionArchived.mockResolvedValueOnce(undefined)
+    render(<Sidebar />)
+    fireEvent.contextMenu(screen.getByText('Archive target'))
+    const menu = screen.getByRole('menu')
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Rename', 'sidebar.archiveSession', 'Delete',
+    ])
+    expect(within(menu).getByRole('separator')).toBeInTheDocument()
+
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'sidebar.archiveSession' }))
+
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'success',
+      message: 'sidebar.archivedToast',
+      action: expect.objectContaining({ label: 'common.undo' }),
+    })))
+    expect(setSessionArchived).toHaveBeenCalledWith('archive-target', true)
+    expect(setSessionsArchived).not.toHaveBeenCalled()
+
+    await act(async () => addToast.mock.calls[0]![0].action.onClick())
+    expect(setSessionsArchived).toHaveBeenCalledWith(['archive-target'], false)
+  })
+
+  it('leaves a rejected session usable and without an undo', async () => {
+    useSessionStore.setState({ sessions: [makeSession('archive-target', 'Archive target', '/workspace/alpha', '2026-01-01')] })
+    setSessionArchived.mockRejectedValueOnce(new Error('fixture write failure'))
+    render(<Sidebar />)
+    fireEvent.contextMenu(screen.getByText('Archive target'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'sidebar.archiveSession' }))
+    await waitFor(() => expect(setSessionArchived).toHaveBeenCalledWith('archive-target', true))
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith({ type: 'error', message: 'sidebar.archiveFailed' }))
+    expect(addToast).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Archive target')).toBeInTheDocument()
+    expect(disconnectSession).not.toHaveBeenCalled()
+    expect(deleteSession).not.toHaveBeenCalled()
+  })
+
+  it('disables archiving when the session is waiting for approval', () => {
+    useSessionStore.setState({ sessions: [makeSession('archive-waiting', 'Waiting session', '/workspace/alpha', '2026-01-01')] })
+    useChatStore.setState({ sessions: { 'archive-waiting': makeChatSessionState(openRequest) } })
+    render(<Sidebar />)
+    fireEvent.contextMenu(screen.getByText('Waiting session'))
+    const archive = screen.getByRole('menuitem', { name: 'sidebar.archiveSession' })
+    expect(archive).toBeDisabled()
+    expect(archive).toHaveAttribute('title', 'sidebar.archiveBusy')
+  })
+
+  it('archives the batch selection, skips busy sessions, and undoes the archived ones together', async () => {
+    useSessionStore.setState({
+      sessions: [
+        makeSession('batch-1', 'First batch session', '/workspace/alpha', '2026-01-03'),
+        makeSession('batch-2', 'Second batch session', '/workspace/alpha', '2026-01-02'),
+        makeSession('batch-waiting', 'Waiting batch session', '/workspace/alpha', '2026-01-01'),
+      ],
+    })
+    useChatStore.setState({ sessions: { 'batch-waiting': makeChatSessionState(openRequest) } })
+    setSessionsArchived.mockResolvedValueOnce({ successes: ['batch-1', 'batch-2'], failures: [] })
+    render(<Sidebar />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Batch manage' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select all' }))
+    expect(screen.getByText('3 selected')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'sidebar.batchArchiveSelected' }))
+
+    await waitFor(() => expect(setSessionsArchived).toHaveBeenCalledWith(['batch-1', 'batch-2'], true))
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith({ type: 'error', message: 'sidebar.batchArchiveFailed' }))
+    const success = addToast.mock.calls.find(([toast]) => toast.type === 'success')![0]
+    expect(success).toMatchObject({ message: 'sidebar.batchArchiveSucceeded', action: { label: 'common.undo' } })
+    // A refused session stays selected, so batch mode stays open for it.
+    expect(useSessionStore.getState().isBatchMode).toBe(true)
+
+    await act(async () => success.action.onClick())
+    expect(setSessionsArchived).toHaveBeenLastCalledWith(['batch-1', 'batch-2'], false)
+  })
+
+  it('opens an editable draft without allocating a session from the sidebar', async () => {
     createSession.mockResolvedValue('session-new-1')
 
     render(<Sidebar />)
@@ -535,19 +702,172 @@ describe('Sidebar', () => {
     })
 
     await waitFor(() => {
-      expect(createSession).toHaveBeenCalled()
-      expect(connectToSession).toHaveBeenCalledWith('session-new-1')
+      expect(useUIStore.getState().newSessionDraft?.workDir).toBe('')
+      expect(createSession).not.toHaveBeenCalled()
+      expect(connectToSession).not.toHaveBeenCalled()
     })
 
-    expect(useTabStore.getState().tabs).toEqual([
-      { sessionId: 'session-new-1', title: 'New Session', type: 'session', status: 'idle' },
-    ])
-    expect(useTabStore.getState().activeTabId).toBe('session-new-1')
+    expect(useTabStore.getState().tabs).toEqual([])
+    expect(useTabStore.getState().activeTabId).toBeNull()
     expect(screen.getByRole('complementary')).not.toHaveAttribute('data-desktop-drag-region')
     expect(screen.getByTestId('sidebar-title-region')).toHaveAttribute('data-desktop-drag-region')
   })
 
-  // The header used to render both "EchoFlow Code" and "echoflow-code" and hide
+  it('keeps every control in the title region clickable on the drag region', async () => {
+    // Only controls inside a drag region are no-drag now, so the rule has to
+    // name every kind the titlebars hold — the repository link here is an <a>,
+    // not a button, and dropping `a` from the rule would let a press on it
+    // drag the window instead.
+    const root = document.body.appendChild(document.createElement('div'))
+    root.id = 'root'
+    render(<Sidebar />, { container: root })
+
+    const titleRegion = screen.getByTestId('sidebar-title-region')
+    expect(resolveAppRegion(titleRegion)).toBe('drag')
+    const controls = Array.from(titleRegion.querySelectorAll('a, button'))
+    expect(controls.some((control) => control.tagName === 'A')).toBe(true)
+    expect(controls.some((control) => control.tagName === 'BUTTON')).toBe(true)
+    for (const control of controls) {
+      expect(resolveAppRegion(control), control.outerHTML).toBe('no-drag')
+    }
+  })
+
+  it('answers the Cmd+N request like the New Session item, in the project on screen', async () => {
+    createSession.mockResolvedValue('session-from-shortcut')
+    useSessionStore.setState({
+      sessions: [
+        makeSession('alpha-1', 'Alpha Session', '/workspace/alpha', new Date().toISOString()),
+      ],
+    })
+    useTabStore.setState({
+      tabs: [{ sessionId: 'alpha-1', title: 'Alpha Session', type: 'session', status: 'idle' }],
+      activeTabId: 'alpha-1',
+    })
+
+    render(<Sidebar />)
+    expect(createSession).not.toHaveBeenCalled()
+
+    await act(async () => {
+      useUIStore.getState().requestNewSession()
+    })
+
+    await waitFor(() => {
+      expect(useUIStore.getState().newSessionDraft?.workDir).toBe('/workspace/alpha')
+      expect(createSession).not.toHaveBeenCalled()
+      expect(connectToSession).not.toHaveBeenCalled()
+    })
+    expect(useTabStore.getState().activeTabId).toBeNull()
+    expect(useTabStore.getState().tabs.map((tab) => tab.sessionId)).toEqual(['alpha-1'])
+  })
+
+  it('retains the effective draft project on another Cmd+N before the first send', () => {
+    useUIStore.getState().startNewSessionDraft('/workspace/changed-draft')
+    useTabStore.setState({ activeTabId: null })
+    render(<Sidebar />)
+    const revision = useUIStore.getState().newSessionDraft!.revision
+    act(() => useUIStore.getState().requestNewSession())
+    expect(useUIStore.getState().newSessionDraft).toEqual({ workDir: '/workspace/changed-draft', revision, hasContent: false })
+    expect(createSession).not.toHaveBeenCalled()
+  })
+
+  // Production order: the first paint has no active tab, so ContentRouter
+  // makes the desktop draft before the saved tabs are restored. That empty
+  // draft used to swallow every later "New session" into a project-less
+  // composer and announce a draft that did not exist.
+  it('lands New Session in the restored chat project although a draft was made before the tabs came back', () => {
+    useSessionStore.setState({ sessions: [makeSession('alpha-1', 'Alpha', '/workspace/alpha', new Date().toISOString())] })
+    render(<><Sidebar /><ContentRouter /></>)
+    const startupDraft = useUIStore.getState().newSessionDraft
+    expect(startupDraft?.workDir).toBe('')
+
+    act(() => useTabStore.setState({
+      tabs: [{ sessionId: 'alpha-1', title: 'Alpha', type: 'session', status: 'idle' }],
+      activeTabId: 'alpha-1',
+    }))
+    fireEvent.click(screen.getByRole('button', { name: 'New Session' }))
+
+    expect(useUIStore.getState().newSessionDraft?.workDir).toBe('/workspace/alpha')
+    expect(addToast).not.toHaveBeenCalled()
+    // Moved, not replaced: the same composer, so nothing in it is lost.
+    expect(useUIStore.getState().newSessionDraft).toEqual({ ...startupDraft, workDir: '/workspace/alpha' })
+    expect(useTabStore.getState().activeTabId).toBeNull()
+    expect(screen.getByTestId('new-session-draft-panel')).not.toHaveAttribute('inert')
+    expect(createSession).not.toHaveBeenCalled()
+  })
+
+  it('moves an empty draft to the project whose + was pressed, without a toast', () => {
+    useSessionStore.setState({ sessions: [makeSession('alpha', 'Alpha', '/workspace/alpha', new Date().toISOString())] })
+    useUIStore.getState().startNewSessionDraft('/workspace/previous')
+    const { revision } = useUIStore.getState().newSessionDraft!
+    render(<Sidebar />)
+    fireEvent.click(screen.getByRole('button', { name: 'New session in alpha' }))
+    expect(useUIStore.getState().newSessionDraft?.workDir).toBe('/workspace/alpha')
+    expect(addToast).not.toHaveBeenCalled()
+    expect(useUIStore.getState().newSessionDraft).toEqual({ workDir: '/workspace/alpha', revision, hasContent: false })
+    expect(useTabStore.getState().activeTabId).toBeNull()
+  })
+
+  it('starts a blank session from an empty draft that had a project', () => {
+    useUIStore.getState().startNewSessionDraft('/workspace/previous')
+    render(<Sidebar />)
+    fireEvent.click(screen.getByRole('button', { name: 'New project' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'New blank session' }))
+    expect(useUIStore.getState().newSessionDraft?.workDir).toBe('')
+    expect(addToast).not.toHaveBeenCalled()
+  })
+
+  it('returns to the same unsent composer through real sidebar navigation after closing settings', () => {
+    useSessionStore.setState({ sessions: [makeSession('old', 'Old', '/workspace/old', new Date().toISOString())] })
+    useTabStore.setState({ tabs: [{ sessionId: 'old', title: 'Old', type: 'session', status: 'idle' }], activeTabId: 'old' })
+    render(<><Sidebar /><ContentRouter /></>)
+    fireEvent.click(screen.getByRole('button', { name: 'New Session' }))
+    const composer = screen.getByLabelText('Draft text')
+    fireEvent.change(composer, { target: { value: 'Keep these unsent edits' } })
+    const draft = useUIStore.getState().newSessionDraft
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    act(() => useTabStore.getState().closeTab(useTabStore.getState().activeTabId!))
+    expect(useTabStore.getState().activeTabId).toBe('old')
+    fireEvent.click(screen.getByRole('button', { name: 'New Session' }))
+    expect(screen.getByLabelText('Draft text')).toBe(composer)
+    expect(composer).toHaveValue('Keep these unsent edits')
+    expect(useUIStore.getState().newSessionDraft).toBe(draft)
+    expect(screen.getByTestId('new-session-draft-panel')).not.toHaveAttribute('inert')
+  })
+
+  it('preserves an unsent draft when another project requests a new chat and explains the return', () => {
+    useSessionStore.setState({ sessions: [makeSession('alpha', 'Alpha', '/workspace/alpha', new Date().toISOString())] })
+    useUIStore.getState().startNewSessionDraft('/workspace/unsent')
+    // What the composer reports once something is typed or attached.
+    useUIStore.getState().setNewSessionDraftContent(useUIStore.getState().newSessionDraft!.revision, true)
+    const draft = useUIStore.getState().newSessionDraft
+    render(<Sidebar />)
+    fireEvent.click(screen.getByRole('button', { name: 'New session in alpha' }))
+    expect(useUIStore.getState().newSessionDraft).toBe(draft)
+    expect(useTabStore.getState().activeTabId).toBeNull()
+    expect(addToast).toHaveBeenCalledWith({ type: 'info', message: 'sidebar.draftResumed' })
+  })
+
+  it('returns to an unsent draft in the same project without a toast', () => {
+    useSessionStore.setState({ sessions: [makeSession('alpha', 'Alpha', '/workspace/alpha', new Date().toISOString())] })
+    useUIStore.getState().startNewSessionDraft('/workspace/alpha')
+    useUIStore.getState().setNewSessionDraftContent(useUIStore.getState().newSessionDraft!.revision, true)
+    const draft = useUIStore.getState().newSessionDraft
+    render(<Sidebar />)
+    fireEvent.click(screen.getByRole('button', { name: 'New session in alpha' }))
+    expect(useUIStore.getState().newSessionDraft).toBe(draft)
+    expect(addToast).not.toHaveBeenCalled()
+  })
+
+  it('does not replay a Cmd+N request made before the sidebar mounted', async () => {
+    useUIStore.getState().requestNewSession()
+
+    render(<Sidebar />)
+    await act(async () => {})
+
+    expect(createSession).not.toHaveBeenCalled()
+  })
+
+  // The header used to render both "Claude Code Haha" and "cc-haha" and hide
   // one with a container query, so the app answered to two names depending on
   // how far the sidebar had been dragged. Only the short one ships now — and
   // the long one must not linger in the DOM, since a display-hidden copy still
@@ -557,9 +877,8 @@ describe('Sidebar', () => {
 
     const region = screen.getByTestId('sidebar-title-region')
 
-    expect(region).toHaveTextContent('EchoFlow Code')
+    expect(region).toHaveTextContent('cc-haha')
     expect(region).not.toHaveTextContent('Claude Code')
-    expect(region.querySelector('img[src="/app-icon.png"]')).not.toBeNull()
   })
 
   it('groups sessions by project and expands overflow rows', () => {
@@ -586,7 +905,10 @@ describe('Sidebar', () => {
     expect(screen.getByText('beta')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Alpha newest/ })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Alpha hidden/ })).not.toBeInTheDocument()
-    expect(screen.getByTestId('sidebar-project-session-list-workspace-alpha').parentElement).toHaveClass('pl-5')
+    // Rows span the full width (so the selected card does) and carry the
+    // indent themselves: `pl-8` lands the title on the project name's line.
+    expect(screen.getByRole('button', { name: /Alpha newest/ })).toHaveClass('pl-8')
+    expect(screen.getByTestId('sidebar-project-count-workspace-alpha')).toHaveTextContent('11')
     expect(screen.getByRole('button', { name: 'Collapse alpha' })).toHaveAttribute('data-state', 'open')
     expect(screen.getByTestId('sidebar-project-icon-workspace-alpha')).toHaveAttribute('data-icon-state', 'open')
 
@@ -665,6 +987,74 @@ describe('Sidebar', () => {
     })
   })
 
+  it('stays still while a session streams and updates only when it starts or stops running (#1480)', () => {
+    // Every streamed token rewrote the chat-store session map. The sidebar read
+    // the whole map, so each token re-rendered every project and row — with a
+    // few hundred sessions and two long /goal runs streaming, the window spent
+    // most of its time here and a click on New Session waited seconds.
+    const base = new Date('2026-05-15T10:00:00.000Z').getTime()
+    useSessionStore.setState({
+      sessions: [
+        makeSession('alpha-1', 'Alpha streaming', '/workspace/alpha', new Date(base).toISOString()),
+        makeSession('alpha-2', 'Alpha quiet', '/workspace/alpha', new Date(base - 1000).toISOString()),
+      ],
+    })
+    useChatStore.setState({
+      sessions: { 'alpha-1': makeChatSessionState({ chatState: 'streaming' }) },
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+    const onRender = vi.fn()
+    render(<Profiler id="sidebar" onRender={onRender}><Sidebar /></Profiler>)
+    expect(within(screen.getByRole('button', { name: /Alpha streaming/ })).getByLabelText('Session running')).toBeInTheDocument()
+
+    onRender.mockClear()
+    for (const chunk of ['Run', 'Running the', 'Running the tests']) {
+      act(() => {
+        useChatStore.setState((state) => ({
+          sessions: {
+            ...state.sessions,
+            'alpha-1': { ...state.sessions['alpha-1']!, streamingText: chunk, streamingResponseChars: chunk.length },
+          },
+        }))
+      })
+    }
+    expect(onRender).not.toHaveBeenCalled()
+
+    act(() => {
+      useChatStore.setState((state) => ({
+        sessions: { ...state.sessions, 'alpha-1': { ...state.sessions['alpha-1']!, chatState: 'idle' } },
+      }))
+    })
+    expect(onRender).toHaveBeenCalled()
+    expect(within(screen.getByRole('button', { name: /Alpha streaming/ })).queryByLabelText('Session running')).not.toBeInTheDocument()
+
+    onRender.mockClear()
+    act(() => {
+      useChatStore.setState((state) => ({
+        sessions: { ...state.sessions, 'alpha-2': makeChatSessionState({ chatState: 'thinking' }) },
+      }))
+    })
+    expect(onRender).toHaveBeenCalled()
+    expect(within(screen.getByRole('button', { name: /Alpha quiet/ })).getByLabelText('Session running')).toBeInTheDocument()
+  })
+
+  it('keeps row times current on its own once streaming no longer re-renders it (#1480)', () => {
+    // Row times used to refresh only because every streamed token re-rendered
+    // the sidebar. Without that they need their own clock.
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-15T10:00:00.000Z'))
+    useSessionStore.setState({
+      sessions: [makeSession('alpha-1', 'Alpha quiet', '/workspace/alpha', '2026-05-15T10:00:00.000Z')],
+    })
+    render(<Sidebar />)
+    const row = () => screen.getByRole('button', { name: /Alpha quiet/ })
+    expect(within(row()).getByText('just now')).toBeInTheDocument()
+
+    act(() => {
+      vi.advanceTimersByTime(10 * 60_000)
+    })
+    expect(within(row()).getByText('10m ago')).toBeInTheDocument()
+  })
+
   it('does not show a fold control when a project is at or below the collapse threshold', () => {
     const base = new Date('2026-05-15T10:00:00.000Z').getTime()
     useSessionStore.setState({
@@ -688,22 +1078,6 @@ describe('Sidebar', () => {
     expect(screen.getByRole('button', { name: /Beta only/ })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Expand display' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Collapse display' })).not.toBeInTheDocument()
-  })
-
-  // The server writes the literal English placeholder into a new session's
-  // title; the sidebar used to print it as-is, so a Chinese UI showed
-  // "Untitled Session" until the first message gave the session a name.
-  it('labels a session the server left unnamed with the localized placeholder', () => {
-    useSessionStore.setState({
-      sessions: [
-        makeSession('session-untitled', 'Untitled Session', '/workspace/alpha', '2026-05-15T10:00:00.000Z'),
-      ],
-    })
-
-    render(<Sidebar />)
-
-    expect(screen.getByRole('button', { name: /未命名会话/ })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Untitled Session/ })).not.toBeInTheDocument()
   })
 
   it('does not show a fold control after a short project is auto-expanded for history', () => {
@@ -842,44 +1216,6 @@ describe('Sidebar', () => {
     expect(projectGroupNames().slice(0, 3)).toEqual(['beta', 'alpha', 'gamma'])
   })
 
-  it('restores active EchoFlow sidebar preferences without rewriting them', () => {
-    window.localStorage.setItem(LEGACY_PROJECT_ORDER_STORAGE_KEY, JSON.stringify([
-      '/workspace/beta',
-      '/workspace/alpha',
-    ]))
-    window.localStorage.setItem(LEGACY_PROJECT_PINNED_STORAGE_KEY, JSON.stringify(['/workspace/beta']))
-    window.localStorage.setItem(LEGACY_PROJECT_HIDDEN_STORAGE_KEY, JSON.stringify(['/workspace/beta']))
-    window.localStorage.setItem(LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY, 'project')
-    window.localStorage.setItem(LEGACY_PROJECT_SORT_STORAGE_KEY, 'createdAt')
-    const base = new Date('2026-05-15T10:00:00.000Z').getTime()
-    useSessionStore.setState({
-      sessions: [
-        {
-          ...makeSession('alpha-1', 'Alpha Session', '/workspace/alpha', new Date(base).toISOString()),
-          createdAt: new Date(base - 20_000).toISOString(),
-        },
-        {
-          ...makeSession('beta-1', 'Beta Session', '/workspace/beta', new Date(base - 10_000).toISOString()),
-          createdAt: new Date(base + 20_000).toISOString(),
-        },
-      ],
-    })
-
-    render(<Sidebar />)
-
-    expect(projectGroupNames()).toEqual(['alpha'])
-    expect(screen.queryByText('beta')).not.toBeInTheDocument()
-    expect(window.localStorage.getItem(PROJECT_ORDER_STORAGE_KEY)).toBe(JSON.stringify([
-      '/workspace/beta',
-      '/workspace/alpha',
-    ]))
-    expect(window.localStorage.getItem(PROJECT_PINNED_STORAGE_KEY)).toBe(JSON.stringify(['/workspace/beta']))
-    expect(window.localStorage.getItem(PROJECT_HIDDEN_STORAGE_KEY)).toBe(JSON.stringify(['/workspace/beta']))
-    expect(window.localStorage.getItem(PROJECT_ORGANIZATION_STORAGE_KEY)).toBe('project')
-    expect(window.localStorage.getItem(PROJECT_SORT_STORAGE_KEY)).toBe('createdAt')
-    expect(window.localStorage.getItem(LEGACY_PROJECT_HIDDEN_STORAGE_KEY)).toBe(JSON.stringify(['/workspace/beta']))
-  })
-
   it('collapses a project group without removing the project header', () => {
     const now = new Date().toISOString()
     useSessionStore.setState({
@@ -901,6 +1237,28 @@ describe('Sidebar', () => {
     expect(screen.getByTestId('sidebar-project-icon-workspace-alpha')).toHaveAttribute('data-icon-state', 'closed')
   })
 
+  it('restores a collapsed project group after a remount', () => {
+    const now = new Date().toISOString()
+    useSessionStore.setState({
+      sessions: [
+        makeSession('alpha-1', 'Alpha Session', '/workspace/alpha', now),
+        makeSession('beta-1', 'Beta Session', '/workspace/beta', now),
+      ],
+    })
+
+    const { unmount } = render(<Sidebar />)
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse alpha' }))
+    expect(JSON.parse(window.localStorage.getItem(PROJECT_COLLAPSED_STORAGE_KEY) ?? '[]')).toEqual(['/workspace/alpha'])
+
+    // A fresh mount stands in for an app restart: the group must stay collapsed.
+    unmount()
+    render(<Sidebar />)
+
+    expect(screen.getByRole('button', { name: 'Expand alpha' })).toHaveAttribute('data-state', 'closed')
+    expect(screen.queryByRole('button', { name: /Alpha Session/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Beta Session/ })).toBeInTheDocument()
+  })
+
   it('uses a bounded per-project session scroller for large expanded groups', () => {
     const base = new Date('2026-05-15T10:00:00.000Z').getTime()
     useSessionStore.setState({
@@ -914,7 +1272,7 @@ describe('Sidebar', () => {
     const expandButton = screen.getByRole('button', { name: 'Expand display' })
     expect(expandButton).toHaveAttribute('aria-expanded', 'false')
     expect(expandButton.parentElement).toHaveClass('justify-start')
-    expect(expandButton).toHaveClass('text-[var(--color-text-tertiary)]', 'opacity-75')
+    expect(expandButton).toHaveClass('text-[var(--color-text-tertiary)]', 'pl-8')
 
     fireEvent.click(expandButton)
 
@@ -998,48 +1356,20 @@ describe('Sidebar', () => {
     })
 
     await waitFor(() => {
-      expect(createSession).toHaveBeenCalledWith('/workspace/alpha')
-      expect(connectToSession).toHaveBeenCalledWith('session-alpha-new')
+      expect(useUIStore.getState().newSessionDraft?.workDir).toBe('/workspace/alpha')
+      expect(createSession).not.toHaveBeenCalled()
     })
   })
 
-  it('keeps the project cwd in the composer when the post-create session refresh is stale', async () => {
-    const existingSession = makeSession(
-      'tmp-existing',
-      'Existing tmp session',
-      '/private/tmp',
-      new Date().toISOString(),
-    )
-    sessionsApiMock.create.mockResolvedValue({
-      sessionId: 'tmp-project-new',
-      workDir: '/private/tmp',
-    })
-    sessionsApiMock.list.mockResolvedValue({
-      sessions: [existingSession],
-      total: 1,
-    })
-    sessionsApiMock.getGitInfo.mockImplementation(() => new Promise(() => {}))
-    useSessionStore.setState({
-      sessions: [existingSession],
-      createSession: realCreateSession,
-      fetchSessions: realFetchSessions,
-    })
-
-    render(
-      <>
-        <Sidebar />
-        <ChatInput variant="hero" />
-      </>,
-    )
-
+  it('keeps the selected project in the draft without a post-create metadata race', () => {
+    const existing = makeSession('tmp-existing', 'Existing tmp session', '/private/tmp', new Date().toISOString())
+    useSessionStore.setState({ sessions: [existing] })
+    render(<Sidebar />)
     fireEvent.click(screen.getByRole('button', { name: 'New session in tmp' }))
-
-    expect(await screen.findByRole('button', { name: 'repoLaunch.launchLocation: tmp' }))
-      .toBeInTheDocument()
-    expect(sessionsApiMock.create).toHaveBeenCalledWith({ workDir: '/private/tmp' })
-    expect(useSessionStore.getState().sessions).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'tmp-project-new', workDir: '/private/tmp' }),
-    ]))
+    expect(useUIStore.getState().newSessionDraft?.workDir).toBe('/private/tmp')
+    expect(sessionsApiMock.create).not.toHaveBeenCalled()
+    expect(createSession).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions).toEqual([existing])
   })
 
   it('shows project header menus and starts a blank project session', async () => {
@@ -1061,8 +1391,8 @@ describe('Sidebar', () => {
     })
 
     await waitFor(() => {
-      expect(createSession).toHaveBeenCalledWith(undefined)
-      expect(connectToSession).toHaveBeenCalledWith('session-blank-project')
+      expect(useUIStore.getState().newSessionDraft?.workDir).toBe('')
+      expect(createSession).not.toHaveBeenCalled()
     })
   })
 
@@ -1094,7 +1424,7 @@ describe('Sidebar', () => {
     expect(header).toHaveAttribute('title', '/workspace/alpha')
 
     fireEvent.click(screen.getByRole('button', { name: 'New session in Custom alpha' }))
-    await waitFor(() => expect(createSession).toHaveBeenCalledWith('/workspace/alpha'))
+    await waitFor(() => expect(useUIStore.getState().newSessionDraft?.workDir).toBe('/workspace/alpha'))
   })
 
   it('creates a named project at its resolved root while launching the selected source folder', async () => {
@@ -1754,7 +2084,7 @@ describe('Sidebar', () => {
     })
 
     await waitFor(() => {
-      expect(createSession).toHaveBeenCalledWith('/workspace/beta')
+      expect(useUIStore.getState().newSessionDraft?.workDir).toBe('/workspace/beta')
       expect(screen.getByText('beta')).toBeInTheDocument()
     })
     expect(JSON.parse(window.localStorage.getItem(PROJECT_HIDDEN_STORAGE_KEY) ?? '[]')).toEqual([])
@@ -1806,13 +2136,13 @@ describe('Sidebar', () => {
     expect(JSON.parse(window.localStorage.getItem(PROJECT_HIDDEN_STORAGE_KEY) ?? '[]')).toEqual(['/workspace/alpha'])
   })
 
-  it('invalidates stale bootstrap preferences before a mobile drawer remount', async () => {
+  it('invalidates stale bootstrap preferences before a sidebar remount', async () => {
     const preferencesResponse = createDeferred<DesktopUiPreferencesResponse>()
     useSessionStore.setState({
       sessions: [makeSession('alpha-1', 'Alpha Session', '/workspace/alpha', new Date().toISOString())],
     })
 
-    render(<SidebarDrawerHarness request={preferencesResponse.promise} />)
+    render(<SidebarRemountHarness request={preferencesResponse.promise} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Project actions for alpha' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Hide from Sidebar' }))
@@ -1827,8 +2157,8 @@ describe('Sidebar', () => {
       })
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close drawer harness' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Open drawer harness' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Unmount sidebar harness' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Mount sidebar harness' }))
     expect(screen.queryByTestId('sidebar-project-group-workspace-alpha')).not.toBeInTheDocument()
 
     await act(async () => {
@@ -1951,7 +2281,7 @@ describe('Sidebar', () => {
     const now = new Date().toISOString()
     useSessionStore.setState({
       sessions: [
-        makeSession('child-1', 'Child Session', 'D:\\workspace\\code\\echoflow-code', now),
+        makeSession('child-1', 'Child Session', 'D:\\workspace\\code\\cc-haha', now),
       ],
     })
     useTabStore.setState({
@@ -1966,7 +2296,7 @@ describe('Sidebar', () => {
     })
 
     await waitFor(() => {
-      expect(createSession).toHaveBeenCalledWith('D:\\workspace\\code\\echoflow-code')
+      expect(useUIStore.getState().newSessionDraft?.workDir).toBe('D:\\workspace\\code\\cc-haha')
     })
     expect(JSON.parse(window.localStorage.getItem(PROJECT_HIDDEN_STORAGE_KEY) ?? '[]')).toEqual(['D:\\'])
     expect(desktopUiPreferencesApiMock.updateSidebarPreferences).not.toHaveBeenCalled()
@@ -1993,7 +2323,7 @@ describe('Sidebar', () => {
     })
 
     await waitFor(() => {
-      expect(createSession).toHaveBeenCalledWith('/workspace/repo')
+      expect(useUIStore.getState().newSessionDraft?.workDir).toBe('/workspace/repo')
     })
   })
 
@@ -2055,22 +2385,13 @@ describe('Sidebar', () => {
     expect(idleMeta).not.toHaveClass('min-w-[78px]')
   })
 
-  it('shows a toast when session creation fails', async () => {
+  it('opens a draft even when server session creation is unavailable', () => {
     createSession.mockRejectedValue(new Error('boom'))
-
     render(<Sidebar />)
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'New Session' }))
-    })
-
-    await waitFor(() => {
-      expect(addToast).toHaveBeenCalledWith({
-        type: 'error',
-        message: 'boom',
-      })
-    })
-
+    fireEvent.click(screen.getByRole('button', { name: 'New Session' }))
+    expect(useUIStore.getState().newSessionDraft?.workDir).toBe('')
+    expect(createSession).not.toHaveBeenCalled()
+    expect(addToast).not.toHaveBeenCalled()
     expect(useTabStore.getState().tabs).toEqual([])
   })
 
@@ -2099,7 +2420,7 @@ describe('Sidebar', () => {
 
     fireEvent.contextMenu(screen.getByRole('button', { name: /Open Session/ }))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
 
     expect(deleteSession).not.toHaveBeenCalled()
     const dialog = screen.getByRole('dialog')
@@ -2234,8 +2555,17 @@ describe('Sidebar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Batch manage' }))
     fireEvent.click(screen.getByRole('button', { name: /First Session/ }))
 
-    expect(screen.getByRole('button', { name: /First Session/ }).parentElement).toHaveClass('mb-0.5')
+    expect(screen.getByRole('button', { name: /First Session/ }).parentElement).toHaveClass('mb-px')
     expect(screen.getByRole('button', { name: /First Session/ })).toHaveClass('sidebar-session-row--selected')
+    // Both the batch selection and the open session are the white card lifted
+    // off the sidebar ground: paper fill, hairline ring, raised shadow step.
+    for (const name of [/First Session/, /Second Session/]) {
+      expect(screen.getByRole('button', { name })).toHaveClass(
+        'bg-[var(--color-sidebar-item-active)]',
+        'shadow-[0_0_0_1px_var(--color-border),var(--shadow-raised)]',
+      )
+    }
+    expect(screen.getByRole('button', { name: /Third Session/ })).not.toHaveClass('bg-[var(--color-sidebar-item-active)]')
     expect(screen.getByRole('button', { name: /Second Session/ })).toHaveClass('sidebar-session-row--active')
     expect(screen.getByRole('button', { name: /Third Session/ })).toHaveClass('sidebar-session-row--idle')
   })
@@ -2266,7 +2596,7 @@ describe('Sidebar', () => {
 
     // Scope to the wordmark's own row — the GitHub link in the same header is
     // also an svg and would answer a looser query.
-    const brandRow = () => screen.getByText('EchoFlow').closest('div')
+    const brandRow = () => screen.getByText('haha').closest('div')
 
     // Expanded, the name carries the brand and the mark beside it is clutter.
     expect(brandRow()?.querySelector('svg')).toBeNull()
@@ -2277,7 +2607,7 @@ describe('Sidebar', () => {
 
     // Collapsed, the copy is width-clamped to zero, so the mark is the only
     // thing left to identify the app.
-    expect(screen.getByTestId('sidebar-title-region').querySelector('svg')).not.toBeNull()
+    expect(brandRow()?.querySelector('svg')).not.toBeNull()
   })
 
   it('renders search controls without the removed embedded project filter', () => {
@@ -2303,45 +2633,68 @@ describe('Sidebar', () => {
     expect(screen.getByTestId('sidebar-settings-dock')).toHaveClass('absolute', 'bottom-0')
   })
 
-  it('keeps mobile navigation focused on chat sessions', async () => {
-    const onRequestClose = vi.fn()
-    createSession.mockResolvedValue('session-mobile-new')
+  // 「素」: refresh and batch-manage are list maintenance, not peers of search.
+  // They moved from beside the search box into the projects header, where the
+  // other list actions already sit, and must stay reachable there.
+  it('keeps refresh and batch-manage in the projects header instead of beside search', () => {
+    useSessionStore.setState({
+      sessions: [makeSession('alpha-1', 'Alpha one', '/workspace/alpha', '2026-05-15T10:00:00.000Z')],
+    })
+    render(<Sidebar />)
+
+    const header = screen.getByTestId('sidebar-projects-header')
+    const search = screen.getByTestId('sidebar-search-controls-section')
+    for (const name of ['Refresh sessions', 'Batch manage', 'Project menu']) {
+      expect(within(header).getByRole('button', { name })).toBeInTheDocument()
+      expect(within(search).queryByRole('button', { name })).not.toBeInTheDocument()
+    }
+
+    // Still a working toggle from its new home, and held in sight while on.
+    fireEvent.click(within(header).getByRole('button', { name: 'Batch manage' }))
+    const exit = within(header).getByRole('button', { name: 'Cancel batch mode' })
+    expect(exit).toHaveAttribute('aria-pressed', 'true')
+    expect(exit.parentElement).toHaveClass('opacity-100')
+  })
+
+  it('keeps the refresh control reachable while the first load is still in flight', async () => {
+    useSessionStore.setState({ sessions: [], isLoading: true })
+    render(<Sidebar />)
+    await waitFor(() => expect(fetchSessions).toHaveBeenCalledTimes(1))
+
+    const refresh = within(screen.getByTestId('sidebar-projects-header')).getByRole('button', { name: 'Refresh sessions' })
+    expect(refresh.querySelector('svg')).toHaveClass('animate-spin')
+    fireEvent.click(refresh)
+    await waitFor(() => expect(fetchSessions).toHaveBeenCalledTimes(2))
+  })
+
+  it('swaps the relative time for a short waiting label on a session that needs the user', () => {
+    useSessionStore.setState({
+      sessions: [makeSession('waiting', 'Waiting row', '/workspace/alpha', new Date(Date.now() - 20 * 60_000).toISOString())],
+    })
+    useChatStore.setState({
+      sessions: { waiting: makeChatSessionState({ chatState: 'tool_executing', ...openRequest }) },
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+    render(<Sidebar />)
+
+    const row = screen.getByRole('button', { name: /Waiting row/ })
+    expect(within(row).getByLabelText('Waiting for your approval')).toBeInTheDocument()
+    expect(within(row).getByText('Needs you')).toHaveAttribute('aria-hidden', 'true')
+    expect(within(row).queryByText('20m ago')).not.toBeInTheDocument()
+  })
+
+  it('draws the worktree branch only on sessions that really run in their own checkout', () => {
+    const at = new Date(Date.now() - 5 * 60_000).toISOString()
     useSessionStore.setState({
       sessions: [
-        {
-          id: 'session-1',
-          title: 'Open Session',
-          createdAt: new Date().toISOString(),
-          modifiedAt: new Date().toISOString(),
-          messageCount: 1,
-          projectPath: '/workspace/project',
-          workDir: '/workspace/project',
-          workDirExists: true,
-        },
+        // git spells the root through /private, the shell does not: same place.
+        { ...makeSession('tmp', 'Temp project', '/private/var/folders/x/T/proj', at), workDir: '/var/folders/x/T/proj' },
+        { ...makeSession('wt', 'Worktree run', '/workspace/alpha', at), workDir: '/workspace/alpha/.claude/worktrees/feature' },
       ],
     })
+    render(<Sidebar />)
 
-    render(<Sidebar isMobile onRequestClose={onRequestClose} />)
-
-    expect(screen.queryByRole('button', { name: 'Scheduled' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Extension Market' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
-    expect(useTabStore.getState().activeTabId).toBe('__settings__')
-    expect(onRequestClose).toHaveBeenCalledTimes(1)
-    onRequestClose.mockClear()
-
-    fireEvent.click(screen.getByRole('button', { name: /Open Session/ }))
-    expect(onRequestClose).toHaveBeenCalledTimes(1)
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'New Session' }))
-    })
-
-    await waitFor(() => {
-      expect(createSession).toHaveBeenCalled()
-    })
-    expect(onRequestClose).toHaveBeenCalledTimes(2)
+    expect(within(screen.getByRole('button', { name: /Temp project/ })).queryByText('worktree')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('button', { name: /Worktree run/ })).getByText('worktree')).toHaveClass('sr-only')
   })
 
   it('keeps one unified extension market entry in desktop navigation', () => {
@@ -2357,6 +2710,32 @@ describe('Sidebar', () => {
         expect.objectContaining({ sessionId: '__market__', title: 'Extension Market', type: 'market' }),
       ]),
     )
+  })
+
+  it.each([true, false])('opens phone connection directly from the desktop sidebar (expanded=%s)', (expanded) => {
+    const previousHost = window.desktopHost
+    window.desktopHost = { ...browserHost, kind: 'electron', isDesktop: true }
+    useUIStore.setState({ sidebarOpen: expanded, activeSettingsTab: 'providers', pendingSettingsTab: 'about' })
+    try {
+      render(<Sidebar />)
+      fireEvent.click(screen.getByRole('button', { name: 'Phone connection' }))
+      expect(useUIStore.getState().activeSettingsTab).toBe('h5Access')
+      expect(useUIStore.getState().pendingSettingsTab).toBe('h5Access')
+      expect(useTabStore.getState().activeTabId).toBe('__settings__')
+      expect(screen.getByRole('button', { name: 'Phone connection' })).toHaveAttribute('aria-current', 'page')
+      expect(screen.getByRole('button', { name: 'Settings' })).not.toHaveAttribute('aria-current')
+      fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+      expect(useUIStore.getState().activeSettingsTab).toBe('general')
+      expect(useUIStore.getState().pendingSettingsTab).toBeNull()
+      expect(screen.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
+    } finally {
+      window.desktopHost = previousHost
+    }
+  })
+
+  it('keeps the desktop phone setup entry out of the browser sidebar', () => {
+    render(<Sidebar />)
+    expect(screen.queryByRole('button', { name: 'Phone connection' })).not.toBeInTheDocument()
   })
 
   it('shows a loading state instead of an empty session list while initial fetch is pending', () => {
@@ -2755,65 +3134,15 @@ describe('Sidebar', () => {
     })
   })
 
-  // The whole drawer is touch-only: it has no hover, and nothing can be focused
-  // through `pointer-events: none`. Every control gated on `group-hover` was
-  // therefore either dead or an invisible tap target, and the 53 tests above
-  // never saw it because they all render the desktop sidebar.
-  describe('touch drawer controls', () => {
-    const renderWithProject = (isMobile: boolean) => {
-      useSessionStore.setState({
-        sessions: [makeSession('alpha-1', 'Alpha newest', '/workspace/alpha', new Date('2026-05-15T10:00:00.000Z').toISOString())],
-      })
-      return render(<Sidebar isMobile={isMobile} />)
-    }
-
-    it('keeps the project row actions hover-gated on desktop', () => {
-      renderWithProject(false)
-
-      const actions = screen.getByRole('button', { name: 'Project actions for alpha' })
-      expect(actions).toHaveClass('h-7', 'w-7')
-      expect(actions.parentElement).toHaveClass('pointer-events-none', 'opacity-0')
+  it('keeps the project row actions hover-gated on desktop', () => {
+    useSessionStore.setState({
+      sessions: [makeSession('alpha-1', 'Alpha newest', '/workspace/alpha', new Date('2026-05-15T10:00:00.000Z').toISOString())],
     })
+    render(<Sidebar />)
 
-    it('leaves the project row actions tappable at 44px in the drawer', () => {
-      renderWithProject(true)
-
-      const actions = screen.getByRole('button', { name: 'Project actions for alpha' })
-      const create = screen.getByRole('button', { name: 'New session in alpha' })
-      expect(actions).toHaveClass('h-11', 'w-11')
-      expect(create).toHaveClass('h-11', 'w-11')
-      // Both live in one row, so they need a gap wide enough not to catch a
-      // thumb aimed at the other.
-      expect(actions.parentElement).toHaveClass('opacity-100', 'gap-1.5')
-      expect(actions.parentElement).not.toHaveClass('pointer-events-none')
-    })
-
-    it('stops rendering the projects header actions as an invisible tap target', () => {
-      renderWithProject(true)
-
-      // These kept `pointer-events` while sitting at `opacity: 0` — visually
-      // absent on a phone, yet still firing on tap.
-      const menu = screen.getByRole('button', { name: 'Project menu' })
-      expect(menu).toHaveClass('h-11', 'w-11')
-      expect(menu.parentElement).toHaveClass('opacity-100')
-      expect(menu.parentElement).not.toHaveClass('opacity-0')
-    })
-
-    it('raises the search row and overflow toggle to the touch minimum', () => {
-      renderWithProject(true)
-
-      expect(screen.getByRole('button', { name: 'Refresh sessions' })).toHaveClass('h-11', 'w-11')
-      expect(screen.getByRole('button', { name: 'Batch manage' })).toHaveClass('h-11', 'w-11')
-      // Same flex row as the two above; at h-9 it left the row ragged.
-      expect(screen.getAllByRole('button', { name: 'Search chats' })[0]).toHaveClass('h-11')
-    })
-
-    it('raises the task view bell to the touch minimum as well', () => {
-      renderWithProject(true)
-
-      // 铃铛跟旁边的折叠按钮同处标题行；停在 32px 会是这行里唯一打不中的目标。
-      expect(screen.getByRole('button', { name: 'Task view' })).toHaveClass('h-11', 'w-11')
-    })
+    const actions = screen.getByRole('button', { name: 'Project actions for alpha' })
+    expect(actions).toHaveClass('h-7', 'w-7')
+    expect(actions.parentElement).toHaveClass('pointer-events-none', 'opacity-0')
   })
 
   describe('task view', () => {

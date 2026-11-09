@@ -1,5 +1,8 @@
 import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { assertPreparedCloudflared } from './prepare-cloudflared'
+import { assertWindowsConsoleSubsystem } from './assert-windows-console-subsystem'
+import { buildNativeAgentDesktop } from './native-agent-desktop'
 import {
   getBundledRipgrepName,
   stageRipgrepLicenses,
@@ -25,8 +28,8 @@ const binariesDir = path.join(desktopRoot, 'src-tauri', 'binaries')
 // `await buildCuHelper()` below) so it is initialized when that runs — a
 // `const` placed after the call site hits the temporal dead zone (ReferenceError).
 // SwiftPM names the resource bundle `${PackageName}_${TargetName}.bundle`.
-// Package stays `cu-helper`; the executable target is now `echoflow-code-computer-use`.
-const CU_HELPER_RESOURCE_BUNDLE = 'cu-helper_echoflow-code-computer-use.bundle'
+// Package stays `cu-helper`; the executable target is now `cc-haha-computer-use`.
+const CU_HELPER_RESOURCE_BUNDLE = 'cu-helper_cc-haha-computer-use.bundle'
 
 const targetTriple =
   process.env.SIDECAR_TARGET_TRIPLE ||
@@ -35,6 +38,10 @@ const targetTriple =
   (await detectHostTriple())
 
 const bunTarget = mapTargetTripleToBun(targetTriple)
+
+// Dependency preparation is explicit in release/local packaging entry points.
+// Required native checks must never fetch executables from the public network.
+await assertPreparedCloudflared({ desktopRoot, targetTriple })
 
 // 编译前先扫一遍 src/ 把所有缺失的 ant-internal 模块在磁盘上 stub 出来。
 // 见 desktop/scripts/scan-missing-imports.ts。
@@ -51,6 +58,7 @@ if (scanExit !== 0) {
 await mkdir(binariesDir, { recursive: true })
 await stageRipgrepLicenses(binariesDir)
 await stageHostRipgrepForOfflineBuild()
+await buildNativeAgentDesktop({ repoRoot, binariesDir, targetTriple })
 
 // 单一合并 sidecar：server / cli 共享一份 bun runtime + 共享依赖代码。
 // 调用方（Electron sidecar manager / legacy Tauri host / conversationService）
@@ -65,8 +73,7 @@ await compileExecutable({
 console.log(`[build-sidecars] Built desktop sidecar for ${targetTriple} (${bunTarget})`)
 
 // macOS-only: build + bundle the native `cu-helper` Computer Use binary.
-// On Windows/Linux this is skipped entirely so the Python helper path is
-// preserved (helperBridge.ts routes non-darwin → python). We do NOT ad-hoc
+// Windows/Linux use the vendored agent-desktop CLI staged above. We do NOT ad-hoc
 // re-sign cu-helper here: native/cu-helper/build.sh already signs it with a
 // STABLE identity + hardened runtime, and re-signing would rotate its TCC
 // identity, dropping the user's Accessibility + Screen Recording grants.
@@ -239,11 +246,12 @@ async function compileExecutable({
       outfile: outfileBase,
       autoloadTsconfig: true,
       autoloadPackageJson: true,
+      // No hideConsole: it makes a GUI-subsystem binary, and the sidecar must
+      // stay a console program (see assert-windows-console-subsystem.ts).
       windows: {
         title: productName,
         publisher: 'Claude Code',
         description: productName,
-        hideConsole: true,
       },
     },
   })
@@ -254,10 +262,12 @@ async function compileExecutable({
   }
 
   const outputPath = result.outputs[0]?.path ?? outfileBase
-  if (!(await Bun.file(outputPath).exists())) {
-    throw new Error(`[build-sidecars] Compiler reported success but did not produce ${outputPath}`)
-  }
   console.log(`[build-sidecars] ${productName} -> ${outputPath}`)
+
+  if (bunTarget.startsWith('bun-windows-')) {
+    const header = new Uint8Array(await Bun.file(outputPath).slice(0, 4096).arrayBuffer())
+    assertWindowsConsoleSubsystem(header, productName)
+  }
 
   // macOS Apple System Policy (ASP) requires valid code signatures on all
   // executables. Bun-compiled binaries ship with an invalid/empty signature
@@ -275,7 +285,7 @@ async function compileExecutable({
  * The identifier is the reason this is not just `codesign -s -`. Ad-hoc signing
  * derives the identifier from the file name plus a content hash
  * (`claude-sidecar-aarch64-apple-darwin-5555…`), which never matches
- * `com.echoflow.code.desktop.sidecar`. `ClientAttestation.swift` compares
+ * `com.claude-code-haha.desktop.sidecar`. `ClientAttestation.swift` compares
  * that identifier exactly, so a hash-suffixed one makes every Computer Use call
  * fail closed with `unauthorized_client`.
  *
@@ -339,7 +349,7 @@ async function signMacBinary(outputPath: string) {
  * `desktop/src-tauri/binaries/` so electron-builder packs them (the existing
  * `src-tauri/binaries/**` glob already covers both).
  *
- * The copy is byte-preserving (`cp -R`) so cu-helper's stable `dev.echoflow.cu-helper`
+ * The copy is byte-preserving (`cp -R`) so cu-helper's stable `dev.cchaha.cu-helper`
  * Mach-O signature is left intact — we never strip or re-sign it here.
  */
 async function buildCuHelper(arch: CuHelperArch) {
@@ -372,15 +382,15 @@ async function buildCuHelper(arch: CuHelperArch) {
   // build.sh now emits the .app BUNDLE path (Screen Recording only works for a
   // real .app bundle subject, not a bare Mach-O). Copy the WHOLE bundle — the
   // resource bundle lives inside it at Contents/Resources/, and the spawnable
-  // executable is at Contents/MacOS/echoflow-code-computer-use (see cuHelperBridge.ts).
-  const destApp = path.join(binariesDir, 'echoflow-code-computer-use.app')
+  // executable is at Contents/MacOS/cc-haha-computer-use (see cuHelperBridge.ts).
+  const destApp = path.join(binariesDir, 'cc-haha-computer-use.app')
 
   // Remove any stale copies first (incl. ALL legacy bare-binary / bundle / old
   // -name artifacts) so `cp -R` does not nest into an existing dir.
   await Bun.spawn(
     ['rm', '-rf',
      destApp,
-     path.join(binariesDir, 'echoflow-code-computer-use'),         // legacy bare binary
+     path.join(binariesDir, 'cc-haha-computer-use'),         // legacy bare binary
      path.join(binariesDir, 'cu-helper'),                    // legacy old-name binary
      path.join(binariesDir, CU_HELPER_RESOURCE_BUNDLE),      // legacy sibling bundle
      path.join(binariesDir, 'cu-helper_cu-helper.bundle')],

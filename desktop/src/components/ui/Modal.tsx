@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { X } from 'lucide-react'
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -17,7 +18,7 @@ type ModalProps = {
   children: ReactNode
   width?: number
   footer?: ReactNode
-  variant?: 'dialog' | 'media'
+  variant?: 'dialog' | 'media' | 'lightbox'
   className?: string
   typography?: 'editorial' | 'interface'
 }
@@ -88,7 +89,7 @@ export function Modal({
     <div className="fixed inset-0 z-[var(--z-dialog)] flex items-center justify-center">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-[var(--color-modal-scrim)] transition-opacity duration-200"
+        className={`absolute inset-0 transition-opacity duration-200 ${variant === 'lightbox' ? 'bg-[var(--color-lightbox-scrim)]' : 'bg-[var(--color-modal-scrim)]'}`}
         onClick={onClose}
       />
 
@@ -98,10 +99,12 @@ export function Modal({
         // 24px — the top of the handoff's corner scale, reserved for modals.
         // `dialog-panel`, not `glass-panel`: the fill has to be opaque on its
         // own rather than leaning on a blur that may never run.
-        className={(variant === 'media'
+        className={(variant === 'lightbox'
+          ? 'relative flex h-dvh w-screen flex-col overflow-hidden text-[var(--color-media-fg)]'
+          : variant === 'media'
           ? 'relative flex h-[calc(100dvh-24px)] w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[var(--radius-2xl)] bg-[var(--color-media-bg)] text-[var(--color-media-fg)]'
           : 'dialog-panel relative flex max-h-[85vh] flex-col rounded-[var(--radius-3xl)]') + (className ? ` ${className}` : '')}
-        style={variant === 'media'
+        style={variant === 'lightbox' ? undefined : variant === 'media'
           ? { maxHeight: 'calc(100dvh - 24px)', maxWidth: 'calc(100vw - 24px)' }
           : { width, maxWidth: 'calc(100vw - 48px)' }}
         role="dialog"
@@ -112,9 +115,9 @@ export function Modal({
         {title && variant === 'dialog' && (
           <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-0">
             <h2
-              // 22px serif — dialog titles are headings, and headings carry the
-              // 「墨」 identity (handoff §7, every modal comp).
-              className="text-[22px] font-bold tracking-tight text-[var(--color-text-primary)]"
+              // 18px semibold: a dialog title names the task, it is not a page
+              // headline. The old 22px bold out-shouted the dialog's own content.
+              className="text-[18px] font-semibold leading-7 text-[var(--color-text-primary)]"
               style={{ fontFamily: typography === 'interface' ? 'inherit' : 'var(--font-headline)' }}
             >
               {title}
@@ -123,14 +126,14 @@ export function Modal({
               type="button"
               onClick={onClose}
               aria-label="Close dialog"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
+              className="-mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
             >
-              <span className="material-symbols-outlined text-[18px]">close</span>
+              <X size={16} strokeWidth={1.75} aria-hidden="true" />
             </button>
           </div>
         )}
 
-        <div className={variant === 'media'
+        <div className={variant !== 'dialog'
           ? 'min-h-0 flex-1 overflow-hidden'
           : 'flex-1 overflow-y-auto px-6 py-4'}>
           {children}

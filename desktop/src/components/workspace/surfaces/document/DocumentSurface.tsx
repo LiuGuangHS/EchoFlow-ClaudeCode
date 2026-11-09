@@ -1,4 +1,5 @@
-import { Suspense } from 'react'
+import { FileQuestion } from 'lucide-react'
+import { Suspense, useCallback, useEffect, useState } from 'react'
 import type { WorkspaceDocumentPreviewType } from '@/api/sessions'
 import { useWorkspaceDocumentBlob } from '@/hooks/useWorkspaceDocumentBlob'
 import { useTranslation } from '@/i18n'
@@ -10,9 +11,11 @@ import {
 } from '@/stores/workspaceContentStore'
 import { OpenInSystemButton } from '../OpenInSystemButton'
 import { PanelMessage } from '../PanelMessage'
+import { useWorkspaceChatContextStore } from '@/stores/workspaceChatContextStore'
+import { DocumentAnnotation, type DocumentAnnotationSelection } from './DocumentAnnotation'
 import { DocumentFailure } from './DocumentFailure'
 import { DocumentViewerBoundary } from './DocumentViewerBoundary'
-import { documentViewers, type DocumentViewers } from './documentViewers'
+import { documentViewers, type DocumentSourceActions, type DocumentViewers } from './documentViewers'
 
 export type DocumentSurfaceProps = {
   sessionId: string
@@ -23,6 +26,8 @@ export type DocumentSurfaceProps = {
   version: string | undefined
   /** The scroll position this file had when its tab was last open. */
   initialView: WorkspaceFileView | undefined
+  /** For a document that is text underneath (`.csv`): how to show and annotate its source. */
+  source?: DocumentSourceActions
   /** Overridable so a test can supply a viewer without loading a real engine. */
   viewers?: DocumentViewers
   /** What "try again" does when the viewer itself could not be loaded. Overridable so a test need not reload the window. */
@@ -54,9 +59,11 @@ export function DocumentSurface({
   previewType,
   version,
   initialView,
+  source,
   viewers = documentViewers,
   reloadPage = reloadWindow,
 }: DocumentSurfaceProps) {
+  const [annotation, setAnnotation] = useState<(DocumentAnnotationSelection & { blob: Blob; sessionId: string; path: string }) | null>(null)
   const t = useTranslation()
   const Viewer = viewers[previewType]
   // No viewer for this kind: nothing to fetch bytes for.
@@ -65,14 +72,18 @@ export function DocumentSurface({
     path,
     Viewer ? version : undefined,
   )
+  const annotate = useCallback((selection: DocumentAnnotationSelection) => {
+    if (blob) setAnnotation({ ...selection, blob, sessionId, path })
+  }, [blob, sessionId, path])
   const zoom = useWorkspaceContentStore((state) => state.fileViewByKey[workspaceFileKey(sessionId, path)]?.zoom)
   const sheet = useWorkspaceContentStore((state) => state.fileViewByKey[workspaceFileKey(sessionId, path)]?.sheet)
+  useEffect(() => setAnnotation(null), [blob, sessionId, path])
   const canOpenInSystem = isRootedLocalPath(absolutePath)
 
   if (!Viewer) {
     return (
       <PanelMessage
-        icon="draft"
+        icon={FileQuestion}
         message={t('workspace.document.unsupported')}
         action={canOpenInSystem ? <OpenInSystemButton absolutePath={absolutePath} /> : undefined}
       />
@@ -90,7 +101,7 @@ export function DocumentSurface({
         />
       )
     }
-    return <PanelMessage icon="progress_activity" message={t('workspace.document.loading')} />
+    return <PanelMessage busy message={t('workspace.document.loading')} />
   }
 
   return (
@@ -105,7 +116,7 @@ export function DocumentSurface({
           />
         }
       >
-        <Suspense fallback={<PanelMessage icon="progress_activity" message={t('workspace.document.loading')} />}>
+        <Suspense fallback={<PanelMessage busy message={t('workspace.document.loading')} />}>
           <Viewer
             path={path}
             absolutePath={absolutePath}
@@ -117,9 +128,30 @@ export function DocumentSurface({
             sheet={sheet}
             onSheetChange={(next) => useWorkspaceContentStore.getState().setFileSheet(sessionId, path, next)}
             initialView={initialView}
+            source={source}
+            onAnnotate={annotate}
           />
         </Suspense>
       </DocumentViewerBoundary>
+      {annotation && annotation.blob === blob && annotation.sessionId === sessionId && annotation.path === path ? (
+        <DocumentAnnotation
+          key={`${sessionId}:${path}:${annotation.location}:${annotation.text}`}
+          selection={annotation}
+          onClose={() => setAnnotation(null)}
+          onAdd={(note) => {
+            useWorkspaceChatContextStore.getState().addReference(sessionId, {
+              id: crypto.randomUUID(),
+              kind: 'code-comment',
+              path,
+              absolutePath,
+              name: path.split(/[\\/]/).pop() ?? path,
+              note: `${annotation.location}\n${note}`,
+              quote: annotation.text,
+            })
+            setAnnotation(null)
+          }}
+        />
+      ) : null}
       {error ? (
         <p role="status" className="shrink-0 border-t border-[var(--color-border)] px-3 py-1.5 text-[11px] text-[var(--color-text-tertiary)]">
           {/* The server's own words are its response body, JSON and English; a refusal has a status to word. */}

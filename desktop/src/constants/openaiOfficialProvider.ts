@@ -1,5 +1,6 @@
 import type { ModelInfo } from '../types/settings'
 import { GROK_OFFICIAL_PROVIDER_ID } from './grokOfficialProvider'
+import { DEEPSEEK_ACCOUNT_PROVIDER_ID } from './deepseekAccountProvider'
 
 export const CLAUDE_OFFICIAL_PROVIDER_ID = 'claude-official'
 export const OPENAI_OFFICIAL_PROVIDER_ID = 'openai-official'
@@ -7,6 +8,7 @@ export const BUILT_IN_PROVIDER_IDS = [
   CLAUDE_OFFICIAL_PROVIDER_ID,
   OPENAI_OFFICIAL_PROVIDER_ID,
   GROK_OFFICIAL_PROVIDER_ID,
+  DEEPSEEK_ACCOUNT_PROVIDER_ID,
 ] as const
 export const OPENAI_OFFICIAL_DEFAULT_MODEL_ID = 'gpt-6-sol'
 export const OPENAI_OFFICIAL_PROVIDER_NAME = 'ChatGPT Official'
@@ -41,6 +43,14 @@ export const OPENAI_OFFICIAL_MODELS: ModelInfo[] = [
     name: 'GPT-6.1-Sol',
     description: 'Latest workhorse model for coding and everyday work',
     context: '258400',
+    defaultReasoningEffort: 'low',
+    supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+  },
+  {
+    id: 'gpt-6.1-terra',
+    name: 'GPT-6.1 Terra',
+    description: 'GPT-6.1 Terra Codex model',
+    context: '475000',
     defaultReasoningEffort: 'low',
     supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
   },

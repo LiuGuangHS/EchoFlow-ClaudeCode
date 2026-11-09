@@ -47,11 +47,11 @@ vi.mock('../lib/desktopRuntime', () => ({
   isDesktopRuntime: () => false,
 }))
 
-import { RuntimeBehaviorSettings } from './settings/RuntimeBehaviorSettings'
+import { GeneralSettings } from './settings/GeneralSettings'
 import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
 
-describe('Runtime output style', () => {
+describe('GeneralSettings output style', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useSettingsStore.setState(useSettingsStore.getInitialState(), true)
@@ -107,7 +107,7 @@ describe('Runtime output style', () => {
   })
 
   it('renders project output styles and saves the selected style', async () => {
-    render(<RuntimeBehaviorSettings />)
+    render(<GeneralSettings />)
 
     expect(await screen.findByText('Project Style')).toBeInTheDocument()
     expect(settingsApiMock.getOutputStyles).toHaveBeenCalledWith('/repo')
@@ -154,13 +154,13 @@ describe('Runtime output style', () => {
       ],
     })
 
-    render(<RuntimeBehaviorSettings />)
+    render(<GeneralSettings />)
 
-    expect(await screen.findByText('EchoFlow 会高效完成编码任务，并提供简洁回复')).toBeInTheDocument()
+    expect(await screen.findByText('Claude 会高效完成编码任务，并提供简洁回复')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '选择输出风格' }))
 
-    expect(screen.getByText('EchoFlow 会暂停并请你编写小段代码进行实战练习 · 内置')).toBeInTheDocument()
+    expect(screen.getByText('Claude 会暂停并请你编写小段代码进行实战练习 · 内置')).toBeInTheDocument()
     expect(screen.getByText('Project custom voice · 项目风格')).toBeInTheDocument()
     expect(screen.queryByText(/Claude completes coding tasks efficiently/)).not.toBeInTheDocument()
   })

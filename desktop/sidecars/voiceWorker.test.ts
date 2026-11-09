@@ -6,8 +6,8 @@ import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { makeWav } from '../../src/server/services/voice/sensevoice/__fixtures__/wav'
-import { WORKER_CONFIG_ENV, WORKER_TOKEN_ENV } from '../../src/server/services/voice/sensevoice/protocol'
+import { makeWav } from '../../src/server/services/voice/sherpa/__fixtures__/wav'
+import { WORKER_CONFIG_ENV, WORKER_TOKEN_ENV } from '../../src/server/services/voice/sherpa/protocol'
 
 const repoRoot = path.resolve(import.meta.dirname, '../..')
 const token = 'c'.repeat(64)
@@ -42,14 +42,18 @@ function post(port: number, body: Uint8Array, headers: Record<string, string>) {
   })
 }
 
-describe.skipIf(process.platform === 'win32')('compiled desktop voice worker routing', () => {
+describe('compiled desktop voice worker routing', () => {
   it('boots the real merged entrypoint as a voice worker, loads the runtime by absolute path and serves the private socket', async () => {
-    const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'echoflow-sidecar-voice-worker-')))
-    const executable = path.join(directory, 'claude-sidecar-voice-fixture')
+    const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'cc-haha-sidecar-voice-worker-')))
+    const executable = path.join(directory, `claude-sidecar-voice-fixture${process.platform === 'win32' ? '.exe' : ''}`)
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
       HOME: directory,
+      USERPROFILE: directory,
       TMPDIR: directory,
+      TMP: directory,
+      TEMP: directory,
+      SystemRoot: process.env.SystemRoot,
       CLAUDE_CONFIG_DIR: path.join(directory, '.claude'),
       BUN_OPTIONS: '--no-env-file',
       // preload.ts would chdir here. The worker must never load it.
@@ -114,7 +118,7 @@ describe.skipIf(process.platform === 'win32')('compiled desktop voice worker rou
         env: {
           ...env,
           [WORKER_CONFIG_ENV]: JSON.stringify({
-            runtimeRoot, model: 'm', tokens: 't', vad: 'v', threads: 1,
+            runtimeRoot, model: { engine: 'sensevoice', model: 'm', tokens: 't' }, vad: 'v', threads: 1,
             maxAudioBytes: 4 * 1024 * 1024,
             vadThreshold: 0.5, minSilenceSeconds: 0.5, minSpeechSeconds: 0.25, segmentSeconds: 30,
           }),

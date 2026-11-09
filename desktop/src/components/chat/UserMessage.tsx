@@ -2,23 +2,52 @@ import { Button } from '@/components/ui/Button'
 import { openSessionSource, sessionSourceTitle } from '@/lib/sessionNavigation'
 import { memo, useCallback, useMemo } from 'react'
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react'
-import { UsersRound } from 'lucide-react'
+import { Box, Puzzle, SquareSlash, UsersRound } from 'lucide-react'
 import type { UIAttachment } from '../../types/chat'
 import { useTranslation } from '../../i18n'
+import { stripAgentTeamRequest } from '../../lib/agentTeamRequest'
 import { openPreviewLink } from '../../lib/openPreviewLink'
 import { splitTextByUrls } from '../../lib/urlBoundary'
+import { hasCapabilitySentence, parseUserMessageSegments } from '../../lib/userMessageCapabilities'
+import { capabilityKey, useCapabilityCatalogStore } from '../../stores/capabilityCatalogStore'
+import { extractRestoredUserDisplay } from '../../stores/chatStore'
+import { AgentTeamChip } from './AgentTeamChip'
 import { AttachmentGallery } from './AttachmentGallery'
-import { MessageActionBar, type MessageBranchAction, type MessageRewindAction } from './MessageActionBar'
+import { MessageActionBar, type MessageBranchAction, type MessageEditAction } from './MessageActionBar'
+import { UserMessageEditor } from './UserMessageEditor'
+import { useMessageActionMenu } from './useMessageActionMenu'
+import type { UserMessageEditDraft } from './userMessageEdit'
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
+import type { PreviewLinkTarget } from '@/lib/previewLinkRouter'
+
+/**
+ * Edit-and-resend for one prompt. The draft lives with the caller, not in this
+ * component, so it survives the row being virtualized away and remounted.
+ */
+export type UserMessageEditAction = {
+  label: string
+  editing: boolean
+  submitting: boolean
+  disabled: boolean
+  /** Why the action is disabled, when the user can do something about it. */
+  disabledReason?: string
+  getDraft: () => UserMessageEditDraft
+  onStart: () => void
+  onCancel: () => void
+  onDraftChange: (draft: UserMessageEditDraft) => void
+  onSubmit: (draft: UserMessageEditDraft) => void
+}
 
 type Props = {
   content: string
+  /** What reached the model; the composer's team switch and pills live only here. */
+  modelContent?: string
   sessionReferences?: Array<{ sessionId: string }>
   /** Set when this message was delivered from another collaborating session. */
   collaboration?: { sourceSessionId: string; messageId?: string }
   attachments?: UIAttachment[]
   branchAction?: MessageBranchAction
-  rewindAction?: MessageRewindAction
+  editAction?: UserMessageEditAction
   timestamp?: number
   sessionId?: string
   /** Set when this turn came from another agent rather than from the user. */
@@ -30,11 +59,12 @@ type Props = {
 
 export const UserMessage = memo(function UserMessage({
   content,
+  modelContent,
   sessionReferences,
   collaboration,
   attachments,
   branchAction,
-  rewindAction,
+  editAction,
   timestamp,
   sessionId,
   teammateFrom,
@@ -44,14 +74,37 @@ export const UserMessage = memo(function UserMessage({
 }: Props) {
   const t = useTranslation()
   const hasText = content.trim().length > 0
+  const actionBarEditAction = useMemo<MessageEditAction | undefined>(
+    () => editAction
+      ? {
+          label: editAction.label,
+          disabled: editAction.disabled,
+          disabledReason: editAction.disabledReason,
+          onEdit: editAction.onStart,
+        }
+      : undefined,
+    [editAction],
+  )
+  // A teammate's message offers copy only; the user's own adds branch and edit.
+  const actionMenu = useMessageActionMenu(teammateFrom
+    ? { copyText: hasText ? content : undefined, timestamp }
+    : { copyText: hasText ? content : undefined, branchAction, editAction: actionBarEditAction, timestamp })
 
   // The operator's prompt is literal text, NOT markdown — `**`, `#` and file
   // paths have to stay exactly as typed. Teammate traffic is rendered separately
   // below because agent-to-agent messages intentionally use Markdown.
-  const segments = useMemo(() => splitTextByUrls(content), [content])
+  const display = useMemo(() => {
+    const agentTeam = modelContent ? stripAgentTeamRequest(modelContent).requested : false
+    // A live bubble shows the composer's `@Label` projection; the model text
+    // carries the capability itself, so read pills from it when it has them.
+    const restored = modelContent ? extractRestoredUserDisplay(modelContent).content.trim() : ''
+    const text = restored && hasCapabilitySentence(restored) ? restored : content
+    return { agentTeam, segments: parseUserMessageSegments(text) }
+  }, [content, modelContent])
+  const catalog = useCapabilityCatalogStore((state) => state.entries)
 
   const handleLinkClick = useCallback(
-    (href: string, event: ReactMouseEvent<HTMLElement>): boolean => {
+    (href: PreviewLinkTarget, event: ReactMouseEvent<HTMLElement>): boolean => {
       if (!sessionId) return false
       const handled = openPreviewLink(href, sessionId)
       if (handled) event.preventDefault()
@@ -60,22 +113,52 @@ export const UserMessage = memo(function UserMessage({
     [sessionId],
   )
 
-  const body: ReactNode = segments.map((segment, index) =>
-    segment.type === 'url' ? (
-      <a
+  const renderText = (text: string, key: number): ReactNode[] =>
+    splitTextByUrls(text).map((segment, index) =>
+      segment.type === 'url' ? (
+        <a
+          key={`${key}-${index}`}
+          href={segment.value}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="text-[var(--color-text-accent)] underline decoration-[1px] underline-offset-[3px] decoration-[var(--color-text-accent)] [overflow-wrap:anywhere] hover:decoration-[2px]"
+          onClick={(event) => handleLinkClick(segment.value, event)}
+        >
+          {segment.value}
+        </a>
+      ) : (
+        segment.value
+      ),
+    )
+
+  const body: ReactNode = display.segments.map((segment, index) => {
+    if (segment.type === 'text') return renderText(segment.text, index)
+    if (segment.type === 'command') {
+      return (
+        <span key={index} data-user-message-pill="command" className="composer-mention composer-mention--command composer-mention--static">
+          <SquareSlash size={14} strokeWidth={1.75} aria-hidden="true" className="composer-mention-icon" />
+          {segment.name}
+        </span>
+      )
+    }
+    // Show the pill the user picked: its display name and brand icon when the
+    // composer listed it, else the name the identity carries.
+    const known = catalog[capabilityKey(segment.type, segment.id)]
+    const Icon = segment.type === 'skill' ? Box : Puzzle
+    return (
+      <span
         key={index}
-        href={segment.value}
-        target="_blank"
-        rel="noreferrer noopener"
-        className="text-[var(--color-text-accent)] underline decoration-[1px] underline-offset-[3px] decoration-[var(--color-text-accent)] [overflow-wrap:anywhere] hover:decoration-[2px]"
-        onClick={(event) => handleLinkClick(segment.value, event)}
+        data-user-message-pill={segment.type}
+        title={segment.id}
+        className={`composer-mention composer-mention--${segment.type} composer-mention--static`}
       >
-        {segment.value}
-      </a>
-    ) : (
-      segment.value
-    ),
-  )
+        {known?.icon
+          ? <img className="composer-mention-brand-icon" src={`${import.meta.env.BASE_URL}${known.icon.slice(1)}`} alt="" draggable={false} />
+          : <Icon size={14} strokeWidth={1.75} aria-hidden="true" className="composer-mention-icon" />}
+        @{known?.label ?? segment.label}
+      </span>
+    )
+  })
 
   // A teammate's instruction is not the user speaking, so it does not take the
   // user's right-aligned bubble. Attributing and left-aligning it is what gives
@@ -87,9 +170,10 @@ export const UserMessage = memo(function UserMessage({
         <div
           data-message-shell="teammate"
           data-teammate-from={teammateFrom}
-          className="group flex min-w-0 max-w-[82%] flex-col items-start sm:max-w-[78%] lg:max-w-[680px]"
+          {...actionMenu.pressProps}
+          className={`group relative flex min-w-0 max-w-[82%] flex-col items-start lg:max-w-[680px] ${actionMenu.pressClassName}`}
         >
-          <div className="mb-1 flex min-w-0 items-center gap-2 px-0.5 text-[11px] text-[var(--color-text-tertiary)]">
+          <div className="mb-1.5 flex min-w-0 items-center gap-2 px-0.5 text-xs text-[var(--color-text-tertiary)]">
             {teammateAvatarSrc ? (
               <span
                 data-testid="teammate-message-avatar"
@@ -109,9 +193,9 @@ export const UserMessage = memo(function UserMessage({
                 />
               </span>
             ) : (
-              <UsersRound size={12} strokeWidth={2.2} aria-hidden="true" className="shrink-0 text-[var(--color-brand)]" />
+              <UsersRound size={12} strokeWidth={2} aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]" />
             )}
-            <span className="min-w-0 truncate font-mono font-bold text-[var(--color-text-secondary)]">
+            <span className="min-w-0 truncate font-mono font-medium text-[var(--color-text-secondary)]">
               {teammateFrom}
             </span>
             <span className="shrink-0">{t('chat.teammateMessage')}</span>
@@ -124,26 +208,50 @@ export const UserMessage = memo(function UserMessage({
             {hasText && (
               <div
                 data-message-body="teammate"
-                className="min-w-0 max-w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container)] px-[16px] py-[12px] chat-reading-text leading-relaxed text-[var(--color-text-primary)]"
+                className="min-w-0 max-w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-3.5 py-2.5 chat-reading-text text-[var(--color-text-primary)]"
                 style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
               >
                 <MarkdownRenderer
                   content={content}
                   onLinkClick={sessionId ? handleLinkClick : undefined}
-                  className="chat-reading-markdown [&>:first-child]:mt-0 [&>:last-child]:mb-0 [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-sm [&_h4]:text-sm"
+                  className="chat-reading-markdown [&>:first-child]:mt-0 [&>:last-child]:mb-0"
                 />
               </div>
             )}
           </div>
 
-          {hasText && (
+          {hasText && !actionMenu.enabled && (
             <MessageActionBar
               copyText={content}
               copyLabel={t('chat.copyPrompt')}
               align="start"
+              placement="overlay"
               timestamp={timestamp}
             />
           )}
+          {actionMenu.sheet}
+        </div>
+      </div>
+    )
+  }
+
+  if (editAction?.editing) {
+    return (
+      <div className="flex justify-end">
+        <div
+          data-message-shell="user"
+          data-editing="true"
+          className="flex w-full min-w-0 max-w-[82%] flex-col items-stretch lg:max-w-[640px]"
+        >
+          <UserMessageEditor
+            initialDraft={editAction.getDraft()}
+            sessionId={sessionId}
+            submitting={editAction.submitting}
+            disabled={editAction.disabled}
+            onDraftChange={editAction.onDraftChange}
+            onCancel={editAction.onCancel}
+            onSubmit={editAction.onSubmit}
+          />
         </div>
       </div>
     )
@@ -153,7 +261,8 @@ export const UserMessage = memo(function UserMessage({
     <div className="flex justify-end">
       <div
         data-message-shell="user"
-        className="group flex min-w-0 max-w-[82%] flex-col items-end sm:max-w-[78%] lg:max-w-[640px]"
+        {...actionMenu.pressProps}
+        className={`group relative flex min-w-0 max-w-[82%] flex-col items-end lg:max-w-[640px] ${actionMenu.pressClassName}`}
       >
         <div className="flex max-w-full flex-col items-end gap-2">
           {collaboration ? <div className="px-0.5 text-[11px] text-[var(--color-text-tertiary)]">
@@ -162,6 +271,7 @@ export const UserMessage = memo(function UserMessage({
           {sessionReferences?.length ? <div className="flex max-w-full flex-wrap gap-1" aria-label={t('chat.referenceSessions')}>
             {sessionReferences.map(reference => <Button key={reference.sessionId} size="sm" variant="ghost" onClick={() => openSessionSource(reference.sessionId)}>{t('chat.openReferencedSession', { id: sessionSourceTitle(reference.sessionId) })}</Button>)}
           </div> : null}
+          {display.agentTeam ? <AgentTeamChip /> : null}
           {attachments && attachments.length > 0 && (
             <AttachmentGallery attachments={attachments} variant="message" />
           )}
@@ -169,7 +279,7 @@ export const UserMessage = memo(function UserMessage({
           {hasText && (
             <div
               data-message-body="user"
-              className="min-w-0 max-w-full rounded-[var(--radius-lg)] bg-[var(--color-surface-user-msg)] px-[18px] py-[13px] chat-reading-text leading-relaxed text-[var(--color-text-primary)] whitespace-pre-wrap break-words"
+              className="min-w-0 max-w-full rounded-[var(--radius-lg)] bg-[var(--color-surface-user-msg)] px-3.5 py-2.5 chat-reading-text text-[var(--color-text-primary)] whitespace-pre-wrap break-words"
               style={{
                 overflowWrap: 'anywhere',
                 wordBreak: 'break-word',
@@ -180,16 +290,18 @@ export const UserMessage = memo(function UserMessage({
           )}
         </div>
 
-        {hasText && (
+        {(hasText || actionBarEditAction) && !actionMenu.enabled && (
           <MessageActionBar
             copyText={content}
             copyLabel={t('chat.copyPrompt')}
             branchAction={branchAction}
-            rewindAction={rewindAction}
+            editAction={actionBarEditAction}
             align="end"
+            placement="overlay"
             timestamp={timestamp}
           />
         )}
+        {actionMenu.sheet}
       </div>
     </div>
   )

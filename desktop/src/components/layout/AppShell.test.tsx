@@ -12,13 +12,15 @@ import {
 const mocks = vi.hoisted(() => ({
   initializeDesktopServerUrl: vi.fn(),
   isTauriRuntime: false,
-  isMobile: false,
+  layout: 'desktop' as 'desktop' | 'phone' | 'tablet',
+  mobileHandoff: 'unavailable' as 'checking' | 'leaving' | 'unavailable',
+  mobileHandoffReady: [] as boolean[],
+  mobileHandoffEligible: [] as boolean[],
   fetchAll: vi.fn(),
   restoreTabs: vi.fn(),
   connectToSession: vi.fn(),
   setActiveTab: vi.fn(),
   openTab: vi.fn(),
-  openTraceTab: vi.fn(),
   getDesktopUiPreferences: vi.fn(),
   updatePetPreferences: vi.fn(),
   tabState: {
@@ -40,6 +42,7 @@ vi.mock('../../lib/desktopRuntime', () => ({
   isDesktopRuntime: () => mocks.isTauriRuntime,
   isH5ConnectionRequiredError: (error: unknown) =>
     error instanceof Error && error.name === 'H5ConnectionRequiredError',
+  readStoredH5Connection: () => ({ serverUrl: null, token: null }),
 }))
 
 vi.mock('../../stores/settingsStore', () => ({
@@ -47,8 +50,28 @@ vi.mock('../../stores/settingsStore', () => ({
     selector({ fetchAll: mocks.fetchAll }),
 }))
 
-vi.mock('../../hooks/useMobileViewport', () => ({
-  useMobileViewport: () => mocks.isMobile,
+vi.mock('../mobile/mobileShellLayout', () => ({
+  useMobileShellLayout: () => mocks.layout,
+}))
+
+// The probe and redirect have their own suite; here only what the shell shows
+// while it runs, and when it is allowed to start.
+vi.mock('../mobile/mobileH5Handoff', () => ({
+  phoneAppCanAuthenticate: () => true,
+  useMobileH5Handoff: ({ ready, eligible }: { ready: boolean; eligible: () => boolean }) => {
+    mocks.mobileHandoffReady.push(ready)
+    if (ready) mocks.mobileHandoffEligible.push(eligible())
+    return mocks.mobileHandoff
+  },
+}))
+
+// The phone and tablet frame has its own suite against real stores; here only
+// the hand-off is checked: which layout it is given and whether the desktop UI
+// preferences request reaches it, since no Sidebar mounts to consume it.
+vi.mock('../mobile/MobileShell', () => ({
+  MobileShell: ({ layout, preferencesRequest }: { layout: string; preferencesRequest: Promise<unknown> | null }) => (
+    <div data-testid="mobile-shell-stub" data-layout={layout} data-has-preferences={preferencesRequest ? 'yes' : 'no'} />
+  ),
 }))
 
 vi.mock('../../stores/tabStore', () => {
@@ -66,7 +89,6 @@ vi.mock('../../stores/tabStore', () => {
     activeTabId: mocks.tabState.activeTabId,
     tabs: mocks.tabState.tabs,
     openTab: mocks.openTab,
-    openTraceTab: mocks.openTraceTab,
     setActiveTab: mocks.setActiveTab,
   })
   useTabStore.setState = (next: { activeTabId?: string | null }) => {
@@ -122,15 +144,6 @@ vi.mock('./ContentRouter', () => ({
   ContentRouter: () => <section>content loaded</section>,
 }))
 
-// The real one subscribes to the chat store, which this file replaces with a
-// `{ getState }` stub. Its behaviour has its own test; here only the wiring —
-// which session it is told is on screen, and where it sits — is checked.
-vi.mock('./MobileAttentionDot', () => ({
-  MobileAttentionDot: ({ activeSessionId }: { activeSessionId: string | null }) => (
-    <span data-testid="mobile-attention-dot-stub" data-active-session={activeSessionId ?? ''} />
-  ),
-}))
-
 vi.mock('./TabBar', () => ({
   TabBar: () => <nav>tabs loaded</nav>,
 }))
@@ -142,14 +155,6 @@ vi.mock('./H5ConnectionView', () => ({
       <div>{error}</div>
       <button type="button" onClick={onConnected}>retry h5 bootstrap</button>
     </div>
-  ),
-}))
-
-vi.mock('../../pages/TraceSession', () => ({
-  TraceSession: ({ sessionId, standalone }: { sessionId: string; standalone?: boolean }) => (
-    <section data-standalone={standalone ? 'true' : 'false'} data-testid="trace-session">
-      trace:{sessionId}
-    </section>
   ),
 }))
 
@@ -170,7 +175,10 @@ describe('AppShell boot flow', () => {
       hydrateProjectDisplayNames({}, Number.MAX_SAFE_INTEGER)
     })
     mocks.isTauriRuntime = false
-    mocks.isMobile = false
+    mocks.layout = 'desktop'
+    mocks.mobileHandoff = 'unavailable'
+    mocks.mobileHandoffReady = []
+    mocks.mobileHandoffEligible = []
     mocks.initializeDesktopServerUrl.mockResolvedValue('http://127.0.0.1:3456')
     mocks.fetchAll.mockResolvedValue(undefined)
     mocks.restoreTabs.mockResolvedValue(undefined)
@@ -209,7 +217,6 @@ describe('AppShell boot flow', () => {
       },
     })
     mocks.openTab.mockReset()
-    mocks.openTraceTab.mockReset()
     mocks.setActiveTab.mockImplementation((sessionId: string) => {
       mocks.tabState.activeTabId = sessionId
     })
@@ -389,51 +396,16 @@ describe('AppShell boot flow', () => {
     })
   })
 
-  it('opens a trace tab from a session-scoped trace deep link', async () => {
-    window.history.pushState({}, '', '/?traceSessionId=session-deep-link')
-
-    render(<AppShell />)
-
-    await screen.findByText('sidebar loaded')
-    await waitFor(() => {
-      // No session in the store yet, so the id prefix is all the title we have.
-      expect(mocks.openTraceTab).toHaveBeenCalledWith('session-deep-link', 'session-')
-    })
-    expect(mocks.connectToSession).not.toHaveBeenCalled()
-  })
-
-  it('titles a deep-linked trace tab with the session once the store knows it', async () => {
-    useSessionStore.setState({
-      sessions: [{
-        id: 'session-deep-link',
-        title: 'Debug stuck agent',
-        createdAt: '2026-06-09T10:00:00.000Z',
-        modifiedAt: '2026-06-09T10:10:00.000Z',
-        messageCount: 2,
-        projectPath: '/tmp',
-        workDir: '/tmp',
-        workDirExists: true,
-      }],
-    })
-    window.history.pushState({}, '', '/?traceSessionId=session-deep-link')
-
-    render(<AppShell />)
-
-    await screen.findByText('sidebar loaded')
-    await waitFor(() => {
-      expect(mocks.openTraceTab).toHaveBeenCalledWith('session-deep-link', 'Debug stuck agent')
-    })
-  })
-
-  it('renders a dedicated trace window shell from traceWindow deep links', async () => {
+  it('boots the normal shell for a retired trace-window deep link', async () => {
+    // Trace windows and `?traceSessionId=` deep links were removed with the
+    // standalone Trace page; a stale URL must not hide the workspace shell.
     window.history.pushState({}, '', '/?traceWindow=1&traceSessionId=session-window')
 
     render(<AppShell />)
 
-    expect(await screen.findByTestId('trace-session')).toHaveTextContent('trace:session-window')
-    expect(screen.getByTestId('trace-session')).toHaveAttribute('data-standalone', 'true')
-    expect(screen.queryByText('sidebar loaded')).not.toBeInTheDocument()
-    expect(mocks.restoreTabs).not.toHaveBeenCalled()
+    await screen.findByText('sidebar loaded')
+    await waitFor(() => expect(mocks.restoreTabs).toHaveBeenCalledTimes(1))
+    expect(mocks.openTab).not.toHaveBeenCalled()
   })
 
   it('routes native menu navigation through the desktop host', async () => {
@@ -572,8 +544,8 @@ describe('AppShell boot flow', () => {
     expect(screen.queryByText('h5 connection view')).not.toBeInTheDocument()
   })
 
-  it('hydrates project display names before the closed H5 drawer mounts Sidebar', async () => {
-    mocks.isMobile = true
+  it('hydrates project display names on a phone, where no sidebar mounts to do it', async () => {
+    mocks.layout = 'phone'
     mocks.getDesktopUiPreferences.mockResolvedValueOnce({
       exists: true,
       preferences: {
@@ -594,129 +566,62 @@ describe('AppShell boot flow', () => {
 
     render(<AppShell />)
 
-    await screen.findByText('content loaded')
+    const shell = await screen.findByTestId('mobile-shell-stub')
+    expect(shell).toHaveAttribute('data-layout', 'phone')
+    // The phone list reads hidden projects from this request.
+    expect(shell).toHaveAttribute('data-has-preferences', 'yes')
     expect(screen.queryByText('sidebar loaded')).not.toBeInTheDocument()
+    expect(screen.queryByText('tabs loaded')).not.toBeInTheDocument()
     await waitFor(() => {
       expect(resolveProjectDisplayName('/workspace/project')).toBe('Mobile alias')
     })
     expect(mocks.getDesktopUiPreferences).toHaveBeenCalledTimes(1)
-
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('mobile-sidebar-toggle'))
-      await Promise.resolve()
-    })
-
-    expect(screen.getByText('sidebar loaded')).toBeInTheDocument()
-    expect(mocks.getDesktopUiPreferences).toHaveBeenCalledTimes(1)
   })
 
-  it('renders a mobile drawer toggle and backdrop in browser H5 mode', async () => {
-    mocks.isMobile = true
+  it('leaves a phone for the phone app only after the connection is ready, without flashing the built-in shell', async () => {
+    mocks.layout = 'phone'
+    mocks.mobileHandoff = 'leaving'
+
+    render(<AppShell />)
+
+    await waitFor(() => expect(mocks.mobileHandoffEligible.at(-1)).toBe(true))
+    // Before bootstrap finished it was never asked to decide.
+    expect(mocks.mobileHandoffReady[0]).toBe(false)
+    expect(screen.getByText('app.launching')).toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-shell-stub')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-shell')).not.toBeInTheDocument()
+  })
+
+  it('never hands a desktop window to the phone app', async () => {
+    mocks.layout = 'desktop'
+    mocks.mobileHandoff = 'leaving'
 
     render(<AppShell />)
 
     await screen.findByText('content loaded')
-
-    await waitFor(() => {
-      expect(useUIStore.getState().sidebarOpen).toBe(false)
-    })
-
-    expect(screen.getByTestId('sidebar-shell')).toHaveAttribute('data-state', 'closed')
-    expect(screen.getByTestId('sidebar-shell')).toHaveAttribute('aria-hidden', 'true')
-    expect(screen.getByTestId('sidebar-shell')).toHaveAttribute('inert')
-    expect(screen.queryByText('sidebar loaded')).not.toBeInTheDocument()
-    expect(screen.getByTestId('mobile-sidebar-toggle')).toBeInTheDocument()
-    expect(screen.queryByTestId('sidebar-backdrop')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('mobile-sidebar-toggle'))
-
-    expect(useUIStore.getState().sidebarOpen).toBe(true)
-    expect(screen.getByTestId('sidebar-shell')).toHaveAttribute('data-state', 'open')
-    expect(screen.getByText('sidebar loaded')).toBeInTheDocument()
-    expect(screen.getByTestId('sidebar-backdrop')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('sidebar-backdrop'))
-
-    expect(useUIStore.getState().sidebarOpen).toBe(false)
-    expect(screen.getByTestId('sidebar-shell')).toHaveAttribute('data-state', 'closed')
+    expect(mocks.mobileHandoffEligible.length).toBeGreaterThan(0)
+    expect(mocks.mobileHandoffEligible.every((eligible) => !eligible)).toBe(true)
   })
 
-  it('shares the mobile drawer row with the active session title', async () => {
-    mocks.isMobile = true
-    mocks.tabState.activeTabId = 'session-mobile'
-    mocks.tabState.tabs = [
-      { sessionId: 'session-mobile', title: 'Fallback tab title', type: 'session', status: 'running' },
-    ]
-    useSessionStore.setState({
-      sessions: [{
-        id: 'session-mobile',
-        title: 'Analyze recent commits',
-        createdAt: '2026-05-10T00:00:00.000Z',
-        modifiedAt: new Date().toISOString(),
-        messageCount: 7,
-        projectPath: '/tmp/project',
-        workDir: '/tmp/project',
-        workDirExists: true,
-      }],
-      activeSessionId: 'session-mobile',
-      isLoading: false,
-      error: null,
-    })
+  it('hands a touch tablet to the mobile shell instead of the desktop chrome', async () => {
+    mocks.layout = 'tablet'
 
     render(<AppShell />)
 
-    await screen.findByText('content loaded')
-
-    const header = screen.getByTestId('mobile-session-header')
-    expect(header).toHaveTextContent('Analyze recent commits')
-    expect(header).toHaveTextContent('session.active')
-    expect(header).toHaveTextContent('session.messages')
-    // 44px — the hamburger is the primary mobile navigation target, and the
-    // platform minimum for primary touch targets is 44, not the 40 it shipped
-    // at (IconButton's own size doc had the two tiers reversed).
-    expect(screen.getByTestId('mobile-sidebar-toggle')).toHaveClass('h-11', 'w-11')
-
-    // The hamburger's corner is where the drawer's waiting marks get announced
-    // from, and the dot is told which session is on screen so it can leave that
-    // one out. It shares a wrapper with the button so it can sit on its corner.
-    const dot = screen.getByTestId('mobile-attention-dot-stub')
-    expect(dot).toHaveAttribute('data-active-session', 'session-mobile')
-    expect(screen.getByTestId('mobile-sidebar-toggle').parentElement).toContainElement(dot)
-  })
-
-  it('does not put the waiting dot on a desktop window, which has the tab strip instead', async () => {
-    mocks.isMobile = false
-
-    render(<AppShell />)
-
-    await screen.findByText('content loaded')
-    expect(screen.queryByTestId('mobile-attention-dot-stub')).not.toBeInTheDocument()
-  })
-
-  it('keeps browser H5 settings active alongside existing chat tabs', async () => {
-    mocks.isMobile = true
-    mocks.tabState.activeTabId = '__settings__'
-    mocks.tabState.tabs = [
-      { sessionId: '__settings__', title: 'Settings', type: 'settings', status: 'idle' },
-      { sessionId: 'session-1', title: 'Existing session', type: 'session', status: 'idle' },
-    ]
-
-    render(<AppShell />)
-
-    await screen.findByText('content loaded')
+    expect(await screen.findByTestId('mobile-shell-stub')).toHaveAttribute('data-layout', 'tablet')
+    expect(screen.queryByTestId('sidebar-shell')).not.toBeInTheDocument()
     expect(screen.queryByText('tabs loaded')).not.toBeInTheDocument()
-    expect(mocks.setActiveTab).not.toHaveBeenCalled()
-    expect(mocks.tabState.activeTabId).toBe('__settings__')
-    expect(screen.getByTestId('mobile-session-header')).toHaveTextContent('sidebar.settings')
   })
 
-  it('keeps mobile settings active when no chat session exists', async () => {
-    mocks.isMobile = true
-    mocks.tabState.activeTabId = '__settings__'
-    mocks.tabState.tabs = [{ sessionId: '__settings__', title: 'Settings', type: 'settings', status: 'idle' }]
+  it('keeps the sidebar, tab strip and resize handle on a desktop window', async () => {
+    mocks.layout = 'desktop'
+
     render(<AppShell />)
+
     await screen.findByText('content loaded')
-    expect(mocks.tabState.activeTabId).toBe('__settings__')
-    expect(mocks.setActiveTab).not.toHaveBeenCalled()
+    expect(screen.getByText('sidebar loaded')).toBeInTheDocument()
+    expect(screen.getByText('tabs loaded')).toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-resize-handle')).toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-shell-stub')).not.toBeInTheDocument()
   })
 })
