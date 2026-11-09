@@ -277,8 +277,6 @@ describe('Telegram command controller helpers', () => {
 
     expect(action).not.toHaveBeenCalled()
     expect(denied.replies[0]).toContain('未授权')
-    expect(denied.replies[0]).toContain('EchoFlow Code 桌面端')
-    expect(denied.replies[0]).not.toContain('Claude')
   })
 
   it('only resolves pending permission callbacks from authorized users', () => {
@@ -413,7 +411,6 @@ describe('Telegram command controller helpers', () => {
     const help = createCommandContext()
     await controller.sendHelp(help.ctx)
     expect(help.replies[0]).toContain('/resume')
-    expect(help.replies[0]).toContain('EchoFlow Code Bot')
 
     await controller.handleModelCommand(createCommandContext().ctx)
     const page = createCommandContext()

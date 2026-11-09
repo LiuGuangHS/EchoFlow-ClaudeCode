@@ -1,6 +1,5 @@
 import { truncateInput } from '../common/format.js'
 import { parsePermitCallbackData, type PermissionDecision } from '../common/permission.js'
-import { ECHOFLOW_PRODUCT_NAME } from '../common/brand.js'
 
 export const DINGTALK_PERMISSION_CARD_CALLBACK_ROUTE = 'permission'
 
@@ -19,7 +18,7 @@ export function buildDingTalkPermissionCardParams(
   const denyValue = { action: 'permit', requestId, allowed: false }
 
   return {
-    title: `${ECHOFLOW_PRODUCT_NAME} 需要权限确认`,
+    title: 'Claude Code 需要权限确认',
     toolName,
     requestId,
     inputPreview: truncateInput(input, 600),
@@ -40,6 +39,21 @@ export function buildDingTalkPermissionCardParams(
     }),
     config: JSON.stringify({ autoLayout: true }),
   }
+}
+
+export function parseDingTalkPermissionCardCallback(raw: unknown): {
+  userId: string
+  outTrackId: string
+  action: DingTalkPermissionCardAction
+} | null {
+  const envelope = parseMaybeJson(raw)
+  if (!isRecord(envelope) || envelope.type !== 'actionCallback') return null
+  // Identity comes only from the Stream envelope, never from card-controlled params.
+  const userId = readString(envelope, ['userId'])
+  const outTrackId = readString(envelope, ['outTrackId'])
+  if (!userId || !outTrackId) return null
+  const action = parseDingTalkPermissionCardAction(envelope.content)
+  return action ? { userId, outTrackId, action } : null
 }
 
 export function parseDingTalkPermissionCardAction(raw: unknown): DingTalkPermissionCardAction | null {

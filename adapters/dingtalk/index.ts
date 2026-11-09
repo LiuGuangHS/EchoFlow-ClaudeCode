@@ -1,3 +1,4 @@
+import { adapterMigrationLifecycle, registerAdapterShutdown } from '../common/migration-lifecycle.js'
 /**
  * DingTalk Adapter for Claude Code Desktop.
  *
@@ -6,12 +7,10 @@
  */
 
 import path from 'node:path'
-import { ECHOFLOW_PRODUCT_NAME } from '../common/brand.js'
 import { DWClient, TOPIC_CARD, TOPIC_ROBOT } from 'dingtalk-stream'
 import { WsBridge, type ServerMessage, type AttachmentRef } from '../common/ws-bridge.js'
 import { MessageDedup } from '../common/message-dedup.js'
 import { MessageBuffer } from '../common/message-buffer.js'
-import { enqueue } from '../common/chat-queue.js'
 import { loadConfig } from '../common/config.js'
 import { formatImHelp, formatImStatus, formatPermissionRequest, splitMessage } from '../common/format.js'
 import {
@@ -51,9 +50,9 @@ import {
 import {
   buildDingTalkPermissionCardParams,
   DINGTALK_PERMISSION_CARD_CALLBACK_ROUTE,
-  parseDingTalkPermissionCardAction,
+  parseDingTalkPermissionCardCallback,
 } from './permission-card.js'
-import { finishAndResetDingTalkStreamingState, resetDingTalkStreamingState } from './stream-state.js'
+import { finishAndResetDingTalkStreamingState, flushDingTalkAiCard, resetDingTalkStreamingState } from './stream-state.js'
 
 const DINGTALK_API = 'https://api.dingtalk.com'
 
@@ -62,7 +61,7 @@ if (!config.dingtalk.clientId || !config.dingtalk.clientSecret) {
   console.error('[DingTalk] Missing DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET. Bind with QR auth in Desktop Settings or set env.')
   process.exit(1)
 }
-const { httpClient, defaultWorkDir } = createAdapterClient(config, config.dingtalk)
+const { httpClient, defaultWorkDir, enqueue } = createAdapterClient(config, config.dingtalk)
 
 const bridge = new WsBridge(config.serverUrl, 'dingtalk')
 const dedup = new MessageDedup()
@@ -83,7 +82,7 @@ const aiCardTargets = new Map<string, DingTalkAiCardTarget>()
 const streamingCards = new Map<string, Promise<DingTalkAiCardInstance | null>>()
 const streamingCardText = new Map<string, string>()
 const pendingPermissions = new Map<string, Set<string>>()
-const pendingPermissionChats = new Map<string, string>()
+const pendingPermissionRecipients = new Map<string, { chatId: string; userId: string | null }>()
 
 let accessTokenCache: { token: string; expiresAt: number } | null = null
 
@@ -148,10 +147,12 @@ async function getAccessToken(): Promise<string> {
   return data.accessToken
 }
 
-async function sendText(chatId: string, text: string): Promise<void> {
+async function sendText(chatId: string, text: string, options: { requireDelivery?: boolean } = {}): Promise<void> {
   const sessionWebhook = sessionWebhooks.get(chatId)
   if (!sessionWebhook) {
-    console.warn(`[DingTalk] Missing sessionWebhook for ${chatId}; cannot send response`)
+    const message = `[DingTalk] Missing sessionWebhook for ${chatId}; cannot send response`
+    if (options.requireDelivery) throw new Error(message)
+    console.warn(message)
     return
   }
 
@@ -166,14 +167,16 @@ async function sendText(chatId: string, text: string): Promise<void> {
       body: JSON.stringify({
         msgtype: 'markdown',
         markdown: {
-          title: ECHOFLOW_PRODUCT_NAME,
+          title: 'Claude Code',
           text: chunk,
         },
       }),
     })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
-      console.warn(`[DingTalk] sendText failed: ${res.status} ${body}`)
+      const message = `[DingTalk] sendText failed: ${res.status} ${body}`
+      if (options.requireDelivery) throw new Error(message)
+      console.warn(message)
     }
   }
 }
@@ -204,32 +207,17 @@ function getOrCreateAiCard(chatId: string): Promise<DingTalkAiCardInstance | nul
 }
 
 async function flushToAiCard(chatId: string, newText: string, isComplete: boolean): Promise<void> {
-  const fullText = (streamingCardText.get(chatId) ?? '') + newText
-  streamingCardText.set(chatId, fullText)
-  if (!fullText.trim()) return
-
-  const cardPromise = getOrCreateAiCard(chatId)
-  const card = cardPromise ? await cardPromise : null
-  if (!card) {
-    if (isComplete) await sendText(chatId, fullText)
-    return
-  }
-
-  try {
-    if (isComplete) {
-      await aiCards.finish(card, fullText)
-      streamingCards.delete(chatId)
-      streamingCardText.delete(chatId)
-      aiCardBuffers.get(chatId)?.reset()
-      aiCardBuffers.delete(chatId)
-    } else {
-      await aiCards.stream(card, `${fullText} ▍`, false)
-    }
-  } catch (err) {
-    console.warn('[DingTalk][AICard] stream failed, falling back to markdown:', err instanceof Error ? err.message : err)
-    streamingCards.delete(chatId)
-    if (isComplete) await sendText(chatId, fullText)
-  }
+  await flushDingTalkAiCard(
+    { aiCardBuffers, streamingCards, streamingCardText },
+    chatId,
+    newText,
+    isComplete,
+    {
+      getOrCreateCard: () => getOrCreateAiCard(chatId),
+      sendText: (text) => sendText(chatId, text, { requireDelivery: true }),
+      aiCards,
+    },
+  )
 }
 
 function clearTransientChatState(chatId: string): void {
@@ -244,7 +232,7 @@ function clearTransientChatState(chatId: string): void {
 function clearPendingPermissions(chatId: string): void {
   const pending = pendingPermissions.get(chatId)
   if (pending) {
-    for (const requestId of pending) pendingPermissionChats.delete(requestId)
+    for (const requestId of pending) pendingPermissionRecipients.delete(requestId)
   }
   pendingPermissions.delete(chatId)
 }
@@ -436,12 +424,12 @@ async function sendPermissionRequest(chatId: string, msg: ServerMessage): Promis
   const set = pendingPermissions.get(chatId) ?? new Set<string>()
   set.add(msg.requestId)
   pendingPermissions.set(chatId, set)
-  pendingPermissionChats.set(msg.requestId, chatId)
+  const target = aiCardTargets.get(chatId)
+  pendingPermissionRecipients.set(msg.requestId, { chatId, userId: target?.type === 'user' ? target.userId : null })
 
   const requestText = formatPermissionRequest(msg.toolName, msg.input, msg.requestId)
   const instructions = formatPermissionInstructions(msg.requestId)
   const templateId = config.dingtalk.permissionCardTemplateId.trim()
-  const target = aiCardTargets.get(chatId)
 
   if (templateId && target) {
     const card = await aiCards.createForTarget(target, {
@@ -485,14 +473,15 @@ function applyPermissionDecision(chatId: string, decision: PermissionDecision): 
   }
 
   pending.delete(requestId)
-  pendingPermissionChats.delete(requestId)
+  pendingPermissionRecipients.delete(requestId)
   const runtime = getRuntimeState(chatId)
   runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
   return sent
 }
 
-async function routeUserMessage(chatId: string, text: string, attachments: AttachmentRef[] = []): Promise<void> {
-  enqueue(chatId, async () => {
+async function routeUserMessage(chatId: string, text: string, attachmentsOrLoader: AttachmentRef[] | (() => Promise<AttachmentRef[]>) = []): Promise<void> {
+  return enqueue(chatId, async () => {
+    const attachments = typeof attachmentsOrLoader === 'function' ? await attachmentsOrLoader() : attachmentsOrLoader
     const trimmed = text.trim()
     const hasAttachments = attachments.length > 0
 
@@ -575,31 +564,30 @@ async function handleRobotMessage(data: DingTalkRobotMessage): Promise<void> {
     await sendText(
       chatId,
       success
-        ? '✅ 配对成功！现在可以开始聊天了。\n\n发送消息即可与 EchoFlow 对话。发送 /help 查看可用命令。'
-        : `🔒 未授权。请先在 ${ECHOFLOW_PRODUCT_NAME} 桌面端完成钉钉扫码绑定，再生成 IM 配对码后发送给我。`,
+        ? '✅ 配对成功！现在可以开始聊天了。\n\n发送消息即可与 Claude 对话。发送 /help 查看可用命令。'
+        : '🔒 未授权。请先在 Claude Code 桌面端完成钉钉扫码绑定，再生成 IM 配对码后发送给我。',
     )
     return
   }
 
   aiCardTargets.set(chatId, { type: 'user', userId })
-  const attachments = await collectAttachments(chatId, mediaCandidates)
-  await routeUserMessage(chatId, text, attachments)
+  await routeUserMessage(chatId, text, () => collectAttachments(chatId, mediaCandidates))
 }
 
 async function handleCardCallback(raw: unknown): Promise<void> {
-  const action = parseDingTalkPermissionCardAction(raw)
-  if (!action) return
+  const callback = parseDingTalkPermissionCardCallback(raw)
+  if (!callback) return
 
-  const chatId = action.chatId && pendingPermissions.has(action.chatId)
-    ? action.chatId
-    : pendingPermissionChats.get(action.requestId)
-  if (!chatId) {
-    console.warn(`[DingTalk][Card] permission request not found: ${action.requestId}`)
+  const { action, userId, outTrackId } = callback
+  const recipient = pendingPermissionRecipients.get(action.requestId)
+  if (!recipient || recipient.userId !== userId || !isAllowedUser('dingtalk', userId)
+    || outTrackId !== `permission_${action.requestId}`) {
+    console.warn('[DingTalk][Card] permission callback rejected')
     return
   }
 
-  if (applyPermissionDecision(chatId, action)) {
-    await sendText(chatId, formatPermissionDecisionStatus(action))
+  if (applyPermissionDecision(recipient.chatId, action)) {
+    await sendText(recipient.chatId, formatPermissionDecisionStatus(action))
   }
 }
 
@@ -675,6 +663,12 @@ async function start(): Promise<void> {
     keepAlive: true,
   } as any)
 
+  registerAdapterShutdown(async () => {
+    bridge.destroy()
+    dedup.destroy()
+    await client.disconnect()
+  })
+
   client.registerCallbackListener(TOPIC_ROBOT, async (res: any) => {
     const messageId = res.headers?.messageId
     if (messageId) {
@@ -686,7 +680,7 @@ async function start(): Promise<void> {
     if (!data) return
     if (data.msgId && !dedup.tryRecord(`body:${data.msgId}`)) return
 
-    await handleRobotMessage(data)
+    await adapterMigrationLifecycle.track(handleRobotMessage(data))
   })
 
   client.registerCallbackListener(TOPIC_CARD, async (res: any) => {
@@ -696,28 +690,16 @@ async function start(): Promise<void> {
       if (!dedup.tryRecord(`card:${messageId}`)) return
     }
 
-    await handleCardCallback(res.data ?? res)
+    await adapterMigrationLifecycle.track(handleCardCallback(res.data ?? res))
   })
 
+  if (adapterMigrationLifecycle.isQuiescing) return
   await client.connect()
   console.log(`[DingTalk] Stream connected. Server: ${config.serverUrl}`)
 
-  const shutdown = async () => {
-    console.log('[DingTalk] Shutting down...')
-    bridge.destroy()
-    dedup.destroy()
-    try {
-      await client.disconnect()
-    } catch {
-      // ignore
-    }
-    process.exit(0)
-  }
-  process.once('SIGINT', () => void shutdown())
-  process.once('SIGTERM', () => void shutdown())
 }
 
-if (import.meta.main || process.argv.includes('--dingtalk')) start().catch((err) => {
+if (import.meta.main || process.argv.includes('--dingtalk')) adapterMigrationLifecycle.track(start()).catch((err) => {
   console.error('[DingTalk] Fatal:', err instanceof Error ? err.message : err)
   process.exit(1)
 })

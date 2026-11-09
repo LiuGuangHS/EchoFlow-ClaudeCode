@@ -1,3 +1,5 @@
+import { adapterMigrationLifecycle, registerAdapterShutdown } from '../common/migration-lifecycle.js'
+import { waitForWhatsAppCredsSave } from './session.js'
 /**
  * WhatsApp Adapter for Claude Code Desktop
  *
@@ -6,14 +8,12 @@
  */
 
 import * as path from 'node:path'
-import { ECHOFLOW_PRODUCT_NAME } from '../common/brand.js'
 import {
   normalizeMessageContent,
   type proto,
 } from '@whiskeysockets/baileys'
 import { WsBridge, type ServerMessage, type AttachmentRef } from '../common/ws-bridge.js'
 import { MessageDedup } from '../common/message-dedup.js'
-import { enqueue } from '../common/chat-queue.js'
 import { loadConfig } from '../common/config.js'
 import {
   formatImHelp,
@@ -36,7 +36,7 @@ import { AttachmentStore } from '../common/attachment/attachment-store.js'
 import { checkAttachmentLimit } from '../common/attachment/attachment-limits.js'
 import { ImageBlockWatcher } from '../common/attachment/image-block-watcher.js'
 import type { PendingUpload } from '../common/attachment/attachment-types.js'
-import { materializePendingUploadImage } from '../common/attachment/safe-remote-image.js'
+import { loadSafeOutboundImage } from '../common/attachment/outbound-image.js'
 import {
   closeWhatsAppSocket,
   createWhatsAppSocket,
@@ -45,7 +45,6 @@ import {
   type WhatsAppSocket,
 } from './session.js'
 import { WhatsAppMediaService } from './media.js'
-import { buildWhatsAppPairingNotice } from './pairing-notice.js'
 import {
   buildWhatsAppThinkingPreview,
   formatWhatsAppOutboundText,
@@ -66,7 +65,7 @@ if (!hasWhatsAppAuth(authDir)) {
 const bridge = new WsBridge(config.serverUrl, 'whatsapp')
 const dedup = new MessageDedup()
 const sessionStore = new SessionStore()
-const { httpClient, defaultWorkDir } = createAdapterClient(config, config.whatsapp)
+const { httpClient, defaultWorkDir, enqueue } = createAdapterClient(config, config.whatsapp)
 const attachmentStore = new AttachmentStore()
 attachmentStore.gc().catch((err) => {
   console.warn('[WhatsApp] AttachmentStore.gc failed:', err instanceof Error ? err.message : err)
@@ -146,7 +145,7 @@ async function sendWhatsAppText(jid: string, text: string): Promise<void> {
 }
 
 async function sendHelp(jid: string): Promise<void> {
-  await sendWhatsAppText(jid, `${ECHOFLOW_PRODUCT_NAME} WhatsApp 已就绪。\n\n${formatImHelp()}`)
+  await sendWhatsAppText(jid, `Claude Code WhatsApp 已就绪。\n\n${formatImHelp()}`)
 }
 
 async function handlePermissionDecision(chatId: string, decision: PermissionDecision): Promise<void> {
@@ -273,12 +272,12 @@ async function showProjectPicker(chatId: string): Promise<void> {
 
 async function dispatchOutboundMedia(chatId: string, pending: PendingUpload): Promise<void> {
   try {
-    const { buffer, mime } = await materializePendingUploadImage(pending.source)
-    const check = checkAttachmentLimit('image', buffer.length, mime)
-    if (!check.ok) {
-      console.warn('[WhatsApp] Outbound image rejected:', check.hint)
+    const loaded = await loadSafeOutboundImage(pending, sessionStore.get(chatId)?.workDir)
+    if (!loaded.ok) {
+      console.warn('[WhatsApp] Outbound image rejected:', loaded.reason)
       return
     }
+    const { buffer, mime } = loaded
     await media.sendMedia(chatId, buffer, mime, pending.alt)
   } catch (err) {
     console.error('[WhatsApp] dispatchOutboundMedia failed:', err instanceof Error ? err.message : err)
@@ -440,16 +439,24 @@ async function routeUserMessage(
   displayName: string,
   text: string,
   attachments: AttachmentRef[],
+  loadAttachments?: () => Promise<AttachmentRef[]>,
 ): Promise<void> {
   if (!isAllowedUser('whatsapp', userId)) {
     const success = attachments.length === 0
       ? tryPair(text.trim(), { userId, displayName }, 'whatsapp')
       : false
-    await sendWhatsAppText(chatId, buildWhatsAppPairingNotice(success))
+    await sendWhatsAppText(
+      chatId,
+      success
+        ? '配对成功！现在可以开始聊天了。\n\n发送消息即可与 Claude 对话。'
+        : '未授权。请在 Claude Code 桌面端生成配对码后发送给我。',
+    )
     return
   }
 
-  enqueue(chatId, async () => {
+  return enqueue(chatId, async () => {
+    if (loadAttachments) attachments = await loadAttachments()
+    if (!text.trim() && attachments.length === 0) return
     const command = text.trim()
     if (command === '/start' || command === '/help') {
       await sendHelp(chatId)
@@ -579,20 +586,19 @@ async function handleIncomingMessage(message: proto.IWebMessageInfo): Promise<vo
   if (!dedup.tryRecord(`${chatId}:${messageId}`)) return
 
   const text = extractText(message.message as proto.IMessage | undefined)
-  const { attachments, rejections } = await collectAttachments(message, chatId)
-  for (const rejection of rejections) {
-    await sendWhatsAppText(chatId, rejection).catch(() => {})
-  }
-  if (!text.trim() && attachments.length === 0) return
-
-  await sock.readMessages([{ remoteJid: chatId, id: messageId, fromMe: false }]).catch(() => {})
-  await sock.sendPresenceUpdate('composing', chatId).catch(() => {})
   await routeUserMessage(
     chatId,
     chatId,
     message.pushName || chatId,
     text,
-    attachments,
+    [],
+    async () => {
+      const { attachments, rejections } = await collectAttachments(message, chatId)
+      for (const rejection of rejections) await sendWhatsAppText(chatId, rejection).catch(() => {})
+      await sock.readMessages([{ remoteJid: chatId, id: messageId, fromMe: false }]).catch(() => {})
+      await sock.sendPresenceUpdate('composing', chatId).catch(() => {})
+      return attachments
+    },
   )
 }
 
@@ -602,16 +608,21 @@ export function useWhatsAppSocket(socket: WhatsAppSocket): void {
 }
 
 async function startSocket(): Promise<void> {
+  if (shuttingDown || adapterMigrationLifecycle.isQuiescing) return
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
   useWhatsAppSocket(await createWhatsAppSocket({ authDir }))
+  if (shuttingDown || adapterMigrationLifecycle.isQuiescing) {
+    closeWhatsAppSocket(sock, 'data migration')
+    return
+  }
 
   sock.ev.on('messages.upsert', ({ type, messages }) => {
-    if (type !== 'notify') return
+    if (type !== 'notify' || adapterMigrationLifecycle.isQuiescing) return
     for (const message of messages) {
-      void handleIncomingMessage(message)
+      void adapterMigrationLifecycle.track(handleIncomingMessage(message))
     }
   })
 
@@ -632,13 +643,14 @@ async function startSocket(): Promise<void> {
 }
 
 function scheduleReconnect(): void {
+  if (shuttingDown || adapterMigrationLifecycle.isQuiescing) return
   if (reconnectTimer) return
   const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** reconnectAttempts)
   reconnectAttempts += 1
   console.warn(`[WhatsApp] Connection closed. Reconnecting in ${delay}ms...`)
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null
-    startSocket().catch((err) => {
+    adapterMigrationLifecycle.track(startSocket()).catch((err) => {
       console.error('[WhatsApp] Reconnect failed:', err instanceof Error ? err.message : err)
       scheduleReconnect()
     })
@@ -652,14 +664,14 @@ console.log(`[WhatsApp] Allowed users: ${config.whatsapp.allowedUsers.length ===
 
 if (import.meta.main || process.argv.includes('--whatsapp')) await startSocket()
 
-if (import.meta.main || process.argv.includes('--whatsapp')) process.on('SIGINT', () => {
+if (import.meta.main || process.argv.includes('--whatsapp')) registerAdapterShutdown(async () => {
   console.log('[WhatsApp] Shutting down...')
   shuttingDown = true
   if (reconnectTimer) clearTimeout(reconnectTimer)
   closeWhatsAppSocket(sock, 'SIGINT')
   bridge.destroy()
   dedup.destroy()
-  process.exit(0)
+  await waitForWhatsAppCredsSave(authDir)
 })
 
-export { bridge, dedup, sessionStore, sessionSelectionController, handleServerMessage, getRuntimeState, clearTransientChatState, createSessionForChat, showProjectPicker, routeUserMessage, startNewSession }
+export { bridge, dedup, sessionStore, sessionSelectionController, handleServerMessage, getRuntimeState, clearTransientChatState, createSessionForChat, showProjectPicker, routeUserMessage, handleIncomingMessage, startNewSession }

@@ -6,11 +6,12 @@ import type { ServerWebSocket } from 'bun'
 import { SessionStore } from '../../common/session-store.js'
 import { WsBridge } from '../../common/ws-bridge.js'
 import { AttachmentStore } from '../../common/attachment/attachment-store.js'
+import { adapterMigrationLifecycle } from '../../common/migration-lifecycle.js'
 
 // Import the actual entrypoint with isolated configuration. Telegram API calls
 // terminate in grammY's documented transformer; HTTP and WS use loopback only.
 describe('Telegram entrypoint session routing', () => {
-  const envKeys = ['CLAUDE_CONFIG_DIR', 'TELEGRAM_BOT_TOKEN', 'ADAPTER_SERVER_URL', 'ADAPTER_ALLOWED_PROJECT_ROOTS', 'ADAPTER_DEFAULT_PROJECT_DIR', 'CLAUDE_ADAPTER_DEFAULT_WORK_DIR', 'ECHOFLOW_LOCAL_ACCESS_TOKEN']
+  const envKeys = ['CLAUDE_CONFIG_DIR', 'TELEGRAM_BOT_TOKEN', 'ADAPTER_SERVER_URL', 'ADAPTER_ALLOWED_PROJECT_ROOTS', 'ADAPTER_DEFAULT_PROJECT_DIR', 'CLAUDE_ADAPTER_DEFAULT_WORK_DIR', 'CC_HAHA_LOCAL_ACCESS_TOKEN']
   const previousEnv = new Map<string, string | undefined>()
   let directory: string
   let project: string
@@ -24,6 +25,9 @@ describe('Telegram entrypoint session routing', () => {
   const messages: Array<{ sessionId: string; message: any }> = []
   const sockets = new Map<string, Set<ServerWebSocket<{ sessionId: string }>>>()
   const sessionPaths = new Map<string, string>()
+  const activeLeases = new Set<string>()
+  const acceptedLeases: string[] = []
+  const protectedDownloads: boolean[] = []
 
   async function eventually(assertion: () => void): Promise<void> {
     const deadline = Date.now() + 2500
@@ -37,13 +41,6 @@ describe('Telegram entrypoint session routing', () => {
 
   function texts(chatId: number): string[] {
     return apiCalls.filter((call) => call.payload.chat_id === chatId && call.payload.text).map((call) => call.payload.text)
-  }
-
-  function setPairingCode(code: string): void {
-    writeFileSync(join(directory, 'adapters.json'), JSON.stringify({
-      telegram: { allowedUsers: [7], defaultWorkDir: project, allowedProjectRoots: [directory] },
-      pairing: { code, expiresAt: Date.now() + 60_000, createdAt: Date.now() },
-    }))
   }
 
   async function text(chatId: number, value: string, options: { userId?: number; messageId?: number; photo?: boolean } = {}): Promise<void> {
@@ -96,6 +93,12 @@ describe('Telegram entrypoint session routing', () => {
           if (server.upgrade(request, { data: { sessionId: url.pathname.split('/')[2] } })) return
           return new Response('upgrade failed', { status: 400 })
         }
+        if (url.pathname === '/api/sessions/power-activity-lease') {
+          const { leaseId, active } = await request.json() as { leaseId: string; active: boolean }
+          if (active) activeLeases.add(leaseId)
+          else activeLeases.delete(leaseId)
+          return Response.json({ ok: true })
+        }
         if (url.pathname === '/api/sessions/recent-projects') return Response.json({ projects: [{ projectName: 'repo', realPath: project, projectPath: '-fixture-repo', branch: 'main', sessionCount: 3 }] })
         if (url.pathname === '/api/sessions' && request.method === 'POST') {
           const body = await request.json() as { workDir: string }
@@ -124,6 +127,7 @@ describe('Telegram entrypoint session routing', () => {
         message(socket, raw) {
           const message = JSON.parse(String(raw))
           messages.push({ sessionId: socket.data.sessionId, message })
+          if (typeof message.powerActivityLeaseId === 'string' && activeLeases.delete(message.powerActivityLeaseId)) acceptedLeases.push(message.powerActivityLeaseId)
           if (message.content === '/clear') socket.send(JSON.stringify({ type: 'message_complete' }))
         },
         close(socket) { sockets.get(socket.data.sessionId)?.delete(socket) },
@@ -135,14 +139,18 @@ describe('Telegram entrypoint session routing', () => {
     process.env.ADAPTER_ALLOWED_PROJECT_ROOTS = directory
     process.env.ADAPTER_DEFAULT_PROJECT_DIR = project
     process.env.CLAUDE_ADAPTER_DEFAULT_WORK_DIR = project
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'fixture-local-token'
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'fixture-local-token'
     writeFileSync(join(directory, 'adapters.json'), JSON.stringify({ telegram: { allowedUsers: [7], defaultWorkDir: project, allowedProjectRoots: [directory] } }))
     store = new SessionStore(join(directory, 'adapter-sessions.json'))
     entry = await import('../index.js')
     entry.bot.botInfo = { id: 12345, is_bot: true, first_name: 'Fixture', username: 'fixture_bot', can_join_groups: false, can_read_all_group_messages: false, supports_inline_queries: false, can_manage_bots: false, can_connect_to_business: false, has_main_web_app: false, has_topics_enabled: false, allows_users_to_create_topics: false }
     entry.bot.api.config.use(async (_previous, method, payload) => {
       apiCalls.push({ method, payload })
-      if (method === 'getFile') throw new Error('Fixture download rejected before network')
+      if (method === 'getFile') {
+        // All media is deferred until the authorized inbound lease is held.
+        protectedDownloads.push(activeLeases.size > 0)
+        throw new Error('Fixture download rejected before network')
+      }
       return { ok: true, result: ['answerCallbackQuery', 'deleteMessage'].includes(method) ? true : { message_id: nextId++, date: 1, chat: { id: (payload as any).chat_id, type: 'private' }, text: (payload as any).text } } as any
     })
   })
@@ -182,6 +190,18 @@ describe('Telegram entrypoint session routing', () => {
     } finally {
       failedOpen.mockRestore()
     }
+  })
+
+  it('protects media before download and hands the lease to the accepted message', async () => {
+    const before = acceptedLeases.length
+    const downloadsBefore = protectedDownloads.length
+    await text(712, 'protected download caption', { photo: true })
+    await eventually(() => expect(acceptedLeases.length).toBe(before + 1))
+    expect(protectedDownloads.slice(downloadsBefore)).toEqual([true])
+    const requestsBefore = requests.length
+    await text(712, 'outsider download', { photo: true, userId: 99 })
+    expect(protectedDownloads).toHaveLength(downloadsBefore + 1)
+    expect(requests).toHaveLength(requestsBefore)
   })
 
   it.each(['status', 'stop', 'clear'] as const)('preserves the session and project when /%s cannot reconnect, then retries the original session', async (command) => {
@@ -228,18 +248,6 @@ describe('Telegram entrypoint session routing', () => {
       sendMessage.mockRestore()
       sendStop.mockRestore()
     }
-  })
-
-  it('uses EchoFlow copy for rejected and successful pairing attempts', async () => {
-    const chatId = 710
-    await text(chatId, 'WRONG1', { userId: 99 })
-    expect(texts(chatId).at(-1)).toContain('EchoFlow Code 桌面端')
-    expect(texts(chatId).at(-1)).not.toContain('Claude')
-
-    setPairingCode('ABC234')
-    await text(chatId, 'ABC234', { userId: 98 })
-    expect(texts(chatId).at(-1)).toContain('发送消息即可与 EchoFlow 对话')
-    expect(texts(chatId).at(-1)).not.toContain('Claude')
   })
 
   it('runs registered history commands after authorization and deduplication', async () => {
@@ -376,7 +384,7 @@ describe('Telegram entrypoint session routing', () => {
   it('starts the registered bot and publishes its menu without external access', async () => {
     const gc = spyOn(AttachmentStore.prototype, 'gc').mockResolvedValue({ removed: 0, bytes: 0 })
     const start = spyOn(entry.bot, 'start').mockImplementation(async (options) => { await options?.onStart?.(entry.bot.botInfo) })
-    const previousListeners = process.listeners('SIGINT')
+    const previousListeners = new Map(['SIGINT', 'SIGTERM'].map(signal => [signal, process.listeners(signal)]))
     try {
       entry.startTelegramAdapter()
       await eventually(() => expect(apiCalls.some((call) => call.method === 'setMyCommands')).toBe(true))
@@ -385,11 +393,54 @@ describe('Telegram entrypoint session routing', () => {
       const commands = apiCalls.find((call) => call.method === 'setMyCommands')!.payload.commands
       expect(commands.some((command: { command: string }) => command.command === 'sessions')).toBe(true)
     } finally {
-      for (const listener of process.listeners('SIGINT')) {
-        if (!previousListeners.includes(listener)) process.removeListener('SIGINT', listener)
+      for (const [signal, listeners] of previousListeners) {
+        for (const listener of process.listeners(signal)) {
+          if (!listeners.includes(listener)) process.removeListener(signal, listener)
+        }
       }
       start.mockRestore()
       gc.mockRestore()
+    }
+  })
+
+  it('blocks real update ingress during migration and its registered shutdown waits for polling to stop', async () => {
+    let cleanup!: () => Promise<void> | void
+    let release!: () => void
+    const pendingStop = new Promise<void>(resolve => { release = resolve })
+    const register = spyOn(adapterMigrationLifecycle, 'registerShutdown').mockImplementation(callback => { cleanup = callback })
+    const start = spyOn(entry.bot, 'start').mockResolvedValue()
+    const running = spyOn(entry.bot, 'isRunning').mockReturnValue(true)
+    const stop = spyOn(entry.bot, 'stop').mockImplementation(async () => { await pendingStop })
+    const gc = spyOn(AttachmentStore.prototype, 'gc').mockResolvedValue({ removed: 0, bytes: 0 })
+    const destroy = spyOn(WsBridge.prototype, 'destroy')
+    const previousListeners = new Map(['SIGINT', 'SIGTERM'].map(signal => [signal, process.listeners(signal)]))
+    try {
+      entry.startTelegramAdapter()
+      expect(register).toHaveBeenCalledTimes(1)
+      Object.defineProperty(adapterMigrationLifecycle, 'isQuiescing', { configurable: true, get: () => true })
+      const previousRequests = requests.length
+      const previousMessages = messages.length
+      await text(710, 'Should remain unadmitted')
+      expect(requests).toHaveLength(previousRequests)
+      expect(messages).toHaveLength(previousMessages)
+      let completed = false
+      const stopping = Promise.resolve(cleanup()).then(() => { completed = true })
+      await Promise.resolve()
+      expect(stop).toHaveBeenCalledTimes(1)
+      expect(completed).toBe(false)
+      expect(destroy).not.toHaveBeenCalled()
+      release()
+      await stopping
+      expect(destroy).toHaveBeenCalledTimes(1)
+    } finally {
+      release()
+      Reflect.deleteProperty(adapterMigrationLifecycle, 'isQuiescing')
+      for (const [signal, listeners] of previousListeners) {
+        for (const listener of process.listeners(signal)) {
+          if (!listeners.includes(listener)) process.removeListener(signal, listener)
+        }
+      }
+      for (const spy of [destroy, gc, stop, running, start, register]) spy.mockRestore()
     }
   })
 })

@@ -106,8 +106,8 @@ describe('createAdapterClient', () => {
   // Narrowing the roots must not brick /new: the client rejects a workDir outside
   // the boundary, and every adapter passes defaultWorkDir straight to createSession.
   it('always yields a default work dir inside the allowed roots', async () => {
-    const allowed = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-allowed-'))
-    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-elsewhere-'))
+    const allowed = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-allowed-'))
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-elsewhere-'))
     try {
       process.chdir('/')
       delete process.env.PWD
@@ -128,8 +128,8 @@ describe('createAdapterClient', () => {
   })
 
   it('honours an explicitly narrowed boundary', async () => {
-    const allowed = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-allowed-'))
-    const denied = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-denied-'))
+    const allowed = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-allowed-'))
+    const denied = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-denied-'))
     try {
       const config = bootConfig({ allowedProjectRoots: [allowed] })
       const { httpClient } = createAdapterClient(config, config.feishu)
@@ -167,6 +167,8 @@ describe('IM adapter entrypoint wiring', () => {
       // Constructing a client here would bypass the resolved boundary entirely,
       // which is exactly how all five adapters shared the #1191 defect.
       expect(source).not.toMatch(/new\s+AdapterHttpClient/)
+      expect(source).not.toMatch(/from\s+['"]\.\.\/common\/chat-queue\.js['"]/)
+      expect(source).toMatch(/\{[^}]*\benqueue\b[^}]*\}\s*=\s*createAdapterClient/)
       // Nor may an entrypoint re-derive the boundary or the work dir itself.
       expect(source).not.toMatch(/resolveAllowedProjectRoots|getConfiguredWorkDir/)
     })

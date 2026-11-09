@@ -36,14 +36,6 @@ describe('buildSlackAppManifest', () => {
     expect(manifest.features.app_home.messages_tab_read_only_enabled).toBe(false)
   })
 
-  it('uses the EchoFlow product name by default', () => {
-    const manifest = buildSlackAppManifest() as any
-
-    expect(manifest.display_information.name).toBe('EchoFlow Code')
-    expect(manifest.features.bot_user.display_name).toBe('EchoFlow Code')
-    expect(manifest.display_information.description).toContain('EchoFlow Code')
-  })
-
   it('uses the caller-supplied app name in both places Slack shows it', () => {
     const manifest = buildSlackAppManifest('My Bot') as any
 

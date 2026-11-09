@@ -1,8 +1,8 @@
+import { registerAdapterShutdown } from '../common/migration-lifecycle.js'
 import * as path from 'node:path'
 import { WsBridge, type ServerMessage, type AttachmentRef } from '../common/ws-bridge.js'
 import { MessageDedup } from '../common/message-dedup.js'
 import { MessageBuffer } from '../common/message-buffer.js'
-import { enqueue } from '../common/chat-queue.js'
 import { loadConfig } from '../common/config.js'
 import {
   formatImHelp,
@@ -24,7 +24,6 @@ import { isAllowedUser, tryPair } from '../common/pairing.js'
 import { AttachmentStore } from '../common/attachment/attachment-store.js'
 import { checkAttachmentLimit } from '../common/attachment/attachment-limits.js'
 import { WechatTypingController } from './typing.js'
-import { buildWechatPairingNotice } from './pairing-notice.js'
 import {
   extractWechatText,
   getWechatConfig,
@@ -51,7 +50,7 @@ const botToken = config.wechat.botToken
 const bridge = new WsBridge(config.serverUrl, 'wechat')
 const dedup = new MessageDedup()
 const sessionStore = new SessionStore()
-const { httpClient, defaultWorkDir } = createAdapterClient(config, config.wechat)
+const { httpClient, defaultWorkDir, enqueue } = createAdapterClient(config, config.wechat)
 const attachmentStore = new AttachmentStore()
 const media = new WechatMediaService(attachmentStore)
 const pendingProjectSelection = new Map<string, boolean>()
@@ -474,7 +473,12 @@ async function routeUserMessage(message: WechatMessage): Promise<void> {
     const success = text
       ? tryPair(text, { userId: chatId, displayName: 'WeChat User' }, 'wechat')
       : false
-    await sendText(chatId, buildWechatPairingNotice(success))
+    await sendText(
+      chatId,
+      success
+        ? '配对成功！现在可以开始聊天了。\n\n发送消息即可与 Claude 对话。发送 /help 查看可用命令。'
+        : '未授权。请先在 Claude Code 桌面端完成微信扫码绑定，再生成 IM 配对码后发送给我。',
+    )
     return
   }
 
@@ -612,6 +616,7 @@ async function pollLoop(): Promise<void> {
         timeoutMs: GET_UPDATES_TIMEOUT_MS,
       })
       if (resp.get_updates_buf) getUpdatesBuf = resp.get_updates_buf
+      if (stopped) return
       const hasRetError = typeof resp.ret === 'number' && resp.ret !== 0
       const hasErrCode = typeof resp.errcode === 'number' && resp.errcode !== 0
       if (hasRetError || hasErrCode) {
@@ -642,13 +647,12 @@ console.log('[WeChat] Starting adapter...')
 console.log(`[WeChat] Account: ${accountId}`)
 if (import.meta.main || process.argv.includes('--wechat')) void pollLoop()
 
-if (import.meta.main || process.argv.includes('--wechat')) process.on('SIGINT', () => {
+if (import.meta.main || process.argv.includes('--wechat')) registerAdapterShutdown(() => {
   console.log('[WeChat] Shutting down...')
   stopped = true
   typingController.destroy()
   bridge.destroy()
   dedup.destroy()
-  process.exit(0)
 })
 
 export { bridge, dedup, sessionStore, sessionSelectionController, handleServerMessage, getRuntimeState, clearTransientChatState, createSessionForChat, showProjectPicker, routeUserMessage, startNewSession, typingController }

@@ -10,8 +10,6 @@
  * requests and the API methods the adapter calls are edited together.
  */
 
-import { ECHOFLOW_PRODUCT_NAME } from '../common/brand.js'
-
 const CREATE_APP_URL = 'https://api.slack.com/apps'
 
 /** Scopes map 1:1 to the Web API calls in `api.ts`. Nothing speculative. */
@@ -30,11 +28,11 @@ export const SLACK_BOT_SCOPES = [
 
 export type SlackManifest = Record<string, unknown>
 
-export function buildSlackAppManifest(appName = ECHOFLOW_PRODUCT_NAME): SlackManifest {
+export function buildSlackAppManifest(appName = 'Claude Code Haha'): SlackManifest {
   return {
     display_information: {
       name: appName,
-      description: `Drive a local ${ECHOFLOW_PRODUCT_NAME} session from Slack direct messages.`,
+      description: 'Drive a local Claude Code session from Slack direct messages.',
       background_color: '#1a1a1a',
     },
     features: {

@@ -1,17 +1,25 @@
-import { afterAll, beforeAll, describe, expect, it, spyOn } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import * as Lark from '@larksuiteoapi/node-sdk'
+import { ProxyAgent } from 'proxy-agent'
+import { DWClient, TOPIC_CARD } from 'dingtalk-stream'
 import { enqueue } from '../../common/chat-queue.js'
 import { StreamingCard } from '../streaming-card.js'
 import { FeishuMediaService } from '../media.js'
 import { WechatMediaService } from '../../wechat/media.js'
+import { DingTalkMediaService } from '../../dingtalk/media.js'
+import { WhatsAppMediaService } from '../../whatsapp/media.js'
+import { currentInboundPowerLease } from '../../common/inbound-power-activity.js'
 
 type Platform = 'feishu' | 'dingtalk' | 'wechat' | 'whatsapp'
 const platforms: Platform[] = ['feishu', 'dingtalk', 'wechat', 'whatsapp']
 const chatFor = (platform: Platform) => platform === 'dingtalk' ? 'dingtalk:dm:fixture-user' : `${platform}-chat`
 let feishu: typeof import('../index.js')
+let feishuStartupWsClient: Lark.WSClient
 let dingtalk: typeof import('../../dingtalk/index.js')
+let dingtalkCardCallback: Parameters<DWClient['registerCallbackListener']>[1]
 let wechat: typeof import('../../wechat/index.js')
 let whatsapp: typeof import('../../whatsapp/index.js')
 let server: Bun.Server<{ sessionId: string }>
@@ -22,14 +30,24 @@ let newSessionCount = 0
 let preflightGate: Promise<void> | undefined
 let preflightStarted: (() => void) | undefined
 const notices: string[] = []
+let dingtalkDelivery: {
+  cardFailure: 'create' | 'finish' | null
+  failFirstMarkdown: boolean
+  markdownAttempts: number
+  delivered: string[]
+  finishedCards: string[]
+} | undefined
 const sentPrompts: Array<{ sessionId: string; content: string }> = []
+const activeLeases = new Set<string>()
+const acceptedLeases: string[] = []
+const attachmentLeases: Array<{ platform: Platform; protected: boolean }> = []
 const spies: Array<{ mockRestore(): void }> = []
 const originalFetch = globalThis.fetch
 const environmentKeys = [
   'HOME', 'CLAUDE_CONFIG_DIR', 'ADAPTER_SERVER_URL', 'ADAPTER_ALLOWED_PROJECT_ROOTS',
   'FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'DINGTALK_CLIENT_ID', 'DINGTALK_CLIENT_SECRET',
   'WECHAT_ACCOUNT_ID', 'WECHAT_BOT_TOKEN', 'WECHAT_BASE_URL', 'WHATSAPP_AUTH_DIR',
-  'ECHOFLOW_LOCAL_ACCESS_TOKEN',
+  'CC_HAHA_LOCAL_ACCESS_TOKEN',
 ]
 const savedEnvironment = new Map(environmentKeys.map((key) => [key, process.env[key]]))
 
@@ -39,13 +57,6 @@ function entries() {
     projectRoot: temporaryRoot, projectPath: 'fixture', workDirExists: true,
     modifiedAt: '2026-09-08T00:00:00Z', createdAt: '2026-09-01T00:00:00Z', messageCount: 4,
   }]
-}
-
-function setPairingCode(code: string): void {
-  const configPath = path.join(temporaryRoot, '.claude', 'adapters.json')
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'))
-  config.pairing = { code, expiresAt: Date.now() + 60_000, createdAt: Date.now() }
-  fs.writeFileSync(configPath, JSON.stringify(config))
 }
 
 beforeAll(async () => {
@@ -58,6 +69,12 @@ beforeAll(async () => {
       if (url.pathname.startsWith('/ws/')) {
         if (currentServer.upgrade(request, { data: { sessionId: url.pathname.slice(4) } })) return
         return new Response('upgrade required', { status: 400 })
+      }
+      if (url.pathname === '/api/sessions/power-activity-lease') {
+        const { leaseId, active } = await request.json() as { leaseId: string; active: boolean }
+        if (active) activeLeases.add(leaseId)
+        else activeLeases.delete(leaseId)
+        return Response.json({ ok: true })
       }
       if (url.pathname === '/api/sessions/recent-projects') {
         return Response.json({ projects: [{
@@ -79,6 +96,15 @@ beforeAll(async () => {
         }
         return Response.json({ workDir: temporaryRoot, permissionMode: 'default' })
       }
+      if (url.pathname === '/dingtalk' && dingtalkDelivery) {
+        dingtalkDelivery.markdownAttempts++
+        if (dingtalkDelivery.failFirstMarkdown && dingtalkDelivery.markdownAttempts === 1) {
+          return new Response('webhook unavailable', { status: 503 })
+        }
+        const body = await request.json() as { markdown: { text: string } }
+        dingtalkDelivery.delivered.push(body.markdown.text)
+        return Response.json({ errcode: 0 })
+      }
       if (url.pathname === '/dingtalk' || url.pathname === '/ilink/bot/sendmessage') {
         notices.push(await request.text())
         return Response.json({ ret: 0 })
@@ -97,7 +123,12 @@ beforeAll(async () => {
       },
       message(socket, raw) {
         const message = JSON.parse(String(raw))
-        if (message.type === 'user_message') sentPrompts.push({ sessionId: socket.data.sessionId, content: message.content })
+        if (message.type === 'user_message') {
+          sentPrompts.push({ sessionId: socket.data.sessionId, content: message.content })
+          if (typeof message.powerActivityLeaseId === 'string' && activeLeases.delete(message.powerActivityLeaseId)) {
+            acceptedLeases.push(message.powerActivityLeaseId)
+          }
+        }
       },
     },
   })
@@ -110,7 +141,7 @@ beforeAll(async () => {
     FEISHU_APP_ID: 'fixture-app', FEISHU_APP_SECRET: 'fixture-secret',
     DINGTALK_CLIENT_ID: 'fixture-client', DINGTALK_CLIENT_SECRET: 'fixture-secret',
     WECHAT_ACCOUNT_ID: 'fixture-account', WECHAT_BOT_TOKEN: 'fixture-token', WECHAT_BASE_URL: httpOrigin,
-    WHATSAPP_AUTH_DIR: path.join(temporaryRoot, 'whatsapp-auth'), ECHOFLOW_LOCAL_ACCESS_TOKEN: '',
+    WHATSAPP_AUTH_DIR: path.join(temporaryRoot, 'whatsapp-auth'), CC_HAHA_LOCAL_ACCESS_TOKEN: '',
   }
   Object.assign(process.env, env)
   fs.mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true })
@@ -127,10 +158,66 @@ beforeAll(async () => {
     if (url.href === 'https://api.dingtalk.com/v1.0/oauth2/accessToken') {
       return Response.json({ accessToken: 'fixture-access-token', expireIn: 7200 })
     }
+    if (dingtalkDelivery && url.origin === 'https://api.dingtalk.com' && url.pathname.startsWith('/v1.0/card/')) {
+      if (url.pathname === '/v1.0/card/instances' && init?.method === 'POST' && dingtalkDelivery.cardFailure === 'create') {
+        return new Response('card unavailable', { status: 503 })
+      }
+      if (url.pathname === '/v1.0/card/streaming') {
+        if (dingtalkDelivery.cardFailure === 'finish') return new Response('stream unavailable', { status: 503 })
+        const body = JSON.parse(String(init?.body))
+        if (body.isFinalize) dingtalkDelivery.finishedCards.push(body.content)
+      }
+      return Response.json({})
+    }
     throw new Error(`External network is forbidden in this fixture: ${url.origin}${url.pathname}`)
   }) as typeof fetch
-  feishu = await import('../index.js')
-  dingtalk = await import('../../dingtalk/index.js')
+  // Exercise the sidecar's actual startup branch, with only the external SDK
+  // boundary replaced. The later test checks both clients' transport wiring.
+  let started!: () => void
+  const startup = new Promise<void>(resolve => { started = resolve })
+  const botInfo = spyOn(Lark.Client.prototype, 'request').mockImplementation(async () => ({
+    code: 0, bot: { open_id: 'fixture-bot' },
+  }))
+  const wsStart = spyOn(Lark.WSClient.prototype, 'start').mockImplementation(async function () {
+    feishuStartupWsClient = this
+    started()
+  })
+  const originalArgv = [...process.argv]
+  const shutdownSignals = ['SIGINT', 'SIGTERM'] as const
+  const signalListeners = new Map(shutdownSignals.map(signal => [signal, new Set(process.listeners(signal))]))
+  process.argv.push('--feishu')
+  try {
+    feishu = await import('../index.js')
+    await startup
+  } finally {
+    process.argv.splice(0, process.argv.length, ...originalArgv)
+    botInfo.mockRestore()
+    wsStart.mockRestore()
+    for (const signal of shutdownSignals) {
+      for (const listener of process.listeners(signal)) {
+        if (!signalListeners.get(signal)!.has(listener)) process.removeListener(signal, listener)
+      }
+    }
+  }
+  const registerCallback = spyOn(DWClient.prototype, 'registerCallbackListener').mockImplementation(function (this: DWClient, topic, callback) {
+    if (topic === TOPIC_CARD) dingtalkCardCallback = callback
+    return this
+  })
+  const connect = spyOn(DWClient.prototype, 'connect').mockResolvedValue(undefined)
+  spies.push(spyOn(DWClient.prototype, 'socketCallBackResponse').mockImplementation(() => {}))
+  process.argv.push('--dingtalk')
+  try {
+    dingtalk = await import('../../dingtalk/index.js')
+  } finally {
+    process.argv.splice(0, process.argv.length, ...originalArgv)
+    registerCallback.mockRestore()
+    connect.mockRestore()
+    for (const signal of shutdownSignals) {
+      for (const listener of process.listeners(signal)) {
+        if (!signalListeners.get(signal)!.has(listener)) process.removeListener(signal, listener)
+      }
+    }
+  }
   wechat = await import('../../wechat/index.js')
   whatsapp = await import('../../whatsapp/index.js')
   spies.push(spyOn(feishu.larkClient.im.message, 'create').mockImplementation(async (request: any) => {
@@ -138,12 +225,22 @@ beforeAll(async () => {
     return { code: 0, data: { message_id: `fixture-${++sequence}` } }
   }))
   const attachment = { kind: 'image' as const, name: 'fixture.png', path: path.join(temporaryRoot, 'fixture.png'), buffer: Buffer.from('fixture'), size: 7, mimeType: 'image/png' }
-  spies.push(spyOn(FeishuMediaService.prototype, 'downloadResource').mockImplementation(async () => attachment))
-  spies.push(spyOn(WechatMediaService.prototype, 'downloadCandidate').mockImplementation(async () => attachment))
+  const protectedAttachment = async (platform: Platform) => {
+    const lease = currentInboundPowerLease(platform === 'whatsapp' ? 'whatsapp-chat@s.whatsapp.net' : chatFor(platform))
+    attachmentLeases.push({ platform, protected: !!lease && activeLeases.has(lease.id) })
+    return attachment
+  }
+  spies.push(spyOn(FeishuMediaService.prototype, 'downloadResource').mockImplementation(() => protectedAttachment('feishu')))
+  spies.push(spyOn(WechatMediaService.prototype, 'downloadCandidate').mockImplementation(() => protectedAttachment('wechat')))
+  spies.push(spyOn(DingTalkMediaService.prototype, 'downloadCandidate').mockImplementation(() => protectedAttachment('dingtalk')))
+  spies.push(spyOn(WhatsAppMediaService.prototype, 'downloadMessageMedia').mockImplementation(() => protectedAttachment('whatsapp')))
   spies.push(spyOn(StreamingCard.prototype, 'ensureCreated').mockImplementation(async () => {}))
   spies.push(spyOn(StreamingCard.prototype, 'abort').mockImplementation(async () => {}))
   spies.push(spyOn(StreamingCard.prototype, 'finalize').mockImplementation(async () => {}))
-  whatsapp.useWhatsAppSocket({ sendMessage: async (_chatId: string, message: { text: string }) => { notices.push(message.text) } } as any)
+  whatsapp.useWhatsAppSocket({
+    sendMessage: async (_chatId: string, message: { text: string }) => { notices.push(message.text) },
+    readMessages: async () => {}, sendPresenceUpdate: async () => {},
+  } as any)
 })
 
 afterAll(async () => {
@@ -166,9 +263,32 @@ function adapterFor(platform: Platform) {
   return { feishu, dingtalk, wechat, whatsapp }[platform]
 }
 
-async function send(platform: Platform, text: string, options: { unauthorized?: boolean; attachment?: boolean; userId?: string } = {}) {
-  const userId = options.userId ?? (options.unauthorized ? 'outsider' : 'fixture-user')
-  const chatId = platform === 'wechat' && (options.unauthorized || options.userId) ? userId : chatFor(platform)
+it('uses the CONNECT-capable HTTP transport for both clients created by Feishu startup', async () => {
+  const restHttp = (feishu.larkClient as unknown as { httpInstance: Lark.HttpInstance }).httpInstance
+  const wsHttp = (feishuStartupWsClient as unknown as { httpInstance: Lark.HttpInstance }).httpInstance
+  const request = spyOn(Lark.defaultHttpInstance, 'request').mockResolvedValue({ code: 0 })
+  try {
+    for (const transport of [restHttp, wsHttp]) {
+      expect(transport).not.toBe(Lark.defaultHttpInstance)
+      await transport.request({ method: 'POST', url: 'https://fixture.invalid/startup', data: { fixture: true } })
+    }
+    expect(request).toHaveBeenCalledTimes(2)
+    for (const [options] of request.mock.calls) {
+      expect(options).toMatchObject({
+        proxy: false,
+        httpAgent: expect.any(ProxyAgent),
+        httpsAgent: expect.any(ProxyAgent),
+        method: 'POST', url: 'https://fixture.invalid/startup', data: { fixture: true },
+      })
+    }
+  } finally {
+    request.mockRestore()
+  }
+})
+
+async function send(platform: Platform, text: string, options: { unauthorized?: boolean; attachment?: boolean } = {}) {
+  const userId = options.unauthorized ? 'outsider' : 'fixture-user'
+  const chatId = options.unauthorized && platform === 'wechat' ? 'outsider' : chatFor(platform)
   sequence++
   if (platform === 'feishu') {
     await feishu.handleMessage({
@@ -194,6 +314,18 @@ async function send(platform: Platform, text: string, options: { unauthorized?: 
 
 for (const platform of platforms) {
   describe(`${platform} actual module session selection`, () => {
+    it('transfers an acquired inbound lease with the accepted WebSocket message', async () => {
+      const adapter = adapterFor(platform)
+      const chatId = chatFor(platform)
+      adapter.clearTransientChatState(chatId)
+      adapter.sessionSelectionController.clear(chatId)
+      const before = acceptedLeases.length
+      await send(platform, `leased inbound ${platform}`)
+      const deadline = Date.now() + 1000
+      while (acceptedLeases.length === before && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 1))
+      expect(acceptedLeases.length).toBe(before + 1)
+    })
+
     it.each(['/status', '/stop', '/clear'])('preserves the binding when %s cannot reconnect and retries the command', async (command) => {
       const adapter = adapterFor(platform)
       const chatId = chatFor(platform)
@@ -320,30 +452,11 @@ for (const platform of platforms) {
       expect(adapter.sessionStore.get(chatId)?.sessionId).toStartWith('new-')
       await send(platform, '/sessions')
       if (platform === 'feishu') {
-        await feishu.handleCardAction({ context: { open_chat_id: chatId }, action: { value: { action: 'pick_project', realPath: temporaryRoot, projectName: 'Fixture' } } })
+        await feishu.handleCardAction({ operator: { open_id: 'fixture-user' }, context: { open_chat_id: chatId }, action: { value: { action: 'pick_project', realPath: temporaryRoot, projectName: 'Fixture' } } })
       } else {
         expect(await adapter.createSessionForChat(chatId, temporaryRoot)).toBe(true)
       }
       expect(await adapter.sessionSelectionController.handleInput(chatId, '1')).toBe(false)
-    })
-
-    it('uses EchoFlow copy for rejected and successful pairing attempts', async () => {
-      setPairingCode('ABC234')
-      const rejectedUser = `pairing-rejected-${platform}`
-      const beforeRejected = notices.length
-      await send(platform, 'WRONG1', { userId: rejectedUser })
-      expect(notices).toHaveLength(beforeRejected + 1)
-      expect(notices.at(-1)).toContain('未授权')
-      expect(notices.at(-1)).toContain('EchoFlow Code 桌面端')
-      expect(notices.at(-1)).not.toContain('Claude')
-
-      setPairingCode('ABC234')
-      const beforePaired = notices.length
-      await send(platform, 'ABC234', { userId: `pairing-success-${platform}` })
-      expect(notices).toHaveLength(beforePaired + 1)
-      expect(notices.at(-1)).toContain('配对成功')
-      expect(notices.at(-1)).toContain('发送消息即可与 EchoFlow 对话')
-      expect(notices.at(-1)).not.toContain('Claude')
     })
 
     it('rejects unpaired users and leaves attachment text on the normal send path', async () => {
@@ -418,6 +531,89 @@ for (const platform of platforms) {
   })
 }
 
+for (const platform of ['feishu', 'whatsapp'] as const) {
+  describe(`${platform} outbound image boundary`, () => {
+    for (const source of ['outside', 'symlink', 'inside', 'base64', 'missing-session', 'remote'] as const) {
+      it(`checks ${source} images through the streaming entrypoint`, async () => {
+        const adapter = adapterFor(platform)
+        const chatId = chatFor(platform)
+        const workspace = path.join(temporaryRoot, 'image-workspace')
+        const outside = path.join(temporaryRoot, 'private.png')
+        const inside = path.join(workspace, 'image.png')
+        const symlink = path.join(workspace, 'escape.png')
+        fs.mkdirSync(workspace, { recursive: true })
+        fs.writeFileSync(outside, 'private-image')
+        fs.writeFileSync(inside, 'project-image')
+        if (!fs.existsSync(symlink)) fs.symlinkSync(outside, symlink)
+        adapter.clearTransientChatState(chatId)
+        adapter.sessionStore.set(chatId, 'image-session', workspace)
+        if (source === 'missing-session') adapter.sessionStore.delete(chatId)
+        const target = source === 'outside' ? outside : source === 'symlink' ? symlink
+          : source === 'remote' ? `${httpOrigin}/must-not-fetch.png`
+            : source === 'base64' ? 'data:image/png;base64,cHJvamVjdC1pbWFnZQ==' : inside
+        const uploaded: string[] = []
+        let finish!: (value: string) => void
+        const outcome = new Promise<string>(resolve => { finish = resolve })
+        const upload = spyOn(FeishuMediaService.prototype, 'uploadImage').mockImplementation(async buffer => {
+          uploaded.push(buffer.toString())
+          return 'fixture-image-key'
+        })
+        const sendImage = spyOn(FeishuMediaService.prototype, 'sendImageMessage').mockImplementation(async () => { finish('uploaded') })
+        const sendMedia = spyOn(WhatsAppMediaService.prototype, 'sendMedia').mockImplementation(async (_chat, buffer) => {
+          uploaded.push(buffer.toString())
+          finish('uploaded')
+        })
+        const warning = spyOn(console, 'warn').mockImplementation((...args) => {
+          if (args.join(' ').includes('Outbound image rejected:')) finish('rejected')
+        })
+        const error = spyOn(console, 'error').mockImplementation(() => { finish('failed') })
+        try {
+          await adapter.handleServerMessage(chatId, { type: 'content_delta', text: `![fixture](${target})` })
+          const allowed = source === 'inside' || source === 'base64'
+          expect(await outcome).toBe(allowed ? 'uploaded' : 'rejected')
+          expect(uploaded).toEqual(allowed ? ['project-image'] : [])
+        } finally {
+          for (const spy of [upload, sendImage, sendMedia, warning, error]) spy.mockRestore()
+          adapter.clearTransientChatState(chatId)
+          adapter.sessionStore.delete(chatId)
+        }
+      })
+    }
+  })
+}
+
+it('holds a lease before each legacy media download starts and refuses unpaired downloads', async () => {
+  attachmentLeases.length = 0
+  await send('feishu', 'protected media', { attachment: true })
+  await send('wechat', 'protected media', { attachment: true })
+  await dingtalk.handleRobotMessage({
+    conversationType: '1', senderStaffId: 'fixture-user', msgtype: 'picture',
+    content: { pictureUrl: 'https://fixture.invalid/image.png' }, sessionWebhook: `${httpOrigin}/dingtalk`,
+  })
+  // Use the real WhatsApp ingress; only its external media transport is mocked.
+  const configFile = path.join(temporaryRoot, '.claude', 'adapters.json')
+  const config = JSON.parse(fs.readFileSync(configFile, 'utf8'))
+  config.whatsapp.allowedUsers.push('whatsapp-chat@s.whatsapp.net')
+  fs.writeFileSync(configFile, JSON.stringify(config))
+  await whatsapp.handleIncomingMessage({
+    key: { remoteJid: 'whatsapp-chat@s.whatsapp.net', id: `media-${++sequence}`, fromMe: false },
+    message: { imageMessage: { caption: 'protected media' } },
+  })
+  expect(attachmentLeases).toEqual((['feishu', 'wechat', 'dingtalk', 'whatsapp'] as const).map(platform => ({ platform, protected: true })))
+  const before = attachmentLeases.length
+  await send('feishu', 'outsider media', { unauthorized: true, attachment: true })
+  await send('wechat', 'outsider media', { unauthorized: true, attachment: true })
+  await dingtalk.handleRobotMessage({
+    conversationType: '1', senderStaffId: 'outsider', msgtype: 'picture',
+    content: { pictureUrl: 'https://fixture.invalid/image.png' }, sessionWebhook: `${httpOrigin}/dingtalk`,
+  })
+  await whatsapp.handleIncomingMessage({
+    key: { remoteJid: 'outsider@s.whatsapp.net', id: `media-${++sequence}`, fromMe: false },
+    message: { imageMessage: { caption: 'outsider media' } },
+  })
+  expect(attachmentLeases).toHaveLength(before)
+})
+
 
 it('serializes Feishu project cards after an in-flight history selection', async () => {
   const chatId = chatFor('feishu')
@@ -429,7 +625,7 @@ it('serializes Feishu project cards after an in-flight history selection', async
   try {
     const resume = send('feishu', '/resume 1')
     await started
-    const card = feishu.handleCardAction({ context: { open_chat_id: chatId }, action: { value: { action: 'pick_project', realPath: temporaryRoot, projectName: 'Fixture' } } })
+    const card = feishu.handleCardAction({ operator: { open_id: 'fixture-user' }, context: { open_chat_id: chatId }, action: { value: { action: 'pick_project', realPath: temporaryRoot, projectName: 'Fixture' } } })
     release()
     await Promise.all([resume, card])
     expect(feishu.sessionStore.get(chatId)?.sessionId).toStartWith('new-')
@@ -438,5 +634,193 @@ it('serializes Feishu project cards after an in-flight history selection', async
     release()
     preflightGate = undefined
     preflightStarted = undefined
+  }
+})
+
+describe('DingTalk permission callback authorization', () => {
+  const chatId = chatFor('dingtalk')
+  const requestId = 'card-approval'
+
+  async function callback(envelope: Record<string, unknown>) {
+    await dingtalkCardCallback({
+      specVersion: '1.0', type: 'CALLBACK',
+      headers: { appId: 'fixture-client', connectionId: 'fixture', contentType: 'application/json', messageId: `card-${++sequence}`, time: '0', topic: TOPIC_CARD },
+      data: JSON.stringify(envelope),
+    })
+  }
+
+  beforeEach(async () => {
+    dingtalk.clearTransientChatState(chatId)
+    await send('dingtalk', '/help')
+    await dingtalk.handleServerMessage(chatId, {
+      type: 'permission_request', requestId, toolName: 'Bash', input: { command: 'pwd' },
+    })
+  })
+
+  afterEach(() => { dingtalk.clearTransientChatState(chatId) })
+
+  for (const decision of [{ allowed: true }, { allowed: false }, { allowed: true, rule: 'always' }] as const) {
+    for (const boundary of ['recipient', 'unpaired', 'other-paired', 'missing-actor', 'nested-actor', 'wrong-card', 'missing-card', 'wrong-type', 'revoked'] as const) {
+      it(`${JSON.stringify(decision)} checks ${boundary} at the Stream listener`, async () => {
+        const configPath = path.join(temporaryRoot, '.claude', 'adapters.json')
+        const originalConfig = fs.readFileSync(configPath, 'utf8')
+        const params: Record<string, unknown> = { action: 'permit', requestId, ...decision, userId: 'fixture-user' }
+        const envelope: Record<string, unknown> = {
+          type: 'actionCallback', userId: 'fixture-user', outTrackId: `permission_${requestId}`,
+          content: JSON.stringify({ cardPrivateData: { params } }),
+        }
+        if (boundary === 'unpaired') envelope.userId = 'outsider'
+        if (boundary === 'other-paired') envelope.userId = 'feishu-chat'
+        if (boundary === 'missing-actor' || boundary === 'nested-actor') delete envelope.userId
+        if (boundary === 'missing-actor') delete params.userId
+        if (boundary === 'wrong-card') envelope.outTrackId = 'permission_another-request'
+        if (boundary === 'missing-card') delete envelope.outTrackId
+        if (boundary === 'wrong-type') envelope.type = 'openSpaceEvent'
+        envelope.content = JSON.stringify({ cardPrivateData: { params } })
+        const response = spyOn(dingtalk.bridge, 'sendPermissionResponse').mockReturnValue(true)
+        const warning = spyOn(console, 'warn').mockImplementation(() => {})
+        try {
+          if (boundary === 'revoked') {
+            const config = JSON.parse(originalConfig)
+            config.dingtalk.allowedUsers = []
+            config.dingtalk.pairedUsers = []
+            fs.writeFileSync(configPath, JSON.stringify(config))
+          }
+          await callback(envelope)
+          if (boundary === 'recipient') {
+            expect(response).toHaveBeenCalledTimes(1)
+            expect(response).toHaveBeenCalledWith(chatId, requestId, decision.allowed, 'rule' in decision ? decision.rule : undefined)
+            expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(0)
+            await callback(envelope)
+            expect(response).toHaveBeenCalledTimes(1)
+          } else {
+            expect(response).not.toHaveBeenCalled()
+            expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
+            fs.writeFileSync(configPath, originalConfig)
+            await callback({ ...envelope, type: 'actionCallback', userId: 'fixture-user', outTrackId: `permission_${requestId}` })
+            expect(response).toHaveBeenCalledTimes(1)
+            expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(0)
+          }
+        } finally {
+          fs.writeFileSync(configPath, originalConfig)
+          response.mockRestore()
+          warning.mockRestore()
+        }
+      })
+    }
+  }
+
+  it('uses the pending request chat, not client-supplied chatId, and keeps failed sends pending', async () => {
+    const otherChat = 'dingtalk:dm:other'
+    await dingtalk.handleServerMessage(otherChat, { type: 'permission_request', requestId: 'other-request', toolName: 'Bash', input: {} })
+    const envelope = {
+      type: 'actionCallback', userId: 'fixture-user', outTrackId: `permission_${requestId}`,
+      content: JSON.stringify({ cardPrivateData: { params: { requestId, allowed: true, chatId: 'dingtalk:dm:other' } } }),
+    }
+    const response = spyOn(dingtalk.bridge, 'sendPermissionResponse').mockReturnValueOnce(false).mockReturnValue(true)
+    const warning = spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await callback(envelope)
+      expect(response).toHaveBeenLastCalledWith(chatId, requestId, true, undefined)
+      expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
+      await callback(envelope)
+      expect(response).toHaveBeenCalledTimes(2)
+      expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(0)
+      expect(dingtalk.getRuntimeState(otherChat).pendingPermissionCount).toBe(1)
+    } finally {
+      dingtalk.clearTransientChatState(otherChat)
+      response.mockRestore()
+      warning.mockRestore()
+    }
+  })
+})
+
+describe('DingTalk reply delivery through the adapter entrypoint', () => {
+  const chatId = chatFor('dingtalk')
+
+  beforeEach(async () => {
+    dingtalk.clearTransientChatState(chatId)
+    dingtalk.sessionSelectionController.clear(chatId)
+    dingtalkDelivery = { cardFailure: null, failFirstMarkdown: false, markdownAttempts: 0, delivered: [], finishedCards: [] }
+    await send('dingtalk', '/help')
+    dingtalkDelivery.markdownAttempts = 0
+    dingtalkDelivery.delivered.length = 0
+  })
+
+  afterEach(() => {
+    dingtalk.clearTransientChatState(chatId)
+    dingtalk.clearTransientChatState('dingtalk:dm:without-webhook')
+    dingtalkDelivery = undefined
+  })
+
+  for (const failure of ['create', 'finish'] as const) {
+    for (const firstSendFails of [false, true]) {
+      it(`${failure} fallback ${firstSendFails ? 'retries a rejected webhook' : 'sends markdown once'}`, async () => {
+        dingtalkDelivery!.cardFailure = failure
+        dingtalkDelivery!.failFirstMarkdown = firstSendFails
+        await dingtalk.handleServerMessage(chatId, { type: 'content_delta', text: 'complete short answer' })
+        await dingtalk.handleServerMessage(chatId, { type: 'message_complete' })
+        await dingtalk.handleServerMessage(chatId, { type: 'message_complete' })
+
+        expect(dingtalkDelivery!.delivered).toEqual(['complete short answer'])
+        expect(dingtalkDelivery!.markdownAttempts).toBe(firstSendFails ? 2 : 1)
+      })
+    }
+  }
+
+  it('finishes a working card without also sending markdown', async () => {
+    await dingtalk.handleServerMessage(chatId, { type: 'content_delta', text: 'card answer' })
+    await dingtalk.handleServerMessage(chatId, { type: 'message_complete' })
+
+    expect(dingtalkDelivery!.finishedCards).toEqual(['card answer'])
+    expect(dingtalkDelivery!.delivered).toEqual([])
+    expect(dingtalkDelivery!.markdownAttempts).toBe(0)
+  })
+
+  it('reports a missing webhook as a delivery failure', async () => {
+    const missingChat = 'dingtalk:dm:without-webhook'
+    await dingtalk.handleServerMessage(missingChat, { type: 'content_delta', text: 'undelivered answer' })
+    await expect(dingtalk.handleServerMessage(missingChat, { type: 'message_complete' }))
+      .rejects.toThrow('Missing sessionWebhook')
+    expect(dingtalkDelivery!.delivered).toEqual([])
+  })
+
+  it('keeps an unpaired notice without a webhook best effort', async () => {
+    const warning = spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await dingtalk.handleRobotMessage({
+        conversationType: '1', senderStaffId: 'unpaired-without-webhook', msgtype: 'text', text: { content: 'hello' },
+      })
+      expect(dingtalkDelivery!.markdownAttempts).toBe(0)
+      expect(warning.mock.calls.some(([message]) => String(message).includes('Missing sessionWebhook'))).toBe(true)
+    } finally {
+      warning.mockRestore()
+    }
+  })
+
+  for (const permissionState of ['unknown', 'disconnected', 'accepted', 'unpaired'] as const) {
+    it(`contains a failed ${permissionState} notice`, async () => {
+      if (permissionState !== 'unknown' && permissionState !== 'unpaired') {
+        await dingtalk.handleServerMessage(chatId, {
+          type: 'permission_request', requestId: 'permission-1', toolName: 'Bash', input: { command: 'pwd' },
+        })
+      }
+      dingtalkDelivery!.markdownAttempts = 0
+      dingtalkDelivery!.delivered.length = 0
+      dingtalkDelivery!.failFirstMarkdown = true
+      const response = spyOn(dingtalk.bridge, 'sendPermissionResponse').mockReturnValue(permissionState === 'accepted')
+      const warning = spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        await send('dingtalk', '/allow permission-1', { unauthorized: permissionState === 'unpaired' })
+        await Bun.sleep(0)
+
+        expect(dingtalkDelivery!.markdownAttempts).toBe(1)
+        expect(dingtalkDelivery!.delivered).toEqual([])
+        expect(warning.mock.calls.some(args => args.join(' ').includes('sendText failed'))).toBe(true)
+      } finally {
+        warning.mockRestore()
+        response.mockRestore()
+      }
+    })
   }
 })
