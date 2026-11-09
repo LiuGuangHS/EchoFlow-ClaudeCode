@@ -1,7 +1,7 @@
 ---
 title: 连接模型服务
 nav_title: 连接模型
-description: 官方账号、第三方 API、本地模型，三种接法任选一种，十分钟内跑起来。
+description: 给 EchoFlow Code 连接模型：Claude、ChatGPT、Grok 官方登录，DeepSeek、Kimi、智谱 GLM 等 API 预设，或 LM Studio、Ollama 本地模型，十分钟跑起来。
 order: 2
 ---
 

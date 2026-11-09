@@ -1,13 +1,13 @@
 ---
 title: 桌面端功能总览
 nav_title: 功能总览
-description: 一屏看懂桌面端有哪些能力，以及每个功能该翻哪一篇。
+description: EchoFlow Code 桌面端功能总览：会话与权限、Diff 审阅、Agent Teams、Dynamic Workflow、Computer Use、定时任务、手机与 IM 接力，一屏看懂。
 order: 0
 ---
 
 # 桌面端功能总览
 
-桌面端把「和 Claude 说话」和「看它到底改了什么」放进同一个窗口：左边是项目和历史会话，中间是对话，右边随时能拉出文件、Diff 和网页预览。
+EchoFlow Code 是支持 macOS、Windows 和 Linux 的本地优先 AI 编程桌面客户端：模型由你选择，Agent 在项目中读写文件、运行命令，你在同一个窗口查看权限请求、工具调用和逐文件 Diff。左边是项目和会话，中间是对话，右边是文件、Diff 与网页预览；Agent Teams、Dynamic Workflow、定时任务和手机接力用于扩展这条工作流。各能力的平台与联网边界见对应页面。
 
 这一篇是地图，不是说明书。每个功能只写一句话，想细看点进去。还没装好或还没连上模型，先去[开始使用](../start/index.md)。
 
@@ -23,19 +23,19 @@ order: 0
 
 - [会话、权限与审阅](./sessions.md) — 怎么开一条会话、工具调用卡怎么看、权限弹窗点哪个、改错了怎么撤销。
 - [工作区](./workspace.md) — 右侧那块面板：已更改文件、Diff 评审、行级评论、独立工作树、内置浏览器。
-- [设置速查](./settings.md) — 16 个分栏一栏一段，包括主题、语言、代理、终端、MCP、Token 用量。
+- [设置速查](./settings.md) — 按设置主题查找说明，包括主题、语言、代理、终端、MCP、Token 用量。
 
 ## 让它替你干更多活
 
 - [子 Agent 与任务拆分](./agents.md) — 什么时候该派 Agent，内置 Agent 有哪些，怎么捏一个自己的。
 - [技能与技能市场](./skills.md) — 技能是什么、和 Agent 有什么区别、从市场装技能前要看什么。
 - [定时任务](./schedule.md) — 让 Claude 每天早上自动跑一遍代码审查。
-- [Computer Use](./computer-use.md) — 在 macOS 上不占用真实鼠标和键盘，替你操作别的应用。
+- [Computer Use](./computer-use.md) — 操作其他桌面应用；macOS 14.4 及以上支持不占用真实鼠标键盘的后台输入，Windows 使用系统输入，Linux 暂不支持。
 
 ## 换个设备继续
 
-- [手机 H5 与 IM 接力](./remote.md) — 扫码在手机浏览器里继续同一条会话，或者从微信、飞书、Telegram 直接对话。
-- [IM 接入](../im/index.md) — 五个平台各自的详细配置步骤。
+- [手机 H5 与 IM 接力](./remote.md) — 电脑保持运行时，扫码在手机浏览器继续同一条会话，或者从微信、飞书、Telegram 等聊天软件远程对话。
+- [IM 接入](../im/index.md) — 按聊天平台查找配置步骤、权限与排查说明。
 
 ## 让它顺眼一点
 

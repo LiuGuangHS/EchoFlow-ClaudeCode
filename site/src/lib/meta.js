@@ -50,6 +50,14 @@ export function setPageMeta({ alternate, canonical, description, lang, title }) 
   setMetaContent('property', 'og:title', title)
   setMetaContent('property', 'og:description', description)
   setMetaContent('property', 'og:url', canonical ? `${SITE_ORIGIN}${canonical}` : null)
+  setMetaContent('name', 'twitter:title', title)
+  setMetaContent('name', 'twitter:description', description)
+  // 首次加载保留静态结构化数据；SPA 换页时移除旧路由的数据。
+  const previousCanonical = document.head.querySelector('link[rel="canonical"]')?.getAttribute('href')
+  if (previousCanonical && previousCanonical !== `${SITE_ORIGIN}${canonical}`) {
+    document.getElementById('page-schema')?.remove()
+    document.head.querySelector('link[rel="alternate"][type="text/markdown"]')?.remove()
+  }
 
   setLink('canonical', canonical ? `${SITE_ORIGIN}${canonical}` : null)
 
@@ -57,5 +65,6 @@ export function setPageMeta({ alternate, canonical, description, lang, title }) 
     const isEnglish = canonical === '/en' || canonical.startsWith('/en/')
     setLink('alternate', `${SITE_ORIGIN}${canonical}`, isEnglish ? 'en' : 'zh-Hans')
     setLink('alternate', alternate ? `${SITE_ORIGIN}${alternate}` : null, isEnglish ? 'zh-Hans' : 'en')
+    setLink('alternate', `${SITE_ORIGIN}${isEnglish && alternate ? alternate : canonical}`, 'x-default')
   }
 }

@@ -1,7 +1,7 @@
 ---
 title: 工作区
 nav_title: 工作区
-description: 右侧工作区：看改了哪些文件、逐行评审 Diff、在应用里预览网页。
+description: EchoFlow Code 的工作区：列出本轮改动的文件，逐行评审带语法高亮的 Diff、留行级评论，并在内置浏览器里预览刚改完的网页。
 order: 2
 ---
 

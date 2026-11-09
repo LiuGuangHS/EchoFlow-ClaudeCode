@@ -1,7 +1,7 @@
 ---
 title: 安装与启动
 nav_title: 安装与启动
-description: 从源码运行 CLI：安装依赖、配置模型服务、在任意目录启动。
+description: 从源码运行 EchoFlow Code 的命令行版本（echoflow-code）：用 Bun 安装依赖、配置模型服务、在任意目录启动。
 order: 0
 ---
 

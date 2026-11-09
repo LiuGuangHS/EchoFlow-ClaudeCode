@@ -1,7 +1,7 @@
 ---
 title: Connect a model
 nav_title: Connect a model
-description: Official accounts, third-party APIs, or a local model — pick one and be running in ten minutes.
+description: Connect a model to EchoFlow Code: official Claude, ChatGPT or Grok sign-in, API presets for DeepSeek, Kimi and Zhipu GLM, or local models via LM Studio and Ollama.
 order: 2
 ---
 

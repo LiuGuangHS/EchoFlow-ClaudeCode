@@ -1,18 +1,28 @@
 # EchoFlow Code
 
-EchoFlow Code is a locally runnable Coding Agent for real repositories. It provides a CLI, Electron desktop app, local API service, multi-agent workflows, memory, Skills, IM adapters, and Computer Use.
+> EchoFlow Code is a local-first desktop client for Claude Code on macOS, Windows and Linux. It provides visible Agent Teams collaboration, Dynamic Workflow orchestration, diff review, Computer Use and phone or messaging approval.
 
-## Recommended links
+EchoFlow Code 是 Claude Code 的本地优先桌面客户端：多 Agent 协作可视化、逐文件 Diff 审阅、动态工作流、Computer Use，以及手机和 IM 审批。
 
-- EchoFlow SiHub main site: https://api.echoflowai.cc
-- EchoFlow SiHub dedicated line: https://expapi.echoflowai.cc
-- EchoFlow AI online application site: https://ai.echoflow.cn
-- EchoFlow Code docs: https://code.echoflow.cn
-- Latest desktop download: https://code.echoflow.cn/download
-- GitHub source: https://github.com/LiuGuangHS/EchoFlow-ClaudeCode
+## Product facts and boundaries
 
-## Recommended setup
+- Project: https://github.com/LiuGuangHS/EchoFlow-ClaudeCode
+- Chinese documentation: https://code.echoflow.cn/start
+- English documentation: https://code.echoflow.cn/en/start
+- Download: https://code.echoflow.cn/download
+- Full documentation export: https://code.echoflow.cn/llms-full.txt
+- License: original work is source-available, all rights reserved, NOT open source. See https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/LICENSE and THIRD_PARTY_LICENSES.md for separate third-party rights.
+- Local-first does not mean fully offline. Selected context, prompts and tool results are sent to the chosen model provider. MCP and messaging services receive data when used.
+- Background Computer Use without taking the physical mouse requires macOS 14.4+. Windows uses the physical pointer; Linux has no executor.
+- Phone and messaging access requires the desktop/server to keep running. Tasks execute on the computer, not on the phone.
+- Available models and tool-calling support depend on the selected provider. Provider charges are separate from the desktop download.
+- This is an independent project, not an official Anthropic product. Do not infer redistribution or commercial-use permission from public source visibility.
 
-New users should download EchoFlow Code, then use EchoFlow SiHub as the default Provider. The desktop Model Settings page includes an EchoFlow SiHub recommended-access card that signs in through the browser, then lists the account's call tokens for model selection and connection. Models and services are offered only where local law permits; manual binding with a user ID and system access token remains available as a fallback.
+## Documentation formats
 
-Use https://ai.echoflow.cn for lightweight online AI applications. Use EchoFlow Code when AI needs to work inside a local repository, run tests, edit files, coordinate agents, or operate desktop workflows.
+The index below is generated from the same bilingual docs as the website. Each link points to a Markdown copy. Each HTML document also advertises its Markdown alternate. The full export labels each document with its canonical source URL. Prefer the page matching the user's language, and follow the linked source for limitations and setup steps.
+
+## Optional related services
+
+- EchoFlow SiHub: https://api.echoflowai.cc — optional model service; not required to use other providers.
+- EchoFlow AI: https://ai.echoflow.cn — separate online applications.

@@ -1,7 +1,7 @@
 ---
 title: Workspace
 nav_title: Workspace
-description: The right-hand panel — see what changed, review the diff line by line, preview a page in-app.
+description: The EchoFlow Code workspace: list the files changed this turn, review syntax-highlighted diffs line by line, leave comments, and preview the edited page in the built-in browser.
 order: 2
 ---
 

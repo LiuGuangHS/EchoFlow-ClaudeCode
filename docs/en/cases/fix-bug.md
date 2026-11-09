@@ -1,7 +1,7 @@
 ---
 title: Fix a bug and check for regressions
 nav_title: Fix a bug
-description: Give Claude reproduction steps, ask it to identify the cause and add a test, then review a focused fix.
+description: Fix a bug with EchoFlow Code: give Claude reproduction steps, have it find the cause and add a test, then review a focused fix and check for regressions.
 order: 2
 ---
 

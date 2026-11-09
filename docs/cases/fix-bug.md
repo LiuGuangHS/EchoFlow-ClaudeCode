@@ -1,7 +1,7 @@
 ---
 title: 修复 Bug 并检查回归
 nav_title: 修复 Bug
-description: 把复现步骤交给 Claude，要求先定位原因与测试，再审阅最小修复。
+description: 用 EchoFlow Code 修复 Bug：把复现步骤交给 Claude，先定位原因并补测试，再审阅最小修复和回归检查。
 order: 2
 ---
 
