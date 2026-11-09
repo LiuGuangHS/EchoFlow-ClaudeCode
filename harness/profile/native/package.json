@@ -1,0 +1,13 @@
+{
+  "name": "echoflow-native-profile",
+  "private": true,
+  "dependencies": {},
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@echoflow/egress-guard"
+      ]
+    }
+  }
+}

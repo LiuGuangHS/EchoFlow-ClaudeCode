@@ -67,6 +67,10 @@ export function composeEffectiveProfile(options = {}) {
     layers.push(hardDisablePatch(blocklist))
   }
 
+  if (options.hardDisablePlugins?.length) {
+    layers.push(options.hardDisablePlugins.map(id => ({ id, disabled: true })))
+  }
+
   const entries = composeEntries(layers, message => warnings.push(message))
   return { profile, entries, warnings, layers }
 }

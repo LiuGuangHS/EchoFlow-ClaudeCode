@@ -1,0 +1,102 @@
+# Direct module composition: keep the native Agent loop and persistence, but
+# expose no model-callable actions until their product-side boundaries are wired.
+- id: agent-default-model
+  config:
+    provider: echoflow
+    model: echoflow-default
+
+- id: plugin-manager
+  disabled: true
+
+- id: remote-access
+  disabled: true
+
+- id: typert-gateway
+  disabled: true
+
+- id: hmr
+  disabled: true
+
+- id: goal-round-driver
+  disabled: true
+
+- id: commands
+  disabled: true
+
+- id: command-feedback
+  disabled: true
+
+- id: command-goal
+  disabled: true
+
+- id: command-compact
+  disabled: true
+
+- id: plan-mode
+  disabled: true
+
+- id: web
+  disabled: true
+
+- id: web-search-deepseek
+  disabled: true
+
+- id: web-deepseek-api
+  disabled: true
+
+- id: web-fetch-http
+  disabled: true
+
+- id: mcp-resources
+  disabled: true
+
+- id: tool-working-directory
+  disabled: true
+
+- id: tool-plugin-manager
+  disabled: true
+
+- id: tool-bash
+  disabled: true
+
+- id: tool-pwsh
+  disabled: true
+
+- id: tool-jobs
+  disabled: true
+
+- id: tool-fs
+  disabled: true
+
+- id: tool-fs-search
+  disabled: true
+
+- id: tool-skill
+  disabled: true
+
+- id: tool-subagent-control
+  disabled: true
+
+- id: tool-subagent-list-agents
+  disabled: true
+
+- id: tool-subagent
+  disabled: true
+
+- id: tool-subagent-fork
+  disabled: true
+
+- id: tool-workflow
+  disabled: true
+
+- id: tool-todo
+  disabled: true
+
+- id: tool-goal
+  disabled: true
+
+- id: tool-web
+  disabled: true
+
+- id: tool-result-pruner
+  disabled: true
