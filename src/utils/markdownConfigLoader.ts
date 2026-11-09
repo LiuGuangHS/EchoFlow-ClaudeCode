@@ -588,12 +588,11 @@ async function loadMarkdownFiles(dir: string): Promise<
           signal,
         )
   } catch (e: unknown) {
+    // Handle missing/inaccessible dir directly instead of pre-checking
+    // existence (TOCTOU). findMarkdownFilesNative already catches internally;
+    // ripGrep rejects on inaccessible target paths.
     if (isFsInaccessible(e)) return []
-    if (!useNative && e instanceof Error && e.message.includes('ripgrep is not available')) {
-      files = await findMarkdownFilesNative(dir, signal)
-    } else {
-      throw e
-    }
+    throw e
   }
 
   // File-system enumeration order is not portable. A stable path order makes

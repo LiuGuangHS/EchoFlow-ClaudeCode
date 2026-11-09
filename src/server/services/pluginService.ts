@@ -14,18 +14,12 @@ import { getPluginErrorMessage } from '../../types/plugin.js'
 import { clearAllCaches } from '../../utils/plugins/cacheUtils.js'
 import {
   getMarketplaceSourceDisplay,
-  isSourceAllowedByPolicy,
 } from '../../utils/plugins/marketplaceHelpers.js'
 import { loadInstalledPluginsV2 } from '../../utils/plugins/installedPluginsManager.js'
 import {
-  getMarketplaceCacheOnly,
+  getDeclaredMarketplaces,
   loadKnownMarketplacesConfig,
 } from '../../utils/plugins/marketplaceManager.js'
-import {
-  createMarketplacePresetRegistry,
-  DEFAULT_MARKETPLACE_PRESETS,
-} from '../../utils/plugins/marketplacePresets.js'
-import type { PluginMarketplace } from '../../utils/plugins/schemas.js'
 import { loadPluginLspServers } from '../../utils/plugins/lspPluginIntegration.js'
 import { loadPluginMcpServers } from '../../utils/plugins/mcpPluginIntegration.js'
 import { parsePluginIdentifier } from '../../utils/plugins/pluginIdentifier.js'
@@ -36,9 +30,10 @@ import { clearPluginCacheExclusions } from '../../utils/plugins/orphanedPluginFi
 import { parseFrontmatter } from '../../utils/frontmatterParser.js'
 import { extractDescriptionFromMarkdown } from '../../utils/markdownConfigLoader.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
-import type {
-  PluginInstallationEntry,
-  PluginScope,
+import {
+  isMarketplaceAutoUpdate,
+  type PluginInstallationEntry,
+  type PluginScope,
 } from '../../utils/plugins/schemas.js'
 import { ApiError } from '../middleware/errorHandler.js'
 import { walkPluginMarkdown } from '../../utils/plugins/walkPluginMarkdown.js'
@@ -156,55 +151,6 @@ type HydratedPluginState = {
 }
 
 export class PluginService {
-  listMarketplacePresets() {
-    return [...createMarketplacePresetRegistry(DEFAULT_MARKETPLACE_PRESETS).values()]
-  }
-
-  async listRegisteredMarketplaces() {
-    const config = await loadKnownMarketplacesConfig()
-    return Object.entries(config).map(([name, entry]) => ({
-      name,
-      source: getMarketplaceSourceDisplay(entry.source),
-      lastUpdated: entry.lastUpdated,
-      autoUpdate: entry.autoUpdate !== false,
-      allowedByPolicy: isSourceAllowedByPolicy(entry.source),
-    })).sort((a, b) => a.name.localeCompare(b.name))
-  }
-
-  async discoverMarketplacePlugins(marketplaceName: string) {
-    const config = await loadKnownMarketplacesConfig()
-    if (!config[marketplaceName]) {
-      throw ApiError.notFound(`Marketplace not found: ${marketplaceName}`)
-    }
-    if (!isSourceAllowedByPolicy(config[marketplaceName].source)) {
-      throw ApiError.badRequest('Marketplace source is blocked by policy')
-    }
-    const marketplace = await getMarketplaceCacheOnly(marketplaceName)
-    if (!marketplace) {
-      throw ApiError.notFound(`Marketplace cache not found: ${marketplaceName}`)
-    }
-    return this.serializeMarketplaceDiscovery(marketplace)
-  }
-
-  async getMarketplacePluginDetail(marketplaceName: string, pluginName: string) {
-    const discovery = await this.discoverMarketplacePlugins(marketplaceName)
-    const plugin = discovery.plugins.find(entry => entry.name === pluginName)
-    if (!plugin) throw ApiError.notFound(`Plugin not found: ${pluginName}@${marketplaceName}`)
-    return plugin
-  }
-
-  private serializeMarketplaceDiscovery(marketplace: PluginMarketplace) {
-    return {
-      name: marketplace.name,
-      owner: marketplace.owner,
-      description: marketplace.metadata?.description,
-      plugins: marketplace.plugins.map(plugin => ({
-        ...plugin,
-        id: `${plugin.name}@${marketplace.name}`,
-      })),
-    }
-  }
-
   async listPlugins(cwd?: string): Promise<ApiPluginListResponse> {
     const { plugins, marketplaces } = await this.collectPluginState(cwd)
     return {
@@ -387,12 +333,16 @@ export class PluginService {
       this.toSummary(detail),
     )
 
-    const marketplaces = Object.entries(marketplaceConfig.marketplaces ?? {})
+    // known_marketplaces.json is the flat record validated by
+    // KnownMarketplacesFileSchema (marketplace name → entry); it has no
+    // nested `marketplaces` key, so reading one always produced an empty list.
+    const declaredMarketplaces = getDeclaredMarketplaces()
+    const marketplaces = Object.entries(marketplaceConfig)
       .map(([name, entry]) => ({
         name,
         source: getMarketplaceSourceDisplay(entry.source),
         lastUpdated: entry.lastUpdated,
-        autoUpdate: entry.autoUpdate !== false,
+        autoUpdate: declaredMarketplaces[name]?.autoUpdate ?? isMarketplaceAutoUpdate(name, entry),
         installedCount: plugins.filter((plugin) => plugin.marketplace === name).length,
       }))
       .sort((a, b) => a.name.localeCompare(b.name))

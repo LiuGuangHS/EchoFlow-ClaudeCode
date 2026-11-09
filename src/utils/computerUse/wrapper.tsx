@@ -73,14 +73,14 @@ function formatLockHeld(holder: string): string {
 
 export function buildSessionContext(): ComputerUseSessionContext {
   return {
-    // ── Read state fresh via the async-local context ──────────────────────
-    // During dispatch, consume persisted desktop grants (pre-authorized apps +
-    // grant flags) written by the EchoFlow desktop settings page. Outside a
-    // dispatch there is no per-call context, so fall back to upstream's
-    // feature-wide defaults (every app, flags enabled).
-    getAllowedApps: () => toolUseContexts.getStore()?.getAppState().computerUseMcpState?.allowedApps ?? [],
+    getAgentId: () => tuc().agentId ?? 'main',
+    // ── Read state fresh via the per-call ref ─────────────────────────────
+    // App authorization is feature-wide once Computer Use is enabled. Keep
+    // returning the legacy shapes for protocol compatibility, but do not
+    // consume persisted app grants or open runtime permission prompts.
+    getAllowedApps: () => [],
     isAborted: () => tuc().abortController.signal.aborted,
-    getGrantFlags: () => toolUseContexts.getStore()?.getAppState().computerUseMcpState?.grantFlags ?? ENABLED_GRANT_FLAGS,
+    getGrantFlags: () => ENABLED_GRANT_FLAGS,
     getUserDeniedBundleIds: () => [],
     getSelectedDisplayId: () => tuc().getAppState().computerUseMcpState?.selectedDisplayId,
     getDisplayPinnedByModel: () => tuc().getAppState().computerUseMcpState?.displayPinnedByModel ?? false,
@@ -202,11 +202,12 @@ export function buildSessionContext(): ComputerUseSessionContext {
     // but is possible under parallel tool-use interleaving — don't spam the
     // notification in that case.
     acquireCuLock: async () => {
-      const signal = tuc().abortController.signal;
+      const { abortController, computerUseTurn } = tuc();
+      const signal = abortController.signal;
       if (signal.aborted) throw new Error("Computer Use cancelled before lock acquisition");
-      const r = await tryAcquireComputerUseLock();
+      const r = await tryAcquireComputerUseLock(computerUseTurn);
       if (signal.aborted) {
-        if (r.kind === 'acquired' && r.fresh) await releaseComputerUseLock();
+        if (r.kind === 'acquired' && r.fresh) await releaseComputerUseLock(computerUseTurn);
         throw new Error("Computer Use cancelled during lock acquisition");
       }
       if (r.kind === 'blocked') {

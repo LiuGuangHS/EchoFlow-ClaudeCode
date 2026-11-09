@@ -6,14 +6,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CONNECTORS } from './catalog.js'
 import { createConnectorAdapter, parseConnectorCheck, trustedAuthorizationUrl } from './cliAdapter.js'
-import { managedInstallation, type RuntimeDependencies } from './managedRuntime.js'
+import { defaultRuntimeDependencies, managedInstallation, type RuntimeDependencies } from './managedRuntime.js'
+
+// Connectors ship for macOS and Windows only. Tests that exercise the real pins pin a
+// supported host instead of borrowing the runner's, which is Linux in CI.
+const supportedHost: RuntimeDependencies = { ...defaultRuntimeDependencies, platform: 'darwin', arch: 'arm64' }
 
 const result = (value: unknown, code = 0) => ({ stdout: typeof value === 'string' ? value : JSON.stringify(value), stderr: '', code })
-const testRuntime: RuntimeDependencies = {
-  readBinary: async () => Buffer.from('binary'),
-  platform: 'darwin', arch: 'arm64', download: async () => new Uint8Array(), extract: async () => new Uint8Array(),
-  run: async () => result('ok'),
-}
 test('pinned CLI output parsers distinguish configured, verified, expired and malformed results', () => {
   expect(parseConnectorCheck('feishu', result(fixtures.feishuVerified))).toEqual({ authenticated: true, verification: 'remote' })
   expect(parseConnectorCheck('feishu', result({ identity: 'user', verified: false })).authenticated).toBe(false)
@@ -56,7 +55,7 @@ test('authorization reports complete streamed URLs and always disables browser o
 })
 
 test('remove rejects foreign directory instead of deleting user credentials', async () => {
-  const adapter = createConnectorAdapter(CONNECTORS[0]!, '/tmp/managed', testRuntime)
+  const adapter = createConnectorAdapter(CONNECTORS[0]!, '/tmp/managed', supportedHost)
   await expect(adapter.remove({ directory: '/tmp/shared-credentials', command: '/tmp/shared-credentials/lark-cli', args: [], env: {} })).rejects.toThrow('Invalid managed')
 })
 
@@ -64,7 +63,7 @@ test('remove cleans only owned versions and interrupted stages, preserving accou
   const root = await mkdtemp(join(tmpdir(), 'connector remove '))
   try {
     const definition = CONNECTORS[0]!
-    const installed = managedInstallation(definition, root, testRuntime)
+    const installed = managedInstallation(definition, root, supportedHost)
     await mkdir(installed.directory, { recursive: true })
     await mkdir(join(root, 'runtime', 'feishu', '0.9.0-old'), { recursive: true })
     await mkdir(join(root, 'runtime', 'feishu', '1.0.95.stage-interrupted'), { recursive: true })
@@ -72,7 +71,7 @@ test('remove cleans only owned versions and interrupted stages, preserving accou
     await mkdir(join(root, 'accounts', 'feishu'), { recursive: true })
     const account = join(root, 'accounts', 'feishu', 'fixture.json')
     await writeFile(account, 'keep synthetic credential')
-    await createConnectorAdapter(definition, root, testRuntime).remove(installed)
+    await createConnectorAdapter(definition, root, supportedHost).remove(installed)
     await expect(access(join(root, 'runtime', 'feishu'))).rejects.toThrow()
     expect(await readFile(account, 'utf8')).toBe('keep synthetic credential')
     await access(join(root, 'runtime', 'wecom'))
@@ -117,7 +116,7 @@ test('Feishu account label only reads the documented name field, never identity 
 
 test('status check rejects an unknown persisted version before spawning its command', async () => {
   const definition = { ...CONNECTORS[0]!, version: '9.9.9' }
-  await expect(createConnectorAdapter(definition, '/tmp/untrusted-version', testRuntime).check({
+  await expect(createConnectorAdapter(definition, '/tmp/untrusted-version', supportedHost).check({
     directory: '/tmp/untrusted-version/runtime/feishu/9.9.9-darwin-arm64',
     command: '/tmp/untrusted-version/runtime/feishu/9.9.9-darwin-arm64/lark-cli', args: [], env: {},
   }, new AbortController().signal)).rejects.toThrow('no pinned artifact')

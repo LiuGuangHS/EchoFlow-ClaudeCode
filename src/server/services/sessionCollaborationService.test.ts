@@ -25,12 +25,6 @@ beforeEach(async () => {
     runtime: { start: async (_, message) => { started.push(message) }, enqueue: async (_, message) => { injected.push(message) }, stop: async () => {} },
   }
   service = new SessionCollaborationService(deps)
-  // The constructor loads state.json in the background while test bodies seed
-  // that path with an in-place truncating write. A write landing mid-read tears
-  // the read, `ready` rejects, and nothing awaits this instance again, so the
-  // run dies on an unhandled rejection with a misleading stack. status() awaits
-  // `ready` without mutating the store, so the load settles before any body runs.
-  await service.status()
 })
 afterEach(async () => { await rm(directory, { recursive: true, force: true }) })
 
@@ -64,6 +58,7 @@ describe('session collaboration', () => {
     await service.create(a.sessionId, { prompt: 'nested' })
     const queued = await service.create('root', { prompt: 'queued' })
     expect(queued).toMatchObject({ state: 'queued', delivery: 'queued' })
+    expect(service.hasPendingPowerWork()).toBe(true)
     expect(started).toHaveLength(3)
     expect((await service.status()).members.find(member => member.sessionId === queued.sessionId)?.state).toBe('queued')
     await service.onSessionState(a.sessionId, 'completed', 'done', 'completion-1')
@@ -75,6 +70,18 @@ describe('session collaboration', () => {
     expect((await service.status()).messages.filter(message => message.id === 'completion-1')).toHaveLength(1)
   })
 
+  test('power activity retains accepted collaboration messages until consumption and excludes cancelled queues', async () => {
+    expect(service.hasPendingPowerWork()).toBe(false)
+    const child = await service.create('root', { prompt: 'fixture' })
+    expect(service.hasPendingPowerWork()).toBe(true)
+    await service.onMessageConsumed(child.messageId)
+    expect(service.hasPendingPowerWork()).toBe(false)
+    await service.send('root', child.sessionId, 'next', 'pending-message')
+    expect(service.hasPendingPowerWork()).toBe(true)
+    await service.onStopped(child.sessionId)
+    expect(service.hasPendingPowerWork()).toBe(false)
+  })
+
   test('injects into existing busy sessions and deduplicates retry ids', async () => {
     deps.runtime.getState = () => 'running'
     await service.send('root', 'existing', 'hello', 'stable-id')
@@ -84,6 +91,12 @@ describe('session collaboration', () => {
     await service.onMessageConsumed('stable-id')
     expect((await service.status()).messages[0]?.status).toBe('consumed')
     await expect(service.send('root', 'existing', 'different', 'stable-id')).rejects.toThrow('different content')
+  })
+
+  test('rejects a session messaging itself instead of feeding its own turn', async () => {
+    await expect(service.send('root', 'root', 'ping')).rejects.toThrow('cannot send a message to itself')
+    expect(injected).toHaveLength(0)
+    expect(started).toHaveLength(0)
   })
 
   test('Stop fences automatic wakeups and survives restart; explicit input clears it', async () => {
@@ -155,6 +168,40 @@ describe('session collaboration', () => {
     const stored = JSON.parse(await readFile(deps.statePath, 'utf8'))
     expect(stored.version).toBe(1)
     expect(stored.futureField).toEqual({ preserve: true })
+  })
+
+  test('completion migration keeps old unknown dates and persists a real successful result across recovery', async () => {
+    let now = new Date('2026-10-24T01:00:00Z')
+    deps.now = () => now
+    await writeFile(deps.statePath, JSON.stringify({
+      version: 1, revision: 2, futureField: { keep: true }, messages: [],
+      members: { old: { sessionId: 'old', rootSessionId: 'old', parentSessionId: null, state: 'completed', stopped: false, extension: 'keep' } },
+    }))
+    service = new SessionCollaborationService(deps)
+    expect((await service.status(['old'])).members[0]?.completedAt).toBeUndefined()
+    await service.onUserInput('new')
+    await service.onSessionState('new', 'completed', 'Done', 'result-1')
+    expect((await service.status(['new'])).members[0]?.completedAt).toBe(now.toISOString())
+    now = new Date('2026-10-25T01:00:00Z')
+    await service.onSessionState('new', 'completed', 'Done', 'result-1')
+    service = new SessionCollaborationService(deps)
+    await service.recover()
+    expect((await service.status(['new'])).members[0]?.completedAt).toBe('2026-10-24T01:00:00.000Z')
+    const stored = JSON.parse(await readFile(deps.statePath, 'utf8'))
+    expect(stored.futureField).toEqual({ keep: true })
+    expect(stored.members.old.extension).toBe('keep')
+    expect(stored.members.old.completedAt).toBeUndefined()
+  })
+
+  test('failed and explicitly stopped results never gain a completion timestamp', async () => {
+    await service.onUserInput('failed')
+    await service.onSessionState('failed', 'failed', 'Error', 'failed-result')
+    await service.onUserInput('stopped')
+    await service.onStopped('stopped')
+    await service.onSessionState('stopped', 'completed', 'Partial response', 'late-result')
+    const rows = (await service.status()).members
+    expect(rows.find(row => row.sessionId === 'failed')?.completedAt).toBeUndefined()
+    expect(rows.find(row => row.sessionId === 'stopped')?.completedAt).toBeUndefined()
   })
 
   test('wait wakes on incoming messages and user input interrupts the caller wait', async () => {
@@ -382,9 +429,6 @@ describe('session collaboration', () => {
   })
 
   test('a short wait is raised to the minimum and says so, while a newer revision still returns immediately', async () => {
-    // afterRevision 0 equals the fresh store's revision, so this really does sit
-    // in the timer for the clamped 10s. The wall-clock assertion is the only way
-    // to prove the clamp took effect; the generous timeout absorbs loaded CI.
     const startedAt = Date.now()
     const raised = await service.wait(0, undefined, 0)
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(10_000)
@@ -394,7 +438,24 @@ describe('session collaboration', () => {
     const fresh = await service.wait(raised.revision, ['peer'], 0)
     expect(fresh.messages.map(message => message.id)).toEqual(['arrived'])
     expect(fresh).toMatchObject({ requestedTimeoutMs: 0, timeoutMs: 10_000 })
-  }, 30_000)
+  }, 20_000)
+
+  test("a team lead waiting on its own members returns at once with guidance instead of blocking", async () => {
+    deps.sessions.teamMemberIdentities = sessionId => sessionId === 'root' ? ['reviewer', 'reviewer@team', 'worker-session'] : []
+    const startedAt = Date.now()
+    const result = await service.wait(0, ['reviewer', 'worker-session'], 300_000, undefined, 'root')
+    expect(Date.now() - startedAt).toBeLessThan(2_000)
+    expect(result.guidance).toContain('Agent Team members')
+    // Real collaboration targets still wait as before.
+    const stillWaits = service.wait((await service.status()).revision, ['peer'], 1000, undefined, 'root')
+    await service.send('root', 'peer', 'arrived', 'arrived-for-peer')
+    expect((await stillWaits).guidance ?? '').not.toContain('Agent Team members')
+    // Another session's member names are not this caller's team.
+    deps.sessions.teamMemberIdentities = () => []
+    const otherCaller = service.wait((await service.status()).revision, ['reviewer'], 1000, undefined, 'root')
+    await service.send('root', 'reviewer', 'later', 'later')
+    expect((await otherCaller).guidance ?? '').not.toContain('Agent Team members')
+  })
 
   test('wait cursor omits unchanged messages but returns a changed delivery receipt', async () => {
     await service.send('root', 'peer', 'message', 'stable')

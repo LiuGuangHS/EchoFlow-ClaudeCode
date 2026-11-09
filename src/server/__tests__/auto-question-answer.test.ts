@@ -111,6 +111,39 @@ describe('automatic AskUserQuestion answers', () => {
     expect(sent).toHaveLength(1)
   })
 
+  it('publishes the real deadline and retains it for reconnect, then clears it on user activity', async () => {
+    await fs.writeFile(path.join(configDir, 'settings.json'), JSON.stringify({ autoQuestion: { enabled: true, timeoutMinutes: 5 } }))
+    const { service, session, request, callbacks } = createPendingService()
+    const createdAt = Date.now() - 30_000
+    Object.assign(request, { autoAnswerCreatedAt: createdAt })
+    await (service as any).scheduleAutoQuestionAnswer('session-1', session, 'req-1', request)
+    const deadline = createdAt + 5 * 60_000
+    expect(callbacks).toContainEqual(expect.objectContaining({ type: 'control_request', request_id: 'req-1', request: expect.objectContaining({ auto_answer_deadline: deadline }) }))
+    expect(service.getPendingPermissionRequests('session-1')[0]).toMatchObject({ requestId: 'req-1', autoAnswerDeadline: deadline })
+    service.cancelAutoQuestionAnswer('session-1', 'req-1')
+    expect(callbacks.at(-1).request.auto_answer_deadline).toBeNull()
+    expect(service.getPendingPermissionRequests('session-1')[0]?.autoAnswerDeadline).toBeNull()
+    const count = callbacks.length
+    service.cancelAutoQuestionAnswer('session-1', 'req-1')
+    expect(callbacks).toHaveLength(count)
+    await (service as any).scheduleAutoQuestionAnswer('session-1', session, 'req-1', request)
+    expect(request).toHaveProperty('autoAnswerTimer', undefined)
+    expect(decisionMock).not.toHaveBeenCalled()
+  })
+
+  it('withdraws a countdown when settings disable auto-answer without changing the request', async () => {
+    const settingsPath = path.join(configDir, 'settings.json')
+    await fs.writeFile(settingsPath, JSON.stringify({ autoQuestion: { enabled: true, timeoutMinutes: 5 } }))
+    const { service, session, request, callbacks } = createPendingService()
+    await (service as any).scheduleAutoQuestionAnswer('session-1', session, 'req-1', request)
+    ;(service as any).clearAutoAnswerWait(request)
+    await fs.writeFile(settingsPath, JSON.stringify({ autoQuestion: { enabled: false, timeoutMinutes: 5 } }))
+    await (service as any).scheduleAutoQuestionAnswer('session-1', session, 'req-1', request)
+    expect(callbacks.at(-1).request.auto_answer_deadline).toBeNull()
+    expect(service.getPendingPermissionRequests('session-1')[0]).toMatchObject({ requestId: 'req-1', autoAnswerDeadline: null })
+    expect(decisionMock).not.toHaveBeenCalled()
+  })
+
   it('does not answer after the user has resolved the request', async () => {
     await fs.writeFile(path.join(configDir, 'settings.json'), JSON.stringify({
       autoQuestion: { enabled: true, timeoutMinutes: 5 },
@@ -240,6 +273,30 @@ describe('automatic AskUserQuestion answers', () => {
 
     expect(sent).toHaveLength(0)
     expect(service.getPendingPermissionRequests('session-1')).toHaveLength(1)
+  })
+
+  // Issue #1839: a team member's question is waited on through the lead session,
+  // so that is where the desktop reports the user's first touch of the card.
+  it("cancels a team member's deadline when the activity arrives on the lead session", async () => {
+    await fs.writeFile(path.join(configDir, 'settings.json'), JSON.stringify({
+      autoQuestion: { enabled: true, timeoutMinutes: 5 },
+    }))
+    const { service, session, request, sent } = createPendingService()
+    Object.assign(session, { teamWorker: { parentSessionId: 'lead-1', teamName: 'greeting-team', name: 'asker' } })
+    const leadOutput: any[] = []
+    ;(service as any).sessions.set('lead-1', {
+      pendingPermissionRequests: new Map(),
+      outputCallbacks: [(message: unknown) => leadOutput.push(message)],
+    })
+    await (service as any).scheduleAutoQuestionAnswer('session-1', session, 'req-1', request)
+    expect(leadOutput.at(-1).request.auto_answer_deadline).toEqual(expect.any(Number))
+
+    service.cancelAutoQuestionAnswer('lead-1', 'req-1')
+    await (service as any).autoAnswerQuestion('session-1', session, 'req-1', request)
+
+    expect(sent).toHaveLength(0)
+    expect(leadOutput.at(-1).request.auto_answer_deadline).toBeNull()
+    expect(service.getPendingPermissionRequests('lead-1')).toMatchObject([{ requestId: 'req-1', autoAnswerDeadline: null }])
   })
 
   it('does not schedule a deadline when interaction arrives during the settings read', async () => {

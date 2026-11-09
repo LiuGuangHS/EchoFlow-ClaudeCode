@@ -16,6 +16,11 @@ import {
   startWechatLoginWithQr,
   WECHAT_DEFAULT_BASE_URL,
 } from '../../../adapters/wechat/protocol.js'
+import {
+  logoutWhatsAppAuth,
+  pollWhatsAppLoginWithQr,
+  startWhatsAppLoginWithQr,
+} from '../../../adapters/whatsapp/protocol.js'
 import { loadConfig } from '../../../adapters/common/config.js'
 import {
   beginFeishuRegistration,
@@ -390,8 +395,8 @@ type RegistrationBeginPayload = {
 }
 
 /** Pre-filled on Feishu's confirmation page; the user can still edit both. */
-const FEISHU_REGISTRATION_APP_NAME = 'EchoFlow Code'
-const FEISHU_REGISTRATION_APP_DESC = '把飞书私聊接到本机的 EchoFlow Code 会话。'
+const FEISHU_REGISTRATION_APP_NAME = 'Claude Code Haha'
+const FEISHU_REGISTRATION_APP_DESC = '把飞书私聊接到本机的 Claude Code 会话。'
 
 const DINGTALK_REGISTRATION_BASE_URL =
   process.env.DINGTALK_REGISTRATION_BASE_URL?.trim() || 'https://oapi.dingtalk.com'
@@ -830,12 +835,6 @@ async function handleWechatAdaptersApi(req: Request, tail: string[]): Promise<Re
 }
 
 async function handleWhatsAppAdaptersApi(req: Request, tail: string[]): Promise<Response> {
-  const {
-    logoutWhatsAppAuth,
-    pollWhatsAppLoginWithQr,
-    startWhatsAppLoginWithQr,
-  } = await import('../../../adapters/whatsapp/protocol.js')
-
   if (req.method === 'POST' && tail[0] === 'login' && tail[1] === 'start') {
     await cleanupExpiredWhatsAppStaging()
     const config = loadConfig()

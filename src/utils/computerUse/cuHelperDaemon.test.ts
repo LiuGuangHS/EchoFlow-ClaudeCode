@@ -66,7 +66,7 @@ afterEach(() => {
   __resetDaemonClientForTests()
   __resetCuHelperCache()
   __resetInstalledHelperCache()
-  delete process.env.ECHOFLOW_CU_HELPER_PATH
+  delete process.env.CC_HAHA_CU_HELPER_PATH
 })
 
 describe('cu-helper daemon system commands', () => {
@@ -204,7 +204,7 @@ describe('cu-helper daemon failure classification', () => {
     // A bare executable can satisfy the availability probe but cannot be
     // launched as the helper .app daemon. The bridge must be allowed to use the
     // native one-shot CLI for this pre-dispatch failure.
-    process.env.ECHOFLOW_CU_HELPER_PATH = '/bin/echo'
+    process.env.CC_HAHA_CU_HELPER_PATH = '/bin/echo'
     __resetCuHelperCache()
     __resetInstalledHelperCache()
 

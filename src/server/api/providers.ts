@@ -1,15 +1,18 @@
 /**
  * Providers REST API
  *
- * GET    /api/providers                  — list all saved providers + activeId
+ * GET    /api/providers                  — list all saved providers + activeId + providerOrder
  * GET    /api/providers/presets           — list available presets
  * GET    /api/providers/auth-status       — check whether any usable auth exists
- * GET    /api/providers/settings          — read EchoFlow managed settings.json
+ *                                           (?providerId=<id>: only that provider's own auth)
+ * GET    /api/providers/settings          — read cc-haha managed settings.json
  * GET    /api/providers/cc-switch/scan    — scan a local cc-switch install
+ * GET    /api/providers/magpie            — the local Magpie gateway's state and catalog
+ * POST   /api/providers/magpie/open       — open the Magpie app (macOS)
  * POST   /api/providers                  — add a provider
  * POST   /api/providers/cc-switch/import  — import scanned cc-switch providers
  * POST   /api/providers/models            — list upstream models for a config
- * PUT    /api/providers/settings          — update EchoFlow managed settings.json
+ * PUT    /api/providers/settings          — update cc-haha managed settings.json
  * PUT    /api/providers/:id              — update a provider
  * DELETE /api/providers/:id              — delete a provider
  * POST   /api/providers/:id/activate     — activate a saved provider
@@ -21,11 +24,14 @@
  */
 
 import { z } from 'zod'
-import { ProviderService, toPublicProvider } from '../services/providerService.js'
+import { ProviderService } from '../services/providerService.js'
+import { openMagpieApp } from '../services/magpieGateway.js'
 import { PROVIDER_PRESETS } from '../config/providerPresets.js'
 import {
   CreateProviderSchema,
+  DEEPSEEK_ACCOUNT_PROVIDER_ID,
   ModelMappingSchema,
+  ProviderProxyConfigSchema,
   UpdateProviderSchema,
   TestProviderSchema,
   ReorderProvidersSchema,
@@ -49,6 +55,7 @@ const FetchProviderModelsSchema = z.object({
   baseUrl: z.string().min(1),
   apiKey: z.string().min(1),
   isFullUrl: z.boolean().optional(),
+  proxy: ProviderProxyConfigSchema.optional(),
   // `modelsUrl` is deliberately NOT accepted over HTTP. The service still
   // supports the override for internal callers, but exposing a free-form
   // endpoint on an authenticated route only widens the request surface — no
@@ -63,9 +70,8 @@ const OfficialProviderModelsUpdateSchema = z.object({
 
 export async function handleProvidersApi(
   req: Request,
-  _url: URL,
+  url: URL,
   segments: string[],
-  options: { projectSecrets?: boolean } = {},
 ): Promise<Response> {
   try {
     const id = segments[2]
@@ -94,6 +100,19 @@ export async function handleProvidersApi(
       throw ApiError.notFound(`Unknown cc-switch route: ${action ?? ''}`)
     }
 
+    // /api/providers/magpie — the local gateway, ahead of the generic :id handlers
+    if (id === 'magpie') {
+      if (!action) {
+        if (req.method !== 'GET') throw methodNotAllowed(req.method)
+        return Response.json(await providerService.getMagpieState({ force: url.searchParams.get('refresh') === '1' }))
+      }
+      if (action === 'open') {
+        if (req.method !== 'POST') throw methodNotAllowed(req.method)
+        return Response.json(await openMagpieApp())
+      }
+      throw ApiError.notFound(`Unknown Magpie route: ${action}`)
+    }
+
     // GET /api/providers/presets
     // Carries retired presets too (flagged `deprecated`), so a consumer resolving a saved
     // provider's presetId still finds it. Filter on `deprecated` to build add-provider choices.
@@ -101,9 +120,9 @@ export async function handleProvidersApi(
       return Response.json({ presets: PROVIDER_PRESETS })
     }
 
-    // GET /api/providers/auth-status
+    // GET /api/providers/auth-status[?providerId=<id>]
     if (id === 'auth-status' && req.method === 'GET') {
-      const status = await providerService.checkAuthStatus()
+      const status = await providerService.checkAuthStatus(readAuthStatusProviderId(url))
       return Response.json(status)
     }
 
@@ -135,10 +154,12 @@ export async function handleProvidersApi(
     // /api/providers (no ID)
     if (!id) {
       if (req.method === 'GET') {
-        const { providers, activeId, providerOrder } = options.projectSecrets === false
-          ? await providerService.listProviders()
-          : await providerService.listPublicProviders()
-        return Response.json({ providers, activeId, providerOrder })
+        const { providers, activeId, providerOrder } = await providerService.listProviders()
+        // The built-in DeepSeek account is not a saved provider, but the model
+        // picker shows its alias rows like one, from the mapping the user saved.
+        const deepSeekAccountModels =
+          await providerService.getOfficialProviderModels(DEEPSEEK_ACCOUNT_PROVIDER_ID)
+        return Response.json({ providers, activeId, providerOrder, deepSeekAccountModels })
       }
       if (req.method === 'POST') {
         return await handleCreate(req)
@@ -214,9 +235,7 @@ export async function handleProvidersApi(
 
     // /api/providers/:id
     if (req.method === 'GET') {
-      const provider = options.projectSecrets === false
-        ? await providerService.getProvider(id)
-        : await providerService.getPublicProvider(id)
+      const provider = await providerService.getProvider(id)
       return Response.json({ provider })
     }
     if (req.method === 'PUT') {
@@ -238,7 +257,7 @@ async function handleCreate(req: Request): Promise<Response> {
   try {
     const input = CreateProviderSchema.parse(body)
     const provider = await providerService.addProvider(input)
-    return Response.json({ provider: toPublicProvider(provider) }, { status: 201 })
+    return Response.json({ provider }, { status: 201 })
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err
@@ -250,7 +269,7 @@ async function handleUpdate(req: Request, id: string): Promise<Response> {
   try {
     const input = UpdateProviderSchema.parse(body)
     const provider = await providerService.updateProvider(id, input)
-    return Response.json({ provider: toPublicProvider(provider) })
+    return Response.json({ provider })
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err
@@ -272,7 +291,7 @@ async function handleCcSwitchImport(req: Request): Promise<Response> {
     const scan = await readCcSwitchProviders({ existingProviders: providers })
     const { inputs, skipped } = resolveCcSwitchImports(scan, input.sourceIds)
     const imported = await providerService.importProviders(inputs)
-    return Response.json({ imported: imported.map(toPublicProvider), skipped })
+    return Response.json({ imported, skipped })
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err
@@ -296,7 +315,7 @@ async function handleReorder(req: Request): Promise<Response> {
   try {
     const input = ReorderProvidersSchema.parse(body)
     const { providers, providerOrder } = await providerService.reorderProviders(input.orderedIds)
-    return Response.json({ providers: providers.map(toPublicProvider), providerOrder })
+    return Response.json({ providers, providerOrder })
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err
@@ -336,6 +355,17 @@ async function handleTestUnsaved(req: Request): Promise<Response> {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err
   }
+}
+
+/**
+ * `providerId` scopes the auth check to one provider: a saved provider id or a
+ * built-in id (`claude-official`, `openai-official`, ...). Absent or blank keeps
+ * the global-default check. The value is only compared with known ids; it is
+ * never used as a path, logged, or echoed back.
+ */
+function readAuthStatusProviderId(url: URL): string | undefined {
+  const providerId = url.searchParams.get('providerId')?.trim()
+  return providerId ? providerId : undefined
 }
 
 async function parseJsonBody(req: Request): Promise<Record<string, unknown>> {

@@ -865,7 +865,7 @@ describe('anthropicToOpenaiChat', () => {
     }
     const result = anthropicToOpenaiChat(req, { imageContentMode: 'text_only' })
     expect(result.messages[0].content).toBe(
-      'What is in this screenshot?\n[Image omitted: this OpenAI-compatible chat endpoint only supports text content.]\n',
+      'What is in this screenshot?\n[Image omitted: the upstream rejected image input for this model.]\n',
     )
     expect(JSON.stringify(result)).not.toContain('image_url')
     expect(JSON.stringify(result)).not.toContain('abc123')
@@ -889,7 +889,7 @@ describe('anthropicToOpenaiChat', () => {
     }
     const result = anthropicToOpenaiChat(req, { imageContentMode: 'text_only' })
     expect(result.messages).toEqual([
-      { role: 'tool', tool_call_id: 'tc_img', content: '\n[Image omitted: this OpenAI-compatible chat endpoint only supports text content.]\n' },
+      { role: 'tool', tool_call_id: 'tc_img', content: '\n[Image omitted: the upstream rejected image input for this model.]\n' },
     ])
     expect(JSON.stringify(result)).not.toContain('image_url')
     expect(JSON.stringify(result)).not.toContain('abc123')
@@ -946,7 +946,7 @@ describe('anthropicToOpenaiChat', () => {
     expect(result.messages).toEqual([
       {
         role: 'user',
-        content: '[Document: cited]\nbefore\n[Image omitted: this OpenAI-compatible chat endpoint only supports text content.]\nafter',
+        content: '[Document: cited]\nbefore\n[Image omitted: the upstream rejected image input for this model.]\nafter',
       },
     ])
     expect(JSON.stringify(result)).not.toContain('image_url')
@@ -1752,7 +1752,7 @@ describe('anthropicToOpenaiResponses', () => {
     expect(result.reasoning).toEqual({ effort: 'high' })
   })
 
-  test('OpenAI OAuth mode restores legacy namespaced redacted thinking as encrypted reasoning input', () => {
+  test('OpenAI OAuth mode restores namespaced redacted thinking as encrypted reasoning input', () => {
     const req = {
       model: 'gpt-5.6-terra',
       max_tokens: 100,
@@ -1760,7 +1760,7 @@ describe('anthropicToOpenaiResponses', () => {
         role: 'assistant',
         content: [{
           type: 'redacted_thinking',
-          data: 'echoflow-code:openai-reasoning:v1:{"id":"rs_1","summary":[],"encrypted_content":"encrypted-reasoning"}',
+          data: 'cc-haha:openai-reasoning:v1:{"id":"rs_1","summary":[],"encrypted_content":"encrypted-reasoning"}',
         }],
       }],
     } as AnthropicRequest

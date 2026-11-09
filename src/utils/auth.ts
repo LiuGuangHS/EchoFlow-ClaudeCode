@@ -80,6 +80,7 @@ import {
 import { sleep } from './sleep.js'
 import { jsonParse } from './slowOperations.js'
 import { clearToolSchemaCache } from './toolSchemaCache.js'
+import { getRequestProviderRoute } from './model/providerEnvScope.js'
 
 /** Default TTL for API key helper cache in milliseconds (5 minutes) */
 const DEFAULT_API_KEY_HELPER_TTL = 5 * 60 * 1000
@@ -284,12 +285,11 @@ export function getAnthropicApiKeyWithSource(
 
     if (
       !apiKeyEnv &&
-      !process.env.ANTHROPIC_AUTH_TOKEN &&
       !process.env.CLAUDE_CODE_OAUTH_TOKEN &&
       !process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR
     ) {
       throw new Error(
-        'ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or CLAUDE_CODE_OAUTH_TOKEN env var is required',
+        'ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN env var is required',
       )
     }
 
@@ -667,6 +667,7 @@ export function refreshAwsAuth(awsAuthRefresh: string): Promise<boolean> {
   return new Promise(resolve => {
     const refreshProc = exec(awsAuthRefresh, {
       timeout: AWS_AUTH_REFRESH_TIMEOUT_MS,
+      windowsHide: true,
     })
     refreshProc.stdout!.on('data', data => {
       const output = data.toString().trim()
@@ -935,6 +936,7 @@ export function refreshGcpAuth(gcpAuthRefresh: string): Promise<boolean> {
   return new Promise(resolve => {
     const refreshProc = exec(gcpAuthRefresh, {
       timeout: GCP_AUTH_REFRESH_TIMEOUT_MS,
+      windowsHide: true,
     })
     refreshProc.stdout!.on('data', data => {
       const output = data.toString().trim()
@@ -1594,6 +1596,9 @@ async function checkAndRefreshOAuthTokenIfNeededImpl(
 }
 
 export function isClaudeAISubscriber(): boolean {
+  // An Agent's request routed to a saved API provider never rides the Claude
+  // subscription, so subscriber-only request shapes must not reach it.
+  if (getRequestProviderRoute()) return false
   let anthropicAuthEnabled = false
   try {
     anthropicAuthEnabled = isAnthropicAuthEnabled()
@@ -1658,6 +1663,24 @@ export function is1PApiCustomer(): boolean {
  */
 export function getOauthAccountInfo(): AccountInfo | undefined {
   return isAnthropicAuthEnabled() ? getGlobalConfig().oauthAccount : undefined
+}
+
+/**
+ * Account UUID reported in request metadata (`metadata.user_id`).
+ *
+ * A host that owns the OAuth token (the desktop server) injects it as
+ * CLAUDE_CODE_ACCOUNT_UUID. That takes precedence over `oauthAccount`: a token
+ * delivered through CLAUDE_CODE_OAUTH_TOKEN has no profile scope, so the CLI
+ * never populates `oauthAccount` itself, and the config file may describe a
+ * different account (for example the one a terminal CLI is logged in to).
+ */
+export function getOauthAccountUuid(): string {
+  if (!isAnthropicAuthEnabled()) return ''
+  return (
+    process.env.CLAUDE_CODE_ACCOUNT_UUID?.trim() ||
+    getGlobalConfig().oauthAccount?.accountUuid ||
+    ''
+  )
 }
 
 /**

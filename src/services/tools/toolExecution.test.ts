@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { createSandboxedTestEnvironment } from '../../../scripts/pr/test-environment.js'
 import type { Tool, ToolUseContext } from '../../Tool.js'
 
-const childScenario = process.env.ECHOFLOW_TOOL_INPUT_GUARD_SCENARIO
+const childScenario = process.env.CC_HAHA_TOOL_INPUT_GUARD_SCENARIO
 
 // Importing the executor loads the full tools/permissions/MCP graph. Isolate
 // those caches from shared-process suites that install their own module mocks.
@@ -70,7 +70,7 @@ for (const scenario of ['provider', 'history']) {
     const child = Bun.spawn([process.execPath, '--no-env-file', 'test', fileURLToPath(import.meta.url)], {
       cwd: root,
       env: createSandboxedTestEnvironment(root, {
-        ECHOFLOW_TOOL_INPUT_GUARD_SCENARIO: scenario,
+        CC_HAHA_TOOL_INPUT_GUARD_SCENARIO: scenario,
         NODE_ENV: 'production',
         CLAUDE_CODE_SIMPLE: '1',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
@@ -78,10 +78,7 @@ for (const scenario of ['provider', 'history']) {
       }),
       stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
     })
-    // Hang guard, not a performance budget: the child boots the real runtime,
-    // which a loaded machine stretches well past 15s; keep the guard below
-    // the per-test timeout so a slow run can never be killed first.
-    const timeout = setTimeout(() => child.kill('SIGKILL'), 45_000)
+    const timeout = setTimeout(() => child.kill('SIGKILL'), 15_000)
     try {
       const [exitCode, stdout, stderr] = await Promise.all([
         child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
@@ -93,5 +90,5 @@ for (const scenario of ['provider', 'history']) {
       await child.exited
       await rm(root, { recursive: true, force: true })
     }
-  }, 60_000)
+  }, 20_000)
 }

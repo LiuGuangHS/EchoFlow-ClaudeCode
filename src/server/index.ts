@@ -1,6 +1,8 @@
+import { configureScheduledTaskHost } from './services/scheduledTaskHost.js'
 import { configureSessionCollaborationHost, getSessionCollaborationService } from './services/sessionCollaborationHost.js'
 import { authenticateCollaborationCaller, collaborationToolAction } from './sessionCollaborationAuth.js'
 import { handleSessionCollaborationApi } from './api/sessionCollaboration.js'
+import { handleScheduledTaskToolsApi } from './api/scheduledTaskTools.js'
 /**
  * Claude Code Desktop App — HTTP + WebSocket Server
  *
@@ -9,17 +11,23 @@ import { handleSessionCollaborationApi } from './api/sessionCollaboration.js'
  */
 
 import { handleApiRequest } from './router.js'
-import { buildStartupFailureMessage } from './startupFailureMessage.js'
-import { serveWithTransientBindRetry } from './serveWithTransientBindRetry.js'
-import { handleWebSocket, type WebSocketData } from './ws/handler.js'
-import { resolveCors, isAllowedBuiltInOrigin, withCors, type CorsResolution } from './middleware/cors.js'
-import { requireAuth, requireH5Token } from './middleware/auth.js'
+import { handleWebSocket, revokeSessionAdmissionsForMigration, drainSessionWritesForMigration, type WebSocketData } from './ws/handler.js'
+import { createResumableSocketHandler, parseResumeRequest } from './ws/resumableStreams.js'
+import { P2PBroker, p2pStateDiagnostic } from './p2p/broker.js'
+import type { ServerWebSocket } from 'bun'
+import { migrationMaintenance, migrationUnavailableResponse } from './migrationMaintenance.js'
+import { countExternalMigrationProcesses } from './migrationInventory.js'
+import { handleMigrationRuntimeRequest, isMigrationRuntimePath } from './migrationRuntimeApi.js'
+import { quiesceTeamPlanRuntimesForMigration } from './services/teamPlanRuntime.js'
+import { ManagedSettingsService } from './services/managedSettingsService.js'
+import { resolveCors, withCors, type CorsResolution } from './middleware/cors.js'
+import { requireAuth, requireH5Token, validateRequestAuth, validateH5RequestAuth } from './middleware/auth.js'
 import { teamWatcher } from './services/teamWatcher.js'
 import { cronScheduler } from './services/cronScheduler.js'
 import { handleProxyRequest } from './proxy/handler.js'
 import { ProviderService } from './services/providerService.js'
-import { handleEchoFlowOAuthCallback } from './api/echoflow-oauth.js'
-import { handleEchoFlowOpenAIOAuthCallback } from './api/echoflow-openai-oauth.js'
+import { handleHahaOAuthCallback } from './api/haha-oauth.js'
+import { handleHahaOpenAIOAuthCallback } from './api/haha-openai-oauth.js'
 import { handlePreviewFs } from './api/previewFs.js'
 import { handleLocalFile } from './api/localFile.js'
 import { sessionService } from './services/sessionService.js'
@@ -49,6 +57,7 @@ import {
   hasConfiguredLocalAccessToken,
   hasConfiguredPetAccessToken,
   isLocalAccessAuthorized,
+  isP2PEndpointAuthorized,
   isPetAccessAuthorized,
 } from './localAccessAuth.js'
 import {
@@ -58,6 +67,8 @@ import {
   PET_SESSION_LIMIT,
 } from './petAccessPolicy.js'
 import { PublicAccessServer, isPublicAccessControlPath } from './publicAccess.js'
+import { resolveRemoteAccessProxy, verifyRemoteAccessGateway } from './services/remoteAccessConnectivity.js'
+import { getMobilePushService, stopMobilePushServices } from './services/mobilePushRuntime.js'
 import { settleResponseOnRequestAbort } from './requestLifecycle.js'
 
 function readArgValue(flag: string): string | undefined {
@@ -130,6 +141,7 @@ export async function startBackgroundIndexesInPriorityOrder(
 }
 
 const publicAccessServers = new Set<PublicAccessServer>()
+const h5ShutdownHandlers = new Set<() => void>()
 
 let backgroundIndexStartupController: AbortController | undefined
 let backgroundIndexStartup: Promise<void> | undefined
@@ -145,23 +157,6 @@ function beginBackgroundIndexStartup(): void {
   void operation.finally(() => {
     if (backgroundIndexStartup === operation) backgroundIndexStartup = undefined
   })
-}
-
-function withH5PolicyCors(
-  response: Response,
-  cors: CorsResolution,
-  origin: string | null,
-  h5Enabled: boolean,
-): Response {
-  // When H5 is disabled, do not expose the policy response to arbitrary
-  // browser origins. Built-in local origins still need to read the response so
-  // the desktop renderer receives the actual API error instead of a fetch
-  // network error caused by missing CORS headers.
-  if (!origin || (!h5Enabled && !isAllowedBuiltInOrigin(origin))) {
-    return response
-  }
-
-  return withCors(response, cors)
 }
 
 function corsRejectedResponse(cors: CorsResolution): Response {
@@ -247,27 +242,21 @@ function originFromUrl(value: string | null): string | null {
   }
 }
 
-function isLoopbackBrowserOriginForPolicy(value: string): boolean {
-  try {
-    const hostname = new URL(value).hostname.replace(/^\[/, '').replace(/\]$/, '').toLowerCase()
-    return hostname === 'localhost' || hostname === '::1' || /^127(?:\.\d{1,3}){3}$/.test(hostname)
-  } catch {
-    return false
-  }
-}
-
 export function startServer(port = PORT, host = HOST) {
-  enableConfigs()
-  const trustedRendererOrigin = resolveTrustedRendererOrigin(
-    process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN,
-  )
+  // Everything before this point is module loading. When a host reports that
+  // the sidecar "never started listening", this line splits that time from
+  // the work below that still runs before Bun.serve binds (#1746).
+  console.log(`[Server] modules loaded ${Math.round(performance.now())} ms after process start; binding ${host}:${port}`)
+  if (process.env.CC_HAHA_MIGRATION_VALIDATION === '1') migrationMaintenance.beginValidation()
+  if (!migrationMaintenance.isActive) enableConfigs()
+  const trustedRendererOrigin = resolveTrustedRendererOrigin(process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN)
   // Warm the synchronous disconnect-grace cache from managed settings so the
   // first client disconnect honors the configured value (issue #764).
-  void refreshDisconnectGraceMs()
+  if (!migrationMaintenance.isActive) void refreshDisconnectGraceMs()
   // Don't hijack the global console / process handlers under `bun test`:
   // a test that boots the server would otherwise route every test-side
   // console.error/warn into the user's real diagnostics file.
-  if (process.env.NODE_ENV !== 'test') {
+  if (process.env.NODE_ENV !== 'test' && !migrationMaintenance.isActive) {
     diagnosticsService.installConsoleCapture()
     diagnosticsService.installProcessCapture()
   }
@@ -290,28 +279,127 @@ export function startServer(port = PORT, host = HOST) {
     process.env.SERVER_AUTH_REQUIRED === '1'
   const h5AccessService = new H5AccessService()
 
+  // One stream registry for both listeners: a client reattaches on whichever
+  // path it can reach, and the gateway can end a revoked device's streams.
+  const sessionSockets = createResumableSocketHandler(handleWebSocket)
+  // Phone ↔ desktop direct connections, signaled through the gateway and
+  // carried by the desktop's WebRTC endpoint (see p2p/broker.ts).
+  let p2pBroker: P2PBroker | undefined
   const publicAccess = new PublicAccessServer({
-    handleApiRequest,
+    resolveProxy: resolveRemoteAccessProxy,
+    verifyGateway: verifyRemoteAccessGateway,
+    handleApiRequest: (request, url, context) => migrationMaintenance.isActive
+      ? Promise.resolve(migrationUnavailableResponse())
+      : migrationMaintenance.track(handleApiRequest(request, url, context)),
     handleStatic: handleStaticH5Request,
-    websocket: handleWebSocket,
+    websocket: sessionSockets,
+    terminateDeviceStreams: deviceId => {
+      sessionSockets.terminateIdentity(deviceId)
+      p2pBroker?.closeDevice(deviceId)
+    },
+    p2p: () => p2pBroker,
     serverPort: () => serverPort,
   })
+  p2pBroker = new P2PBroker({
+    gateway: () => publicAccess.tunnel(),
+    onState: event => { void diagnosticsService.recordEvent(p2pStateDiagnostic(event)) },
+  })
+  const broker = p2pBroker
+  // The main port carries session sockets and, from the desktop itself, the
+  // WebRTC endpoint's relay link. Nothing else ever sees the `p2p` channel.
+  const activeMainSockets = new Set<ServerWebSocket<WebSocketData>>()
+  const revokeH5Connections = (identity: string) => {
+    sessionSockets.terminateH5Identity(identity)
+    for (const socket of activeMainSockets) {
+      if (socket.data.h5Authorization !== identity) continue
+      socket.data.terminal = true
+      socket.close(1008, 'H5 access revoked')
+    }
+  }
+  const h5Revocations = h5AccessService.watchRevocations(revokeH5Connections)
+  const disposeH5Connections = () => {
+    h5ShutdownHandlers.delete(disposeH5Connections)
+    h5Revocations.dispose()
+    revokeH5Connections(h5Revocations.identity)
+  }
+  h5ShutdownHandlers.add(disposeH5Connections)
+  const isRevokedH5Socket = (socket: ServerWebSocket<WebSocketData>) =>
+    socket.data.h5Authorization !== undefined && !h5Revocations.isCurrent(socket.data.h5Authorization)
+  const mainSockets = {
+    ...sessionSockets,
+    open(ws: ServerWebSocket<WebSocketData>) {
+      if (isRevokedH5Socket(ws)) { ws.close(1008, 'H5 access revoked'); return }
+      activeMainSockets.add(ws)
+      if (ws.data.channel === 'p2p') broker.attachEndpoint(ws)
+      else sessionSockets.open(ws)
+    },
+    message(ws: ServerWebSocket<WebSocketData>, message: string | Buffer) {
+      if (isRevokedH5Socket(ws)) { ws.close(1008, 'H5 access revoked'); return }
+      if (ws.data.channel === 'p2p') broker.receive(ws, String(message))
+      else sessionSockets.message(ws, message)
+    },
+    close(ws: ServerWebSocket<WebSocketData>, code: number, reason: string) {
+      if (!activeMainSockets.delete(ws)) return
+      if (ws.data.channel === 'p2p') broker.detachEndpoint(ws)
+      else sessionSockets.close(ws, code, reason)
+    },
+    drain(ws: ServerWebSocket<WebSocketData>) {
+      if (!isRevokedH5Socket(ws) && ws.data.channel !== 'p2p') sessionSockets.drain(ws)
+    },
+  }
   publicAccessServers.add(publicAccess)
+  if (!migrationMaintenance.isActive) getMobilePushService().start(
+    id => [...publicAccessServers].some(remote => remote.isDeviceActive(id)),
+    id => [...publicAccessServers].some(remote => remote.isDevicePaired(id)),
+  )
   let server: ReturnType<typeof Bun.serve<WebSocketData>>
 
-  // Open SQLite before the first REST request. Discovery still runs in the
-  // background; without this, getPublicStatus() reports `off` and the sidebar
-  // falls through to a full JSONL scan that can exceed the 120s client timeout.
-  void localIndexCoordinator.start().catch(() => undefined)
-
+  // Index startup runs after `Bun.serve` (see below), never before it. Opening
+  // SQLite and scanning `source_files` happen before the first `await` inside
+  // `localIndexCoordinator.start()`, so doing that here kept the port unbound
+  // for the whole synchronous pass — every host probe then looked like a dead
+  // sidecar (issue #1746). Requests that need the index still await it in the
+  // `fetch` handler.
   try {
-    server = serveWithTransientBindRetry(() => Bun.serve<WebSocketData>({
+    server = Bun.serve<WebSocketData>({
       port,
       hostname: host,
       idleTimeout: HTTP_CONNECTION_IDLE_TIMEOUT_SECONDS,
 
       async fetch(req, server) {
+        const pathname = new URL(req.url).pathname
+        if (isMigrationRuntimePath(pathname)) {
+          return handleMigrationRuntimeRequest(req, server.requestIP(req)?.address ?? null, {
+            preview: migrationRuntimePreview,
+            quiesce: quiesceServerRuntimeForMigration,
+            recover: quiesceServerRuntimeForRecovery,
+            activate: async () => {
+              migrationMaintenance.activateValidation()
+              delete process.env.CC_HAHA_MIGRATION_VALIDATION
+              enableConfigs()
+              void refreshDisconnectGraceMs()
+              if (process.env.NODE_ENV !== 'test') {
+                diagnosticsService.installConsoleCapture()
+                diagnosticsService.installProcessCapture()
+              }
+              beginBackgroundIndexStartup()
+              teamWatcher.start()
+              cronScheduler.start()
+            },
+          })
+        }
+        if (migrationMaintenance.isActive && pathname !== '/health' &&
+          (migrationMaintenance.isValidation || !pathname.startsWith('/sdk/'))) return migrationUnavailableResponse()
+        return migrationMaintenance.track((async () => {
         const url = new URL(req.url)
+        if (url.pathname === '/api/public-access/p2p/endpoint') {
+          // The desktop's own WebRTC endpoint (a hidden Electron window): loopback
+          // and its own per-launch token only. The public gateway never serves it.
+          const address = server.requestIP(req)?.address ?? ''
+          if (!isP2PEndpointAuthorized(url.searchParams.get('endpointToken'), address)) return new Response('Forbidden', { status: 403 })
+          if (server.upgrade(req, { data: { sessionId: 'p2p', connectedAt: Date.now(), channel: 'p2p', sdkToken: null, serverPort, serverHost: localConnectHost } })) return undefined
+          return new Response('WebSocket upgrade failed', { status: 400 })
+        }
         if (isPublicAccessControlPath(url.pathname)) return publicAccess.control(req)
 
         // Startup probes must not wait on migrations, config reads, or auth.
@@ -329,8 +417,15 @@ export function startServer(port = PORT, host = HOST) {
           )
         }
 
-        await localIndexCoordinator.start().catch(() => undefined)
-        await ensurePersistentStorageUpgraded()
+        if (!migrationMaintenance.isActive) {
+          await localIndexCoordinator.start().catch(() => undefined)
+          await ensurePersistentStorageUpgraded()
+        }
+        if (url.pathname === '/api/scheduled-task-tools') {
+          const caller = authenticateCollaborationCaller(req, (id, token) => conversationService.authorizeSdkConnection(id, token))
+          if (!caller) return Response.json({ error: 'Invalid session credential' }, { status: 401 })
+          return handleScheduledTaskToolsApi(req, caller)
+        }
         const collaborationAction = collaborationToolAction(url.pathname)
         if (collaborationAction) {
           const caller = authenticateCollaborationCaller(req, (id, token) => conversationService.authorizeSdkConnection(id, token))
@@ -388,6 +483,7 @@ export function startServer(port = PORT, host = HOST) {
             sdkSessionId && sdkToken && conversationService.authorizeSdkConnection(sdkSessionId, sdkToken),
           ),
         }
+        const h5AuthorizationIdentity = h5Revocations.identity
         const h5Settings = await h5AccessService.getSettings()
         const h5PublicOrigin = originFromUrl(h5Settings.publicBaseUrl)
         const cors = await resolveCors(origin, url.origin, {
@@ -411,63 +507,24 @@ export function startServer(port = PORT, host = HOST) {
         })
         const h5AccessControlBlocked = isH5AccessControlRequest(req, url, h5RequestContext)
 
-        // Handle CORS preflight before capability authentication. A preflight
-        // carries no application credential by design; the actual request is
-        // still enforced by the H5 policy below. Remote preflights remain
-        // blocked while H5 access is disabled.
+        // The configured dev renderer's preflight is classified as local-trusted.
+        // All other browser origins still pass through these capability gates.
+        if (h5AccessControlBlocked) {
+          return isLocalCredentialOnlyPath(url.pathname)
+            ? localCredentialRejectedResponse()
+            : h5AccessControlRejectedResponse()
+        }
+
+        if (h5AccessDisabledBlocked) {
+          return h5AccessDisabledResponse()
+        }
+
+        // Handle CORS preflight
         if (req.method === 'OPTIONS') {
-          if (
-            h5RequestContext.localAccessTokenConfigured &&
-            origin &&
-            isLoopbackBrowserOriginForPolicy(origin) &&
-            url.pathname !== '/api/status' &&
-            origin !== h5RequestContext.trustedRendererOrigin
-          ) {
-            return localCredentialRejectedResponse()
-          }
-          if (h5AccessControlBlocked) {
-            return withH5PolicyCors(
-              isLocalCredentialOnlyPath(url.pathname)
-                ? localCredentialRejectedResponse()
-                : h5AccessControlRejectedResponse(),
-              cors,
-              origin,
-              h5Settings.enabled,
-            )
-          }
-
-          if (
-            h5AccessDisabledBlocked &&
-            origin !== null &&
-            !isAllowedBuiltInOrigin(origin)
-          ) {
-            return h5AccessDisabledResponse()
-          }
-
           if (cors.rejected) {
             return corsRejectedResponse(cors)
           }
           return new Response(null, { status: 204, headers: cors.headers })
-        }
-
-        if (h5AccessControlBlocked) {
-          return withH5PolicyCors(
-            isLocalCredentialOnlyPath(url.pathname)
-              ? localCredentialRejectedResponse()
-              : h5AccessControlRejectedResponse(),
-            cors,
-            origin,
-            h5Settings.enabled,
-          )
-        }
-
-        if (h5AccessDisabledBlocked) {
-          return withH5PolicyCors(
-            h5AccessDisabledResponse(),
-            cors,
-            origin,
-            h5Settings.enabled,
-          )
         }
 
         // WebSocket upgrade
@@ -476,17 +533,16 @@ export function startServer(port = PORT, host = HOST) {
             return corsRejectedResponse(cors)
           }
 
-          // Enforce authentication when required
-          if (!petAccessAuthorized && authRequired) {
-            const authError = await requireH5Token(req, url.searchParams.get('token'))
-            if (authError) {
-              return withCors(authError, cors)
+          let h5Authorization: string | undefined
+          if (!petAccessAuthorized && (authRequired || forceAuth)) {
+            const auth = await (authRequired ? validateH5RequestAuth : validateRequestAuth)(req, url.searchParams.get('token'))
+            if (!auth.valid) {
+              return withCors(Response.json({ error: 'Unauthorized', message: auth.error }, { status: 401 }), cors)
             }
-          } else if (!petAccessAuthorized && forceAuth) {
-            const authError = await requireAuth(req, url.searchParams.get('token'))
-            if (authError) {
-              return withCors(authError, cors)
-            }
+            if (auth.source === 'h5') h5Authorization = h5AuthorizationIdentity
+          }
+          if (h5Authorization && !h5Revocations.isCurrent(h5Authorization)) {
+            return withCors(Response.json({ error: 'Unauthorized', message: 'H5 access revoked' }, { status: 401 }), cors)
           }
 
           // Validate session ID format
@@ -500,9 +556,14 @@ export function startServer(port = PORT, host = HOST) {
               connectedAt: Date.now(),
               channel: 'client',
               clientKind: petAccessAuthorized ? 'pet' : 'full',
+              ...(h5Authorization ? { h5Authorization } : {}),
+              powerActivityLeaseAuthorized: !petAccessAuthorized && isLocalAccessAuthorized(req, localTokenOverride),
               sdkToken: null,
               serverPort,
               serverHost: localConnectHost,
+              mediaRefs: url.searchParams.get('media') === 'ref',
+              promptSuggestions: !petAccessAuthorized && url.searchParams.get('suggestions') === '1',
+              ...(petAccessAuthorized ? {} : { resume: parseResumeRequest(url.searchParams) }),
             },
           })
           if (upgraded) return undefined
@@ -546,14 +607,14 @@ export function startServer(port = PORT, host = HOST) {
         }
 
         if (url.pathname === '/callback') {
-          return handleEchoFlowOAuthCallback(url)
+          return handleHahaOAuthCallback(url)
         }
 
         if (
           url.pathname === OPENAI_CODEX_REDIRECT_PATH ||
           url.pathname === '/callback/openai'
         ) {
-          return handleEchoFlowOpenAIOAuthCallback(url)
+          return handleHahaOpenAIOAuthCallback(url)
         }
 
         // Preview filesystem — serve sandboxed workspace files for a session.
@@ -692,16 +753,21 @@ export function startServer(port = PORT, host = HOST) {
         }
 
         return new Response('Not Found', { status: 404 })
+        })())
       },
 
-      websocket: handleWebSocket,
-    }))
+      websocket: mainSockets,
+    })
     const disposeCollaboration = configureSessionCollaborationHost(localConnectHost, server.port)
+    const disposeScheduledTaskHost = configureScheduledTaskHost(localConnectHost, server.port)
     const stop = server.stop.bind(server)
     server.stop = (closeActiveConnections?: boolean) => {
+      disposeH5Connections()
       apiPerformanceMonitor.stop()
       disposeCollaboration()
+      disposeScheduledTaskHost()
       publicAccess.disable()
+      broker.closeAll()
       publicAccessServers.delete(publicAccess)
       return stop(closeActiveConnections)
     }
@@ -709,23 +775,27 @@ export function startServer(port = PORT, host = HOST) {
     ProviderService.setServerPort(serverPort)
     apiPerformanceMonitor.start()
   } catch (error) {
+    disposeH5Connections()
     publicAccess.disable()
     publicAccessServers.delete(publicAccess)
-    throw new Error(buildStartupFailureMessage(error, host, port), { cause: error })
+    const message = error instanceof Error && error.message
+      ? error.message
+      : `Failed to start server. Is port ${port} in use?`
+    throw new Error(message, { cause: error })
   }
 
   // Bun.serve is already accepting requests. Both projections remain
   // background work; session-list metadata gets priority on a cold start so
   // full-text backfill cannot make the sidebar slower on low-memory machines.
-  beginBackgroundIndexStartup()
+  if (!migrationMaintenance.isActive) beginBackgroundIndexStartup()
 
   // Start watching ~/.claude/teams/ for real-time WebSocket push
-  teamWatcher.start()
+  if (!migrationMaintenance.isActive) teamWatcher.start()
 
   // Start the cron scheduler to execute scheduled tasks
-  cronScheduler.start()
+  if (!migrationMaintenance.isActive) cronScheduler.start()
 
-  void ensureDesktopCliLauncherInstalled().catch((error) => {
+  if (!migrationMaintenance.isActive) void ensureDesktopCliLauncherInstalled().catch((error) => {
     console.error(
         '[desktop-cli-launcher] failed to install bundled launcher:',
         error instanceof Error ? error.message : error,
@@ -739,10 +809,55 @@ export function startServer(port = PORT, host = HOST) {
 // ─── Graceful shutdown: kill all CLI subprocesses on exit ────────────────────
 
 let shutdownInProgress: Promise<void> | null = null
+let migrationQuiescence: Promise<void> | undefined
+
+async function migrationRuntimePreview() {
+  const owned = [...conversationService.getProcessIds(), ...cronScheduler.getProcessIds()]
+  return { activeTasks: owned.length, externalProcesses: await countExternalMigrationProcesses(owned) }
+}
+
+export function quiesceServerRuntimeForMigration(ignoreExternalProcesses = false): Promise<void> {
+  if (migrationQuiescence) return migrationQuiescence
+  migrationMaintenance.begin()
+  revokeSessionAdmissionsForMigration()
+  const operation = (async () => {
+    const inventory = await migrationRuntimePreview()
+    if (!ignoreExternalProcesses && inventory.externalProcesses > 0) throw new Error('Close external CLI sessions before migrating data')
+    for (const remote of publicAccessServers) remote.disable()
+    await stopMobilePushServices()
+    await quiesceTeamPlanRuntimesForMigration()
+    await Promise.all([teamWatcher.stopAndWait(), cronScheduler.stopAndWait(), conversationService.stopForMigration()])
+    await migrationMaintenance.drain()
+    await drainSessionWritesForMigration()
+    backgroundIndexStartupController?.abort()
+    await Promise.all([localIndexCoordinator.stop(), searchContentCoordinator.stop(), backgroundIndexStartup])
+    await sessionService.drainForMigration()
+    await ManagedSettingsService.drainForMigration()
+    await diagnosticsService.drainForMigration()
+  })()
+  migrationQuiescence = operation
+  return operation
+}
+
+export async function quiesceServerRuntimeForRecovery(): Promise<void> {
+  if (migrationQuiescence) {
+    try {
+      await migrationQuiescence
+      return
+    } catch {
+      migrationQuiescence = undefined
+    }
+  }
+  // Recovery restarts the source runtime; it never authorizes copying while
+  // another process still owns that directory.
+  await quiesceServerRuntimeForMigration(true)
+}
 
 export async function stopServerRuntimeForShutdown(
   options: { waitForCli?: boolean } = {},
 ): Promise<void> {
+  for (const dispose of [...h5ShutdownHandlers]) dispose()
+  await stopMobilePushServices()
   for (const remote of publicAccessServers) remote.disable()
   publicAccessServers.clear()
   teamWatcher.stop()

@@ -17,15 +17,6 @@ import type { LocalIndexGateway } from '../services/localIndex/sessionIndex.js'
 let tmpDir: string
 let service: SearchService
 
-const fakeRipgrepCommand = () => ({ rgPath: '/fake/rg', rgArgs: [] })
-
-function createTestSearchService(options: Record<string, unknown> = {}): SearchService {
-  return new SearchService({
-    resolveRipgrepCommand: fakeRipgrepCommand,
-    ...options,
-  } as never)
-}
-
 async function setupTmpConfigDir(): Promise<void> {
   tmpDir = path.join(
     os.tmpdir(),
@@ -59,7 +50,7 @@ async function writeSessionFile(
 
 beforeEach(async () => {
   await setupTmpConfigDir()
-  service = createTestSearchService()
+  service = new SearchService()
 })
 
 afterEach(cleanupTmpDir)
@@ -76,7 +67,7 @@ describe('SearchService.searchSessions', () => {
     const expectedLiteral = JSON.stringify(query).slice(1, -1)
     const phaseAArgs: string[][] = []
     const phaseBArgs: string[][] = []
-    const escapedService = createTestSearchService({
+    const escapedService = new SearchService({
       readEntriesAtLines: async (_requestedPath, lineNumbers) => ({
         entries: [...lineNumbers].map(lineNumber => ({ entry, lineNumber })),
         bytesRead: Buffer.byteLength(JSON.stringify(entry)) + 1,
@@ -152,7 +143,7 @@ describe('SearchService.searchSessions', () => {
       paths.push(filePath)
     }
     const lineScanPaths: string[] = []
-    const rankedService = createTestSearchService({
+    const rankedService = new SearchService({
       getMetadataForPaths: async filePaths => new Map(filePaths.map(filePath => [
         path.resolve(filePath),
         metadata.get(path.resolve(filePath))!,
@@ -245,7 +236,7 @@ describe('SearchService.searchSessions', () => {
       bytesRead: Buffer.byteLength(JSON.stringify(entries[0])) + 1,
       rangesRead: 1,
     })
-    const targetedService = createTestSearchService({
+    const targetedService = new SearchService({
       readEntriesAtLines: targetedRead,
     } as never)
     const metrics = {
@@ -279,13 +270,12 @@ describe('SearchService.searchSessions', () => {
       message: { role: 'user', content: 'prefilterneedle excluded' },
     }])
     const metadata = new Map([[path.resolve(included), {
-      archived: false,
       title: 'Included',
       modifiedAt: '2026-06-01T00:00:00.000Z',
       workDir: null,
       projectPath: 'proj-a',
     }]])
-    const indexed = createTestSearchService({
+    const indexed = new SearchService({
       getCandidatesForFilters: async () => metadata,
     } as never)
     ;(indexed as unknown as { commandExists: () => Promise<boolean> }).commandExists = async () => true
@@ -318,13 +308,12 @@ describe('SearchService.searchSessions', () => {
     const current = new Date('2026-06-01T00:00:00.000Z')
     await fs.utimes(filePath, current, current)
     const staleMetadata = new Map([[path.resolve(filePath), {
-      archived: false,
       title: 'Stale indexed title',
       modifiedAt: '2025-01-01T00:00:00.000Z',
       workDir: '/stale/indexed/workdir',
       projectPath: 'proj-a',
     }]])
-    const stale = createTestSearchService({
+    const stale = new SearchService({
       readEntriesAtLines: async () => null,
       getCandidatesForFilters: async () => null,
       getMetadataForPaths: async () => staleMetadata,
@@ -355,13 +344,12 @@ describe('SearchService.searchSessions', () => {
       message: { role: 'user', content: 'directoryraceneedle included' },
     }])
     const metadata = new Map([[path.resolve(included), {
-      archived: false,
       title: 'Included',
       modifiedAt: '2026-06-01T00:00:00.000Z',
       workDir: null,
       projectPath: 'proj-a',
     }]])
-    const indexed = createTestSearchService({
+    const indexed = new SearchService({
       getCandidatesForFilters: async () => metadata,
       getMetadataForPaths: async () => null,
     })
@@ -427,7 +415,7 @@ describe('SearchService.searchSessions', () => {
       projectPath: 'proj-a',
     })
     let filterCalls = 0
-    const indexed = createTestSearchService({
+    const indexed = new SearchService({
       getCandidatesForFilters: async () => {
         filterCalls += 1
         return filterCalls === 1
@@ -499,7 +487,7 @@ describe('SearchService.searchSessions', () => {
       projectPath: 'proj-a',
     })
     let filterCalls = 0
-    const indexed = createTestSearchService({
+    const indexed = new SearchService({
       getCandidatesForFilters: async () => {
         filterCalls += 1
         return filterCalls === 1
@@ -547,7 +535,7 @@ describe('SearchService.searchSessions', () => {
     const outOfRange = new Date('2025-06-01T00:00:00.000Z')
     await fs.utimes(entering, outOfRange, outOfRange)
     let filterCalls = 0
-    const indexed = createTestSearchService({
+    const indexed = new SearchService({
       getCandidatesForFilters: async () => {
         filterCalls += 1
         if (filterCalls === 1) return new Map()
@@ -602,7 +590,7 @@ describe('SearchService.searchSessions', () => {
       ctimeMs: snapshot.ctimeMs,
     })
     let filterCalls = 0
-    const indexed = createTestSearchService({
+    const indexed = new SearchService({
       getCandidatesForFilters: async () => {
         filterCalls += 1
         const snapshot = await fs.stat(transcriptPath)
@@ -666,7 +654,7 @@ describe('SearchService.searchSessions', () => {
       workDir: null,
       projectPath: 'proj-a',
     }]))
-    const indexed = createTestSearchService({
+    const indexed = new SearchService({
       getCandidatesForFilters: async () => metadata,
     } as never)
     const batches: string[][] = []
@@ -693,7 +681,7 @@ describe('SearchService.searchSessions', () => {
       uuid: 'fallback',
       message: { role: 'user', content: 'rootfallbackneedle' },
     }])
-    const fallback = createTestSearchService({
+    const fallback = new SearchService({
       getCandidatesForFilters: async () => null,
     } as never)
     ;(fallback as unknown as { commandExists: () => Promise<boolean> }).commandExists = async () => true
@@ -755,7 +743,7 @@ describe('SearchService.searchSessions', () => {
       async rebuild() { return this.getPublicStatus() },
     }
     const indexedSessionService = new SessionService(gateway)
-    const indexed = createTestSearchService({
+    const indexed = new SearchService({
       getCandidatesForFilters: filters =>
         indexedSessionService.getIndexedSessionSearchCandidates(filters),
       getMetadataForPaths: async () => null,
@@ -785,7 +773,7 @@ describe('SearchService.searchSessions', () => {
         projectPath: `project-${candidateCount}`,
       }]))
       const metrics = { candidateFiles: 0, filesOpened: 0, bytesRead: 0, fallbackFiles: 0 }
-      const targeted = createTestSearchService({
+      const targeted = new SearchService({
         readEntriesAtLines: async (filePath, lineNumbers) => ({
           entries: [{
             entry: {
@@ -963,7 +951,7 @@ describe('SearchService.searchSessions', () => {
       { type: 'ai-title', aiTitle: 'AI Generated Title', sessionId: 'titled-session' },
       { type: 'custom-title', customTitle: 'My Custom Title', sessionId: 'titled-session' },
     ])
-    const indexedTitleService = createTestSearchService({
+    const indexedTitleService = new SearchService({
       getMetadataForPaths: async () => new Map([[path.resolve(filePath), {
         title: 'My Custom Title',
         modifiedAt: '2026-07-16T00:00:00.000Z',
@@ -988,7 +976,7 @@ describe('SearchService.searchSessions', () => {
       entry,
       { type: 'ai-title', aiTitle: 'Smart Title', sessionId: 'ai-titled' },
     ])
-    const indexedTitleService = createTestSearchService({
+    const indexedTitleService = new SearchService({
       getMetadataForPaths: async () => new Map([[path.resolve(filePath), {
         title: 'Smart Title',
         modifiedAt: '2026-07-16T00:00:00.000Z',
@@ -1110,7 +1098,7 @@ describe('SearchService.searchSessions', () => {
     const filePath = await writeSessionFile('proj-a', 'session-13', [
       { type: 'user', uuid: 'u1', message: { role: 'user', content: 'fallbackword works fine' } },
     ])
-    service = createTestSearchService({
+    service = new SearchService({
       resolveRipgrepCommand: () => ({ rgPath: '', rgArgs: [] }),
     })
     const metrics = { candidateFiles: 0, filesOpened: 0, bytesRead: 0, fallbackFiles: 0 }
@@ -1131,7 +1119,7 @@ describe('SearchService.searchSessions', () => {
     const filePath = await writeSessionFile('proj-a', 'session-14', [
       { type: 'user', uuid: 'u1', message: { role: 'user', content: 'bundledword works' } },
     ])
-    service = createTestSearchService({
+    service = new SearchService({
       resolveRipgrepCommand: () => ({
         rgPath: '/packaged/rg',
         rgArgs: ['--no-config'],

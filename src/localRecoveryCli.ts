@@ -9,9 +9,9 @@ type RecoveryInput = NodeJS.ReadableStream & { isTTY?: boolean }
 function printHelp(): void {
   process.stdout.write(
     [
-      'Usage: echoflow-code [options] [prompt]',
+      'Usage: claude-haha [options] [prompt]',
       '',
-      'Local recovery mode for EchoFlow Code.',
+      'Local recovery mode for this leaked source tree.',
       '',
       'Options:',
       '  -h, --help                    Show help',
@@ -247,16 +247,22 @@ async function runInteractive(parsed: {
     output: process.stdout,
     prompt: 'you> ',
   })
+  let inputClosed = false
+  rl.once('close', () => { inputClosed = true })
+  const prompt = () => {
+    // EOF can close readline while a response is pending; buffered lines still run.
+    if (!inputClosed) rl.prompt()
+  }
 
   process.stdout.write(
-    `EchoFlow Code local interactive mode\nmodel: ${model}\ncommands: /exit, /clear\n\n`,
+    `Claude Haha local interactive mode\nmodel: ${model}\ncommands: /exit, /clear\n\n`,
   )
-  rl.prompt()
+  prompt()
 
   for await (const line of rl) {
     const input = line.trim()
     if (!input) {
-      rl.prompt()
+      prompt()
       continue
     }
     if (input === '/exit' || input === '/quit') {
@@ -266,7 +272,7 @@ async function runInteractive(parsed: {
     if (input === '/clear') {
       messages.length = 0
       process.stdout.write('history cleared\n')
-      rl.prompt()
+      prompt()
       continue
     }
 
@@ -289,7 +295,7 @@ async function runInteractive(parsed: {
         error instanceof Error ? error.message : String(error)
       process.stderr.write(`error: ${message}\n`)
     }
-    rl.prompt()
+    prompt()
   }
 }
 

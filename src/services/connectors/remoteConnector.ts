@@ -20,7 +20,7 @@ export type RemoteConnectorDependencies = {
 }
 
 function ownedName(recipe: RemoteConnectorRecipe): string {
-  if (!/^[a-z][a-z0-9-]*$/.test(recipe.id) || recipe.pluginId !== `office-${recipe.id}@echoflow-connectors`) throw new Error('Invalid managed remote connector identity')
+  if (!/^[a-z][a-z0-9-]*$/.test(recipe.id) || recipe.pluginId !== `office-${recipe.id}@haha-connectors`) throw new Error('Invalid managed remote connector identity')
   return `office-${recipe.id}`
 }
 

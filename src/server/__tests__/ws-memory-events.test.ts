@@ -68,42 +68,6 @@ describe('WebSocket memory events', () => {
     ])
   })
 
-  it('marks gateway context-window errors as recoverable prompt overflows', () => {
-    const message = '502 Your input exceeds the context window of this model. Please adjust your input and try again.'
-
-    expect(translateCliMessage({
-      type: 'assistant',
-      error: 'server_error',
-      isApiErrorMessage: true,
-      message: {
-        role: 'assistant',
-        content: [{ type: 'text', text: message }],
-      },
-    }, 'session-1')).toEqual([
-      {
-        type: 'error',
-        message,
-        code: 'server_error',
-        businessErrorCode: 'prompt_too_long',
-      },
-    ])
-
-    expect(translateCliMessage({
-      type: 'result',
-      is_error: true,
-      result: message,
-      usage: { input_tokens: 0, output_tokens: 0 },
-    }, 'session-2')).toEqual([
-      {
-        type: 'error',
-        message,
-        code: 'CLI_ERROR',
-        businessErrorCode: 'prompt_too_long',
-      },
-      { type: 'message_complete', usage: { input_tokens: 0, output_tokens: 0 } },
-    ])
-  })
-
   it('maps watchdog API errors to stable desktop error codes', () => {
     expect(translateCliMessage({
       type: 'assistant',
@@ -325,6 +289,20 @@ describe('WebSocket compact events', () => {
         type: 'status',
         state: 'compacting',
         verb: 'Compacting conversation',
+      },
+    ])
+
+    expect(translateCliMessage({
+      type: 'system',
+      subtype: 'status',
+      status: 'compacting',
+      compact_progress: { output_chars: 3214 },
+    }, 'session-1')).toEqual([
+      {
+        type: 'status',
+        state: 'compacting',
+        verb: 'Compacting conversation',
+        compactProgress: { outputChars: 3214 },
       },
     ])
 
@@ -1371,5 +1349,28 @@ describe('WebSocket stream event translation', () => {
         parentToolUseId: undefined,
       },
     ])
+  })
+})
+
+
+it('forwards retry diagnostic detail and provider request id', () => {
+  expect(translateCliMessage({ type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10,
+    retry_delay_ms: 500, error_status: null, error: 'connection_error',
+    error_message: 'ECONNRESET: socket hang up', request_id: 'req-fixture',
+  }, 'retry-diagnostics')).toEqual([{ type: 'api_retry', attempt: 2, maxRetries: 10,
+    retryDelayMs: 500, errorStatus: null, errorType: 'connection_error',
+    errorMessage: 'ECONNRESET: socket hang up', requestId: 'req-fixture',
+  }])
+})
+
+it('keeps quoted credential suffixes redacted when forwarding retry diagnostics', () => {
+  const [message] = translateCliMessage({
+    type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10,
+    retry_delay_ms: 500, error_status: null, error: 'connection_error',
+    error_message: 'Proxy rejected password="correct horse battery staple"; {"api_key":"fixture,key,with,commas"}',
+  }, 'retry-quoted-credentials')
+  expect(message).toMatchObject({
+    type: 'api_retry',
+    errorMessage: 'Proxy rejected password="[REDACTED]"; {"api_key":"[REDACTED]"}',
   })
 })

@@ -1,4 +1,5 @@
 import { handleSideChatsRoute } from './sideChats.js'
+import { emitSessionTurnEvent } from '../services/sessionTurnEvents.js'
 /**
  * Session REST API Routes
  *
@@ -13,7 +14,11 @@ import { handleSideChatsRoute } from './sideChats.js'
  *   GET    /api/sessions/:id/subagents/by-tool/:toolUseId — 获取 SubAgent 运行详情
  *   POST   /api/sessions/:id/subagents/by-tool/:toolUseId/messages — 继续与 SubAgent 对话
  *   GET    /api/sessions/:id/trace — 获取会话级模型调用 trace（body preview 裁剪后的列表视图）
- *   GET    /api/sessions/:id/trace/calls/:callId — 获取单次调用的完整 trace 记录
+ *   GET    /api/sessions/:id/trace/calls/:callId?at= — 获取单次调用的完整 trace 记录（at=字节范围，来自 near 的 locs）
+ *   GET    /api/sessions/:id/trace/near?from=&to= — 按开始时间窗口（≤1 小时）查找调用，最旧在前，最多 50 条
+ *   GET    /api/sessions/:id/trajectory?cursor=&after=&agentId= — 轨迹账本分页（尾页 / 更早页 / 实时追加）
+ *   GET    /api/sessions/:id/trajectory/rows/:rowId?loc=&agentId= — 按字节定位读取单行的完整记录
+ *   GET    /api/sessions/:id/trajectory/snapshots/:hash — 读取一份系统提示词 / 工具 / 用户上下文快照
  *   GET    /api/sessions/:id/turn-checkpoints — 获取按轮次保留的 checkpoint 预览
  *   GET    /api/sessions/:id/turn-checkpoints/diff — 获取绑定到指定 checkpoint 的 diff
  *   GET    /api/sessions/:id/review — 按显式来源获取 Git 审查状态
@@ -23,17 +28,26 @@ import { handleSideChatsRoute } from './sideChats.js'
  *   POST   /api/sessions/batch-delete — 批量删除会话
  *   DELETE /api/sessions/:id        — 删除会话
  *   PATCH  /api/sessions/:id        — 重命名会话
+ *   PATCH  /api/sessions/:id/archive — 归档或恢复会话（保留全部内容）
  */
 
 import * as path from 'node:path'
 import { handleSideQuestionRoute } from './sideQuestions.js'
 import { sessionService } from '../services/sessionService.js'
+import { loadRenderedToolImage } from '../services/toolImageMedia.js'
+import { projectSessionBackgroundActivity, readSessionBackgroundTaskOutputFromTranscript } from '../services/sessionBackgroundActivity.js'
+import { getMobileSessionActivity } from '../services/mobileSessionActivityRuntime.js'
+import { getPowerActivitySnapshot } from '../services/powerActivityRuntime.js'
+import { handlePowerActivityLease } from '../services/powerActivityLease.js'
 import { conversationService } from '../services/conversationService.js'
+import { endTeamsForParent } from '../services/teamPlanRuntime.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 import {
   closeSessionConnection,
   ensureCliSessionStartedForControl,
   getSlashCommands,
+  listLiveSessionActivity,
+  assertSessionCanArchive,
 } from '../ws/handler.js'
 import { listSkillSlashCommands, type SkillSlashCommand } from './skills.js'
 import { WorkspaceService, type WorkspaceRawFile } from '../services/workspaceService.js'
@@ -60,6 +74,12 @@ import { registerChangedFileAccessRoot, registerFilesystemAccessRoot } from '../
 import { findGitRoot } from '../../utils/git.js'
 import { traceCaptureService, trimTraceCallPreviews } from '../services/traceCaptureService.js'
 import { getSubagentRunByAgentId, getSubagentRunByTool } from '../services/subagentRunService.js'
+import {
+  getTrajectoryPage,
+  getTrajectoryRowDetail,
+  getTrajectorySnapshotBlob,
+  parseAgentIdParam,
+} from '../services/trajectoryService.js'
 import { isValidPermissionMode } from '../services/settingsService.js'
 import { handleWorkspaceSearchRoute } from './workspaceSearch.js'
 import { handleWorkspaceWatchRoute } from './workspaceWatch.js'
@@ -141,6 +161,25 @@ export async function handleSessionsApi(
       return await batchDeleteSessions(req)
     }
 
+    if (sessionId === 'power-activity-lease') return handlePowerActivityLease(req)
+    if (sessionId === 'power-activity') {
+      if (req.method !== 'GET') return Response.json({ error: 'METHOD_NOT_ALLOWED' }, { status: 405 })
+      return Response.json(await getPowerActivitySnapshot(), { headers: { 'Cache-Control': 'no-store' } })
+    }
+
+    // Special collection route: /api/sessions/live-status
+    if (sessionId === 'live-status' || sessionId === 'mobile-status') {
+      if (req.method !== 'GET') {
+        return Response.json(
+          { error: 'METHOD_NOT_ALLOWED', message: `Method ${req.method} not allowed` },
+          { status: 405 }
+        )
+      }
+      return Response.json({ sessions: sessionId === 'mobile-status'
+        ? await getMobileSessionActivity()
+        : listLiveSessionActivity({ includeTeamWorkers: url.searchParams.get('includeTeamWorkers') === '1' }) })
+    }
+
     // Special collection route: /api/sessions/recent-projects
     if (sessionId === 'recent-projects' && req.method === 'GET') {
       return await getRecentProjects(url)
@@ -154,11 +193,11 @@ export async function handleSessionsApi(
       if (limit !== null && !/^\d+$/.test(limit)) throw ApiError.badRequest('Invalid limit parameter')
       return Response.json(await sessionService.listProjectHistory({
         projectRoot: url.searchParams.get('projectRoot') ?? '',
+        archived: parseArchivedFilter(url),
         ...(limit !== null ? { limit: Number(limit) } : {}),
         ...(url.searchParams.has('cursor') ? { cursor: url.searchParams.get('cursor')! } : {}),
         ...(url.searchParams.has('beforeModifiedAt') ? { beforeModifiedAt: url.searchParams.get('beforeModifiedAt')! } : {}),
         ...(url.searchParams.has('beforeId') ? { beforeId: url.searchParams.get('beforeId')! } : {}),
-        includeArchived: url.searchParams.get('includeArchived') === 'true' || url.searchParams.get('archived') === 'true',
       }))
     }
 
@@ -181,6 +220,19 @@ export async function handleSessionsApi(
     // -----------------------------------------------------------------------
     // Sub-resource routes: /api/sessions/:id/messages
     // -----------------------------------------------------------------------
+    if (subResource === 'archive') {
+      if (segments.length !== 4) throw ApiError.notFound('Archive route not found')
+      if (req.method !== 'PATCH') return Response.json({ error: 'METHOD_NOT_ALLOWED' }, { status: 405 })
+      let body: unknown
+      try { body = await req.json() } catch { throw ApiError.badRequest('Invalid JSON body') }
+      if (!body || typeof body !== 'object' || Array.isArray(body) || typeof (body as { archived?: unknown }).archived !== 'boolean') {
+        throw ApiError.badRequest('archived (boolean) is required in request body')
+      }
+      const archived = (body as { archived: boolean }).archived
+      await sessionService.setSessionArchived(sessionId, archived, () => assertSessionCanArchive(sessionId))
+      return Response.json({ success: true, archived })
+    }
+
     if (subResource === 'summary') {
       if (req.method !== 'GET') {
         return Response.json(
@@ -203,6 +255,17 @@ export async function handleSessionsApi(
       return await getSessionMessages(req, sessionId, url)
     }
 
+    if (subResource === 'tool-images') {
+      if (req.method !== 'GET') {
+        return Response.json(
+          { error: 'METHOD_NOT_ALLOWED', message: `Method ${req.method} not allowed` },
+          { status: 405 }
+        )
+      }
+      if (segments.length !== 6) throw ApiError.notFound('Tool image not found')
+      return await getToolImage(sessionId, segments[4], segments[5], url)
+    }
+
     if (subResource === 'history-recovery' && req.method === 'GET') {
       return Response.json(await sessionService.getSessionHistoryRecovery(sessionId, { signal: req.signal }))
     }
@@ -223,9 +286,20 @@ export async function handleSessionsApi(
           'cache-control': 'no-store',
         } })
       }
+      if (segments[4] === 'near') return await getSessionTraceCallsNear(req, sessionId, url)
       return segments[4] === 'calls'
-        ? await getSessionTraceCall(sessionId, segments[5])
+        ? await getSessionTraceCall(sessionId, segments[5], url)
         : await getSessionTrace(req, sessionId, url)
+    }
+
+    if (subResource === 'trajectory') {
+      if (req.method !== 'GET') {
+        return Response.json(
+          { error: 'METHOD_NOT_ALLOWED', message: `Method ${req.method} not allowed` },
+          { status: 405 }
+        )
+      }
+      return await handleTrajectoryRoute(req, url, sessionId, segments)
     }
 
     if (subResource === 'git-info') {
@@ -312,6 +386,25 @@ export async function handleSessionsApi(
 
     if (subResource === 'review') {
       return await handleSessionReviewRoute(req, sessionId, url, segments[4])
+    }
+
+    if (subResource === 'background-tasks') {
+      if (req.method !== 'GET') return Response.json({ error: 'METHOD_NOT_ALLOWED' }, { status: 405 })
+      if (segments.length === 6 && segments[5] === 'output') {
+        if (url.search) throw ApiError.badRequest('Task output accepts only a session and task ID')
+        let taskId: string
+        try { taskId = decodeURIComponent(segments[4]!) } catch { throw ApiError.badRequest('Invalid task ID') }
+        const history = await sessionService.getSessionHistoryRecovery(sessionId, { signal: req.signal })
+        const found = await sessionService.findSessionFile(sessionId)
+        if (!found) throw ApiError.notFound('Session transcript is unavailable')
+        return Response.json(await readSessionBackgroundTaskOutputFromTranscript(sessionId, taskId, history.messages, found.filePath, req.signal), { headers: { 'Cache-Control': 'no-store' } })
+      }
+      if (segments.length !== 4) throw ApiError.notFound('Background task route not found')
+      const [history, recovery] = await Promise.all([
+        sessionService.getSessionHistoryPage(sessionId, { limit: 200, signal: req.signal }),
+        sessionService.getSessionHistoryRecovery(sessionId, { signal: req.signal }),
+      ])
+      return Response.json({ tasks: projectSessionBackgroundActivity(sessionId, [...recovery.messages, ...history.messages], history.taskNotifications), historyComplete: history.page.historyComplete })
     }
 
     if (subResource === 'subagents') {
@@ -443,11 +536,11 @@ export async function handleSessionsApi(
 // ============================================================================
 
 async function listSessions(req: Request, url: URL): Promise<Response> {
+  const archived = parseArchivedFilter(url)
   const project = url.searchParams.get('project') || undefined
   const view = url.searchParams.get('view')
   const requestedLimit = parseInt(url.searchParams.get('limit') || '20', 10)
   const offset = parseInt(url.searchParams.get('offset') || '0', 10)
-  const includeArchived = url.searchParams.get('includeArchived') === 'true' || url.searchParams.get('archived') === 'true'
 
   if (isNaN(requestedLimit) || requestedLimit < 0) {
     throw ApiError.badRequest('Invalid limit parameter')
@@ -466,7 +559,8 @@ async function listSessions(req: Request, url: URL): Promise<Response> {
       throw ApiError.badRequest('Invalid perProjectLimit parameter')
     }
     return Response.json({
-      ...await sessionService.listProjectPreviews(perProjectLimit, url.searchParams.get('includeArchived') === 'true' || url.searchParams.get('archived') === 'true'),
+      ...await sessionService.listProjectPreviews(perProjectLimit),
+      archivedSessionIds: sessionService.listArchivedSessionIds(),
       index: localIndexCoordinator.getPublicStatus(),
     })
   }
@@ -475,7 +569,7 @@ async function listSessions(req: Request, url: URL): Promise<Response> {
     ...(petAccess ? {} : { project }),
     limit,
     offset: petAccess ? 0 : offset,
-    includeArchived,
+    archived: petAccess ? false : archived,
   })
   if (petAccess) {
     return Response.json({
@@ -498,6 +592,12 @@ async function listSessions(req: Request, url: URL): Promise<Response> {
   })
 }
 
+function parseArchivedFilter(url: URL): boolean {
+  const value = url.searchParams.get('archived')
+  if (value !== null && value !== 'true' && value !== 'false') throw ApiError.badRequest('Invalid archived parameter')
+  return value === 'true'
+}
+
 async function getSession(sessionId: string): Promise<Response> {
   const [summary, history] = await Promise.all([
     sessionService.getSessionSummary(sessionId),
@@ -514,13 +614,39 @@ async function getSessionMessages(req: Request, sessionId: string, url: URL): Pr
   // A full read always starts from the tail; mixing it with a cursor would
   // silently turn it back into a paged read with a larger budget.
   if (mode === 'full' && cursor) throw ApiError.badRequest('mode=full does not take a cursor')
+  const media = url.searchParams.get('media')
+  if (media !== null && media !== 'ref') throw ApiError.badRequest('Invalid history media mode')
+  if (media === 'ref' && mode === 'full') throw ApiError.badRequest('media=ref is only available for paged history')
   return Response.json(await sessionService.getSessionHistoryPage(sessionId, {
     cursor,
     // `mode=full` returns the whole transcript up to the reader's byte budget in
     // one response so the desktop timeline never stitches pages together.
     full: mode === 'full',
+    // Remote clients fetch tool images by reference instead of inline base64.
+    mediaRefs: media === 'ref',
     signal: req.signal,
   }))
+}
+
+async function getToolImage(sessionId: string, rawToolUseId: string | undefined, rawIndex: string | undefined, url: URL): Promise<Response> {
+  let toolUseId = ''
+  try { toolUseId = decodeURIComponent(rawToolUseId ?? '') } catch { /* rejected below */ }
+  // Subagent results use `parent/child` scoped ids.
+  if (!/^[\w./:-]{1,300}$/.test(toolUseId) || !/^\d{1,2}$/.test(rawIndex ?? '')) throw ApiError.badRequest('Invalid tool image reference')
+  const variant = url.searchParams.get('variant') ?? 'thumb'
+  if (variant !== 'thumb' && variant !== 'full') throw ApiError.badRequest('Invalid tool image variant')
+  const image = await loadRenderedToolImage(sessionId, toolUseId, Number(rawIndex), variant, async () =>
+    (await sessionService.findSessionFile(sessionId))?.filePath ?? null)
+  if (!image) throw ApiError.notFound('Tool image not found')
+  return new Response(new Uint8Array(image.bytes), {
+    headers: {
+      'Content-Type': image.mediaType,
+      'Content-Length': String(image.bytes.length),
+      // A tool result never changes once recorded.
+      'Cache-Control': 'private, max-age=86400',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  })
 }
 
 async function getSessionTrace(req: Request, sessionId: string, url: URL): Promise<Response> {
@@ -549,6 +675,32 @@ async function getSessionTrace(req: Request, sessionId: string, url: URL): Promi
   })
 }
 
+async function handleTrajectoryRoute(req: Request, url: URL, sessionId: string, segments: string[]): Promise<Response> {
+  const agentId = parseAgentIdParam(url.searchParams.get('agentId'))
+  const leaf = (index: number): string => {
+    try {
+      return decodeURIComponent(segments[index] ?? '')
+    } catch {
+      throw ApiError.badRequest('Invalid trajectory path')
+    }
+  }
+  if (segments.length === 4) {
+    return Response.json(await getTrajectoryPage(sessionId, {
+      cursor: url.searchParams.get('cursor') || undefined,
+      after: url.searchParams.get('after') || undefined,
+      agentId,
+      signal: req.signal,
+    }))
+  }
+  if (segments.length === 6 && segments[4] === 'rows') {
+    return Response.json(await getTrajectoryRowDetail(sessionId, leaf(5), url.searchParams.get('loc'), { agentId, signal: req.signal }))
+  }
+  if (segments.length === 6 && segments[4] === 'snapshots') {
+    return Response.json(await getTrajectorySnapshotBlob(sessionId, leaf(5), req.signal))
+  }
+  throw ApiError.notFound('Trajectory route not found')
+}
+
 function parseTracePageOffset(url: URL): number {
   const value = url.searchParams.get('offset') ?? '0'
   if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
@@ -572,12 +724,45 @@ async function getSessionTraceMeta(sessionId: string): Promise<{
   }
 }
 
-async function getSessionTraceCall(sessionId: string, callId: string | undefined): Promise<Response> {
+/** Mirrors `TRACE_NEAR_MAX_WINDOW_MS` in the trace service, which re-validates. */
+const TRACE_NEAR_MAX_WINDOW_MS = 60 * 60 * 1000
+const TRACE_NEAR_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/
+
+function parseTraceNearTime(url: URL, name: 'from' | 'to'): number {
+  const value = url.searchParams.get(name)
+  const time = value && TRACE_NEAR_TIME_RE.test(value) ? Date.parse(value) : Number.NaN
+  if (!Number.isFinite(time)) throw ApiError.badRequest(`${name} must be an ISO timestamp`)
+  return time
+}
+
+async function getSessionTraceCallsNear(req: Request, sessionId: string, url: URL): Promise<Response> {
+  const from = parseTraceNearTime(url, 'from')
+  const to = parseTraceNearTime(url, 'to')
+  if (to < from) throw ApiError.badRequest('to must not be earlier than from')
+  if (to - from > TRACE_NEAR_MAX_WINDOW_MS) throw ApiError.badRequest('The trace lookup window is at most one hour')
+  const near = await traceCaptureService.getSessionTraceCallsNear(sessionId, {
+    from: new Date(from).toISOString(),
+    to: new Date(to).toISOString(),
+    signal: req.signal,
+  })
+  return Response.json({ ...near, calls: near.calls.map((call) => trimTraceCallPreviews(call)) })
+}
+
+function parseTraceCallLocator(url: URL): [number, number] | undefined {
+  const value = url.searchParams.get('at')
+  if (value === null || value === '') return undefined
+  const match = /^(\d{1,15})-(\d{1,15})$/.exec(value)
+  const range = match ? [Number(match[1]), Number(match[2])] as [number, number] : null
+  if (!range || range[1] <= range[0]) throw ApiError.badRequest('Invalid trace call locator')
+  return range
+}
+
+async function getSessionTraceCall(sessionId: string, callId: string | undefined, url: URL): Promise<Response> {
   if (!callId || callId.trim().length === 0) {
     throw ApiError.badRequest('callId is required')
   }
 
-  const call = await traceCaptureService.getSessionTraceCall(sessionId, callId)
+  const call = await traceCaptureService.getSessionTraceCall(sessionId, callId, { at: parseTraceCallLocator(url) })
   if (!call) {
     throw ApiError.notFound(`Trace call not found: ${callId}`)
   }
@@ -604,6 +789,11 @@ async function handleSessionWorkspaceRoute(
       ))
     case 'search':
       return handleWorkspaceSearchRoute(workDir, url)
+    case 'stat':
+      return await runWorkspaceRequest(() => workspaceService.statFiles(
+        sessionId,
+        requireWorkspaceStatPaths(url),
+      ).then((files) => ({ files })))
     case 'file':
       return await runWorkspaceRequest(() => workspaceService.readFile(
         sessionId,
@@ -611,6 +801,8 @@ async function handleSessionWorkspaceRoute(
       ))
     case 'raw':
       return await serveWorkspaceRaw(sessionId, requireWorkspacePath(url, 'raw'))
+    case 'download':
+      return await serveWorkspaceDownload(sessionId, requireWorkspacePath(url, 'download'), req.signal)
     case 'diff':
       return await runWorkspaceDiffRequest(() => workspaceService.getDiff(
         sessionId,
@@ -813,9 +1005,9 @@ function isReviewPathRejection(error: unknown): error is Error {
 }
 
 async function createSession(req: Request): Promise<Response> {
-  let body: { workDir?: string; repository?: CreateSessionRepositoryOptions; permissionMode?: string }
+  let body: { workDir?: string; repository?: CreateSessionRepositoryOptions; permissionMode?: string; agentProfile?: 'standard' | 'lean' }
   try {
-    body = (await req.json()) as { workDir?: string; repository?: CreateSessionRepositoryOptions; permissionMode?: string }
+    body = (await req.json()) as { workDir?: string; repository?: CreateSessionRepositoryOptions; permissionMode?: string; agentProfile?: 'standard' | 'lean' }
   } catch {
     throw ApiError.badRequest('Invalid JSON body')
   }
@@ -843,7 +1035,9 @@ async function createSession(req: Request): Promise<Response> {
     }
   }
 
-  const result = await sessionService.createSession(body.workDir, body.repository, body.permissionMode)
+  if (body.agentProfile !== undefined && body.agentProfile !== 'standard' && body.agentProfile !== 'lean') throw ApiError.badRequest('agentProfile must be standard or lean')
+  if (body.agentProfile === 'lean' && body.permissionMode === 'plan') throw ApiError.badRequest('Plan mode is unavailable in lean sessions. Choose another permission mode.')
+  const result = await sessionService.createSession(body.workDir, body.repository, body.permissionMode, body.agentProfile)
   recentProjectsCache = null
   return Response.json(result, { status: 201 })
 }
@@ -855,9 +1049,6 @@ async function getSessionRepositoryContext(url: URL): Promise<Response> {
   }
 
   const context = await getRepositoryContext(workDir)
-  registerFilesystemAccessRoot(workDir)
-  registerFilesystemAccessRoot(context.workDir)
-  registerFilesystemAccessRoot(context.repoRoot)
   return Response.json(context)
 }
 
@@ -901,12 +1092,25 @@ async function requireSessionWorkspace(sessionId: string): Promise<string> {
   return workDir
 }
 
-function requireWorkspacePath(url: URL, route: 'file' | 'diff' | 'raw'): string {
+function requireWorkspacePath(url: URL, route: 'file' | 'diff' | 'raw' | 'download'): string {
   const filePath = url.searchParams.get('path')
   if (!filePath) {
     throw ApiError.badRequest(`path query parameter is required for workspace ${route}`)
   }
   return filePath
+}
+
+const MAX_WORKSPACE_STAT_PATHS = 20
+
+function requireWorkspaceStatPaths(url: URL): string[] {
+  const paths = [...new Set(url.searchParams.getAll('path').filter(Boolean))]
+  if (paths.length === 0) {
+    throw ApiError.badRequest('path query parameter is required for workspace stat')
+  }
+  if (paths.length > MAX_WORKSPACE_STAT_PATHS) {
+    throw ApiError.badRequest(`workspace stat accepts at most ${MAX_WORKSPACE_STAT_PATHS} paths`)
+  }
+  return paths
 }
 
 /**
@@ -967,6 +1171,23 @@ async function serveWorkspaceRaw(sessionId: string, requestedPath: string): Prom
   })
 }
 
+async function serveWorkspaceDownload(sessionId: string, requestedPath: string, signal: AbortSignal): Promise<Response> {
+  try {
+    const file = await workspaceService.readDownloadFile(sessionId, requestedPath, signal)
+    const encodedName = encodeURIComponent(file.name).replace(/['()*]/g,
+      (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
+    return new Response(file.bytes, { headers: {
+      'Content-Type': file.mimeType,
+      'Content-Disposition': `attachment; filename="download"; filename*=UTF-8''${encodedName}`,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "sandbox; default-src 'none'",
+    } })
+  } catch (error) {
+    throw mapWorkspaceError(error)
+  }
+}
+
 async function runWorkspaceDiffRequest<T extends { state?: string; error?: string }>(
   operation: () => Promise<T>,
 ): Promise<Response> {
@@ -997,8 +1218,11 @@ async function deleteSession(sessionId: string): Promise<Response> {
     throw error
   }
   closeSessionConnection(sessionId, 'session deleted')
+  emitSessionTurnEvent({ type: 'deleted', sessionId })
   cleanupAdapterSessionMappings(sessionId)
   recentProjectsCache = null
+  // A deleted lead ends its reviewed team for good; Stop and lead restarts only pause it.
+  void endTeamsForParent(sessionId).catch(error => console.error(`[Sessions] Failed to end the deleted session's team: ${error}`))
   return Response.json({ ok: true })
 }
 
@@ -1020,7 +1244,9 @@ async function batchDeleteSessions(req: Request): Promise<Response> {
 
   for (const sessionId of result.successes) {
     closeSessionConnection(sessionId, 'session deleted')
+    emitSessionTurnEvent({ type: 'deleted', sessionId })
     cleanupAdapterSessionMappings(sessionId)
+    void endTeamsForParent(sessionId).catch(error => console.error(`[Sessions] Failed to end the deleted session's team: ${error}`))
   }
   if (result.successes.length > 0) {
     recentProjectsCache = null
@@ -1099,9 +1325,11 @@ async function getSessionSlashCommands(sessionId: string): Promise<Response> {
     throw ApiError.notFound(`Session not found: ${sessionId}`)
   }
 
-  const hasCliList = cachedCommands.length > 0
+  const lean = (await sessionService.getSessionLaunchInfo(sessionId))?.agentProfile === 'lean'
+  const hasCliList = !lean && cachedCommands.length > 0
   const skillCommands = await listSkillSlashCommands(workDir, {
-    includeCompiledIn: !hasCliList,
+    includeCompiledIn: !lean && !hasCliList,
+    agentProfile: lean ? 'lean' : undefined,
   })
   const slashCommands = hasCliList
     ? mergeSessionSlashCommands(cachedCommands, skillCommands)
@@ -1111,29 +1339,44 @@ async function getSessionSlashCommands(sessionId: string): Promise<Response> {
 }
 
 async function getSessionInspection(req: Request, sessionId: string, url: URL): Promise<Response> {
-  const includeContext = url.searchParams.get('includeContext') !== '0'
+  const statusOnly = url.searchParams.get('statusOnly') === '1'
+  const includeContext = !statusOnly && url.searchParams.get('includeContext') !== '0'
   const contextOnly = includeContext && url.searchParams.get('contextOnly') === '1'
   // Lightweight polling mode for the context panel: one `get_session_usage` control and
   // nothing else. The full inspection also scans the skills directory and re-reads the whole
   // transcript to cross-check usage, which is far too much work to repeat every few seconds.
-  const usageOnly = !includeContext && url.searchParams.get('usageOnly') === '1'
+  const usageOnly = !statusOnly && !includeContext && url.searchParams.get('usageOnly') === '1'
   let transcriptSnapshot: Awaited<ReturnType<typeof sessionService.getInspectionTranscriptSnapshot>> | undefined
+  let transcriptLimit: string | undefined
   const getTranscriptSnapshot = async () => {
     if (transcriptSnapshot !== undefined) return transcriptSnapshot
-    transcriptSnapshot = await sessionService.getInspectionTranscriptSnapshot(sessionId)
+    try {
+      transcriptSnapshot = await sessionService.getInspectionTranscriptSnapshot(sessionId)
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'HISTORY_INSPECTION_LIMIT') throw error
+      // Keep live data and launch metadata available when historical totals cannot be verified.
+      transcriptLimit = error.message
+      transcriptSnapshot = null
+    }
     return transcriptSnapshot
   }
 
   const active = conversationService.hasSession(sessionId)
-  const workDir =
-    conversationService.getSessionWorkDir(sessionId) ||
-    (await getTranscriptSnapshot())?.launchInfo.workDir
+  const liveWorkDir = conversationService.getSessionWorkDir(sessionId)
+  const needsLaunchInfo = !active || !liveWorkDir
+  const persistedStatus = statusOnly && needsLaunchInfo ? await sessionService.getSessionStatusMetadata(sessionId) : null
+  const launchInfo = statusOnly
+    ? persistedStatus?.launchInfo
+    : needsLaunchInfo
+      ? (await getTranscriptSnapshot())?.launchInfo
+        ?? (transcriptLimit ? await sessionService.getSessionLaunchInfo(sessionId) : null)
+      : null
+  const workDir = liveWorkDir || launchInfo?.workDir
 
   if (!workDir) {
     throw ApiError.notFound(`Session not found: ${sessionId}`)
   }
 
-  const launchInfo = !active ? (await getTranscriptSnapshot())?.launchInfo ?? null : null
   const permissionMode = active
     ? conversationService.getSessionPermissionMode(sessionId)
     : launchInfo?.permissionMode ?? 'default'
@@ -1141,9 +1384,21 @@ async function getSessionInspection(req: Request, sessionId: string, url: URL): 
     [...conversationService.getRecentSdkMessages(sessionId)]
     .reverse()
     .find((message) => message?.type === 'system' && message.subtype === 'init')
-  const transcriptMetadata = !usageOnly && (!active || !initMessage)
-    ? (await getTranscriptSnapshot())?.metadata ?? null
-    : null
+  const transcriptMetadata = statusOnly
+    ? persistedStatus?.transcriptMetadata
+    : !usageOnly && (!active || !initMessage)
+      ? (await getTranscriptSnapshot())?.metadata
+      : undefined
+  const liveRuntime = statusOnly && active ? conversationService.getSessionRuntimeSelection(sessionId) : undefined
+  const model = typeof initMessage?.model === 'string'
+    ? initMessage.model
+    : transcriptMetadata?.model ?? (statusOnly ? liveRuntime?.modelId ?? launchInfo?.runtimeModelId : undefined)
+  const contextWindow = statusOnly && model
+    ? await sessionService.getSessionModelContextWindow(sessionId, model, launchInfo ?? {
+      runtimeProviderId: liveRuntime?.providerId,
+      runtimeModelId: liveRuntime?.modelId,
+    })
+    : undefined
   const cachedSlashCommands = getSlashCommands(sessionId)
   const hasCliSlashCommands = cachedSlashCommands.length > 0
   // `listSkillSlashCommands` walks every skill directory on disk with no cache. The usage
@@ -1160,6 +1415,7 @@ async function getSessionInspection(req: Request, sessionId: string, url: URL): 
     ? initMessage.slash_commands.length
     : fallbackSlashCommands.length
 
+  const errors: Record<string, string> = {}
   const response: Record<string, unknown> = {
     active,
     status: {
@@ -1168,7 +1424,8 @@ async function getSessionInspection(req: Request, sessionId: string, url: URL): 
       permissionMode,
       version: typeof initMessage?.claude_code_version === 'string' ? initMessage.claude_code_version : transcriptMetadata?.version,
       cwd: typeof initMessage?.cwd === 'string' ? initMessage.cwd : transcriptMetadata?.cwd ?? workDir,
-      model: typeof initMessage?.model === 'string' ? initMessage.model : transcriptMetadata?.model,
+      model,
+      contextWindow,
       apiKeySource: typeof initMessage?.apiKeySource === 'string' ? initMessage.apiKeySource : undefined,
       outputStyle: typeof initMessage?.output_style === 'string' ? initMessage.output_style : undefined,
       tools: Array.isArray(initMessage?.tools) ? initMessage.tools : [],
@@ -1176,10 +1433,11 @@ async function getSessionInspection(req: Request, sessionId: string, url: URL): 
       slashCommandCount,
       skillCount: Array.isArray(initMessage?.skills) ? initMessage.skills.length : 0,
     },
-    errors: {},
+    errors,
   }
 
   if (!active) {
+    if (statusOnly) return Response.json(response)
     const snapshot = await getTranscriptSnapshot()
     const transcriptUsage = snapshot?.usage ?? null
     const transcriptContextEstimate = snapshot?.contextEstimate ?? null
@@ -1188,15 +1446,13 @@ async function getSessionInspection(req: Request, sessionId: string, url: URL): 
     }
     if (transcriptUsage) {
       response.usage = transcriptUsage
+    } else {
+      errors.usage = transcriptLimit ?? 'CLI session is not running'
     }
-    response.errors = {
-      ...(transcriptUsage ? {} : { usage: 'CLI session is not running' }),
-      ...(includeContext ? { context: 'CLI session is not running' } : {}),
-    }
+    if (includeContext) errors.context = transcriptLimit ?? 'CLI session is not running'
     return Response.json(response)
   }
 
-  const errors: Record<string, string> = {}
   if (usageOnly) {
     // No `mcp_status`, no skills scan, and deliberately no transcript cross-check: the
     // transcript re-read is what made this endpoint too expensive to poll. The CLI's own
@@ -1215,7 +1471,6 @@ async function getSessionInspection(req: Request, sessionId: string, url: URL): 
       throwIfRequestAborted(req)
       errors.usage = error instanceof Error ? error.message : String(error)
     }
-    response.errors = errors
     return Response.json(response)
   }
 
@@ -1231,16 +1486,12 @@ async function getSessionInspection(req: Request, sessionId: string, url: URL): 
       throwIfRequestAborted(req)
       errors.context = error instanceof Error ? error.message : String(error)
     }
-    if (!response.context) {
-      const transcriptContextEstimate = (await getTranscriptSnapshot())?.contextEstimate ?? null
-      if (transcriptContextEstimate) {
-        response.contextEstimate = transcriptContextEstimate
-      }
-    }
   } else {
     const basicControlTimeoutMs = includeContext ? 10_000 : 4_000
     const [usageResult, contextResult, mcpResult] = await Promise.allSettled([
-      conversationService.requestControl(sessionId, { subtype: 'get_session_usage' }, basicControlTimeoutMs, req.signal),
+      statusOnly
+        ? Promise.resolve(null)
+        : conversationService.requestControl(sessionId, { subtype: 'get_session_usage' }, basicControlTimeoutMs, req.signal),
       includeContext
         ? conversationService.requestControl(
             sessionId,
@@ -1253,32 +1504,24 @@ async function getSessionInspection(req: Request, sessionId: string, url: URL): 
     ])
     throwIfRequestAborted(req)
 
-    if (usageResult.status === 'fulfilled') {
+    if (!statusOnly) {
       const transcriptUsage = (await getTranscriptSnapshot())?.usage ?? null
-      response.usage = chooseRicherUsage(
-        { ...usageResult.value, source: 'current_process' },
-        transcriptUsage,
-      )
-    } else {
-      const transcriptUsage = (await getTranscriptSnapshot())?.usage ?? null
-      if (transcriptUsage) {
+      if (usageResult.status === 'fulfilled') {
+        response.usage = chooseRicherUsage(
+          { ...usageResult.value, source: 'current_process' },
+          transcriptUsage,
+        )
+      } else if (transcriptUsage) {
         response.usage = transcriptUsage
       } else {
-        errors.usage = usageResult.reason instanceof Error ? usageResult.reason.message : String(usageResult.reason)
+        errors.usage = transcriptLimit ?? (usageResult.reason instanceof Error ? usageResult.reason.message : String(usageResult.reason))
       }
     }
 
-    if (!includeContext) {
-      // Context can be expensive on large live sessions. The desktop UI loads it
-      // separately when the context tab is actually selected.
-    } else if (contextResult.status === 'fulfilled' && contextResult.value) {
+    if (contextResult.status === 'fulfilled' && contextResult.value) {
       response.context = contextResult.value
-    } else {
+    } else if (contextResult.status === 'rejected') {
       errors.context = contextResult.reason instanceof Error ? contextResult.reason.message : String(contextResult.reason)
-      const transcriptContextEstimate = (await getTranscriptSnapshot())?.contextEstimate ?? null
-      if (transcriptContextEstimate) {
-        response.contextEstimate = transcriptContextEstimate
-      }
     }
 
     if (mcpResult.status === 'fulfilled' && response.status && typeof response.status === 'object') {
@@ -1289,7 +1532,11 @@ async function getSessionInspection(req: Request, sessionId: string, url: URL): 
     }
   }
 
-  response.errors = errors
+  if (includeContext && !response.context) {
+    const estimate = (await getTranscriptSnapshot())?.contextEstimate
+    if (estimate) response.contextEstimate = estimate
+    else if (transcriptLimit) errors.context = transcriptLimit
+  }
   return Response.json(response)
 }
 
@@ -1326,7 +1573,7 @@ function sameResolvedPath(left: string | null | undefined, right: string | null 
 }
 
 function getGitInfoCommandTimeoutMs(): number {
-  const raw = process.env.ECHOFLOW_GIT_INFO_TIMEOUT_MS
+  const raw = process.env.CC_HAHA_GIT_INFO_TIMEOUT_MS
   if (!raw) return DEFAULT_GIT_INFO_COMMAND_TIMEOUT_MS
   const parsed = Number(raw)
   return Number.isFinite(parsed) && parsed > 0
@@ -1344,6 +1591,7 @@ async function runGitInfoCommand(workDir: string, args: string[]): Promise<strin
       stdin: 'ignore',
       stdout: 'pipe',
       stderr: 'ignore',
+      windowsHide: true,
     })
 
     const output = new Response(proc.stdout).text()
@@ -1492,6 +1740,7 @@ async function rewindSession(req: Request, sessionId: string): Promise<Response>
 }
 
 async function branchSession(req: Request, sessionId: string): Promise<Response> {
+  if ((await sessionService.getSessionLaunchInfo(sessionId))?.agentProfile === 'lean') throw ApiError.conflict('Forking is unavailable in lean sessions')
   let body: { targetMessageId?: unknown; title?: unknown }
   try {
     body = (await req.json()) as { targetMessageId?: unknown; title?: unknown }
@@ -1543,15 +1792,7 @@ async function branchSession(req: Request, sessionId: string): Promise<Response>
   }
 }
 
-async function assertCheckpointPreviewBudget(sessionId: string): Promise<void> {
-  const found = await sessionService.findSessionFile(sessionId)
-  if (found && Bun.file(found.filePath).size > 16 * 1024 * 1024) {
-    throw new ApiError(413, 'This transcript exceeds the full checkpoint preview budget. Chat history remains available in pages.', 'HISTORY_CHECKPOINT_PREVIEW_LIMIT')
-  }
-}
-
 async function getTurnCheckpoints(req: Request, sessionId: string): Promise<Response> {
-  await assertCheckpointPreviewBudget(sessionId)
   const checkpoints = await listSessionTurnCheckpoints(sessionId, req.signal, new URL(req.url).searchParams.get('frozen') === 'true')
   // Make this turn's real changed files previewable even when they live outside
   // the session workdir (e.g. the user told the model to write to an absolute
@@ -1565,7 +1806,6 @@ async function getTurnCheckpoints(req: Request, sessionId: string): Promise<Resp
 }
 
 async function getTurnCheckpointDiff(sessionId: string, url: URL): Promise<Response> {
-  await assertCheckpointPreviewBudget(sessionId)
   const targetUserMessageId = url.searchParams.get('targetUserMessageId') || undefined
   const userMessageIndexParam = url.searchParams.get('userMessageIndex')
   const path = url.searchParams.get('path')
@@ -1597,24 +1837,19 @@ async function getTurnCheckpointDiff(sessionId: string, url: URL): Promise<Respo
 }
 
 async function patchSession(req: Request, sessionId: string): Promise<Response> {
-  let body: { title?: string; archived?: boolean }
+  let body: { title?: string; agentProfile?: unknown }
   try {
-    body = (await req.json()) as { title?: string }
+    body = (await req.json()) as { title?: string; agentProfile?: unknown }
   } catch {
     throw ApiError.badRequest('Invalid JSON body')
   }
 
-  if (body.title !== undefined && (typeof body.title !== 'string' || !body.title)) {
-    throw ApiError.badRequest('title must be a non-empty string')
+  if ('agentProfile' in body) throw ApiError.conflict('Agent profile is locked for this conversation. Create a new conversation to change it.')
+  if (!body.title || typeof body.title !== 'string') {
+    throw ApiError.badRequest('title (string) is required in request body')
   }
-  if (body.archived !== undefined && typeof body.archived !== 'boolean') {
-    throw ApiError.badRequest('archived must be a boolean')
-  }
-  if (body.title === undefined && body.archived === undefined) {
-    throw ApiError.badRequest('title or archived is required in request body')
-  }
-  if (body.title !== undefined) await sessionService.renameSession(sessionId, body.title)
-  if (body.archived !== undefined) await sessionService.setSessionArchived(sessionId, body.archived)
+
+  await sessionService.renameSession(sessionId, body.title)
   return Response.json({ ok: true })
 }
 

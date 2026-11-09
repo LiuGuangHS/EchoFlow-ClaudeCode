@@ -4,8 +4,12 @@ import * as os from 'os'
 import * as path from 'path'
 
 import { handleProvidersApi } from '../api/providers.js'
-import { PROVIDER_PRESETS } from '../config/providerPresets.js'
+import { PROVIDER_PRESETS, ProviderPresetSchema } from '../config/providerPresets.js'
 import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
+import { buildProviderManagedEnv, providerNeedsProxy } from '../services/providerRuntimeEnv.js'
+import { resolveModelApiFormat } from '../../shared/modelApiFormats.js'
+import { resolveUpstreamHeaders } from '../proxy/upstreamHeaders.js'
+import { IMAGE_GENERATION_PROTOCOL_ENV_KEY } from '../../services/imageGeneration/config.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -95,10 +99,10 @@ describe('provider presets API', () => {
       baseUrl: 'https://api.deepseek.com/anthropic',
       authStrategy: 'auth_token',
       defaultModels: {
-        main: 'deepseek-v4-pro[1m]',
-        haiku: 'deepseek-v4-flash',
-        sonnet: 'deepseek-v4-pro[1m]',
-        opus: 'deepseek-v4-pro[1m]',
+        main: 'deepseek-flash[1m]',
+        haiku: 'deepseek-flash[1m]',
+        sonnet: 'deepseek-flash[1m]',
+        opus: 'deepseek-flash[1m]',
       },
     })
     expect(zhipu?.regionalEndpoints).toEqual([
@@ -139,7 +143,7 @@ describe('provider presets API', () => {
   test('does not expose sponsor, relay, or referral metadata', () => {
     const serialized = JSON.stringify(PROVIDER_PRESETS)
     expect(serialized).not.toMatch(
-      /teamorouter|jiekouai|shengsuanyun|xuanshuapi|fennoai|qiniuai|atlascloud|[?&](?:ref|referral|invite|source|utm_[^=]+)=/i,
+      /teamorouter|jiekouai|shengsuanyun|xuanshuapi|fennoai|qiniuai|atlascloud|aruhub|modelflare|apismart|openrouter|magpie|[?&](?:ref|referral|invite|code|aff|source|utm_[^=]+)=/i,
     )
   })
 
@@ -179,4 +183,118 @@ describe('provider presets API', () => {
       'utf-8',
     ))).toEqual(update)
   })
+  test('exposes Flash with 1M in every DeepSeek slot and carries it into the runtime', async () => {
+    const { req, url, segments } = makeRequest('GET', '/api/providers/presets')
+    const response = await handleProvidersApi(req, url, segments)
+    const { presets } = await response.json()
+    const preset = presets.find((entry: { id: string }) => entry.id === 'deepseek')
+    expect(preset.defaultModels).toEqual({
+      main: 'deepseek-flash[1m]',
+      fable: 'deepseek-flash[1m]',
+      haiku: 'deepseek-flash[1m]',
+      sonnet: 'deepseek-flash[1m]',
+      opus: 'deepseek-flash[1m]',
+    })
+    const env = buildProviderManagedEnv({
+      id: 'deepseek-test', presetId: preset.id, name: preset.name,
+      baseUrl: preset.baseUrl, apiFormat: preset.apiFormat,
+      authStrategy: preset.authStrategy, apiKey: 'fake-deepseek-key',
+      models: preset.defaultModels,
+    })
+    for (const key of [
+      'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_FABLE_MODEL',
+      'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL',
+      'ANTHROPIC_DEFAULT_OPUS_MODEL',
+    ]) {
+      expect(env[key]).toBe('deepseek-flash[1m]')
+    }
+    expect(JSON.parse(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)['deepseek-flash']).toBe(1_000_000)
+  })
+
+  describe('OpenCode Go preset', () => {
+    const opencodeGo = PROVIDER_PRESETS.find((preset) => preset.id === 'opencode-go')!
+
+    test('links to official signup without referral metadata', () => {
+      expect(opencodeGo.apiKeyUrl).toBe('https://opencode.ai/go')
+      expect(opencodeGo.promoText).toBeUndefined()
+    })
+
+    test('is selectable and declares an OpenAI format so requests reach the proxy', () => {
+      expect(opencodeGo).toBeDefined()
+      expect(opencodeGo.deprecated).toBeUndefined()
+      expect(opencodeGo.needsApiKey).toBe(true)
+      expect(opencodeGo.baseUrl).toBe('https://opencode.ai/zen/go/v1')
+      expect(providerNeedsProxy(opencodeGo.apiFormat, undefined)).toBe(true)
+      // Every model on this gateway that is not reached through the paths below
+      // arrives over Bearer, and the Messages path alone reads x-api-key.
+      expect(opencodeGo.authStrategy).toBe('api_key')
+    })
+
+    test('routes only the families that need a non-chat endpoint', () => {
+      expect(opencodeGo.modelApiFormats).toEqual([
+        { prefixes: ['grok-', 'gpt-', 'muse-spark-'], apiFormat: 'openai_responses' },
+        { prefixes: ['minimax-', 'qwen', 'union-alpha'], apiFormat: 'anthropic' },
+        // OpenCode Go serves Gemini only over Google generateContent, outside /zen/go/v1.
+        { prefixes: ['gemini-'], apiFormat: 'gemini', baseUrl: '/inference/go/google/v1beta' },
+      ])
+      // Everything else must fall through to the provider format rather than being
+      // pinned by a rule, so the default only advertises what was verified.
+      for (const model of ['glm-5.3', 'kimi-k3', 'deepseek-v4-pro', 'longcat-2.0']) {
+        expect(resolveModelApiFormat(opencodeGo.modelApiFormats, model), model).toBeUndefined()
+      }
+    })
+
+    test('sends the session id the gateway requires plus a client-identifying user agent', () => {
+      expect(opencodeGo.upstreamHeaders).toEqual({
+        'User-Agent': 'echoflow-code/$VERSION',
+        'x-opencode-session': '$SESSION_ID',
+      })
+      const resolved = resolveUpstreamHeaders(opencodeGo.upstreamHeaders, { sessionId: 's-1' })
+      expect(resolved['x-opencode-session']).toBe('s-1')
+      expect(resolved['User-Agent']).toMatch(/^echoflow-code\//)
+    })
+
+    test('publishes a context window for every model it offers as a default', () => {
+      for (const model of Object.values(opencodeGo.defaultModels)) {
+        expect(opencodeGo.modelContextWindows?.[model], model).toBeGreaterThan(0)
+      }
+    })
+
+    test('stays ordered before the local endpoints so the catalog layout is stable', () => {
+      const ids = PROVIDER_PRESETS.map((preset) => preset.id)
+      expect(ids.indexOf('opencode-go')).toBeGreaterThan(-1)
+      expect(ids.indexOf('opencode-go')).toBeLessThan(ids.indexOf('lmstudio'))
+    })
+  })
+
+  test('rejects an upstream header name that would break the upstream request', () => {
+    const base = {
+      id: 'probe', name: 'Probe', baseUrl: 'https://probe.test', apiFormat: 'anthropic',
+      defaultModels: { main: 'm', haiku: 'm', sonnet: 'm', opus: 'm' },
+      needsApiKey: true, websiteUrl: '',
+    }
+    expect(ProviderPresetSchema.safeParse({ ...base, upstreamHeaders: { 'x-ok': 'v' } }).success).toBe(true)
+    // A malformed name only surfaces as a fetch TypeError on every request at
+    // runtime, so the bundle must refuse to load it instead.
+    for (const name of ['x-bad\nx-leak: 1', 'has space', 'colon:yes', '']) {
+      expect(
+        ProviderPresetSchema.safeParse({ ...base, upstreamHeaders: { [name]: 'v' } }).success,
+        JSON.stringify(name),
+      ).toBe(false)
+    }
+  })
+})
+
+test.each(['openai_images', 'gemini_native', 'xai_images'] as const)('keeps a preset image protocol %s through runtime configuration', protocol => {
+  const preset = ProviderPresetSchema.parse({
+    name: 'Image fixture', baseUrl: 'https://images.example.test/v1', apiFormat: 'openai_chat',
+    defaultModels: { main: 'm', haiku: 'm', sonnet: 'm', opus: 'm' }, needsApiKey: true, websiteUrl: '',
+    id: 'native-image-fixture', defaultImageGeneration: { model: 'fixture-image-alias', protocol },
+  })
+  const env = buildProviderManagedEnv({
+    id: 'fixture', name: 'Fixture', presetId: preset.id, apiKey: 'fake-key',
+    baseUrl: preset.baseUrl, apiFormat: preset.apiFormat, models: preset.defaultModels,
+    imageGeneration: preset.defaultImageGeneration,
+  })
+  expect(env[IMAGE_GENERATION_PROTOCOL_ENV_KEY]).toBe(protocol)
 })

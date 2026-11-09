@@ -21,7 +21,7 @@ import {
 const tempDirs: string[] = []
 
 async function createTempDir(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'echoflow-code-local-index-recovery-'))
+  const directory = await mkdtemp(join(tmpdir(), 'cc-haha-local-index-recovery-'))
   tempDirs.push(directory)
   return directory
 }
@@ -35,7 +35,7 @@ afterEach(async () => {
 describe('local index recovery', () => {
   test('moves only the fixed derived database family into the managed backup directory', async () => {
     const scope = await createTempDir()
-    const databasePath = join(scope, 'echoflow-code', 'db', 'index-v1.sqlite')
+    const databasePath = join(scope, 'cc-haha', 'db', 'index-v1.sqlite')
     const sourcePath = join(scope, 'projects', '-repo', 'source.jsonl')
     await mkdir(dirname(databasePath), { recursive: true })
     await mkdir(dirname(sourcePath), { recursive: true })
@@ -55,7 +55,7 @@ describe('local index recovery', () => {
       now: () => Date.UTC(2026, 6, 15),
     })
 
-    expect(relative(join(scope, 'echoflow-code', 'db', 'backups'), result.backupPath))
+    expect(relative(join(scope, 'cc-haha', 'db', 'backups'), result.backupPath))
       .not.toStartWith('..')
     expect(await readFile(join(result.backupPath, 'index-v1.sqlite'), 'utf-8')).toBe('database')
     expect(await readFile(join(result.backupPath, 'index-v1.sqlite-wal'), 'utf-8')).toBe('wal')
@@ -94,30 +94,30 @@ describe('local index recovery', () => {
     expect(isConfirmedLocalIndexCorruption(futureSchema)).toBe(false)
   })
 
-  test.each(['echoflow-code', 'db', 'backups'] as const)(
+  test.each(['cc-haha', 'db', 'backups'] as const)(
     'rejects a symlinked managed %s ancestor without moving external files',
     async (ancestor) => {
       const scope = await createTempDir()
       const outside = await createTempDir()
-      const databasePath = join(scope, 'echoflow-code', 'db', 'index-v1.sqlite')
+      const databasePath = join(scope, 'cc-haha', 'db', 'index-v1.sqlite')
       const externalSentinel = join(outside, 'outside-sentinel.txt')
       await writeFile(externalSentinel, 'must-stay-outside')
 
       let protectedDatabasePath: string
-      if (ancestor === 'echoflow-code') {
+      if (ancestor === 'cc-haha') {
         await mkdir(join(outside, 'db'), { recursive: true })
         protectedDatabasePath = join(outside, 'db', 'index-v1.sqlite')
         await symlink(
           outside,
-          join(scope, 'echoflow-code'),
+          join(scope, 'cc-haha'),
           process.platform === 'win32' ? 'junction' : 'dir',
         )
       } else if (ancestor === 'db') {
-        await mkdir(join(scope, 'echoflow-code'), { recursive: true })
+        await mkdir(join(scope, 'cc-haha'), { recursive: true })
         protectedDatabasePath = join(outside, 'index-v1.sqlite')
         await symlink(
           outside,
-          join(scope, 'echoflow-code', 'db'),
+          join(scope, 'cc-haha', 'db'),
           process.platform === 'win32' ? 'junction' : 'dir',
         )
       } else {
@@ -153,7 +153,7 @@ describe('local index recovery', () => {
 
   test('rolls back a partial family move and retains no completed backup', async () => {
     const scope = await createTempDir()
-    const databasePath = join(scope, 'echoflow-code', 'db', 'index-v1.sqlite')
+    const databasePath = join(scope, 'cc-haha', 'db', 'index-v1.sqlite')
     await mkdir(dirname(databasePath), { recursive: true })
     for (const suffix of ['', '-wal', '-shm']) {
       await writeFile(`${databasePath}${suffix}`, suffix || 'database')
@@ -174,13 +174,13 @@ describe('local index recovery', () => {
     for (const suffix of ['', '-wal', '-shm']) {
       expect((await stat(`${databasePath}${suffix}`)).isFile()).toBe(true)
     }
-    const backupsRoot = join(scope, 'echoflow-code', 'db', 'backups')
+    const backupsRoot = join(scope, 'cc-haha', 'db', 'backups')
     expect(await readdir(backupsRoot)).toEqual([])
   })
 
   test('keeps only the newest three bounded derived backups', async () => {
     const scope = await createTempDir()
-    const databasePath = join(scope, 'echoflow-code', 'db', 'index-v1.sqlite')
+    const databasePath = join(scope, 'cc-haha', 'db', 'index-v1.sqlite')
     await mkdir(dirname(databasePath), { recursive: true })
     for (let index = 0; index < 5; index += 1) {
       await writeFile(databasePath, `database-${index}`)
@@ -192,7 +192,7 @@ describe('local index recovery', () => {
       })
     }
 
-    const backups = await readdir(join(scope, 'echoflow-code', 'db', 'backups'))
+    const backups = await readdir(join(scope, 'cc-haha', 'db', 'backups'))
     expect(backups).toHaveLength(3)
     expect(backups.some(name => name.includes('00-00-04'))).toBe(true)
     expect(backups.some(name => name.includes('00-00-00'))).toBe(false)

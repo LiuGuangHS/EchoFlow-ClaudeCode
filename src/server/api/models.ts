@@ -2,15 +2,16 @@
  * Models REST API
  *
  * GET  /api/models          — 获取可用模型列表
+ * GET  /api/models/catalog?provider=<id> — 内置 OAuth 供应商账号可选的模型目录
  * GET  /api/models/current  — 获取当前选中的模型
  * PUT  /api/models/current  — 切换模型
  * GET  /api/effort          — 获取 Effort 等级
  * PUT  /api/effort          — 设置 Effort 等级
  */
 
-import { ManagedSettingsService } from '../services/managedSettingsService.js'
 import { SettingsService } from '../services/settingsService.js'
 import { ProviderService } from '../services/providerService.js'
+import type { SavedProvider } from '../types/provider.js'
 import { attributionHeaderEnvForModel } from '../services/attributionHeaderPolicy.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 import { hasOpenAIAuthLogin } from '../../utils/auth.js'
@@ -25,8 +26,7 @@ import {
   OPENAI_OFFICIAL_PROVIDER_NAME,
   isOpenAIOfficialProviderId,
 } from '../services/openaiOfficialProvider.js'
-import { CLAUDE_OFFICIAL_PROVIDER_ID } from '../types/provider.js'
-import { getGrokModelCatalog } from '../../services/grokAuth/modelCatalog.js'
+import { getDesktopGrokModelCatalog } from '../services/grokModelCatalog.js'
 import {
   GROK_DEFAULT_MAIN_MODEL,
   type GrokModelCatalogEntry,
@@ -36,8 +36,18 @@ import {
   GROK_OFFICIAL_PROVIDER_NAME,
   isGrokOfficialProviderId,
 } from '../services/grokOfficialProvider.js'
-import { echoFlowGrokOAuthService } from '../services/echoFlowGrokOAuthService.js'
+import {
+  DEEPSEEK_ACCOUNT_PROVIDER,
+  isDeepSeekAccountProviderId,
+  listDeepSeekAccountModels,
+} from '../services/deepseekAccountProvider.js'
+import type { DeepSeekAccountModel } from '../../services/deepseekAuth/modelCatalog.js'
+import {
+  CLAUDE_OFFICIAL_PROVIDER_ID,
+  isBuiltInProviderId,
+} from '../types/provider.js'
 import { resolveClaudeOfficialRuntimeModel } from '../services/claudeOfficialRuntime.js'
+import { CLAUDE_MODEL_CATALOG as DEFAULT_MODELS, getDesktopClaudeModelCatalog } from '../services/claudeModelCatalog.js'
 import {
   getPresetDefaultEnv,
   getPresetReasoningProviderKind,
@@ -52,68 +62,6 @@ import {
 
 // ─── Fallback models (used when no provider is configured) ────────────────────
 
-const DEFAULT_MODELS = [
-  {
-    id: 'claude-fable-5-1',
-    name: 'Fable 5.1',
-    description: 'Highest capability for long-running tasks',
-    context: '1m',
-    defaultReasoningEffort: 'high',
-    supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-  },
-  {
-    id: 'claude-fable-5',
-    name: 'Fable 5',
-    description: 'Highest capability for long-running tasks',
-    context: '1m',
-  },
-  {
-    id: 'claude-opus-5-5',
-    name: 'Opus 5.5',
-    description: 'Best for complex agentic coding and enterprise work',
-    context: '1m',
-    defaultReasoningEffort: 'medium',
-    supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-  },
-  {
-    id: 'claude-opus-5',
-    name: 'Opus 5',
-    description: 'Best for complex agentic coding and enterprise work',
-    context: '1m',
-    defaultReasoningEffort: 'high',
-    supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-  },
-  {
-    id: 'claude-opus-4-8',
-    name: 'Opus 4.8',
-    description: 'Best for complex agentic coding and enterprise work',
-    context: '1m',
-    defaultReasoningEffort: 'high',
-    supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-  },
-  {
-    id: 'claude-sonnet-5-5',
-    name: 'Sonnet 5.5',
-    description: 'Best combination of speed and intelligence',
-    context: '1m',
-    defaultReasoningEffort: 'medium',
-    supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-  },
-  {
-    id: 'claude-sonnet-5',
-    name: 'Sonnet 5',
-    description: 'Best combination of speed and intelligence',
-    context: '1m',
-    defaultReasoningEffort: 'high',
-    supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-  },
-  {
-    id: 'claude-haiku-4-5',
-    name: 'Haiku 4.5',
-    description: 'Fastest with near-frontier intelligence',
-    context: '200k',
-  },
-] as const
 
 const EFFORT_LEVELS = MODEL_REASONING_EFFORTS
 
@@ -121,10 +69,9 @@ const EFFORT_LEVELS = MODEL_REASONING_EFFORTS
 // CLI's own default runs. Keep this in step with what the `opus` alias resolves to there
 // (getDefaultOpusModel) so the UI names the model that actually runs.
 const DEFAULT_MODEL = 'claude-opus-5-5'
-const DEFAULT_EFFORT = 'medium'
+const DEFAULT_EFFORT = 'low'
 
 const settingsService = new SettingsService()
-const managedSettingsService = new ManagedSettingsService()
 const providerService = new ProviderService()
 
 type ApiModelInfo = {
@@ -218,8 +165,10 @@ function buildOpenAIModelList(catalog: OpenAIModelCatalogEntry[]): ApiModelInfo[
   }))
 }
 
-async function getOpenAIModelList(): Promise<ApiModelInfo[]> {
-  return buildOpenAIModelList(await getDesktopOpenAICodexModelCatalog())
+type CatalogRefreshOptions = { forceRefresh?: boolean; throwOnError?: boolean }
+
+async function getOpenAIModelList(options?: CatalogRefreshOptions): Promise<ApiModelInfo[]> {
+  return buildOpenAIModelList(await getDesktopOpenAICodexModelCatalog(options))
 }
 
 function buildGrokModelList(catalog: GrokModelCatalogEntry[]): ApiModelInfo[] {
@@ -237,12 +186,27 @@ function buildGrokModelList(catalog: GrokModelCatalogEntry[]): ApiModelInfo[] {
   }))
 }
 
-async function getGrokModelList(): Promise<ApiModelInfo[]> {
-  const tokens = await echoFlowGrokOAuthService.ensureFreshTokens()
-  return buildGrokModelList(await getGrokModelCatalog({
-    ...(tokens?.accessToken ? { accessToken: tokens.accessToken } : {}),
-    accountKey: tokens?.email ?? (tokens ? 'authenticated-default' : 'logged-out'),
-  }))
+async function getGrokModelList(options?: CatalogRefreshOptions): Promise<ApiModelInfo[]> {
+  return buildGrokModelList(await getDesktopGrokModelCatalog(options))
+}
+
+// Effort levels come from the same reasoning profile the CLI runs with, so
+// a catalog row offers exactly the levels a slot row for that model would.
+function buildDeepSeekAccountModelList(catalog: readonly DeepSeekAccountModel[]): ApiModelInfo[] {
+  const providerKind = getPresetReasoningProviderKind(DEEPSEEK_ACCOUNT_PROVIDER.presetId)
+  return catalog.map((model) => {
+    const reasoningProfile = resolveModelReasoningProfile(model.id, 'anthropic', undefined, providerKind)
+    return {
+      id: model.id,
+      name: model.name,
+      description: '',
+      context: model.contextWindow ? String(model.contextWindow) : '',
+      supportedReasoningEfforts: [...(reasoningProfile?.supportedReasoningEfforts ?? [])],
+      ...(reasoningProfile?.defaultReasoningEffort
+        ? { defaultReasoningEffort: reasoningProfile.defaultReasoningEffort }
+        : {}),
+    }
+  })
 }
 
 function getConfiguredAnthropicModels(settingsEnv: Record<string, unknown>): ApiModelInfo[] {
@@ -320,12 +284,71 @@ export async function handleModelsApi(
       case 'current':
         return await handleCurrentModel(req)
 
+      case 'catalog':
+        if (req.method !== 'GET') throw methodNotAllowed(req.method)
+        return await handleModelCatalog(url)
+
       default:
         throw ApiError.notFound(`Unknown models endpoint: ${sub}`)
     }
   } catch (error) {
     return errorResponse(error)
   }
+}
+
+// The DeepSeek account provider is built in (not in the saved list) but is a
+// plain Anthropic-compatible model mapping, so it takes the saved-provider path
+// instead of the catalog logic the Grok and OpenAI providers need.
+async function resolveActiveProvider(
+  providers: SavedProvider[],
+  activeId: string | null,
+): Promise<SavedProvider | null> {
+  if (!activeId) return null
+  const saved = providers.find((provider) => provider.id === activeId)
+  if (saved) return saved
+  if (isDeepSeekAccountProviderId(activeId)) {
+    return providerService.getProvider(activeId)
+  }
+  return null
+}
+
+function baseModelId(id: string): string {
+  return id.trim().replace(/\[1m\]$/i, '')
+}
+
+/**
+ * The account's alias mapping, named the way the account names its models,
+ * followed by the account models no alias points at (`deepseek-v4-pro[1m]`
+ * and `deepseek-v4-pro` are one model).
+ */
+function withDeepSeekAccountCatalog(
+  mapped: ApiModelInfo[],
+  catalog: ApiModelInfo[],
+): ApiModelInfo[] {
+  const byBaseId = new Map(catalog.map((model) => [baseModelId(model.id), model]))
+  const models = mapped.map((model) => {
+    const listed = byBaseId.get(baseModelId(model.id))
+    return listed ? { ...model, name: listed.name, context: listed.context } : model
+  })
+  const mappedBaseIds = new Set(models.map((model) => baseModelId(model.id)))
+  for (const model of catalog) {
+    if (!mappedBaseIds.has(baseModelId(model.id))) models.push(model)
+  }
+  return models
+}
+
+async function buildActiveProviderModelList(provider: SavedProvider): Promise<ApiModelInfo[]> {
+  const mapped = buildProviderModelList(
+    provider.models,
+    provider.apiFormat,
+    getPresetDefaultEnv(provider.presetId),
+    getPresetReasoningProviderKind(provider.presetId),
+  )
+  if (!isDeepSeekAccountProviderId(provider.id)) return mapped
+  return withDeepSeekAccountCatalog(
+    mapped,
+    buildDeepSeekAccountModelList(await listDeepSeekAccountModels()),
+  )
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -351,34 +374,54 @@ async function handleModelsList(): Promise<Response> {
     })
   }
 
-  const activeProvider = activeId ? providers.find((p) => p.id === activeId) : null
+  const activeProvider = await resolveActiveProvider(providers, activeId)
   if (activeProvider) {
-    const modelList = buildProviderModelList(
-      activeProvider.models,
-      activeProvider.apiFormat,
-      getPresetDefaultEnv(activeProvider.presetId),
-      getPresetReasoningProviderKind(activeProvider.presetId),
-    )
+    const modelList = await buildActiveProviderModelList(activeProvider)
     return Response.json({
       models: modelList,
       provider: { id: activeProvider.id, name: activeProvider.name },
     })
   }
   if (await resolveClaudeOfficialRuntimeModel()) {
-    return Response.json({ models: DEFAULT_MODELS, provider: null })
+    return Response.json({ models: await getDesktopClaudeModelCatalog(), provider: null })
   }
-  return Response.json({ models: await getStandaloneModelList(), provider: null })
+  return Response.json({ models: await getStandaloneModelList(), provider: null, runtimeSource: 'standalone' })
+}
+
+// The models one built-in OAuth provider's account can use, whichever provider
+// is active: the settings card of an inactive provider must not list the
+// active provider's models.
+async function handleModelCatalog(url: URL): Promise<Response> {
+  const providerId = url.searchParams.get('provider')
+  if (!providerId || !isBuiltInProviderId(providerId)) {
+    throw ApiError.notFound(`Official provider not found: ${providerId ?? ''}`)
+  }
+  const forceRefresh = url.searchParams.get('refresh') === 'true'
+  const options = { forceRefresh, throwOnError: forceRefresh }
+  try {
+    const models = isOpenAIOfficialProviderId(providerId)
+      ? await getOpenAIModelList(options)
+      : isGrokOfficialProviderId(providerId)
+        ? await getGrokModelList(options)
+        : isDeepSeekAccountProviderId(providerId)
+          ? buildDeepSeekAccountModelList(await listDeepSeekAccountModels({ ...options, forceRefresh: true }))
+          : providerId === CLAUDE_OFFICIAL_PROVIDER_ID
+            ? await getDesktopClaudeModelCatalog(options)
+            : []
+    return Response.json({ models })
+  } catch {
+    // Keep raw upstream errors and credentials out of API responses and logs.
+    throw new ApiError(502, 'Could not refresh the account model list. Retry or sign in again.', 'MODEL_CATALOG_REFRESH_FAILED')
+  }
 }
 
 async function handleCurrentModel(req: Request): Promise<Response> {
   if (req.method === 'GET') {
     // Build the full model list: prefer active provider's models, fall back to defaults
     const { providers, activeId } = await providerService.listProviders()
-    const isClaudeOfficialProviderActive =
-      activeId === null || activeId === CLAUDE_OFFICIAL_PROVIDER_ID
     const isOpenAIProviderActive = isOpenAIOfficialProviderId(activeId)
     const isGrokProviderActive = isGrokOfficialProviderId(activeId)
-    const activeProvider = activeId ? providers.find((p) => p.id === activeId) : null
+    const activeProvider = await resolveActiveProvider(providers, activeId)
     const settings = activeProvider || isOpenAIProviderActive || isGrokProviderActive
       ? await providerService.getManagedSettings()
       : await settingsService.getUserSettings()
@@ -389,7 +432,7 @@ async function handleCurrentModel(req: Request): Promise<Response> {
     const settingsEnvModel = typeof env.ANTHROPIC_MODEL === 'string'
       ? env.ANTHROPIC_MODEL.trim()
       : ''
-    const claudeOfficialModel = isClaudeOfficialProviderActive
+    const claudeOfficialModel = activeId === null
       ? await resolveClaudeOfficialRuntimeModel(
           explicitModel || runtimeEnvModel || settingsEnvModel,
         )
@@ -405,7 +448,7 @@ async function handleCurrentModel(req: Request): Promise<Response> {
       currentModelId = explicitModel || env.ANTHROPIC_MODEL || GROK_DEFAULT_MAIN_MODEL
       currentModelName = currentModelId
     } else if (activeProvider) {
-      // Provider is active — only use the provider-managed EchoFlow settings.
+      // Provider is active — only use the provider-managed cc-haha settings.
       // This avoids leaking global ~/.claude/settings.json model choices into
       // the active provider flow.
       const providerEnvModel = env.ANTHROPIC_MODEL
@@ -433,18 +476,19 @@ async function handleCurrentModel(req: Request): Promise<Response> {
       : isGrokProviderActive
         ? await getGrokModelList()
         : activeProvider
-          ? buildProviderModelList(
-              activeProvider.models,
-              activeProvider.apiFormat,
-              getPresetDefaultEnv(activeProvider.presetId),
-              getPresetReasoningProviderKind(activeProvider.presetId),
-            )
+          ? await buildActiveProviderModelList(activeProvider)
           : claudeOfficialModel
-            ? [...DEFAULT_MODELS]
+            ? await getDesktopClaudeModelCatalog()
             : await getStandaloneModelList()
 
+    // A saved account model may omit the default alias's 1M marker. Reuse its
+    // catalog metadata without changing the user's selected model id.
+    const accountModelEntry = isDeepSeekAccountProviderId(activeId)
+      ? availableModels.find((model) => baseModelId(model.id) === baseModelId(currentModelId))
+      : undefined
     const modelEntry = availableModels.find((m) => m.id === lookupId)
       || availableModels.find((m) => m.id === currentModelId)
+      || (accountModelEntry && { ...accountModelEntry, id: currentModelId })
       || {
         id: currentModelId,
         name: currentModelName,
@@ -476,7 +520,7 @@ async function handleCurrentModel(req: Request): Promise<Response> {
       updates.modelContext = undefined
     }
     const { activeId } = await providerService.listProviders()
-    if (activeId && activeId !== CLAUDE_OFFICIAL_PROVIDER_ID) {
+    if (activeId) {
       const currentManagedSettings = await providerService.getManagedSettings()
       const currentEnv =
         (currentManagedSettings.env as Record<string, string> | undefined) ?? {}
@@ -487,13 +531,8 @@ async function handleCurrentModel(req: Request): Promise<Response> {
           ...attributionHeaderEnvForModel(baseId),
         },
       })
-    } else if (activeId === null || activeId === CLAUDE_OFFICIAL_PROVIDER_ID) {
-      await settingsService.updateUserSettings(updates)
     } else {
-      await managedSettingsService.updateSettings(current => ({
-        settings: { ...current, ...updates },
-        result: undefined,
-      }))
+      await settingsService.updateUserSettings(updates)
     }
     return Response.json({ ok: true, model: modelId })
   }
@@ -503,10 +542,7 @@ async function handleCurrentModel(req: Request): Promise<Response> {
 
 async function handleEffort(req: Request): Promise<Response> {
   if (req.method === 'GET') {
-    const { activeId } = await providerService.listProviders()
-    const settings = activeId === null || activeId === CLAUDE_OFFICIAL_PROVIDER_ID
-      ? await settingsService.getUserSettings()
-      : await managedSettingsService.readSettings()
+    const settings = await settingsService.getUserSettings()
     const level = normalizeEffortLevel(settings.effort)
     return Response.json({ level, available: EFFORT_LEVELS })
   }
@@ -522,15 +558,7 @@ async function handleEffort(req: Request): Promise<Response> {
         `Invalid effort level: "${level}". Valid levels: ${EFFORT_LEVELS.join(', ')}`,
       )
     }
-    const { activeId } = await providerService.listProviders()
-    if (activeId === null || activeId === CLAUDE_OFFICIAL_PROVIDER_ID) {
-      await settingsService.updateUserSettings({ effort: level })
-    } else {
-      await managedSettingsService.updateSettings(current => ({
-        settings: { ...current, effort: level },
-        result: undefined,
-      }))
-    }
+    await settingsService.updateUserSettings({ effort: level })
     return Response.json({ ok: true, level })
   }
 

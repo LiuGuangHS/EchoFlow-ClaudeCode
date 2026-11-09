@@ -14,15 +14,7 @@ import * as tasks from '../../utils/tasks.js'
 import * as dialog from '../design-system/Dialog.js'
 import { TeamsDialog } from './TeamsDialog.js'
 
-// Lets queued microtasks and ink's own renders settle. A fixed 20ms was a
-// guess at that, and it loses under load — the check that follows then runs
-// before the handler has committed, which reads as a real failure but is only
-// the machine being busy.
-const tick = async () => {
-  for (let i = 0; i < 3; i++) {
-    await new Promise(resolve => setImmediate(resolve))
-  }
-}
+const tick = () => new Promise(resolve => setTimeout(resolve, 20))
 
 const TEAM = 'team-x'
 

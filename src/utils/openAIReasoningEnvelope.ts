@@ -1,5 +1,6 @@
 export const OPENAI_REASONING_ENVELOPE_PREFIX =
-  'echoflow-code:openai-reasoning:v1:'
+  'cc-haha:openai-reasoning:v1:'
+
 export type OpenAIReasoningEnvelopeData = {
   id?: string
   summary: Array<{ type: string; text: string }>
@@ -11,7 +12,9 @@ export function parseOpenAIReasoningEnvelope(
   if (!data.startsWith(OPENAI_REASONING_ENVELOPE_PREFIX)) return null
 
   try {
-    const value = JSON.parse(data.slice(OPENAI_REASONING_ENVELOPE_PREFIX.length)) as unknown
+    const value = JSON.parse(
+      data.slice(OPENAI_REASONING_ENVELOPE_PREFIX.length),
+    ) as unknown
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null
 
     const envelope = value as Record<string, unknown>

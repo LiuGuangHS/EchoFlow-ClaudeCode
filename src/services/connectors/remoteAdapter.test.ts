@@ -6,7 +6,7 @@ import type { ConnectorDefinition } from './types.js'
 import type { RemoteConnectorRecipe } from './remoteConnector.js'
 import { createRemoteConnectorAdapter, type RemoteAdapterDependencies } from './remoteAdapter.js'
 
-const definition: ConnectorDefinition = { id: 'remote-fixture', pluginId: 'office-remote-fixture@echoflow-connectors', version: '1.0.0', packageName: 'remote-fixture', homepage: 'https://official.example', credentialMode: 'isolated', platforms: ['darwin-arm64'], transport: 'mcp' }
+const definition: ConnectorDefinition = { id: 'remote-fixture', pluginId: 'office-remote-fixture@haha-connectors', version: '1.0.0', packageName: 'remote-fixture', homepage: 'https://official.example', credentialMode: 'isolated', platforms: ['darwin-arm64'], transport: 'mcp' }
 const recipe: RemoteConnectorRecipe = { id: definition.id, pluginId: definition.pluginId, version: definition.version, endpoint: 'https://official.example/mcp', transport: 'http', auth: { type: 'api-key', in: 'query', name: 'key' } }
 function fixture() {
   let configured = false

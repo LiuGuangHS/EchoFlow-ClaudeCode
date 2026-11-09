@@ -9,7 +9,8 @@ const sessionTranscriptModule = feature('KAIROS')
 
 import { APIUserAbortError } from '@anthropic-ai/sdk'
 import { markPostCompaction } from 'src/bootstrap/state.js'
-import { getInvokedSkillsForAgent } from '../../bootstrap/state.js'
+import { getInvokedSkillsForAgent, getSdkBetas } from '../../bootstrap/state.js'
+import { BUSINESS_ERROR_CODES } from '../../constants/businessErrors.js'
 import type { QuerySource } from '../../constants/querySource.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import type { Tool, ToolUseContext } from '../../Tool.js'
@@ -27,6 +28,7 @@ import type {
   HookResultMessage,
   Message,
   PartialCompactDirection,
+  StreamEvent,
   SystemCompactBoundaryMessage,
   SystemMessage,
   UserMessage,
@@ -38,8 +40,14 @@ import {
   getDeferredToolsDeltaAttachment,
   getMcpInstructionsDeltaAttachment,
 } from '../../utils/attachments.js'
+import { getAgentProfile } from '../../utils/agentProfile.js'
 import { getMemoryPath } from '../../utils/config.js'
-import { COMPACT_MAX_OUTPUT_TOKENS } from '../../utils/context.js'
+import {
+  COMPACT_MAX_OUTPUT_TOKENS,
+  getContextWindowForModel,
+  getEffectiveModelContextWindow,
+  getProviderReportedContextLimit,
+} from '../../utils/context.js'
 import {
   analyzeContext,
   tokenStatsToStatsigMetrics,
@@ -61,7 +69,6 @@ import {
   createCompactBoundaryMessage,
   createUserMessage,
   getAssistantMessageText,
-  getLastAssistantMessage,
   getMessagesAfterCompactBoundary,
   isCompactBoundaryMessage,
   normalizeMessagesForAPI,
@@ -84,7 +91,9 @@ import { jsonStringify } from '../../utils/slowOperations.js'
 import { asSystemPrompt } from '../../utils/systemPromptType.js'
 import { getTaskOutputPath } from '../../utils/task/diskOutput.js'
 import {
+  getTokenCountFromUsage,
   getTokenUsage,
+  isUsableContextUsage,
   tokenCountFromLastAPIResponse,
   tokenCountWithEstimation,
 } from '../../utils/tokens.js'
@@ -108,7 +117,12 @@ import {
   startsWithApiErrorPrefix,
 } from '../api/errors.js'
 import { notifyCompaction } from '../api/promptCacheBreakDetection.js'
-import { getRetryDelay } from '../api/withRetry.js'
+import {
+  type ApiAttemptBudget,
+  getDefaultMaxRetries,
+  getRetryDelay,
+  hasApiAttemptsLeft,
+} from '../api/withRetry.js'
 import { logPermissionContextForAnts } from '../internalLogging.js'
 import {
   roughTokenCountEstimation,
@@ -131,6 +145,60 @@ export const POST_COMPACT_MAX_TOKENS_PER_FILE = 5_000
 export const POST_COMPACT_MAX_TOKENS_PER_SKILL = 5_000
 export const POST_COMPACT_SKILLS_TOKEN_BUDGET = 25_000
 const MAX_COMPACT_STREAMING_RETRIES = 2
+
+/**
+ * Every API attempt one compaction may make — the cache-sharing fork, the
+ * streaming fallback and prompt-too-long rounds combined. Each layer keeps its
+ * own retry budget (mid-stream transport re-sends alone allow 10), so without
+ * a shared count a failing provider re-sends the full context dozens of times
+ * while the UI shows "compacting". One compaction gets the attempts a single
+ * ordinary request would.
+ */
+export function createCompactApiAttemptBudget(): ApiAttemptBudget {
+  const retries = getDefaultMaxRetries()
+  return {
+    remaining: (Number.isFinite(retries) && retries >= 0 ? retries : 10) + 1,
+  }
+}
+
+// What the summary instruction and its framing add on top of the conversation.
+const COMPACT_REQUEST_OVERHEAD_TOKENS = 5_000
+
+/**
+ * The cache-sharing fork inherits the main thread's max_tokens (32K/64K/128K by
+ * model) so the thinking config, and with it the prompt cache key, stays
+ * identical. The auto-compact threshold only leaves room for a 20K summary, so a
+ * conversation near the window plus that default allowance can be rejected by
+ * the provider; the failed attempt is then retried on the streaming fallback,
+ * which has its own system prompt and re-sends the whole context uncached.
+ *
+ * Returns the cap to apply to the fork only when the default allowance would not
+ * fit; otherwise undefined, leaving the request identical to the main thread's.
+ */
+export function getCompactForkMaxOutputTokens(
+  preCompactTokenCount: number,
+  model: string,
+): number | undefined {
+  const defaultMaxTokens = getMaxOutputTokensForModel(model)
+  if (defaultMaxTokens <= COMPACT_MAX_OUTPUT_TOKENS) {
+    return undefined
+  }
+  // A limit the provider stated is the real cap when it is below the
+  // registered window (a relay serving the model with less context).
+  const contextWindow = Math.min(
+    getContextWindowForModel(model, getSdkBetas()),
+    getProviderReportedContextLimit(model) ?? Number.POSITIVE_INFINITY,
+  )
+  const fits =
+    preCompactTokenCount +
+      COMPACT_REQUEST_OVERHEAD_TOKENS +
+      defaultMaxTokens <=
+    contextWindow
+  return fits ? undefined : COMPACT_MAX_OUTPUT_TOKENS
+}
+
+/** Minimum gap between live 'compacting' progress statuses. */
+export const COMPACT_PROGRESS_INTERVAL_MS = 1_000
 
 /**
  * Strip image blocks from user messages before sending for compaction.
@@ -178,13 +246,63 @@ export const ERROR_MESSAGE_NOT_ENOUGH_MESSAGES =
 const MAX_PTL_RETRIES = 3
 const PTL_RETRY_MARKER = '[earlier conversation truncated for compaction retry]'
 
+export type CompactRequestCounts = {
+  actualTokens: number
+  limitTokens: number
+}
+
+/**
+ * The provider refused the summary request for its size: a context overflow,
+ * or a relay's 413 (the summary request carries no media, so its text is what
+ * is too large). Both are fixed by trimming the oldest rounds.
+ */
+function isCompactRequestTooLarge(message: AssistantMessage): boolean {
+  return (
+    isPromptTooLongMessage(message) ||
+    (message.isApiErrorMessage === true &&
+      message.businessErrorCode === BUSINESS_ERROR_CODES.REQUEST_TOO_LARGE)
+  )
+}
+
+/**
+ * When the provider's rejection states no counts, the conversation still
+ * holds two: how large the request being summarized is, and the largest size
+ * the provider is known to accept — the request it last answered (its usage)
+ * or a limit it stated before. Undefined when neither is below the request.
+ */
+export function inferCompactRequestCounts(
+  messages: readonly Message[],
+  preCompactTokenCount: number,
+  model: string,
+): CompactRequestCounts | undefined {
+  let acceptedTokens: number | undefined
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const usage = getTokenUsage(messages[i]!)
+    if (usage && isUsableContextUsage(usage)) {
+      acceptedTokens = getTokenCountFromUsage({ ...usage, output_tokens: 0 })
+      break
+    }
+  }
+  const knownLimits = [acceptedTokens, getEffectiveModelContextWindow(model)]
+    .filter((tokens): tokens is number =>
+      tokens !== undefined && tokens > 0 && tokens < preCompactTokenCount,
+    )
+  if (knownLimits.length === 0) return undefined
+  return {
+    actualTokens: preCompactTokenCount,
+    limitTokens: Math.max(...knownLimits),
+  }
+}
+
 /**
  * Drops the oldest API-round groups to fit the provider's reported budget.
  * Local token estimates only weight the groups: their absolute scale can be
  * very different from the provider's tokenizer, especially for large logs.
- * Falls back to dropping 20% of groups when the gap is unparseable (some
- * Vertex/Bedrock error formats). Returns null when nothing can be dropped
- * without leaving an empty summarize set.
+ * When the error states no counts (MiniMax, Zhipu, a relay's 413), the counts
+ * the conversation knows stand in (see inferCompactRequestCounts), never
+ * cutting less than the plain fallback of 20% of groups, which applies when
+ * nothing is known. Returns null when nothing can be dropped without leaving
+ * an empty summarize set.
  *
  * This is the last-resort escape hatch for CC-1180 — when the compact request
  * itself hits prompt-too-long, the user is otherwise stuck. Dropping the
@@ -196,6 +314,7 @@ const PTL_RETRY_MARKER = '[earlier conversation truncated for compaction retry]'
 export function truncateHeadForPTLRetry(
   messages: Message[],
   ptlResponse: AssistantMessage,
+  inferredCounts?: CompactRequestCounts,
 ): Message[] | null {
   // Strip our own synthetic marker from a previous retry before grouping.
   // Otherwise it becomes its own group 0 and the 20% fallback stalls
@@ -210,10 +329,16 @@ export function truncateHeadForPTLRetry(
   const groups = groupMessagesByApiRound(input)
   if (groups.length < 2) return null
 
-  const { actualTokens, limitTokens } = parsePromptTooLongTokenCounts(ptlResponse.errorDetails ?? '')
+  const stated = isPromptTooLongMessage(ptlResponse)
+    ? parsePromptTooLongTokenCounts(ptlResponse.errorDetails ?? '')
+    : { actualTokens: undefined, limitTokens: undefined }
+  const statesBoth =
+    stated.actualTokens !== undefined && stated.limitTokens !== undefined
+  const actualTokens = stated.actualTokens ?? inferredCounts?.actualTokens
+  const limitTokens = stated.limitTokens ?? inferredCounts?.limitTokens
+  const fallbackDropCount = Math.max(1, Math.floor(groups.length * 0.2))
   let dropCount: number
   if (
-    isPromptTooLongMessage(ptlResponse) &&
     actualTokens !== undefined &&
     limitTokens !== undefined &&
     actualTokens > limitTokens
@@ -231,8 +356,9 @@ export function truncateHeadForPTLRetry(
       dropCount++
       if (acc >= tokensToDrop) break
     }
+    if (!statesBoth) dropCount = Math.max(dropCount, fallbackDropCount)
   } else {
-    dropCount = Math.max(1, Math.floor(groups.length * 0.2))
+    dropCount = fallbackDropCount
   }
 
   // Keep at least one group so there's something to summarize.
@@ -437,6 +563,7 @@ export async function compactConversation(
     const summaryRequest = createUserMessage({
       content: compactPrompt,
     })
+    const apiAttemptBudget = createCompactApiAttemptBudget()
 
     let messagesToSummarize = messages
     let retryCacheSafeParams = cacheSafeParams
@@ -451,16 +578,30 @@ export async function compactConversation(
         context,
         preCompactTokenCount,
         cacheSafeParams: retryCacheSafeParams,
+        apiAttemptBudget,
       })
       summary = getAssistantMessageText(summaryResponse)
-      if (!summary?.startsWith(PROMPT_TOO_LONG_ERROR_MESSAGE)) break
+      if (
+        !summary?.startsWith(PROMPT_TOO_LONG_ERROR_MESSAGE) &&
+        !isCompactRequestTooLarge(summaryResponse)
+      ) {
+        break
+      }
 
       // CC-1180: compact request itself hit prompt-too-long. Truncate the
       // oldest API-round groups and retry rather than leaving the user stuck.
       ptlAttempts++
       const truncated =
-        ptlAttempts <= MAX_PTL_RETRIES
-          ? truncateHeadForPTLRetry(messagesToSummarize, summaryResponse)
+        ptlAttempts <= MAX_PTL_RETRIES && hasApiAttemptsLeft(apiAttemptBudget)
+          ? truncateHeadForPTLRetry(
+              messagesToSummarize,
+              summaryResponse,
+              inferCompactRequestCounts(
+                messages,
+                preCompactTokenCount,
+                context.options.mainLoopModel,
+              ),
+            )
           : null
       if (!truncated) {
         logEvent('tengu_compact_failed', {
@@ -500,7 +641,10 @@ export async function compactConversation(
       throw new Error(
         `Failed to generate conversation summary - response did not contain valid text content`,
       )
-    } else if (startsWithApiErrorPrefix(summary)) {
+    } else if (
+      startsWithApiErrorPrefix(summary) ||
+      summaryResponse.isApiErrorMessage
+    ) {
       logEvent('tengu_compact_failed', {
         reason:
           'api_error' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -560,25 +704,9 @@ export async function compactConversation(
     // state so the model has tool/instruction context on the first
     // post-compact turn. Empty message history → diff against nothing →
     // announces the full set.
-    for (const att of getDeferredToolsDeltaAttachment(
-      context.options.tools,
-      context.options.mainLoopModel,
-      [],
-      { callSite: 'compact_full' },
-    )) {
-      postCompactFileAttachments.push(createAttachmentMessage(att))
-    }
-    for (const att of getAgentListingDeltaAttachment(context, [])) {
-      postCompactFileAttachments.push(createAttachmentMessage(att))
-    }
-    for (const att of getMcpInstructionsDeltaAttachment(
-      context.options.mcpClients,
-      context.options.tools,
-      context.options.mainLoopModel,
-      [],
-    )) {
-      postCompactFileAttachments.push(createAttachmentMessage(att))
-    }
+    postCompactFileAttachments.push(
+      ...createPostCompactDeltaAttachments(context, [], 'compact_full'),
+    )
 
     context.onCompactProgress?.({
       type: 'hooks_start',
@@ -855,6 +983,7 @@ export async function partialCompactConversation(
     let summaryResponse: AssistantMessage
     let summary: string | null
     let ptlAttempts = 0
+    const apiAttemptBudget = createCompactApiAttemptBudget()
     for (;;) {
       summaryResponse = await streamCompactSummary({
         messages: apiMessages,
@@ -863,14 +992,28 @@ export async function partialCompactConversation(
         context,
         preCompactTokenCount,
         cacheSafeParams: retryCacheSafeParams,
+        apiAttemptBudget,
       })
       summary = getAssistantMessageText(summaryResponse)
-      if (!summary?.startsWith(PROMPT_TOO_LONG_ERROR_MESSAGE)) break
+      if (
+        !summary?.startsWith(PROMPT_TOO_LONG_ERROR_MESSAGE) &&
+        !isCompactRequestTooLarge(summaryResponse)
+      ) {
+        break
+      }
 
       ptlAttempts++
       const truncated =
-        ptlAttempts <= MAX_PTL_RETRIES
-          ? truncateHeadForPTLRetry(apiMessages, summaryResponse)
+        ptlAttempts <= MAX_PTL_RETRIES && hasApiAttemptsLeft(apiAttemptBudget)
+          ? truncateHeadForPTLRetry(
+              apiMessages,
+              summaryResponse,
+              inferCompactRequestCounts(
+                allMessages,
+                preCompactTokenCount,
+                context.options.mainLoopModel,
+              ),
+            )
           : null
       if (!truncated) {
         logEvent('tengu_partial_compact_failed', {
@@ -902,7 +1045,10 @@ export async function partialCompactConversation(
       throw new Error(
         'Failed to generate conversation summary - response did not contain valid text content',
       )
-    } else if (startsWithApiErrorPrefix(summary)) {
+    } else if (
+      startsWithApiErrorPrefix(summary) ||
+      summaryResponse.isApiErrorMessage
+    ) {
       logEvent('tengu_partial_compact_failed', {
         reason:
           'api_error' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -950,25 +1096,9 @@ export async function partialCompactConversation(
 
     // Re-announce only what was in the summarized portion — messagesToKeep
     // is scanned, so anything already announced there is skipped.
-    for (const att of getDeferredToolsDeltaAttachment(
-      context.options.tools,
-      context.options.mainLoopModel,
-      messagesToKeep,
-      { callSite: 'compact_partial' },
-    )) {
-      postCompactFileAttachments.push(createAttachmentMessage(att))
-    }
-    for (const att of getAgentListingDeltaAttachment(context, messagesToKeep)) {
-      postCompactFileAttachments.push(createAttachmentMessage(att))
-    }
-    for (const att of getMcpInstructionsDeltaAttachment(
-      context.options.mcpClients,
-      context.options.tools,
-      context.options.mainLoopModel,
-      messagesToKeep,
-    )) {
-      postCompactFileAttachments.push(createAttachmentMessage(att))
-    }
+    postCompactFileAttachments.push(
+      ...createPostCompactDeltaAttachments(context, messagesToKeep, 'compact_partial'),
+    )
 
     context.onCompactProgress?.({
       type: 'hooks_start',
@@ -1129,13 +1259,66 @@ export function createCompactCanUseTool(): CanUseToolFn {
   })
 }
 
-async function streamCompactSummary({
+/**
+ * Counts summary characters as they stream and reports them, so a long
+ * compaction visibly makes progress instead of showing a bare spinner: the
+ * REPL response counter every delta, SDK consumers (desktop) through a
+ * 'compacting' status at most once per COMPACT_PROGRESS_INTERVAL_MS. Every
+ * attempt opens with message_start, so a re-sent attempt restarts the count.
+ */
+export function createCompactProgressReporter(
+  context: Pick<ToolUseContext, 'setResponseLength' | 'setSDKStatus'>,
+  now: () => number = Date.now,
+): (event: StreamEvent['event']) => void {
+  let outputChars = 0
+  let lastReportedAt = 0
+  return event => {
+    if (event.type === 'message_start') {
+      outputChars = 0
+      context.setResponseLength?.(() => 0)
+      return
+    }
+    if (
+      event.type !== 'content_block_delta' ||
+      event.delta.type !== 'text_delta'
+    ) {
+      return
+    }
+    const charactersStreamed = event.delta.text.length
+    outputChars += charactersStreamed
+    context.setResponseLength?.(length => length + charactersStreamed)
+    const time = now()
+    if (time - lastReportedAt < COMPACT_PROGRESS_INTERVAL_MS) return
+    lastReportedAt = time
+    context.setSDKStatus?.('compacting', { compactProgress: { outputChars } })
+  }
+}
+
+// Each completed content block becomes an assistant message. Skip empty text
+// only within the same response: a blank continuation must not revive text
+// from an earlier, possibly truncated API attempt.
+function selectCompactSummaryResponse(
+  current: AssistantMessage | undefined,
+  next: AssistantMessage,
+): AssistantMessage {
+  if (!current || next.isApiErrorMessage || next.message.content.some(
+    block => block.type !== 'text' || block.text.trim() !== '',
+  )) return next
+  if (current.isApiErrorMessage) return current
+  if (current.message.id !== next.message.id || current.requestId !== next.requestId) return next
+  // message_delta updates only the last block. Keep its terminal metadata with
+  // the selected text, without changing the fork's messages or transcript.
+  return { ...current, message: { ...next.message, content: current.message.content } }
+}
+
+export async function streamCompactSummary({
   messages,
   summaryRequest,
   appState,
   context,
   preCompactTokenCount,
   cacheSafeParams,
+  apiAttemptBudget,
 }: {
   messages: Message[]
   summaryRequest: UserMessage
@@ -1143,6 +1326,7 @@ async function streamCompactSummary({
   context: ToolUseContext
   preCompactTokenCount: number
   cacheSafeParams: CacheSafeParams
+  apiAttemptBudget: ApiAttemptBudget
 }): Promise<AssistantMessage> {
   // When prompt cache sharing is enabled, use forked agent to reuse the
   // main conversation's cached prefix (system prompt, tools, context messages).
@@ -1170,31 +1354,46 @@ async function streamCompactSummary({
         context.setSDKStatus,
       )
     : undefined
+  const reportProgress = createCompactProgressReporter(context)
 
   try {
     if (promptCacheSharingEnabled) {
       try {
-        // DO NOT set maxOutputTokens here. The fork piggybacks on the main thread's
-        // prompt cache by sending identical cache-key params (system, tools, model,
-        // messages prefix, thinking config). Setting maxOutputTokens would clamp
-        // budget_tokens via Math.min(budget, maxOutputTokens-1) in claude.ts,
-        // creating a thinking config mismatch that invalidates the cache.
-        // The streaming fallback path (below) can safely set maxOutputTokensOverride
-        // since it doesn't share cache with the main thread.
+        // Leave maxOutputTokens unset unless the default allowance cannot fit.
+        // The fork piggybacks on the main thread's prompt cache by sending
+        // identical cache-key params (system, tools, model, messages prefix,
+        // thinking config), and setting maxOutputTokens would clamp budget_tokens
+        // via Math.min(budget, maxOutputTokens-1) in claude.ts, creating a
+        // thinking config mismatch that invalidates the cache. When the request
+        // would be rejected for size, a clamped fork still beats the fallback,
+        // which re-sends the whole context uncached under its own system prompt.
         const result = await runForkedAgent({
           promptMessages: [summaryRequest],
           cacheSafeParams,
           canUseTool: createCompactCanUseTool(),
           querySource: 'compact',
           forkLabel: 'compact',
+          maxOutputTokens: getCompactForkMaxOutputTokens(
+            preCompactTokenCount,
+            context.options.mainLoopModel,
+          ),
           maxTurns: 1,
           skipCacheWrite: true,
+          onStreamEvent: reportProgress,
           // Pass the compact context's abortController so user Esc aborts the
           // fork — same signal the streaming fallback uses at
           // `signal: context.abortController.signal` below.
-          overrides: { abortController: context.abortController },
+          overrides: {
+            abortController: context.abortController,
+            apiAttemptBudget,
+          },
         })
-        const assistantMsg = getLastAssistantMessage(result.messages)
+        if (context.abortController.signal.aborted) throw new APIUserAbortError()
+        const assistantMsg = result.messages.reduce<AssistantMessage | undefined>(
+          (current, message) => message.type === 'assistant'
+            ? selectCompactSummaryResponse(current, message) : current,
+          undefined,
+        )
         const assistantText = assistantMsg
           ? getAssistantMessageText(assistantMsg)
           : null
@@ -1224,6 +1423,21 @@ async function streamCompactSummary({
           }
           return assistantMsg
         }
+        // Refused for its size: the uncached fallback carries the same
+        // conversation and would be refused the same way. Hand the rejection
+        // back so the caller trims the oldest rounds instead.
+        if (assistantMsg && isCompactRequestTooLarge(assistantMsg)) {
+          return assistantMsg
+        }
+        // The fork's retries already spent the shared budget: a fallback would
+        // only re-send the full context again. Surface the fork's error.
+        if (assistantMsg && !hasApiAttemptsLeft(apiAttemptBudget)) {
+          logForDebugging(
+            'Compact cache sharing: API attempt budget spent, not falling back',
+            { level: 'warn' },
+          )
+          return assistantMsg
+        }
         logForDebugging(
           `Compact cache sharing: no text in response, falling back. Response: ${jsonStringify(assistantMsg)}`,
           { level: 'warn' },
@@ -1234,6 +1448,7 @@ async function streamCompactSummary({
           preCompactTokenCount,
         })
       } catch (error) {
+        if (context.abortController.signal.aborted) throw new APIUserAbortError()
         logError(error)
         logEvent('tengu_compact_cache_sharing_fallback', {
           reason:
@@ -1251,6 +1466,13 @@ async function streamCompactSummary({
     const maxAttempts = retryEnabled ? MAX_COMPACT_STREAMING_RETRIES : 1
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (!hasApiAttemptsLeft(apiAttemptBudget)) {
+        logForDebugging(
+          `Compact streaming: API attempt budget spent before attempt ${attempt}`,
+          { level: 'error' },
+        )
+        throw new Error(ERROR_MESSAGE_INCOMPLETE_RESPONSE)
+      }
       // Reset state for retry
       let hasStartedStreaming = false
       let response: AssistantMessage | undefined
@@ -1318,6 +1540,7 @@ async function streamCompactSummary({
           agents: context.options.agentDefinitions.activeAgents,
           mcpTools: [],
           effortValue: appState.effortValue,
+          apiAttemptBudget,
         },
       })
       const streamIter = streamingGen[Symbol.asyncIterator]()
@@ -1336,22 +1559,18 @@ async function streamCompactSummary({
           context.setStreamMode?.('responding')
         }
 
-        if (
-          event.type === 'stream_event' &&
-          event.event.type === 'content_block_delta' &&
-          event.event.delta.type === 'text_delta'
-        ) {
-          const charactersStreamed = event.event.delta.text.length
-          context.setResponseLength?.(length => length + charactersStreamed)
+        if (event.type === 'stream_event') {
+          reportProgress(event.event)
         }
 
         if (event.type === 'assistant') {
-          response = event
+          response = selectCompactSummaryResponse(response, event)
         }
 
         next = await streamIter.next()
       }
 
+      if (context.abortController.signal.aborted) throw new APIUserAbortError()
       if (response) {
         return response
       }
@@ -1389,6 +1608,34 @@ async function streamCompactSummary({
   } finally {
     clearInterval(activityInterval)
   }
+}
+
+/**
+ * Re-announce deferred tools, agent listings and MCP instructions after
+ * compaction. These are the same producers the per-turn attachment pipeline
+ * skips for lean, so a lean session never gains them through compaction.
+ */
+export function createPostCompactDeltaAttachments(
+  context: ToolUseContext,
+  messagesToKeep: Message[],
+  callSite: 'compact_full' | 'compact_partial',
+): AttachmentMessage[] {
+  if (getAgentProfile() === 'lean') return []
+  return [
+    ...getDeferredToolsDeltaAttachment(
+      context.options.tools,
+      context.options.mainLoopModel,
+      messagesToKeep,
+      { callSite },
+    ),
+    ...getAgentListingDeltaAttachment(context, messagesToKeep),
+    ...getMcpInstructionsDeltaAttachment(
+      context.options.mcpClients,
+      context.options.tools,
+      context.options.mainLoopModel,
+      messagesToKeep,
+    ),
+  ].map(attachment => createAttachmentMessage(attachment))
 }
 
 /**

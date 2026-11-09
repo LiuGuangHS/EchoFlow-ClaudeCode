@@ -13,6 +13,7 @@ import {
   type DriverId,
   type InstallationId,
   type InterruptResult,
+  type NewSessionInput,
   type RuntimeCapabilities,
   type RuntimeConnection,
   type RuntimeDriver,
@@ -20,6 +21,7 @@ import {
   type RuntimeExit,
   type RuntimeInstallation,
   type RuntimeSession,
+  type ResumeSessionInput,
   type UserTurn,
 } from './contract.js'
 
@@ -72,7 +74,8 @@ export type RuntimeHost = {
     cwd: string
     env?: Record<string, string | undefined>
   }): Promise<{ runId: string; connection: RuntimeConnection }>
-  openSession(input: { installationId: InstallationId; sessionId: string; cwd: string }): Promise<RuntimeSession>
+  openSession(input: NewSessionInput & { installationId: InstallationId }): Promise<RuntimeSession>
+  resumeSession(input: ResumeSessionInput & { installationId: InstallationId }): Promise<RuntimeSession>
   getSession(sessionId: string): RuntimeSession
   capabilitiesOf(sessionId: string): RuntimeCapabilities
   /** Throws `UnsupportedRuntimeCapabilityError` unless the engine claims the capability natively. */
@@ -110,6 +113,35 @@ export function createRuntimeHost(options: RuntimeHostOptions = {}): RuntimeHost
     const entry = sessions.get(sessionId)
     if (entry === undefined) throw new UnknownRuntimeSessionError(sessionId)
     return entry.session
+  }
+
+  async function openOrResumeSession(
+    installationId: InstallationId,
+    sessionId: string,
+    open: (connection: RuntimeConnection) => Promise<RuntimeSession>,
+  ): Promise<RuntimeSession> {
+    if (closing !== null) throw new RuntimeHostClosedError()
+    const entry = connections.get(installationId)
+    if (entry === undefined) throw new UnknownRuntimeInstallationError(installationId)
+    if (sessions.has(sessionId) || openingSessions.has(sessionId)) throw new RuntimeSessionAlreadyOpenError(sessionId)
+    const opening = (async () => {
+      const session = await open(entry.connection)
+      // The connection may have been replaced, or the host may have closed,
+      // while the engine was opening: such a session belongs to an engine
+      // nobody owns any more, so it is closed instead of registered.
+      if (connections.get(installationId)?.connection !== entry.connection || closing !== null) {
+        await session.close()
+        throw new UnknownRuntimeInstallationError(installationId)
+      }
+      sessions.set(sessionId, { session, installationId })
+      return session
+    })()
+    openingSessions.set(sessionId, opening)
+    try {
+      return await opening
+    } finally {
+      if (openingSessions.get(sessionId) === opening) openingSessions.delete(sessionId)
+    }
   }
 
   return {
@@ -162,29 +194,12 @@ export function createRuntimeHost(options: RuntimeHostOptions = {}): RuntimeHost
       }
     },
 
-    async openSession({ installationId, sessionId, cwd }) {
-      if (closing !== null) throw new RuntimeHostClosedError()
-      const entry = connections.get(installationId)
-      if (entry === undefined) throw new UnknownRuntimeInstallationError(installationId)
-      if (sessions.has(sessionId) || openingSessions.has(sessionId)) throw new RuntimeSessionAlreadyOpenError(sessionId)
-      const opening = (async () => {
-        const session = await entry.connection.openSession({ sessionId, cwd })
-        // The connection may have been replaced, or the host may have closed,
-        // while the engine was opening: such a session belongs to an engine
-        // nobody owns any more, so it is closed instead of registered.
-        if (connections.get(installationId)?.connection !== entry.connection || closing !== null) {
-          await session.close()
-          throw new UnknownRuntimeInstallationError(installationId)
-        }
-        sessions.set(sessionId, { session, installationId })
-        return session
-      })()
-      openingSessions.set(sessionId, opening)
-      try {
-        return await opening
-      } finally {
-        if (openingSessions.get(sessionId) === opening) openingSessions.delete(sessionId)
-      }
+    openSession({ installationId, ...sessionInput }) {
+      return openOrResumeSession(installationId, sessionInput.sessionId, connection => connection.openSession(sessionInput))
+    },
+
+    resumeSession({ installationId, ...sessionInput }) {
+      return openOrResumeSession(installationId, sessionInput.sessionId, connection => connection.resumeSession(sessionInput))
     },
 
     getSession: requireSession,

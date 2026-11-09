@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { isRemoteManagedSettingsEligible } from '../services/remoteManagedSettings/syncCache.js'
 import {
   activeProviderNeedsProxy,
@@ -9,7 +8,8 @@ import {
 import { ensureStandaloneProviderProxy } from '../server/proxy/standaloneProviderProxy.js'
 import { clearCACertsCache } from './caCerts.js'
 import { getGlobalConfig } from './config.js'
-import { getClaudeConfigHomeDir, isEnvTruthy } from './envUtils.js'
+import { isEnvTruthy } from './envUtils.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import {
   isProviderManagedEnvVar,
   SAFE_ENV_VARS,
@@ -70,13 +70,13 @@ function withoutHostManagedProviderVars(
 // Internal launch controls are never supplied by settings.env. This also
 // covers sdk-cli/OAuth sessions without host-managed provider routing.
 const HOST_TEAM_ENV_KEYS = new Set([
-  'ECHOFLOW_AGENT_TEAMS_ENABLED',
-  'ECHOFLOW_AGENT_TEAMS_DEFAULT',
+  'CC_HAHA_AGENT_TEAMS_ENABLED',
+  'CC_HAHA_AGENT_TEAMS_DEFAULT',
 ])
 
 const HOST_OWNED_ENV_KEYS = new Set([
   'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST',
-  'ECHOFLOW_LOCAL_ACCESS_TOKEN',
+  'CC_HAHA_LOCAL_ACCESS_TOKEN',
 ])
 
 function withoutHostOwnedEnvVars(
@@ -128,21 +128,21 @@ function filterSettingsEnv(
 }
 
 /**
- * Read env vars from EchoFlow-managed provider settings.
- * This file is written by ProviderService sync and
+ * Read env vars from <EchoFlow config root>/echoflow-code/settings.json (Haha-specific provider
+ * config). This file is written by ProviderService.syncToSettings() and
  * contains ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, model defaults, etc.
  * Returns an empty object if the file doesn't exist or is invalid.
  */
 function getEchoFlowSettingsEnv(): Record<string, string> {
-  const configDir = getClaudeConfigHomeDir()
+  const configDir = getEchoFlowConfigDir()
   const serverPort =
     !isEnvTruthy(process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST) &&
     activeProviderNeedsProxy(configDir)
       ? ensureStandaloneProviderProxy()
       : undefined
   try {
-    const echoFlowSettings = join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'settings.json')
-    const raw = readFileSync(echoFlowSettings, 'utf-8')
+    const ccHahaSettings = join(getEchoFlowInternalDir(configDir), 'settings.json')
+    const raw = readFileSync(ccHahaSettings, 'utf-8')
     const parsed = JSON.parse(raw) as { env?: Record<string, string> }
     const settingsEnv = normalizeLegacyDeepSeekManagedEnv(parsed.env ?? {}).env
     return mergeActiveProviderManagedEnv(settingsEnv, configDir, { serverPort })
@@ -209,9 +209,10 @@ export function applySafeConfigEnvironmentVariables(): void {
     )
   }
 
-  // EchoFlow provider isolation: apply env from EchoFlow-managed settings
-  // AFTER userSettings so provider config takes priority without touching
-  // the original Claude Code's settings.
+  // cc-haha provider isolation: apply env from <EchoFlow config root>/echoflow-code/settings.json
+  // AFTER userSettings so Haha-specific provider config takes priority over
+  // the original Claude Code's settings. This prevents Haha from polluting
+  // ~/.claude/settings.json while still allowing it to override provider vars.
   Object.assign(process.env, filterSettingsEnv(getEchoFlowSettingsEnv()))
 
   // Compute remote-managed-settings eligibility now, with userSettings and
@@ -255,8 +256,8 @@ export function applyConfigEnvironmentVariables(): void {
 
   Object.assign(process.env, filterSettingsEnv(getSettings_DEPRECATED()?.env))
 
-  // EchoFlow provider isolation: same as in applySafeConfigEnvironmentVariables,
-  // apply EchoFlow-specific env last so it overrides the original settings.
+  // cc-haha provider isolation: same as in applySafeConfigEnvironmentVariables,
+  // apply Haha-specific env last so it overrides the original settings.
   Object.assign(process.env, filterSettingsEnv(getEchoFlowSettingsEnv()))
 
   // Clear caches so agents are rebuilt with the new env vars

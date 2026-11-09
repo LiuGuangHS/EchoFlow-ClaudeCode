@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, spyOn, test } from 'bun:test'
+import { afterAll, beforeAll, afterEach, describe, expect, spyOn, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PDF_MAX_PAGES_PER_READ } from '../../constants/apiLimits.js'
 import type { ToolUseContext } from '../../Tool.js'
 import { getEmptyToolPermissionContext } from '../../Tool.js'
+import { decodeShellOutput } from '../../utils/shell/outputEncoding.js'
+import { getToolResultsDir } from '../../utils/toolResultStorage.js'
 import { FileReadTool, readImageWithTokenBudget } from './FileReadTool.js'
 import { getImageCreator, getImageProcessor } from './imageProcessor.js'
 import * as imageResizer from '../../utils/imageResizer.js'
@@ -20,6 +22,56 @@ function makeToolUseContext(): ToolUseContext {
 }
 
 const temporaryDirectories: string[] = []
+let isolatedConfig: string
+const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
+beforeAll(async () => {
+  isolatedConfig = await mkdtemp(join(tmpdir(), 'file-read-test-config-'))
+  process.env.CLAUDE_CONFIG_DIR = isolatedConfig
+})
+afterAll(async () => {
+  if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
+  else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
+  await rm(isolatedConfig, { recursive: true, force: true })
+})
+
+test.skipIf(process.platform !== 'win32')('Windows Read decodes persisted tool output while leaving project files as UTF-8', async () => {
+  const resultsDirectory = getToolResultsDir()
+  const result = join(resultsDirectory, 'legacy-output.txt')
+  const ordinaryFile = join(isolatedConfig, 'ordinary.txt')
+  const raw = Buffer.from([0xd6, 0xd0, 0xce, 0xc4])
+  await mkdir(resultsDirectory, { recursive: true })
+  await writeFile(result, raw)
+  await writeFile(ordinaryFile, raw)
+  const read = (path: string) => FileReadTool.call({ file_path: path }, makeToolUseContext())
+  expect((await read(result)).data).toMatchObject({ file: { content: decodeShellOutput(raw).content } })
+  expect((await read(ordinaryFile)).data).toMatchObject({ file: { content: raw.toString('utf8') } })
+})
+
+test('uses the relocated managed upload for permissions and reading, preserving the original path input', async () => {
+  const current = await mkdtemp(join(tmpdir(), 'file-read-relocated-'))
+  temporaryDirectories.push(current)
+  const previous = process.env.CLAUDE_CONFIG_DIR
+  const previousSimple = process.env.CLAUDE_CODE_SIMPLE
+  process.env.CLAUDE_CONFIG_DIR = current
+  process.env.CLAUDE_CODE_SIMPLE = '1'
+  try {
+    const oldRoot = join(current, 'absent-original')
+    const oldPath = join(oldRoot, 'uploads', 'session', 'fixture.txt')
+    const newPath = join(current, 'uploads', 'session', 'fixture.txt')
+    await mkdir(join(current, 'uploads/session'), { recursive: true })
+    await mkdir(join(current, 'cc-haha'))
+    await writeFile(newPath, 'copied upload')
+    await writeFile(join(current, 'cc-haha/storage-relocations.json'), JSON.stringify({ version: 1, previousRoots: [oldRoot] }))
+    expect(FileReadTool.getPath({ file_path: oldPath })).toBe(newPath)
+    const result = await FileReadTool.call({ file_path: oldPath }, makeToolUseContext())
+    expect(result.data).toMatchObject({ type: 'text', file: { content: 'copied upload' } })
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previous
+    if (previousSimple === undefined) delete process.env.CLAUDE_CODE_SIMPLE
+    else process.env.CLAUDE_CODE_SIMPLE = previousSimple
+  }
+})
 
 test('uses the shared image processor for the final image compression fallback', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cc-haha-read-image-fallback-'))
@@ -116,7 +168,7 @@ describe('FileReadTool pages validation', () => {
 
 describe('FileReadTool Windows text fidelity', () => {
   test('preserves Unicode paths and literal tabs in model-facing output', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-read-'))
+    const root = await mkdtemp(join(tmpdir(), 'cc-haha-read-'))
     temporaryDirectories.push(root)
     const directory = join(root, '中文目录')
     const filePath = join(directory, 'Tab 样例.txt')

@@ -35,6 +35,7 @@ import {
   triggerFastModeCooldown,
 } from '../../utils/fastMode.js'
 import { isNonCustomOpusModel } from '../../utils/model/model.js'
+import { readProviderEnv } from '../../utils/model/providerEnvScope.js'
 import { disableKeepAlive } from '../../utils/proxy.js'
 import { sleep } from '../../utils/sleep.js'
 import type { ThinkingConfig } from '../../utils/thinking.js'
@@ -51,6 +52,9 @@ import {
   REPEATED_529_ERROR_MESSAGE,
 } from './errors.js'
 import { extractConnectionErrorDetails } from './errorUtils.js'
+import { isLocalProtocolProxy } from './outputBudget.js'
+import { StreamEndedEarlyError } from './streamFallback.js'
+import { StreamWatchdogTimeoutError } from './streamWatchdog.js'
 import { isOpenAIPolicyError } from '../openaiAuth/policyError.js'
 
 const abortError = () => new APIUserAbortError()
@@ -58,6 +62,7 @@ const abortError = () => new APIUserAbortError()
 const DEFAULT_MAX_RETRIES = 10
 const FLOOR_OUTPUT_TOKENS = 3000
 const MAX_529_RETRIES = 3
+const LOCAL_SERVICE_REFUSED_MAX_RETRIES = 2
 export const BASE_DELAY_MS = 500
 
 // Foreground query sources where the user IS blocking on the result — these
@@ -123,11 +128,49 @@ function isStaleConnectionError(error: unknown): boolean {
   return details?.code === 'ECONNRESET' || details?.code === 'EPIPE'
 }
 
+const CONNECTION_REFUSED_CODES = new Set(['ECONNREFUSED', 'ConnectionRefused'])
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+/**
+ * A service on this machine (Ollama, LM Studio, a Magpie gateway) that refuses
+ * the connection is not running. Our own `/proxy` stays out: it fronts a remote
+ * upstream and keeps the normal retries.
+ */
+export function isLocalServiceRefused(
+  error: unknown,
+  baseUrl = readProviderEnv('ANTHROPIC_BASE_URL'),
+): boolean {
+  if (!(error instanceof APIConnectionError)) return false
+  const code = extractConnectionErrorDetails(error)?.code
+  if (!code || !CONNECTION_REFUSED_CODES.has(code)) return false
+  if (!baseUrl || isLocalProtocolProxy(baseUrl)) return false
+  try {
+    return LOOPBACK_HOSTS.has(new URL(baseUrl).hostname)
+  } catch {
+    return false
+  }
+}
+
 export interface RetryContext {
   maxTokensOverride?: number
   model: string
   thinkingConfig: ThinkingConfig
   fastMode?: boolean
+  /** Set once the request is re-sent with its images replaced. */
+  withoutImages?: boolean
+}
+
+/**
+ * API attempts one logical operation may still make, shared by every layer
+ * that re-sends it: stream-open retries, mid-stream re-sends and a caller's own
+ * fallback request. Each layer has its own retry budget, so without a shared
+ * count a failing provider multiplies one large request across nested loops.
+ * Mirrors Claude Code's `compactionApiAttemptsLeft`.
+ */
+export type ApiAttemptBudget = { remaining: number }
+
+export function hasApiAttemptsLeft(budget: ApiAttemptBudget | undefined): boolean {
+  return budget === undefined || budget.remaining > 0
 }
 
 interface RetryOptions {
@@ -138,6 +181,8 @@ interface RetryOptions {
   fastMode?: boolean
   signal?: AbortSignal
   querySource?: QuerySource
+  /** Each attempt takes one; when none are left the last error is final. */
+  apiAttemptBudget?: ApiAttemptBudget
   /**
    * Pre-seed the consecutive 529 counter. Used when this retry loop is a
    * non-streaming fallback after a streaming 529 — the streaming 529 should
@@ -145,6 +190,12 @@ interface RetryOptions {
    * regardless of which request mode hit the overload.
    */
   initialConsecutive529Errors?: number
+  /**
+   * Whether a failure may be the provider refusing image input. If so, the
+   * request is re-sent once, immediately, with `withoutImages` set; the
+   * operation decides what that removes.
+   */
+  shouldRetryWithoutImages?: (error: unknown) => boolean
 }
 
 export class CannotRetryError extends Error {
@@ -174,12 +225,24 @@ export class FallbackTriggeredError extends Error {
 }
 
 /**
- * Raised inside the streaming path when a transient, server-side error arrives
+ * Which budget a mid-stream re-send draws from (see getMaxStreamRetries):
+ * - transport: the connection under the stream died or the body ended before
+ *   the response did (reset socket, proxy-reported truncation, clean EOF).
+ *   Nothing ruled on the request, so it gets the stream-creation budget.
+ * - watchdog: an idle stall. The attempt already burned its idle budget.
+ * - transient: an error the upstream itself reported inside the stream
+ *   (api_error/overloaded_error). It is the verdict a 500/529 status would
+ *   have carried at stream creation, so it gets that budget too.
+ */
+export type StreamRetryKind = 'transport' | 'watchdog' | 'transient'
+
+/**
+ * Raised inside the streaming path when a recoverable failure arrives
  * mid-stream (inside the 200 SSE body) and therefore bypasses withRetry — which
  * only wraps stream *creation*, not stream *consumption*. Caught by
- * withStreamRetry() in claude.ts, which re-establishes the stream and retries
- * the whole request. Carries the original SDK error so the retries-exhausted
- * path can surface a faithful API-error message.
+ * withStreamRetry() in streamRetry.ts, which re-establishes the stream and
+ * retries the whole request. Carries the original SDK error so the
+ * retries-exhausted path can surface a faithful API-error message.
  */
 export class RetriableStreamError extends Error {
   public readonly bufferedMessages: readonly AssistantMessage[]
@@ -187,6 +250,7 @@ export class RetriableStreamError extends Error {
   constructor(
     public readonly originalError: unknown,
     bufferedMessages: readonly AssistantMessage[] = [],
+    public readonly kind: StreamRetryKind = 'transient',
   ) {
     super(errorMessage(originalError))
     this.name = 'RetriableStreamError'
@@ -221,6 +285,11 @@ export function isRetryableStreamError(error: unknown): boolean {
   if (!message) {
     return false
   }
+  // An overflow reported inside the stream is still an overflow: re-sending
+  // the same request cannot succeed, compaction can.
+  if (isContextOverflowErrorText(message)) {
+    return false
+  }
   return (
     message.includes('"type":"api_error"') ||
     message.includes('"type":"overloaded_error"')
@@ -252,8 +321,7 @@ const STREAM_TRANSPORT_DISCONNECT_CODES = new Set([
  * socket connection was closed unexpectedly", which is not an APIError at all.
  * Hence the check walks the cause chain for a code instead of keying on type.
  *
- * Retrying is only safe behind a side-effect guard; see
- * shouldRetryStreamAfterTransportDisconnect.
+ * Retrying is only safe behind a replay guard; see getStreamRetryKind.
  */
 export function isRetryableStreamTransportError(error: unknown): boolean {
   if (isOpenAIPolicyError(error)) return false
@@ -262,43 +330,131 @@ export function isRetryableStreamTransportError(error: unknown): boolean {
 }
 
 /**
- * Decide whether a mid-stream transport disconnect can be recovered by
- * re-establishing the stream.
- *
- * SSE has no resume, so recovery is a full re-send — legitimate only while the
- * failed attempt is still side-effect-free. That is exactly the boundary
- * StreamAssistantCommitBuffer tracks: completed thinking/text stay buffered and
- * are discarded with the attempt, but once a tool_use block completes or
- * server-side tool activity starts, a re-send could duplicate a tool call
- * (#766 / inc-4258), so the disconnect must surface to the user instead.
- *
- * A watchdog abort is excluded because it has its own retry path with a
- * narrower safety check, and a user abort is not a fault to recover from.
+ * Error types the local provider proxy (src/server/proxy) writes into a 200
+ * SSE body when it loses the upstream response: `stream_error` when reading or
+ * converting the upstream body failed, `stream_truncated` when the upstream
+ * closed without a terminal finish_reason. Unlike api_error or
+ * invalid_request_error they report the connection, not a provider verdict.
  */
-export function shouldRetryStreamAfterTransportDisconnect(input: {
-  error: unknown
-  hasCrossedSideEffectBoundary: boolean
-  streamIdleAborted: boolean
-  signalAborted: boolean
-}): boolean {
+const PROXY_STREAM_TRANSPORT_ERROR_TYPES: ReadonlySet<string> = new Set([
+  'stream_error',
+  'stream_truncated',
+])
+
+function streamErrorEventType(error: unknown): unknown {
+  // The SDK raises an SSE `error` event as a status-less APIError whose
+  // `error` is the parsed event: { type: 'error', error: { type, message } }.
+  if (!(error instanceof APIError) || error.status !== undefined) return undefined
+  return (error.error as { error?: { type?: unknown } } | undefined)?.error?.type
+}
+
+export function isProxyStreamTransportError(error: unknown): boolean {
+  if (isOpenAIPolicyError(error)) return false
+  const type = streamErrorEventType(error)
+  return typeof type === 'string' && PROXY_STREAM_TRANSPORT_ERROR_TYPES.has(type)
+}
+
+/**
+ * The upstream rejected the request inside the stream. Unlike a broken stream,
+ * re-sending it without streaming only gets the same answer. A context
+ * overflow is such a rejection whatever event type carries it: the local proxy
+ * relays an OpenAI `data: {"error":...}` chunk as an api_error.
+ */
+export function isStreamRequestRejection(error: unknown): boolean {
+  const type = streamErrorEventType(error)
   return (
-    !input.hasCrossedSideEffectBoundary &&
-    !input.streamIdleAborted &&
-    !input.signalAborted &&
-    isRetryableStreamTransportError(input.error)
+    type === 'invalid_request_error' ||
+    (type !== undefined && isContextOverflowErrorText(errorMessage(error)))
   )
 }
 
 /**
- * Max times withStreamRetry() re-establishes a stream after a transient
- * mid-stream error (see RetriableStreamError). Small by default — a malformed
- * tool_call or a one-off blip usually clears on the first retry; this is not a
- * capacity backoff loop. Override with CLAUDE_STREAM_TRANSIENT_RETRY_MAX;
- * values are capped at 5 so a bad environment value cannot make it unbounded.
+ * Decide whether a failed streaming attempt can be discarded and re-sent as a
+ * new stream, and which budget that draws from. null leaves the failure to the
+ * non-streaming fallback or the terminal error path.
+ *
+ * SSE has no resume, so recovery is a full re-send — legitimate only while
+ * `canReplay` holds: nothing from the attempt was committed to the consumer and
+ * no server-side tool work began. Local tool_use blocks stay in
+ * StreamAssistantCommitBuffer until the response completes, so a completed but
+ * uncommitted tool call has not run and a re-send cannot duplicate it
+ * (#766 / inc-4258).
+ *
+ * Truncations the non-streaming fallback already recovers keep going there
+ * when it is available. A response that ended mid-way never did: the fallback
+ * would silently replace output the user already saw, while a stream retry
+ * first retracts it.
+ */
+export function getStreamRetryKind(input: {
+  error: unknown
+  canReplay: boolean
+  streamIdleAborted: boolean
+  signalAborted: boolean
+  nonStreamingFallbackAvailable: boolean
+  /** Whether an upstream-reported error may re-send this attempt. */
+  transientRetryAllowed: boolean
+}): StreamRetryKind | null {
+  const { error } = input
+  if (!input.canReplay || input.signalAborted || isOpenAIPolicyError(error)) {
+    return null
+  }
+  if (input.streamIdleAborted) {
+    return error instanceof StreamWatchdogTimeoutError &&
+      error.safeToRetryStream()
+      ? 'watchdog'
+      : null
+  }
+  if (isRetryableStreamTransportError(error)) return 'transport'
+  if (
+    error instanceof StreamEndedEarlyError ||
+    isProxyStreamTransportError(error)
+  ) {
+    const fallbackRecovers =
+      input.nonStreamingFallbackAvailable &&
+      !(error instanceof StreamEndedEarlyError && error.reason === 'incomplete')
+    return fallbackRecovers ? null : 'transport'
+  }
+  return input.transientRetryAllowed && isRetryableStreamError(error)
+    ? 'transient'
+    : null
+}
+
+const DEFAULT_MAX_STREAM_TRANSIENT_RETRIES = 2
+
+function getStreamTransientRetryOverride(): number | undefined {
+  const raw = parseInt(process.env.CLAUDE_STREAM_TRANSIENT_RETRY_MAX || '', 10)
+  return Number.isFinite(raw) && raw >= 0 ? Math.min(raw, 5) : undefined
+}
+
+/**
+ * Max times withStreamRetry() re-establishes a stream after a watchdog stall.
+ * Small by default — a stalled attempt already burned its idle budget.
+ * Override with CLAUDE_STREAM_TRANSIENT_RETRY_MAX; values are capped at 5 so a
+ * bad environment value cannot make it unbounded.
  */
 export function getMaxStreamTransientRetries(): number {
-  const raw = parseInt(process.env.CLAUDE_STREAM_TRANSIENT_RETRY_MAX || '', 10)
-  return Number.isFinite(raw) && raw >= 0 ? Math.min(raw, 5) : 2
+  return getStreamTransientRetryOverride() ?? DEFAULT_MAX_STREAM_TRANSIENT_RETRIES
+}
+
+/**
+ * Retry budget for one kind of mid-stream failure. A transport failure never
+ * got an answer, and an upstream-reported api_error/overloaded_error is the
+ * answer a 500/529 at stream creation would have given, so both get the budget
+ * of a stream that failed to open (CLAUDE_CODE_MAX_RETRIES, default 10).
+ * Otherwise a relay that reports "overloaded" inside its 200 SSE body ends the
+ * turn within two seconds, while the same error as a status waits minutes. An
+ * explicit CLAUDE_STREAM_TRANSIENT_RETRY_MAX also caps it, so 0 still disables
+ * every mid-stream retry.
+ */
+export function getMaxStreamRetries(kind: StreamRetryKind): number {
+  if (kind === 'watchdog') return getMaxStreamTransientRetries()
+  const configured = getDefaultMaxRetries()
+  const apiRetries =
+    Number.isFinite(configured) && configured >= 0
+      ? configured
+      : DEFAULT_MAX_RETRIES
+  const override = getStreamTransientRetryOverride()
+  return override === undefined ? apiRetries : Math.min(override, apiRetries)
 }
 
 export async function* withRetry<T>(
@@ -323,6 +479,15 @@ export async function* withRetry<T>(
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
     if (options.signal?.aborted) {
       throw new APIUserAbortError()
+    }
+    if (options.apiAttemptBudget) {
+      if (options.apiAttemptBudget.remaining <= 0) {
+        throw new CannotRetryError(
+          lastError ?? new Error('No API attempts left for this request'),
+          retryContext,
+        )
+      }
+      options.apiAttemptBudget.remaining--
     }
 
     // Capture whether fast mode is active before this attempt
@@ -446,6 +611,14 @@ export async function* withRetry<T>(
         continue
       }
 
+      if (
+        !retryContext.withoutImages &&
+        options.shouldRetryWithoutImages?.(error)
+      ) {
+        retryContext.withoutImages = true
+        continue
+      }
+
       // Non-foreground sources bail immediately on 529 — no retry amplification
       // during capacity cascades. User never sees these fail.
       if (is529Error(error) && !shouldRetry529(options.querySource)) {
@@ -500,7 +673,19 @@ export async function* withRetry<T>(
       // Only retry if the error indicates we should
       const persistent =
         isPersistentRetryEnabled() && isTransientCapacityError(error)
-      if (attempt > maxRetries && !persistent) {
+      if (
+        (attempt > maxRetries && !persistent) ||
+        !hasApiAttemptsLeft(options.apiAttemptBudget)
+      ) {
+        throw new CannotRetryError(error, retryContext)
+      }
+
+      // Backing off for minutes only hides that a local service is closed;
+      // a couple of quick tries are enough for a momentary blip.
+      if (
+        attempt > LOCAL_SERVICE_REFUSED_MAX_RETRIES &&
+        isLocalServiceRefused(error)
+      ) {
         throw new CannotRetryError(error, retryContext)
       }
 
@@ -860,6 +1045,13 @@ function shouldRetry(error: APIError): boolean {
     return true
   }
 
+  // A context overflow replays the same oversized prompt on every attempt,
+  // whatever status a gateway wraps it in (a 401 in #1162, a 500 from relays).
+  // Fail fast so the overflow surfaces and compaction can react instead.
+  if (error.status !== 429 && isContextOverflowErrorText(error.message)) {
+    return false
+  }
+
   // Note this is not a standard header.
   const shouldRetryHeader = error.headers?.get('x-should-retry')
 
@@ -903,12 +1095,6 @@ function shouldRetry(error: APIError): boolean {
   // Clear API key cache on 401 and allow retry.
   // OAuth token handling is done in the main retry loop via handleOAuth401Error.
   if (error.status === 401) {
-    // Some gateways wrap context-overflow rejections in a 401 (#1162).
-    // Retrying just replays the same oversized prompt — fail fast so the
-    // overflow surfaces and compaction can react instead.
-    if (isContextOverflowErrorText(error.message)) {
-      return false
-    }
     clearApiKeyHelperCache()
     return true
   }

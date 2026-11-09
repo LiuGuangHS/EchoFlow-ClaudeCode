@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
-import { constants } from 'node:fs'
 import * as fs from 'node:fs/promises'
+import { constants } from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import {
@@ -15,7 +15,7 @@ describe('background task notification persistence', () => {
 
   beforeEach(async () => {
     previousConfigDir = process.env.CLAUDE_CONFIG_DIR
-    configDir = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-code-task-notification-'))
+    configDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-task-notification-'))
     process.env.CLAUDE_CONFIG_DIR = configDir
     await fs.mkdir(path.join(configDir, 'projects'), { recursive: true })
   })
@@ -68,38 +68,7 @@ describe('background task notification persistence', () => {
       result: 'Background verification passed',
       timestamp: '2026-07-18T00:01:00.000Z',
     }])
-    expect(await fs.readFile(transcriptPath, 'utf8')).toContain('"type":"echoflow-code-task-notification"')
-  })
-
-  it('restores a legacy task notification without rewriting its transcript entry', async () => {
-    const sessionId = crypto.randomUUID()
-    const projectDir = path.join(configDir, 'projects', '-tmp-legacy-task-notification')
-    const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`)
-    const legacyEntry = {
-      type: 'echoflow-code-task-notification',
-      isMeta: true,
-      timestamp: '2026-07-18T00:00:00.000Z',
-      taskNotification: {
-        taskId: 'legacy-agent-task',
-        toolUseId: 'legacy-agent-tool',
-        status: 'completed',
-        summary: 'Legacy task completed',
-      },
-    }
-    const rawTranscript = `${JSON.stringify(legacyEntry)}\n`
-    await fs.mkdir(projectDir, { recursive: true })
-    await fs.writeFile(transcriptPath, rawTranscript, 'utf8')
-
-    const service = new SessionService()
-
-    expect(await service.getSessionTaskNotifications(sessionId)).toEqual([{
-      taskId: 'legacy-agent-task',
-      toolUseId: 'legacy-agent-tool',
-      status: 'completed',
-      summary: 'Legacy task completed',
-      timestamp: '2026-07-18T00:00:00.000Z',
-    }])
-    expect(await fs.readFile(transcriptPath, 'utf8')).toBe(rawTranscript)
+    expect(await fs.readFile(transcriptPath, 'utf8')).toContain('"type":"cc-haha-task-notification"')
   })
 
   it('aborts and drains an in-flight task append before clearing the transcript', async () => {
@@ -158,7 +127,7 @@ describe('background task notification persistence', () => {
     await append
 
     const cleared = await fs.readFile(transcriptPath, 'utf8')
-    expect(cleared).not.toContain('echoflow-code-task-notification')
+    expect(cleared).not.toContain('cc-haha-task-notification')
     expect(cleared).not.toContain('agent-task-clear-race')
     expect(cleared).toContain('"type":"session-meta"')
   })
@@ -184,9 +153,7 @@ describe('background task notification persistence', () => {
     })
     spyOn(fs, 'open').mockImplementation(async (...args) => {
       const handle = await realOpen(...args)
-      const flags = args[1]
-      const isAppend = typeof flags === 'number' && (flags & constants.O_APPEND) !== 0
-      if (!isAppend) return handle
+      if (typeof args[1] !== 'number' || (args[1] & constants.O_APPEND) === 0) return handle
       appendAttempts++
       if (appendAttempts > 1) return handle
       const realClose = handle.close.bind(handle)
@@ -262,6 +229,101 @@ describe('background task notification persistence', () => {
       summary: 'Legacy task completed',
       timestamp: '2026-07-17T00:00:00.000Z',
     }])
+  })
+
+  it('restores terminal notifications the CLI recorded as queued attachments or queue operations', async () => {
+    const sessionId = crypto.randomUUID()
+    const projectDir = path.join(configDir, 'projects', '-tmp-attachment-notification')
+    const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`)
+    await fs.mkdir(projectDir, { recursive: true })
+    const notificationXml = (taskId: string, toolUseId: string, status: string) =>
+      `<task-notification>\n<task-id>${taskId}</task-id>\n<tool-use-id>${toolUseId}</tool-use-id>\n<output-file>/tmp/tasks/${taskId}.output</output-file>\n<status>${status}</status>\n<summary>Background command "Install desktop dependencies" ${status} (exit code 0)</summary>\n</task-notification>`
+    // A notification drained mid-turn is written as an attachment, not a user turn
+    // (official CLI 2.1.288 shape); its prompt may also be a content-block array.
+    const entries = [
+      {
+        type: 'queue-operation',
+        operation: 'enqueue',
+        timestamp: '2026-10-05T10:52:39.100Z',
+        sessionId,
+        content: notificationXml('bdlrow0cg', 'toolu_bash_1', 'completed'),
+      },
+      {
+        type: 'attachment',
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-10-05T10:52:39.100Z',
+        attachment: {
+          type: 'queued_command',
+          prompt: notificationXml('bdlrow0cg', 'toolu_bash_1', 'completed'),
+          commandMode: 'task-notification',
+          origin: { kind: 'task-notification', producer: 'session-task' },
+        },
+      },
+      {
+        type: 'attachment',
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-10-05T11:00:00.000Z',
+        attachment: {
+          type: 'queued_command',
+          prompt: [{ type: 'text', text: notificationXml('b2', 'toolu_bash_2', 'killed') }],
+          commandMode: 'task-notification',
+        },
+      },
+      {
+        // Queued but never delivered: the session exited before draining it.
+        type: 'queue-operation',
+        operation: 'enqueue',
+        timestamp: '2026-10-05T11:02:00.000Z',
+        sessionId,
+        content: notificationXml('b3', 'toolu_bash_3', 'failed'),
+      },
+      {
+        type: 'queue-operation',
+        operation: 'remove',
+        timestamp: '2026-10-05T11:03:00.000Z',
+        sessionId,
+      },
+      {
+        // A prompt the user typed while a turn was running stays a prompt.
+        type: 'attachment',
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-10-05T11:01:00.000Z',
+        attachment: {
+          type: 'queued_command',
+          prompt: notificationXml('typed', 'toolu_typed', 'completed'),
+          commandMode: 'prompt',
+        },
+      },
+    ]
+    await fs.writeFile(transcriptPath, `${entries.map(entry => JSON.stringify(entry)).join('\n')}\n`, 'utf8')
+
+    const service = new SessionService()
+    expect(await service.getSessionTaskNotifications(sessionId)).toEqual([
+      {
+        taskId: 'bdlrow0cg',
+        toolUseId: 'toolu_bash_1',
+        status: 'completed',
+        summary: 'Background command "Install desktop dependencies" completed (exit code 0)',
+        outputFile: '/tmp/tasks/bdlrow0cg.output',
+        timestamp: '2026-10-05T10:52:39.100Z',
+      },
+      {
+        taskId: 'b2',
+        toolUseId: 'toolu_bash_2',
+        status: 'stopped',
+        summary: 'Background command "Install desktop dependencies" killed (exit code 0)',
+        outputFile: '/tmp/tasks/b2.output',
+        timestamp: '2026-10-05T11:00:00.000Z',
+      },
+      {
+        taskId: 'b3',
+        toolUseId: 'toolu_bash_3',
+        status: 'failed',
+        summary: 'Background command "Install desktop dependencies" failed (exit code 0)',
+        outputFile: '/tmp/tasks/b3.output',
+        timestamp: '2026-10-05T11:02:00.000Z',
+      },
+    ])
   })
 
   it('restores workflow run identity from task-notification transcript turns', async () => {

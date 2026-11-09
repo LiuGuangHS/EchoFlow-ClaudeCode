@@ -1,19 +1,26 @@
 import * as fs from 'fs/promises'
+import { migrateScheduledTasks } from './scheduledTaskMigrations.js'
+import * as os from 'os'
 import * as path from 'path'
 import { randomBytes } from 'node:crypto'
-import {
-  normalizeLegacyDeepSeekManagedEnv,
-} from '../../utils/providerManagedEnvCompat.js'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir, ensureEchoFlowConfigRoot } from './echoFlowConfigRoot.js'
+import { normalizeLegacyDeepSeekManagedEnv } from '../../utils/providerManagedEnvCompat.js'
 import { isOpenAIOfficialProviderId } from './openaiOfficialProvider.js'
 import { isGrokOfficialProviderId } from './grokOfficialProvider.js'
 import {
+  isDeepSeekAccountProviderId,
+  migrateLegacyDeepSeekAccountModels,
+} from './deepseekAccountProvider.js'
+import {
   BUILT_IN_PROVIDER_IDS,
-  PROVIDER_OFFICIAL_MODEL_SETTINGS_SCHEMA_VERSION,
+  DEEPSEEK_ACCOUNT_PROVIDER_ID,
+  PROVIDER_DEEPSEEK_ACCOUNT_MODEL_IDS_SCHEMA_VERSION,
+  PROVIDER_ECHOFLOW_CREDENTIAL_SOURCE_SCHEMA_VERSION,
+  PROVIDER_IMAGE_PROTOCOL_SCHEMA_VERSION,
   PROVIDER_TOOL_SEARCH_OPT_IN_SCHEMA_VERSION,
 } from '../types/provider.js'
 
-export const CURRENT_PROVIDER_INDEX_SCHEMA_VERSION = PROVIDER_OFFICIAL_MODEL_SETTINGS_SCHEMA_VERSION
+export const CURRENT_PROVIDER_INDEX_SCHEMA_VERSION = PROVIDER_ECHOFLOW_CREDENTIAL_SOURCE_SCHEMA_VERSION
 
 type MigrationReport = {
   migratedEntries: string[]
@@ -24,6 +31,10 @@ type JsonObject = Record<string, unknown>
 
 let migrationPromise: Promise<MigrationReport> | null = null
 let migrationConfigDir: string | null = null
+
+function getConfigDir(): string {
+  return getEchoFlowConfigDir()
+}
 
 function isRecord(value: unknown): value is JsonObject {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -52,13 +63,20 @@ function isSavedProvider(value: unknown): value is JsonObject {
   )
 }
 
-function normalizeOfficialProviderModels(value: unknown): JsonObject {
+function normalizeOfficialProviderModels(value: unknown, sourceSchemaVersion: number): JsonObject {
   if (!isRecord(value)) return {}
   const normalized: JsonObject = { ...value }
   for (const id of BUILT_IN_PROVIDER_IDS) {
     if (!isProviderModels(value[id])) {
       delete normalized[id]
     }
+  }
+  const deepSeekAccountModels = normalized[DEEPSEEK_ACCOUNT_PROVIDER_ID]
+  if (
+    sourceSchemaVersion < PROVIDER_DEEPSEEK_ACCOUNT_MODEL_IDS_SCHEMA_VERSION &&
+    isRecord(deepSeekAccountModels)
+  ) {
+    normalized[DEEPSEEK_ACCOUNT_PROVIDER_ID] = migrateLegacyDeepSeekAccountModels(deepSeekAccountModels)
   }
   return normalized
 }
@@ -163,6 +181,34 @@ function migrateProvidersIndex(value: unknown): JsonObject {
     .map((provider) => sourceSchemaVersion < PROVIDER_TOOL_SEARCH_OPT_IN_SCHEMA_VERSION
       ? { ...provider, toolSearchEnabled: false }
       : provider)
+    .map((provider) => {
+      const credentialSource = provider.credentialSource
+      if (
+        !isRecord(credentialSource) ||
+        credentialSource.kind !== 'echoflow-token' ||
+        typeof credentialSource.tokenId !== 'string' ||
+        !credentialSource.tokenId.trim() ||
+        (typeof credentialSource.tokenName === 'string' && credentialSource.tokenName.trim().length > 0)
+      ) {
+        return provider
+      }
+      return {
+        ...provider,
+        credentialSource: { ...credentialSource, tokenName: provider.name },
+      }
+    })
+    .map((provider) => {
+      const imageGeneration = provider.imageGeneration
+      if (sourceSchemaVersion >= PROVIDER_IMAGE_PROTOCOL_SCHEMA_VERSION ||
+        !isRecord(imageGeneration) || typeof imageGeneration.model !== 'string' ||
+        !imageGeneration.model.trim() || imageGeneration.protocol !== undefined) {
+        return provider
+      }
+      return {
+        ...provider,
+        imageGeneration: { ...imageGeneration, protocol: 'openai_images' },
+      }
+    })
   const rawActiveId =
     typeof value.activeId === 'string'
       ? value.activeId
@@ -172,7 +218,8 @@ function migrateProvidersIndex(value: unknown): JsonObject {
   const activeId = rawActiveId && (
     providers.some((provider) => provider.id === rawActiveId) ||
     isOpenAIOfficialProviderId(rawActiveId) ||
-    isGrokOfficialProviderId(rawActiveId)
+    isGrokOfficialProviderId(rawActiveId) ||
+    isDeepSeekAccountProviderId(rawActiveId)
   )
     ? rawActiveId
     : null
@@ -183,7 +230,7 @@ function migrateProvidersIndex(value: unknown): JsonObject {
     activeId,
     providers,
     providerOrder: normalizeProviderOrder(rawProviderOrder, providers),
-    officialProviderModels: normalizeOfficialProviderModels(rawOfficialProviderModels),
+    officialProviderModels: normalizeOfficialProviderModels(rawOfficialProviderModels, sourceSchemaVersion),
   }
 }
 
@@ -192,12 +239,11 @@ function migrateManagedSettings(value: unknown): JsonObject {
   if (value.env !== undefined && !isRecord(value.env)) {
     return { ...value, env: {} }
   }
-  if (!isRecord(value.env)) return value
-
-  const deepSeekMigration = normalizeLegacyDeepSeekManagedEnv(value.env as Record<string, string>)
-  if (!deepSeekMigration.changed) return value
-
-  return { ...value, env: deepSeekMigration.env }
+  if (isRecord(value.env)) {
+    const { env, changed } = normalizeLegacyDeepSeekManagedEnv(value.env as Record<string, string>)
+    if (changed) return { ...value, env }
+  }
+  return value
 }
 
 async function migrateJsonEntry(
@@ -233,20 +279,84 @@ async function migrateJsonEntry(
   }
 }
 
+async function copyLegacyEchoFlowEntries(configDir: string, report: MigrationReport): Promise<void> {
+  const sourceDir = getEchoFlowInternalDir(path.join(os.homedir(), '.claude'))
+  const targetDir = getEchoFlowInternalDir(configDir)
+  if (path.resolve(sourceDir) === path.resolve(targetDir)) return
+
+  for (const name of ['providers.json', 'settings.json']) {
+    const sourcePath = path.join(sourceDir, name)
+    const targetPath = path.join(targetDir, name)
+    try {
+      const source = await readJsonFile(sourcePath)
+      if (source.missing) continue
+      if (!isRecord(source.value) || (name === 'providers.json' && !Array.isArray(source.value.providers))) {
+        report.failures.push(`legacy echoflow-code/${name}: invalid object`)
+        continue
+      }
+      let target
+      try {
+        target = await readJsonFile(targetPath)
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        await backupFile(targetPath, 'bak-before-migration')
+        await writeJsonFile(targetPath, source.value)
+        report.migratedEntries.push(`legacy echoflow-code/${name}`)
+        continue
+      }
+      if (!target.missing && (!isRecord(target.value) || (name === 'providers.json' && !Array.isArray(target.value.providers)))) {
+        await backupFile(targetPath, 'bak-before-migration')
+        await writeJsonFile(targetPath, source.value)
+        report.migratedEntries.push(`legacy echoflow-code/${name}`)
+        continue
+      }
+      if (!target.missing) {
+        const normalize = name === 'providers.json' ? migrateProvidersIndex : migrateManagedSettings
+        if (stableStringify(normalize(target.value)) !== stableStringify(normalize(source.value))) {
+          report.failures.push(`legacy echoflow-code/${name}: conflict; existing target retained`)
+        }
+        continue
+      }
+      await fs.mkdir(targetDir, { recursive: true })
+      // Exclusive copy keeps a concurrently created target authoritative and the source untouched.
+      await fs.copyFile(sourcePath, targetPath, (await import('node:fs')).constants.COPYFILE_EXCL)
+      report.migratedEntries.push(`legacy echoflow-code/${name}`)
+    } catch (error) {
+      report.failures.push(`legacy echoflow-code/${name}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+}
+
 async function runPersistentStorageMigrations(configDir: string): Promise<MigrationReport> {
   const report: MigrationReport = { migratedEntries: [], failures: [] }
-  const echoFlowDir = getEchoFlowInternalDir(configDir)
-
+  const ccHahaDir = getEchoFlowInternalDir(configDir)
   await ensureEchoFlowConfigRoot(configDir)
+  await copyLegacyEchoFlowEntries(configDir, report)
+
+  // Task definitions are user-authored data: never quarantine/reset malformed JSON.
+  const tasksPath = path.join(configDir, 'scheduled_tasks.json')
+  try {
+    const current = await readJsonFile(tasksPath)
+    if (!current.missing) {
+      const migrated = migrateScheduledTasks(current.value)
+      if (stableStringify(migrated) !== stableStringify(current.value)) {
+        await backupFile(tasksPath, 'bak-before-migration')
+        await writeJsonFile(tasksPath, migrated)
+        report.migratedEntries.push('scheduled_tasks.json')
+      }
+    }
+  } catch (error) {
+    report.failures.push(`scheduled_tasks.json: ${error instanceof Error ? error.message : String(error)}`)
+  }
 
   await migrateJsonEntry(
-    path.join(echoFlowDir, 'providers.json'),
+    path.join(ccHahaDir, 'providers.json'),
     'echoflow-code/providers.json',
     report,
     migrateProvidersIndex,
   )
   await migrateJsonEntry(
-    path.join(echoFlowDir, 'settings.json'),
+    path.join(ccHahaDir, 'settings.json'),
     'echoflow-code/settings.json',
     report,
     migrateManagedSettings,
@@ -256,7 +366,7 @@ async function runPersistentStorageMigrations(configDir: string): Promise<Migrat
 }
 
 export function ensurePersistentStorageUpgraded(): Promise<MigrationReport> {
-  const configDir = getEchoFlowConfigDir()
+  const configDir = getConfigDir()
   if (!migrationPromise || migrationConfigDir !== configDir) {
     migrationConfigDir = configDir
     migrationPromise = runPersistentStorageMigrations(configDir)

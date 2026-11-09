@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -240,58 +240,31 @@ describe('downloadAsset', () => {
   })
 
   it('falls back to the next source only after retries on the first are exhausted', async () => {
-    // A single source removes the HEAD-probe race from this assertion: with two
-    // mirrors the probe winner varies run to run, so counting GETs against the
-    // flaky mirror tested the race rather than the retry budget. The retry
-    // budget itself is proven by the GET count below.
-    const flaky = await serve({ breakAfter: 10_000, headDelayMs: 200 })
-    const good = await serve()
-    const destination = join(dir, 'file.bin')
-
-    const result = await downloadAsset(
-      assetFor(content, [`${flaky.origin}/file`]),
-      destination,
-      { maxRetries: 1, sleep: noSleep, probeTimeoutMs: 3000 },
-    ).catch(error => error)
-
-    // The mirror retried once (initial attempt + one retry) and then gave up;
-    // it did not retry a third time inside the same source.
-    expect(flaky.gets()).toHaveLength(2)
-    expect(result).toBeInstanceOf(VoiceDownloadError)
-    expect(result.failure.reason).toBe('network')
-  })
-
-  it('recovers on the next source once the first source exhausts its retries', async () => {
-    const flaky = await serve({ breakAfter: 10_000, headStatus: 503 })
+    const flaky = await serve({ breakAfter: 10_000 })
     const good = await serve()
     const destination = join(dir, 'file.bin')
 
     const result = await downloadAsset(
       assetFor(content, [`${flaky.origin}/file`, `${good.origin}/file`]),
       destination,
-      { maxRetries: 1, sleep: noSleep, probeTimeoutMs: 3000 },
+      { maxRetries: 1, sleep: noSleep, probeTimeoutMs: 1000 },
     )
 
-    // flaky's HEAD fails, so the probe excludes it and only good is tried.
     expect(result.source).toBe(good.origin)
     expect(Buffer.compare(await readFile(destination), content)).toBe(0)
-    expect(flaky.gets()).toHaveLength(0)
-    expect(good.gets()).toHaveLength(1)
+    expect(flaky.gets()).toHaveLength(2)
+    expect(good.gets().length).toBeGreaterThanOrEqual(1)
   })
 
   it('falls back on HTTP errors immediately', async () => {
-    // Single source: with two mirrors the HEAD-probe winner varies, so broken
-    // could be ordered last and never requested at all. The point here is that
-    // an HTTP error is terminal within a source (one GET, no retry).
     const broken = await serve({ status: 503 })
-    const error = await downloadAsset(
-      assetFor(content, [`${broken.origin}/file`]),
+    const good = await serve()
+    const result = await downloadAsset(
+      assetFor(content, [`${broken.origin}/file`, `${good.origin}/file`]),
       join(dir, 'file.bin'),
       { sleep: noSleep },
-    ).catch(caught => caught)
-    expect(error).toBeInstanceOf(VoiceDownloadError)
-    expect(error.failure.reason).toBe('http')
-    expect(error.failure.status).toBe(503)
+    )
+    expect(result.source).toBe(good.origin)
     expect(broken.gets()).toHaveLength(1)
   })
 
@@ -332,14 +305,68 @@ describe('downloadAsset', () => {
   })
 
   it('classifies a stalled transfer as a timeout and keeps what arrived', async () => {
-    const server = await serve({ stallAfter: 40_000, chunkDelayMs: 2 })
     const destination = join(dir, 'file.bin')
-    const error = await downloadAsset(assetFor(content, [`${server.origin}/file`]), destination, {
-      idleTimeoutMs: 150,
-      maxRetries: 0,
-    }).catch(e => e)
-    expect(error.failure.reason).toBe('timeout')
-    expect((await stat(partPathFor(destination))).size).toBeGreaterThan(0)
+    const idleTimeoutMs = 150
+    const prefixBytes = 40_000
+    const progress: number[] = []
+    const nativeSetTimeout = globalThis.setTimeout
+    const nativeClearTimeout = globalThis.clearTimeout
+    const idleTimers = new Map<ReturnType<typeof setTimeout>, () => void>()
+    const controlledTimers = new Set<ReturnType<typeof setTimeout>>()
+    let sequence = 0
+    const timerSpy = spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+      if (delay !== idleTimeoutMs) return nativeSetTimeout(callback, delay, ...args)
+      const timer = ++sequence as unknown as ReturnType<typeof setTimeout>
+      controlledTimers.add(timer)
+      idleTimers.set(timer, () => callback(...args))
+      return timer
+    })
+    const clearSpy = spyOn(globalThis, 'clearTimeout').mockImplementation(timer => {
+      if (controlledTimers.has(timer as ReturnType<typeof setTimeout>)) idleTimers.delete(timer as ReturnType<typeof setTimeout>)
+      else nativeClearTimeout(timer)
+    })
+
+    try {
+      const error = await downloadAsset(assetFor(content, ['http://stalled.test/file']), destination, {
+        idleTimeoutMs,
+        maxRetries: 0,
+        progressIntervalMs: 0,
+        fetch: async (_input, init) => {
+          const signal = init!.signal!
+          // HTTP may coalesce the old fixture's writes into one reader chunk.
+          // Since interruptions deliberately discard the last chunk, require
+          // two distinct chunks before testing that the earlier prefix survives.
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(content.subarray(0, prefixBytes))
+              controller.enqueue(content.subarray(prefixBytes, prefixBytes * 2))
+              signal.addEventListener('abort', () => controller.error(signal.reason), { once: true })
+            },
+          })
+          return new Response(body, { status: 200, headers: { 'content-length': String(content.length) } })
+        },
+        onProgress: event => {
+          progress.push(event.completedBytes)
+          if (event.completedBytes !== prefixBytes * 2) return
+          // Progress follows writeFully: expire the real idle callback only
+          // once both writes finished, without racing CI scheduling or disk I/O.
+          expect(idleTimers.size).toBe(1)
+          const [timer, expire] = idleTimers.entries().next().value!
+          idleTimers.delete(timer)
+          expire()
+        },
+      }).catch(e => e)
+
+      expect(error).toBeInstanceOf(VoiceDownloadError)
+      expect(error.failure.reason).toBe('timeout')
+      expect(progress).toEqual([0, prefixBytes, prefixBytes * 2])
+      expect((await stat(partPathFor(destination))).size).toBeGreaterThan(0)
+      expect(Buffer.compare(await readFile(partPathFor(destination)), content.subarray(0, prefixBytes))).toBe(0)
+      expect(await exists(destination)).toBe(false)
+    } finally {
+      timerSpy.mockRestore()
+      clearSpy.mockRestore()
+    }
   })
 
   it('classifies certificate and DNS failures and never leaks URL credentials', async () => {

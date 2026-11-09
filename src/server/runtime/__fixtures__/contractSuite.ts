@@ -1,13 +1,13 @@
 /**
- * The behavior every runtime driver must show. One suite, run against each
- * driver, so the contract is proven by the code that implements it rather than
- * by a document.
+ * Shared contract checks and a separate exact regression for the scripted fakes.
+ * Test fixtures demonstrate substitutability, not production engine support.
  */
 import { describe, expect, test } from 'bun:test'
 import {
   RuntimeBusyError,
   UnsupportedRuntimeCapabilityError,
   type RuntimeDriver,
+  type RuntimeEvent,
   type RuntimeSession,
 } from '../contract.js'
 
@@ -176,6 +176,188 @@ export function runRuntimeContractSuite(label: string, makeDriver: () => Runtime
       await connection.close()
     })
   })
+}
+
+/** Inputs are fixture scenarios, not magic prompts required of real engines. */
+export type RuntimeContractScenarios = {
+  text: string
+  approval: string
+  usage: string
+}
+
+export function runRuntimeCapabilitySuite(
+  label: string,
+  makeDriver: () => RuntimeDriver,
+  scenarios: RuntimeContractScenarios,
+): void {
+  async function withSession(check: (session: RuntimeSession, connection: Awaited<ReturnType<RuntimeDriver['start']>>) => Promise<void>) {
+    const connection = await makeDriver().start({ installation: {} as never, runId: 'run-contract', cwd: '/tmp' })
+    try {
+      const session = await connection.openSession({ sessionId: 'product-session', cwd: '/tmp' })
+      await check(session, connection)
+    } finally {
+      await connection.close()
+    }
+  }
+
+  describe(`generic runtime contract: ${label}`, () => {
+    test('connection and session expose explicit capabilities and an opaque native id', async () => {
+      await withSession(async (session, connection) => {
+        expect(typeof session.nativeSessionId).toBe('string')
+        expect(session.nativeSessionId.length).toBeGreaterThan(0)
+        // Native and product identifiers have different roles, not necessarily different bytes.
+        for (const snapshot of [session.capabilities, connection.capabilities]) {
+          for (const group of Object.values(snapshot)) {
+            for (const capability of Object.values(group)) {
+              expect(['native', 'unsupported']).toContain(capability.state)
+              expect(['handshake', 'protocol-baseline', 'version-assumption', 'extension']).toContain(capability.source)
+            }
+          }
+        }
+      })
+    })
+
+    test('text support is honest and events remain stamped across turns without prescribing chunks', async () => {
+      await withSession(async (session) => {
+        if (session.capabilities.prompt.text.state === 'unsupported') {
+          await expectUnsupported(() => runScriptedTurn(session, scenarios.text), 'prompt.text')
+          return
+        }
+        const first = await runScriptedTurn(session, scenarios.text)
+        const second = await runScriptedTurn(session, scenarios.text)
+        for (const events of [first, second]) {
+          expect(events.filter((event) => event.kind === 'turn.completed')).toHaveLength(1)
+          expect(events.some((event) => event.kind === 'assistant.delta' || event.kind === 'assistant.message')).toBe(true)
+        }
+        assertStampedEvents([...first, ...second])
+      })
+    })
+
+    test('busy is enforced while consuming a turn and releasing an iterator permits the next turn', async () => {
+      await withSession(async (session) => {
+        if (session.capabilities.prompt.text.state === 'unsupported') return
+        const iterator = session.send({ text: scenarios.text })[Symbol.asyncIterator]()
+        try {
+          expect((await iterator.next()).done).not.toBe(true)
+          // send may throw eagerly or on the first next() of a lazy iterator.
+          await expect((async () => {
+            for await (const _event of session.send({ text: scenarios.text })) { /* consume */ }
+          })()).rejects.toBeInstanceOf(RuntimeBusyError)
+        } finally {
+          await iterator.return?.()
+        }
+        expect((await runScriptedTurn(session, scenarios.text)).some((event) => event.kind === 'turn.completed')).toBe(true)
+      })
+    })
+
+    test('list and resume agree with their connection capability claims', async () => {
+      await withSession(async (session, connection) => {
+        const list = async () => {
+          const items = []
+          for await (const item of connection.listSessions({ cwd: '/tmp' })) items.push(item)
+          return items
+        }
+        if (connection.capabilities.session.list.state === 'unsupported') {
+          await expectUnsupported(list, 'session.list')
+        } else {
+          expect((await list()).some((item) => item.nativeSessionId === session.nativeSessionId)).toBe(true)
+        }
+        const resume = () => connection.resumeSession({
+          sessionId: 'resumed-product', nativeSessionId: session.nativeSessionId, cwd: '/tmp',
+        })
+        if (connection.capabilities.session.resume.state === 'unsupported') {
+          await expectUnsupported(resume, 'session.resume')
+        } else {
+          const resumed = await resume()
+          expect(resumed.nativeSessionId).toBe(session.nativeSessionId)
+          if (resumed.capabilities.prompt.text.state === 'native') {
+            const events = await runScriptedTurn(resumed, scenarios.text)
+            expect(events.every((event) => event.sessionId === 'resumed-product')).toBe(true)
+          }
+          await resumed.close()
+        }
+      })
+    })
+
+    test('image support accepts an image or rejects explicitly, never silently downgrades', async () => {
+      await withSession(async (session) => {
+        const image = async () => {
+          const events = []
+          for await (const event of session.send({ text: scenarios.text, attachments: [
+            { kind: 'image', mimeType: 'image/png', dataBase64: 'AA==' },
+          ] })) events.push(event)
+          return events
+        }
+        if (session.capabilities.prompt.image.state === 'unsupported') {
+          await expectUnsupported(image, 'prompt.image')
+        } else {
+          expect((await image()).some((event) => event.kind === 'turn.completed')).toBe(true)
+        }
+      })
+    })
+
+    test('a tool approval scenario follows the advertised capability', async () => {
+      await withSession(async (session) => {
+        if (session.capabilities.approval.tool.state === 'unsupported') {
+          await expectUnsupported(() => runScriptedTurn(session, scenarios.approval), 'approval.tool')
+          return
+        }
+        const events: RuntimeEvent[] = []
+        for await (const event of session.send({ text: scenarios.approval })) {
+          events.push(event)
+          if (event.kind === 'approval.requested') {
+            expect(event.request.kind).toBe('tool')
+            const option = event.request.options[0]
+            expect(option).toBeDefined()
+            await session.respondApproval(event.request.requestId, option!.id)
+          }
+        }
+        const requested = events.find((event) => event.kind === 'approval.requested')
+        expect(requested).toBeDefined()
+        expect(events.some((event) => event.kind === 'approval.resolved' && event.requestId === requested!.request.requestId)).toBe(true)
+        expect(events.some((event) => event.kind === 'turn.completed')).toBe(true)
+      })
+    })
+
+    test('usage is observed when advertised and not emitted when unsupported', async () => {
+      await withSession(async (session) => {
+        const events = await runScriptedTurn(session, scenarios.usage)
+        const usage = events.filter((event) => event.kind === 'usage')
+        if (session.capabilities.observability.usage.state === 'native') {
+          expect(usage.length).toBeGreaterThan(0)
+        } else {
+          expect(usage).toHaveLength(0)
+        }
+      })
+    })
+  })
+}
+
+async function expectUnsupported(operation: () => Promise<unknown>, capability: string) {
+  try {
+    await operation()
+  } catch (error) {
+    expect(error).toBeInstanceOf(UnsupportedRuntimeCapabilityError)
+    expect((error as Error).message).toContain(capability)
+    return
+  }
+  throw new Error(`expected explicit unsupported error for ${capability}`)
+}
+
+function assertStampedEvents(events: RuntimeEvent[]) {
+  expect(events.length).toBeGreaterThan(0)
+  expect(new Set(events.map((event) => event.eventId)).size).toBe(events.length)
+  let previous = 0
+  for (const event of events) {
+    expect(event.sessionId).toBe('product-session')
+    expect(event.runId).toBe('run-contract')
+    expect(event.eventId.length).toBeGreaterThan(0)
+    expect(Number.isInteger(event.seq)).toBe(true)
+    expect(event.seq).toBeGreaterThan(previous)
+    expect(Number.isFinite(event.at)).toBe(true)
+    expect(['engine', 'echoflow']).toContain(event.source)
+    previous = event.seq
+  }
 }
 
 async function waitUntil(condition: () => boolean) {

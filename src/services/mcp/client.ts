@@ -55,6 +55,7 @@ import { type MCPProgress, MCPTool } from '../../tools/MCPTool/MCPTool.js'
 import { createMcpAuthTool } from '../../tools/McpAuthTool/McpAuthTool.js'
 import { ReadMcpResourceTool } from '../../tools/ReadMcpResourceTool/ReadMcpResourceTool.js'
 import { createAbortController } from '../../utils/abortController.js'
+import { isAgentProfileMcpEnabled, LEAN_MCP_UNAVAILABLE } from '../../utils/agentProfile.js'
 import { count } from '../../utils/array.js'
 import {
   checkAndRefreshOAuthTokenIfNeeded,
@@ -133,6 +134,10 @@ import {
   wrapFetchWithStepUpDetection,
 } from './auth.js'
 import { markClaudeAiMcpConnected } from './claudeai.js'
+import {
+  killWindowsProcessTree,
+  type WindowsProcessTreeKillDeps,
+} from '../../utils/windowsProcessTree.js'
 import { getAllMcpConfigs, isMcpServerDisabled, isMcpServerDisabledForExecution } from './config.js'
 import { getCwd, runWithCwdOverride } from '../../utils/cwd.js'
 import { getMcpServerHeaders } from './headersHelper.js'
@@ -625,6 +630,55 @@ export function notifyMcpConnectionClosed(name: string, client: Client): void {
   onMcpConnectionClosed?.(name, client)
 }
 
+type StdioProcessTreeKillOverrides = WindowsProcessTreeKillDeps & {
+  platform?: NodeJS.Platform
+}
+let stdioProcessTreeKillOverrides: StdioProcessTreeKillOverrides = {}
+
+/** Test seam: platform and taskkill spawn used to stop a stdio server's tree. */
+export function __setStdioProcessTreeKillForTests(
+  overrides: StdioProcessTreeKillOverrides = {},
+): void {
+  stdioProcessTreeKillOverrides = overrides
+}
+
+function stopsStdioServersAsProcessTree(): boolean {
+  return (stdioProcessTreeKillOverrides.platform ?? process.platform) === 'win32'
+}
+
+// Same absolute failsafe as the per-pid signal escalation it replaces.
+const STDIO_SERVER_TREE_STOP_BUDGET_MS = 600
+
+/**
+ * Windows only. 'stopped': taskkill ended the tree. 'failed': taskkill could
+ * not run or reported an error, so the caller terminates the pid directly.
+ * 'pending': still running when the budget ran out; the caller does not signal
+ * the pid itself, since that could cut the tree out from under taskkill. The
+ * client.close() that follows still ends the wrapper after the SDK's own
+ * grace, by which time taskkill has normally finished.
+ */
+async function stopWindowsStdioServerTree(
+  name: string,
+  pid: number,
+): Promise<'stopped' | 'failed' | 'pending'> {
+  logMCPDebug(name, 'Stopping MCP server process tree with taskkill')
+  let budgetTimer: ReturnType<typeof setTimeout> | undefined
+  const outcome = await Promise.race([
+    killWindowsProcessTree(pid, {
+      env: stdioProcessTreeKillOverrides.env,
+      spawn: stdioProcessTreeKillOverrides.spawn,
+    }).then(stopped => (stopped ? 'stopped' : 'failed') as 'stopped' | 'failed'),
+    new Promise<'pending'>(resolve => {
+      budgetTimer = setTimeout(resolve, STDIO_SERVER_TREE_STOP_BUDGET_MS, 'pending')
+    }),
+  ])
+  clearTimeout(budgetTimer)
+  if (outcome !== 'stopped') {
+    logMCPDebug(name, `taskkill did not stop the MCP server process tree (${outcome})`)
+  }
+  return outcome
+}
+
 function clearServerFetchCaches(name: string, connectionKey: string): void {
   const key = `${connectionKey}-connected`
   fetchToolsForClient.cache.delete(key)
@@ -680,6 +734,17 @@ const connectToServerMemoized = memoize(
     const connectStartTime = Date.now()
     const attempt: ConnectionAttempt = { key: getServerCacheKey(name, serverRef) }
     connectionAttempts.set(attempt.key, attempt)
+    // The connected client's cleanup is registered only once the handshake and
+    // setup finish. A CLI that shuts down before then (a runtime stopped while
+    // it starts, or one the server no longer recognises) must still stop the
+    // server process it spawned, or that process outlives it. Before the spawn
+    // there is nothing to cancel yet: retiring the attempt makes the
+    // superseded-attempt check refuse to spawn it at all.
+    const unregisterStartupCancel = registerCleanup(async () => {
+      if (attempt.cleanup) return
+      if (attempt.cancel) return attempt.cancel()
+      if (connectionAttempts.get(attempt.key) === attempt) connectionAttempts.delete(attempt.key)
+    })
     let inProcessServer:
       | { connect(t: Transport): Promise<void>; close(): Promise<void> }
       | undefined
@@ -1123,13 +1188,24 @@ const connectToServerMemoized = memoize(
           ? { name, type: 'disabled', config: serverRef }
           : { name, type: 'failed', config: serverRef, error: 'MCP connection superseded' }
       }
-      attempt.cancel = async () => {
+      // Both a disable (clearServerCache) and a shutdown can cancel the same
+      // attempt; the process is stopped once.
+      let cancelling: Promise<void> | undefined
+      attempt.cancel = () => cancelling ??= (async () => {
         if (transport instanceof StdioClientTransport && transport.pid) {
-          try { process.kill(transport.pid, 'SIGTERM') } catch { /* already exited */ }
+          const pid = transport.pid
+          // Same as a connected server: on Windows a signal would end only the
+          // cmd.exe wrapper and orphan the server under it.
+          const treeStop = stopsStdioServersAsProcessTree()
+            ? await stopWindowsStdioServerTree(name, pid)
+            : null
+          if (treeStop === null || treeStop === 'failed') {
+            try { process.kill(pid, 'SIGTERM') } catch { /* already exited */ }
+          }
         }
         await client.close().catch(() => {})
         await inProcessServer?.close().catch(() => {})
-      }
+      })()
       const connectPromise = client.connect(transport)
       const timeoutPromise = new Promise<never>((_, reject) => {
         const timeoutId = setTimeout(() => {
@@ -1138,10 +1214,10 @@ const connectToServerMemoized = memoize(
             name,
             `Connection timeout triggered after ${elapsed}ms (limit: ${getConnectionTimeoutMs()}ms)`,
           )
-          if (inProcessServer) {
-            inProcessServer.close().catch(() => {})
-          }
-          transport.close().catch(() => {})
+          // Not transport.close() alone: on Windows that ends only the cmd.exe
+          // wrapper of a server still starting (a slow first `npx -y`), and the
+          // server under it would keep running with nobody left to stop it.
+          void attempt.cancel?.()
           reject(
             new TelemetrySafeError_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS(
               `MCP server "${name}" connection timed out after ${getConnectionTimeoutMs()}ms`,
@@ -1229,10 +1305,8 @@ const connectToServerMemoized = memoize(
             connectionDurationMs: elapsed,
           })
         }
-        if (inProcessServer) {
-          inProcessServer.close().catch(() => {})
-        }
-        transport.close().catch(() => {})
+        // Stops the whole stdio server tree on Windows, then closes the client.
+        void attempt.cancel?.()
         if (stderrOutput) {
           logMCPError(name, `Server stderr: ${stderrOutput}`)
         }
@@ -1240,8 +1314,7 @@ const connectToServerMemoized = memoize(
       }
 
       if (isMcpServerDisabledForExecution(name) || connectionAttempts.get(attempt.key) !== attempt) {
-        await client.close().catch(() => {})
-        await inProcessServer?.close().catch(() => {})
+        await attempt.cancel?.()
         return isMcpServerDisabledForExecution(name)
           ? { name, type: 'disabled', config: serverRef }
           : { name, type: 'failed', config: serverRef, error: 'MCP connection superseded' }
@@ -1513,12 +1586,23 @@ const connectToServerMemoized = memoize(
         // For stdio transports, explicitly terminate the child process with proper signals
         // NOTE: StdioClientTransport.close() only sends an abort signal, but many MCP servers
         // (especially Docker containers) need explicit SIGINT/SIGTERM signals to trigger graceful shutdown
-        if (serverRef.type === 'stdio') {
+        // A config without `type` is stdio too (the transport above was built from it).
+        if (serverRef.type === 'stdio' || !serverRef.type) {
           try {
             const stdioTransport = transport as StdioClientTransport
             const childPid = stdioTransport.pid
 
-            if (childPid) {
+            // Windows has no signals: every process.kill() below is a
+            // TerminateProcess on childPid alone. For `cmd /c npx …` that is
+            // cmd.exe, and the node server under it would be orphaned. Stop
+            // the whole tree instead; only a taskkill that could not run
+            // falls back to the per-pid escalation.
+            const windowsTreeStop =
+              childPid && stopsStdioServersAsProcessTree()
+                ? await stopWindowsStdioServerTree(name, childPid)
+                : null
+
+            if (childPid && (windowsTreeStop === null || windowsTreeStop === 'failed')) {
               logMCPDebug(name, 'Sending SIGINT to MCP server process')
 
               // First try SIGINT (like Ctrl+C)
@@ -1727,6 +1811,8 @@ const connectToServerMemoized = memoize(
         config: serverRef,
         error: errorMessage(error),
       }
+    } finally {
+      unregisterStartupCancel()
     }
   },
   getServerCacheKey,
@@ -1737,6 +1823,10 @@ const connectToServerMemoized = memoize(
 export const connectToServer = Object.assign(
   async (...args: Parameters<typeof connectToServerMemoized>): Promise<MCPServerConnection> => {
     const [name, config] = args
+    // Startup loads no MCP config for lean; this also covers later SDK/desktop
+    // controls (mcp_set_servers, toggle, reconnect, plugin reload): nothing is
+    // spawned, contacted or cached for a profile without an MCP runtime.
+    if (!isAgentProfileMcpEnabled()) return { name, config, type: 'failed', error: LEAN_MCP_UNAVAILABLE }
     if (isMcpServerDisabledForExecution(name)) return { name, config, type: 'disabled' }
     const pending = connectToServerMemoized(...args)
     let result = await pending
@@ -3583,6 +3673,12 @@ export async function setupSdkMcpClients(
 }> {
   const clients: MCPServerConnection[] = []
   const tools: Tool[] = []
+  if (!isAgentProfileMcpEnabled()) {
+    for (const [name, config] of Object.entries(sdkMcpConfigs)) {
+      clients.push({ type: 'failed', name, config: { ...config, scope: 'dynamic' }, error: LEAN_MCP_UNAVAILABLE })
+    }
+    return { clients, tools }
+  }
 
   // Connect to all servers in parallel
   const results = await Promise.allSettled(

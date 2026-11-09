@@ -42,9 +42,9 @@ const entries: RemoteCatalogEntry[] = [
 const allEntries = [...entries, ...DOMESTIC_ENTRIES, ...GLOBAL_ENTRIES]
 const domesticIds = new Set(['tencent-docs', 'jinshuju', 'pkulaw', 'datayes', 'tencent-search', 'amap', 'baidu-maps', 'tencent-maps', 'zhipu-search'])
 
-export const REMOTE_RECIPES: RemoteConnectorRecipe[] = allEntries.map(entry => ({ id: entry.id, pluginId: `office-${entry.id}@echoflow-connectors`, version: '1.0.0', endpoint: entry.endpoint, transport: 'http', auth: entry.auth }))
+export const REMOTE_RECIPES: RemoteConnectorRecipe[] = allEntries.map(entry => ({ id: entry.id, pluginId: `office-${entry.id}@haha-connectors`, version: '1.0.0', endpoint: entry.endpoint, transport: 'http', auth: entry.auth }))
 export const REMOTE_CONNECTORS: ConnectorDefinition[] = allEntries.map(entry => ({
-  id: entry.id, pluginId: `office-${entry.id}@echoflow-connectors`, version: '1.0.0', packageName: entry.name,
+  id: entry.id, pluginId: `office-${entry.id}@haha-connectors`, version: '1.0.0', packageName: entry.name,
   collection: 'services', region: entry.region ?? (domesticIds.has(entry.id) ? 'china' : 'global'),
   homepage: entry.source, credentialMode: 'isolated', transport: 'mcp',
   platforms: ['darwin-arm64', 'darwin-x64', 'win32-x64', 'win32-arm64'],

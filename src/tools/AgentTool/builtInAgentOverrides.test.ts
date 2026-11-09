@@ -29,8 +29,10 @@ let tmpDir: string
 
 /** Write the user settings file the resolver reads, then clear the caches. */
 function writeUserSettings(settings: unknown): void {
-  const settingsPath = path.join(tmpDir, 'settings.json')
-  fs.writeFileSync(settingsPath, JSON.stringify(settings ?? {}))
+  fs.writeFileSync(
+    path.join(tmpDir, 'settings.json'),
+    JSON.stringify(settings ?? {}),
+  )
   resetSettingsCache()
 }
 
@@ -128,6 +130,23 @@ describe('built-in agent overrides', () => {
 
     expect(effective('Explore').model).toBe(baseline('Explore').model)
     expect(effective('Explore').effort).toBe('high')
+  })
+
+  test('pins a provider together with the model saved beside it', () => {
+    writeUserSettings({
+      builtInAgentOverrides: {
+        Explore: { model: 'deepseek-v4-flash', provider: 'deepseek-direct', effort: 'max' },
+        Plan: { provider: 'deepseek-direct', effort: 'low' },
+      },
+    })
+
+    expect(effective('Explore')).toMatchObject({
+      model: 'deepseek-v4-flash', provider: 'deepseek-direct', effort: 'max',
+    })
+    // A provider means nothing without the model it was chosen for.
+    expect(effective('Plan').provider).toBeUndefined()
+    expect(effective('Plan').effort).toBe('low')
+    expect(baseline('Explore').provider).toBeUndefined()
   })
 
   test('treats model "inherit" as a real override, not as a reset', () => {

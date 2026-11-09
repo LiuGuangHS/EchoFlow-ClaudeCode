@@ -1,8 +1,8 @@
 /**
  * Provider types — preset-based provider configuration.
  *
- * Providers are stored in <EchoFlow AppData>/echoflow-code/providers.json as a lightweight index.
- * The active provider's env vars are written to <EchoFlow AppData>/echoflow-code/settings.json.
+ * Providers are stored in ~/.claude/cc-haha/providers.json as a lightweight index.
+ * The active provider's env vars are written to ~/.claude/settings.json.
  */
 
 import { z } from 'zod'
@@ -10,13 +10,19 @@ import { z } from 'zod'
 export const CLAUDE_OFFICIAL_PROVIDER_ID = 'claude-official'
 export const OPENAI_OFFICIAL_PROVIDER_ID = 'openai-official'
 export const GROK_OFFICIAL_PROVIDER_ID = 'grok-official'
+export const DEEPSEEK_ACCOUNT_PROVIDER_ID = 'deepseek-account'
 export const PROVIDER_TOOL_SEARCH_OPT_IN_SCHEMA_VERSION = 4
 export const PROVIDER_REQUEST_COMPATIBILITY_SCHEMA_VERSION = 5
 export const PROVIDER_OFFICIAL_MODEL_SETTINGS_SCHEMA_VERSION = 6
+export const PROVIDER_IMAGE_PROTOCOL_SCHEMA_VERSION = 7
+export const PROVIDER_DEEPSEEK_ACCOUNT_MODEL_IDS_SCHEMA_VERSION = 8
+export const PROVIDER_PROXY_CONFIG_SCHEMA_VERSION = 9
+export const PROVIDER_ECHOFLOW_CREDENTIAL_SOURCE_SCHEMA_VERSION = 10
 export const BUILT_IN_PROVIDER_IDS = [
   CLAUDE_OFFICIAL_PROVIDER_ID,
   OPENAI_OFFICIAL_PROVIDER_ID,
   GROK_OFFICIAL_PROVIDER_ID,
+  DEEPSEEK_ACCOUNT_PROVIDER_ID,
 ] as const
 
 export function isBuiltInProviderId(id: string | null | undefined): boolean {
@@ -29,6 +35,14 @@ export const ApiFormatSchema = z.enum([
   'openai_responses',  // OpenAI Responses API /v1/responses
 ])
 export type ApiFormat = z.infer<typeof ApiFormatSchema>
+
+/**
+ * Protocols a preset can route one model family to. Wider than ApiFormat: a
+ * gateway may serve a family only over a protocol no provider record is saved
+ * with (OpenCode Go serves Gemini only over Google `generateContent`).
+ */
+export const ModelApiFormatSchema = z.enum([...ApiFormatSchema.options, 'gemini'])
+export type ModelApiFormat = z.infer<typeof ModelApiFormatSchema>
 
 export const ProviderAuthStrategySchema = z.enum([
   'api_key',
@@ -43,6 +57,7 @@ export const ProviderRuntimeKindSchema = z.enum([
   'anthropic_compatible',
   'openai_oauth',
   'grok_oauth',
+  'deepseek_oauth',
 ])
 export type ProviderRuntimeKind = z.infer<typeof ProviderRuntimeKindSchema>
 
@@ -58,6 +73,7 @@ export const OfficialProviderModelsSchema = z.object({
   [CLAUDE_OFFICIAL_PROVIDER_ID]: ModelMappingSchema.optional(),
   [OPENAI_OFFICIAL_PROVIDER_ID]: ModelMappingSchema.optional(),
   [GROK_OFFICIAL_PROVIDER_ID]: ModelMappingSchema.optional(),
+  [DEEPSEEK_ACCOUNT_PROVIDER_ID]: ModelMappingSchema.optional(),
 }).passthrough()
 
 export const Model1mSupportSchema = z.object({
@@ -75,21 +91,14 @@ export const ModelContextWindowsSchema = z.record(
   z.string().min(1),
   z.number().int().min(16000).max(10000000),
 )
+/** Per-model reply limits, keyed like `modelContextWindows` (a gateway's catalog). */
+export const ModelMaxOutputTokensSchema = z.record(
+  z.string().min(1),
+  z.number().int().min(1024).max(10000000),
+)
 export const ToolSearchEnabledSchema = z.boolean()
 export const DisableExperimentalBetasSchema = z.boolean()
 export const SupportsNestedToolResultMediaSchema = z.boolean()
-export const AvailableModelSchema = z.object({
-  id: z.string().min(1),
-  ownedBy: z.string().optional(),
-})
-
-export const CredentialSourceSchema = z.object({
-  kind: z.literal('echoflow-token'),
-  endpoint: z.enum(['main', 'dedicated']),
-  tokenId: z.string().min(1),
-  tokenName: z.string().optional(),
-})
-export type CredentialSource = z.infer<typeof CredentialSourceSchema>
 
 const RequestCapabilitySchema = z.enum(['auto', 'supported', 'unsupported'])
 const OutputTokenBudgetSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
@@ -109,16 +118,49 @@ export const RequestCompatibilitySchema = z.object({
 export type RequestCompatibility = z.infer<typeof RequestCompatibilitySchema>
 
 export const ImageGenerationConfigSchema = z.object({
+  protocol: z.enum(['openai_images', 'gemini_native', 'xai_images']).optional(),
   model: z.string().trim().min(1),
   baseUrl: z.string().trim().optional(),
   apiKey: z.string().trim().optional(),
+}).passthrough()
+
+export const ProviderProxyModeSchema = z.enum(['follow_global', 'direct', 'manual'])
+export type ProviderProxyMode = z.infer<typeof ProviderProxyModeSchema>
+
+/**
+ * Per-provider network proxy override. Absent (or mode 'follow_global') means
+ * the provider keeps using the global NetworkSettings proxy — built-in
+ * official providers never grow this field, so they always follow the global
+ * setting by construction.
+ */
+export const ProviderProxyConfigSchema = z.object({
+  mode: ProviderProxyModeSchema,
+  url: z.string().trim().optional(),
+}).superRefine((config, ctx) => {
+  if (config.mode === 'manual' && !config.url) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['url'],
+      message: 'proxy.url is required when proxy.mode is manual',
+    })
+  }
 })
+export type ProviderProxyConfig = z.infer<typeof ProviderProxyConfigSchema>
+
+export const ProviderCredentialSourceSchema = z.object({
+  kind: z.literal('echoflow-token'),
+  endpoint: z.enum(['main', 'dedicated']),
+  tokenId: z.string().min(1),
+  tokenName: z.string().min(1),
+})
+export type ProviderCredentialSource = z.infer<typeof ProviderCredentialSourceSchema>
 
 export const SavedProviderSchema = z.object({
   id: z.string(),
   presetId: z.string(),
   name: z.string().min(1),
   apiKey: z.string(),
+  credentialSource: ProviderCredentialSourceSchema.optional(),
   authStrategy: ProviderAuthStrategySchema.optional(),
   baseUrl: z.string(),
   apiFormat: ApiFormatSchema.default('anthropic'),
@@ -127,16 +169,14 @@ export const SavedProviderSchema = z.object({
   model1mSupport: Model1mSupportSchema.optional(),
   autoCompactWindow: AutoCompactWindowSchema.optional(),
   modelContextWindows: ModelContextWindowsSchema.optional(),
+  modelMaxOutputTokens: ModelMaxOutputTokensSchema.optional(),
   toolSearchEnabled: ToolSearchEnabledSchema.optional(),
   disableExperimentalBetas: DisableExperimentalBetasSchema.optional(),
   supportsNestedToolResultMedia: SupportsNestedToolResultMediaSchema.optional(),
   requestCompatibility: RequestCompatibilitySchema.optional(),
   imageGeneration: ImageGenerationConfigSchema.optional(),
+  proxy: ProviderProxyConfigSchema.optional(),
   notes: z.string().optional(),
-  credentialSource: CredentialSourceSchema.optional(),
-  hasApiKey: z.boolean().optional(),
-  keyPreview: z.string().optional(),
-  availableModels: z.array(AvailableModelSchema).optional(),
 })
 
 export const ProvidersIndexSchema = z.object({
@@ -151,6 +191,7 @@ export const CreateProviderSchema = z.object({
   presetId: z.string().min(1),
   name: z.string().min(1),
   apiKey: z.string(),
+  credentialSource: ProviderCredentialSourceSchema.optional(),
   authStrategy: ProviderAuthStrategySchema.optional(),
   baseUrl: z.string(),
   apiFormat: ApiFormatSchema.default('anthropic'),
@@ -159,19 +200,20 @@ export const CreateProviderSchema = z.object({
   model1mSupport: Model1mSupportSchema.optional(),
   autoCompactWindow: AutoCompactWindowSchema.optional(),
   modelContextWindows: ModelContextWindowsSchema.optional(),
+  modelMaxOutputTokens: ModelMaxOutputTokensSchema.optional(),
   toolSearchEnabled: ToolSearchEnabledSchema.optional(),
   disableExperimentalBetas: DisableExperimentalBetasSchema.optional(),
   supportsNestedToolResultMedia: SupportsNestedToolResultMediaSchema.optional(),
   requestCompatibility: RequestCompatibilitySchema.optional(),
   imageGeneration: ImageGenerationConfigSchema.optional(),
+  proxy: ProviderProxyConfigSchema.optional(),
   notes: z.string().optional(),
-  credentialSource: CredentialSourceSchema.optional(),
-  availableModels: z.array(AvailableModelSchema).optional(),
 })
 
 export const UpdateProviderSchema = z.object({
   name: z.string().min(1).optional(),
   apiKey: z.string().optional(),
+  credentialSource: ProviderCredentialSourceSchema.nullable().optional(),
   authStrategy: ProviderAuthStrategySchema.optional(),
   baseUrl: z.string().optional(),
   apiFormat: ApiFormatSchema.optional(),
@@ -180,14 +222,14 @@ export const UpdateProviderSchema = z.object({
   model1mSupport: Model1mSupportSchema.nullable().optional(),
   autoCompactWindow: AutoCompactWindowSchema.nullable().optional(),
   modelContextWindows: ModelContextWindowsSchema.nullable().optional(),
+  modelMaxOutputTokens: ModelMaxOutputTokensSchema.nullable().optional(),
   toolSearchEnabled: ToolSearchEnabledSchema.optional(),
   disableExperimentalBetas: DisableExperimentalBetasSchema.optional(),
   supportsNestedToolResultMedia: SupportsNestedToolResultMediaSchema.optional(),
   requestCompatibility: RequestCompatibilitySchema.nullable().optional(),
   imageGeneration: ImageGenerationConfigSchema.nullable().optional(),
+  proxy: ProviderProxyConfigSchema.nullable().optional(),
   notes: z.string().optional(),
-  credentialSource: CredentialSourceSchema.nullable().optional(),
-  availableModels: z.array(AvailableModelSchema).nullable().optional(),
 })
 
 export const TestProviderSchema = z.object({
@@ -204,6 +246,7 @@ export const TestProviderSchema = z.object({
    * wire — the rules themselves stay server-side.
    */
   presetId: z.string().optional(),
+  proxy: ProviderProxyConfigSchema.optional(),
 })
 
 export const ReorderProvidersSchema = z.object({

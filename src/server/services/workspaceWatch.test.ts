@@ -45,7 +45,9 @@ function controlledWatchCallbacks(canonicalRoot: string) {
   const closeSpies: ReturnType<typeof spyOn<nativeFs.FSWatcher, 'close'>>[] = []
   let sequence = 0
   const watchSpy = spyOn(nativeFs, 'watch').mockImplementation(((filename, options, listener) => {
-    const watcher = nativeWatch(filename, options, listener)
+    // Only explicitly emitted callbacks belong to this deterministic batch.
+    // FSEvents can replay fixture creation after registration on its CF thread.
+    const watcher = nativeWatch(filename, options, () => {})
     listeners.set(path.relative(canonicalRoot, String(filename)).replace(/\\/g, '/'), listener as Listener)
     closeSpies.push(spyOn(watcher, 'close'))
     return watcher
@@ -167,34 +169,6 @@ describe('workspace watch coalescing contract', () => {
 })
 
 describe('bounded workspace watches', () => {
-  it('reports synchronous EISDIR watcher setup failures without leaking earlier watchers', async () => {
-    await fs.mkdir(path.join(root, 'other'))
-    const closed: nativeFs.FSWatcher[] = []
-    const nativeWatch = nativeFs.watch
-    const watchSpy = spyOn(nativeFs, 'watch').mockImplementation(((filename, options, listener) => {
-      if (String(filename).endsWith(`${path.sep}other`)) {
-        const error = new Error('watch target is a directory') as NodeJS.ErrnoException
-        error.code = 'EISDIR'
-        throw error
-      }
-      const watcher = nativeWatch(filename, options, listener)
-      const close = watcher.close.bind(watcher)
-      watcher.close = (() => { closed.push(watcher); return close() }) as typeof watcher.close
-      return watcher
-    }) as typeof nativeFs.watch)
-    const abort = controller()
-    const errors: Error[] = []
-    try {
-      const stop = await service.watchDirectories('task', ['src', 'other'], () => {}, abort.signal, error => errors.push(error))
-      expect(errors).toHaveLength(1)
-      expect(errors[0]?.message).toContain('directory')
-      expect(closed).toHaveLength(1)
-      stop()
-    } finally {
-      watchSpy.mockRestore()
-    }
-  })
-
   it('reports each restored ancestor so a missing multilevel target can be reattached and read again', async () => {
     await fs.mkdir(path.join(root, 'src/nested'))
     const filePath = path.join(root, 'src/nested/a.ts')
@@ -234,9 +208,17 @@ describe('bounded workspace watches', () => {
     await service.watchDirectories('task', ['src'], (event) => events.push(event), abort.signal)
     await fs.writeFile(path.join(root, 'src/a.ts'), 'one')
     await fs.writeFile(path.join(root, 'src/a.ts'), 'two')
+    // Observe both persistent states. Reconciliation can recover final state
+    // after a native callback gap, but cannot reconstruct an already vanished
+    // intermediate filename. The separate rapid-rename test covers that gap.
+    await until(() => events.some((event) => event.paths.includes('src/a.ts')))
     await fs.rename(path.join(root, 'src/a.ts'), path.join(root, 'src/b.ts'))
     await until(() => events.some((event) => event.paths.includes('src/b.ts')))
-    expect(events.flatMap((event) => event.paths)).toContain('src/a.ts')
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    const named = events.flatMap((event) => event.paths)
+    expect(named.every((changed) => changed === 'src/a.ts' || changed === 'src/b.ts')).toBe(true)
+    expect(named).toContain('src/a.ts')
+    expect(named).toContain('src/b.ts')
     expect(events.every((event) => new Set(event.paths).size === event.paths.length)).toBe(true)
     expect(events.every((event) => event.directories.includes('src'))).toBe(true)
 
@@ -245,6 +227,20 @@ describe('bounded workspace watches', () => {
     await fs.writeFile(path.join(root, 'src/after-close.ts'), 'closed')
     await new Promise((resolve) => setTimeout(resolve, 100))
     expect(events).toHaveLength(count)
+  })
+
+  it('invalidates the final state of rapid real write/write/rename even across native callback gaps', async () => {
+    const events: WorkspaceWatchChange[] = []
+    await service.watchDirectories('task', ['src'], event => events.push(event), controller().signal)
+    await fs.writeFile(path.join(root, 'src/a.ts'), 'one')
+    await fs.writeFile(path.join(root, 'src/a.ts'), 'two')
+    await fs.rename(path.join(root, 'src/a.ts'), path.join(root, 'src/b.ts'))
+    await until(() => events.some(event => event.paths.includes('src/b.ts')))
+    expect(events.every(event => event.directories.includes('src'))).toBe(true)
+    expect(events.every(event => new Set(event.paths).size === event.paths.length)).toBe(true)
+    const tree = await service.readTree('task', 'src')
+    expect(tree.entries.map(entry => entry.path)).toEqual(['src/b.ts'])
+    expect((await service.readFile('task', 'src/b.ts')).content).toBe('two')
   })
 
   it('does not recursively watch unopened descendants', async () => {

@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { ApiError } from '../middleware/errorHandler.js'
+import { powerActivityClock } from './powerActivityClock.js'
+import type { SessionRuntimeSelection, SessionModelOption, SessionUserInstruction, SessionDelegationInput, SessionDelegationBatch, SessionModelChangeInput, SessionModelChange } from '../../shared/sessionDelegation.js'
 
 export type CollaborationState = 'queued' | 'running' | 'idle' | 'blocked' | 'completed' | 'failed' | 'stopped'
 export type CollaborationMessage = {
@@ -23,8 +25,14 @@ export type CollaborationMember = {
   state: CollaborationState
   stopped: boolean
   result?: string
+  /** Observed successful root result; absent on historical records with no evidence. */
+  completedAt?: string
+  completionResultId?: string
   /** Display title, attached at snapshot time so tool results render names immediately. */
   title?: string
+  runtime?: SessionRuntimeSelection
+  continuationId?: string
+  continuationSourceSessionId?: string
 }
 export type CollaborationCreateInput = {
   requestId?: string
@@ -33,7 +41,9 @@ export type CollaborationCreateInput = {
   workDir?: string
   model?: string
   providerId?: string | null
+  runtime?: SessionRuntimeSelection
 }
+export type SessionCompletionState = Pick<CollaborationMember, 'state' | 'completedAt'> & { id: string }
 export type CollaborationCreateResult = { sessionId: string; workDir?: string; messageId: string; title?: string; state: CollaborationState; delivery: CollaborationMessage['status']; error?: string; errorCode?: string }
 export type SessionCollaborationDependencies = {
   statePath: string
@@ -41,12 +51,25 @@ export type SessionCollaborationDependencies = {
     list(options: { query?: string; limit: number; offset: number; signal?: AbortSignal }): Promise<unknown>
     read(sessionId: string, options: { cursor?: string; limit: number; signal?: AbortSignal }): Promise<unknown>
     exists(sessionId: string): Promise<boolean>
+    /** False must prove absence; unreadable caller storage must reject. */
+    existsForPower?(sessionId: string): Promise<boolean>
     /** Must use the caller's effective runtime and an isolated Git worktree. */
     create(callerSessionId: string, input: CollaborationCreateInput): Promise<{ sessionId: string; workDir?: string }>
     /** Optional display titles for snapshot members; keyed by session id. */
     titles?(sessionIds: string[]): Promise<Record<string, string>> | Record<string, string>
+    /** Names and worker session ids of the Agent Team members this session leads. */
+    teamMemberIdentities?(sessionId: string): Promise<string[]> | string[]
+    verifyUserInstruction?(sessionId: string, evidence: SessionUserInstruction): Promise<boolean>
+  }
+  models?: {
+    list(): Promise<SessionModelOption[]>
+    resolve(callerSessionId: string, input: { runtime?: SessionRuntimeSelection; model?: string; providerId?: string | null }): Promise<SessionRuntimeSelection>
+    validate(runtime: SessionRuntimeSelection): Promise<SessionRuntimeSelection>
+    parentRuntime(callerSessionId: string): Promise<SessionRuntimeSelection>
   }
   runtime: {
+    apply?(sessionId: string, runtime: SessionRuntimeSelection): Promise<void>
+    stopAndWait?(sessionId: string): Promise<void>
     getState?(sessionId: string): 'running' | 'blocked' | 'idle'
     /** Admit a foreground turn and return promptly; completion arrives through onSessionState. */
     start(sessionId: string, message: CollaborationMessage): Promise<void>
@@ -56,12 +79,14 @@ export type SessionCollaborationDependencies = {
   }
   now?: () => Date
 }
-type Store = { version: 1; revision: number; members: Record<string, CollaborationMember>; messages: CollaborationMessage[]; stopEpochs?: Record<string, number>; creations?: Record<string, { input: string; rootSessionId?: string; stopEpoch?: number; result?: { sessionId: string; workDir?: string; messageId: string; title?: string }; failure?: { message: string; code: string; status: number } }> }
+type StoredBatch = SessionDelegationBatch & { input: string; stopEpoch: number }
+type Store = { batches?: Record<string, StoredBatch>; modelChanges?: Record<string, SessionModelChange & { input: string; continuations?: string[]; stopEpoch?: number }>; version: 1; revision: number; members: Record<string, CollaborationMember>; messages: CollaborationMessage[]; stopEpochs?: Record<string, number>; creations?: Record<string, { input: string; rootSessionId?: string; stopEpoch?: number; result?: { sessionId: string; workDir?: string; messageId: string; title?: string }; failure?: { message: string; code: string; status: number } }> }
 /** Pages one ReadSession cursor chain may serve before it stops instead of walking the whole transcript. */
 export const COLLABORATION_READ_MAX_PAGES = 8
 export const COLLABORATION_WAIT_MIN_MS = 10_000
 export const COLLABORATION_WAIT_DEFAULT_MS = 30_000
 export const COLLABORATION_WAIT_MAX_MS = 300_000
+export const UNKNOWN_WAIT_TARGET_GUIDANCE = 'These are your Agent Team members, not collaboration sessions, so WaitSessions will never report on them. Their results, failures and questions arrive automatically as teammate messages. If you are waiting for teammates, end your turn instead of polling or sleeping.'
 export type CollaborationSnapshot = { revision: number; members: CollaborationMember[]; messages: CollaborationMessage[]; waitReason?: 'capacity_blocked'; guidance?: string; truncated?: boolean; omittedMessages?: number; omittedMembers?: number; requestedTimeoutMs?: number; timeoutMs?: number }
 
 /** Mirrors the host's customTitle rule so the tool result carries the same name the session list shows. */
@@ -122,15 +147,20 @@ export function migrateCollaborationStore(value: unknown): Store {
   for (const [id, member] of Object.entries(source.members)) {
     if (!member || typeof member !== 'object' || member.sessionId !== id || typeof member.rootSessionId !== 'string' ||
       !['queued', 'running', 'idle', 'blocked', 'completed', 'failed', 'stopped'].includes(member.state) ||
-      (member.title !== undefined && typeof member.title !== 'string')) throw new Error('Invalid collaboration member')
+      (member.title !== undefined && typeof member.title !== 'string') ||
+      (member.completedAt !== undefined && (typeof member.completedAt !== 'string' || !Number.isFinite(Date.parse(member.completedAt)))) ||
+      (member.completionResultId !== undefined && typeof member.completionResultId !== 'string')) throw new Error('Invalid collaboration member')
   }
   for (const message of source.messages) {
     if (!message || typeof message.id !== 'string' || typeof message.sourceSessionId !== 'string' ||
       typeof message.targetSessionId !== 'string' || typeof message.content !== 'string' ||
       !['queued', 'accepted', 'consumed', 'cancelled'].includes(message.status)) throw new Error('Invalid collaboration message')
   }
+  for (const field of ['batches', 'modelChanges'] as const) {
+    if (source[field] !== undefined && (!source[field] || typeof source[field] !== 'object' || Array.isArray(source[field]))) throw new Error(`Invalid collaboration ${field}`)
+  }
   const revision = Math.max(typeof source.revision === 'number' ? source.revision : 0, source.messages.length ? 1 : 0)
-  return { ...source, version: 1, revision,
+  return { ...source, version: 1, revision, batches: (source.batches ?? {}) as Store['batches'], modelChanges: (source.modelChanges ?? {}) as Store['modelChanges'],
     members: source.members as Store['members'], messages: source.messages.map(message => ({ ...message, revision: message.revision ?? revision })) as CollaborationMessage[] }
 }
 
@@ -141,11 +171,53 @@ export class SessionCollaborationService {
   private pumping: Promise<void> | null = null
   private listeners = new Set<() => void>()
   private userInputs = new Map<string, number>()
+  private heldCreations = new Set<string>()
+  private changeOperations = new Map<string, Promise<void>>()
   private userAdmissions = new Map<string, { token: symbol; previous: { state: CollaborationState; stopped: boolean } }>()
+  private missingDecisionCallers = new Set<string>()
 
   constructor(private readonly deps: SessionCollaborationDependencies) {
     this.ready = readFile(deps.statePath, 'utf8').then(text => { this.store = migrateCollaborationStore(JSON.parse(text)) })
       .catch(error => { if (error?.code !== 'ENOENT') throw error })
+  }
+
+  /** Startup reads decisions without recovering, persisting or dispatching work. */
+  async loadForPowerActivity(): Promise<void> {
+    await this.ready
+    const callers = [...new Set(Object.values(this.store.batches ?? {})
+      .filter(batch => ['review', 'failed', 'launching'].includes(batch.state)).map(batch => batch.callerSessionId))]
+    const missing = await Promise.all(callers.map(async id =>
+      !await (this.deps.sessions.existsForPower?.(id) ?? this.deps.sessions.exists(id)) ? id : null))
+    this.missingDecisionCallers = new Set(missing.filter((id): id is string => id !== null))
+  }
+
+  private pausesOnRecovery(member: CollaborationMember): boolean {
+    return ['running', 'queued', 'blocked'].includes(member.state)
+      || this.store.messages.some(message => message.targetSessionId === member.sessionId && (message.status === 'queued' || message.status === 'accepted'))
+  }
+
+  hasPendingPowerDecisions(beforeRecovery = false): boolean {
+    return Object.values(this.store.batches ?? {}).some(batch => {
+      // Recovery turns interrupted launches into retry decisions. Model-change
+      // failures, in contrast, are terminal notices with no confirm/retry action.
+      if (batch.state !== 'review' && batch.state !== 'failed' && !(beforeRecovery && batch.state === 'launching')) return false
+      const caller = this.store.members[batch.callerSessionId]
+      return !!caller && !caller.stopped && !this.missingDecisionCallers.has(batch.callerSessionId)
+        && !(beforeRecovery && this.pausesOnRecovery(caller))
+        && (this.store.stopEpochs?.[caller.rootSessionId] ?? 0) === batch.stopEpoch
+    })
+  }
+
+  hasPendingPowerWork(): boolean {
+    return this.pumping !== null || this.userAdmissions.size > 0 || this.changeOperations.size > 0
+      || this.hasPendingPowerDecisions()
+      || Object.values(this.store.batches ?? {}).some(batch => batch.state === 'launching')
+      || Object.values(this.store.modelChanges ?? {}).some(change => change.state === 'pending' || change.state === 'applying')
+      || this.store.messages.some(message => {
+        const member = this.store.members[message.targetSessionId]
+        return member && !member.stopped && !message.error
+          && (message.status === 'queued' || message.status === 'accepted')
+      })
   }
 
   private async mutate<T>(fn: () => T): Promise<T> {
@@ -156,6 +228,7 @@ export class SessionCollaborationService {
       try {
         const result = fn()
         if (JSON.stringify(previous) === JSON.stringify(this.store)) return structuredClone(result)
+        powerActivityClock.changed()
         this.store.revision++
         const previousMessages = new Map(previous.messages.map(message => [message.id, JSON.stringify(message)]))
         for (const message of this.store.messages) {
@@ -189,6 +262,320 @@ export class SessionCollaborationService {
       createdAt: (this.deps.now?.() ?? new Date()).toISOString() }
     this.store.messages.push(message)
     return message
+  }
+
+  async getModels(): Promise<SessionModelOption[]> { return this.deps.models?.list() ?? [] }
+
+  async getMemberRuntimes(callerSessionId: string): Promise<Array<{ sessionId: string; runtime?: SessionRuntimeSelection; state: CollaborationState; paused: boolean; error?: string }>> {
+    const snapshot = await this.groupStatus(callerSessionId)
+    return Promise.all(snapshot.members.filter(member => member.parentSessionId !== null).map(async member => {
+      try {
+        const runtime = this.deps.models ? await this.deps.models.parentRuntime(member.sessionId) : member.runtime
+        return { sessionId: member.sessionId, runtime, state: member.state, paused: member.stopped }
+      } catch (cause) {
+        return { sessionId: member.sessionId, runtime: member.runtime, state: member.state, paused: member.stopped, error: cause instanceof Error ? cause.message : String(cause) }
+      }
+    }))
+  }
+
+
+  async listBatches(callerSessionId: string): Promise<SessionDelegationBatch[]> {
+    await this.ready; await this.tail
+    return structuredClone(Object.values(this.store.batches ?? {}).filter(batch => batch.callerSessionId === callerSessionId).map(({ input, stopEpoch, ...batch }) => batch))
+  }
+
+  async listModelChanges(callerSessionId: string): Promise<SessionModelChange[]> {
+    await this.ready; await this.tail
+    return structuredClone(Object.values(this.store.modelChanges ?? {}).filter(change => change.callerSessionId === callerSessionId).map(({ input, continuations, stopEpoch, ...change }) => change))
+  }
+
+  private batch(callerSessionId: string, id: string, revision?: number) {
+    const batch = this.store.batches?.[id]
+    if (!batch || batch.callerSessionId !== callerSessionId) throw ApiError.notFound('Delegation batch not found')
+    if (revision !== undefined && batch.revision !== revision) throw ApiError.conflict('Delegation batch changed; refresh before continuing')
+    return batch
+  }
+
+  async propose(callerSessionId: string, input: SessionDelegationInput): Promise<SessionDelegationBatch> {
+    if (!input.requestId?.trim() || !Array.isArray(input.sessions) || input.sessions.length < 1 || input.sessions.length > 8 || input.sessions.some(item => !item.prompt?.trim())) throw ApiError.badRequest('A requestId and between one and eight tasks are required')
+    if (!await this.deps.sessions.exists(callerSessionId)) throw ApiError.notFound('Caller session not found')
+    this.missingDecisionCallers.delete(callerSessionId)
+    const id = `${callerSessionId}:${input.requestId}`
+    await this.ready; await this.tail
+    const previous = this.store.batches?.[id]
+    if (previous) {
+      if (previous.input !== JSON.stringify(input)) throw ApiError.conflict('requestId was reused for different input')
+      return (await this.listBatches(callerSessionId)).find(batch => batch.id === id)!
+    }
+    const proposalFence = await this.mutate(() => {
+      const caller = this.ensureMember(callerSessionId)
+      if (caller.stopped) throw ApiError.conflict('Caller session was stopped')
+      return { root: caller.rootSessionId, epoch: this.store.stopEpochs?.[caller.rootSessionId] ?? 0 }
+    })
+    let explicit = true
+    const explicitIds = new Set<string>()
+    const sessions = await Promise.all(input.sessions.map(async (item, index) => {
+      let runtime: SessionRuntimeSelection | undefined
+      let error: string | undefined
+      try {
+        if (!this.deps.models) throw new Error('Model selection is unavailable')
+        runtime = await this.deps.models.resolve(callerSessionId, item)
+      } catch (cause) { error = cause instanceof Error ? cause.message : String(cause) }
+      const verified = item.userInstruction && this.deps.sessions.verifyUserInstruction
+        ? await this.deps.sessions.verifyUserInstruction(callerSessionId, item.userInstruction).catch(() => false) : false
+      if (!verified || !runtime || (!item.runtime && !item.model)) explicit = false
+      else explicitIds.add(item.id ?? String(index + 1))
+      return { id: item.id ?? String(index + 1), title: item.title, prompt: item.prompt, workDir: item.workDir, runtime, ...(error ? { error } : {}) }
+    }))
+    if (new Set(sessions.map(item => item.id)).size !== sessions.length) throw ApiError.badRequest('Task ids must be unique')
+    const batch = await this.mutate(() => {
+      const caller = this.ensureMember(callerSessionId)
+      if (caller.stopped || caller.rootSessionId !== proposalFence.root || (this.store.stopEpochs?.[caller.rootSessionId] ?? 0) !== proposalFence.epoch) throw ApiError.conflict('Delegation was stopped while resolving models')
+      const existing = this.store.batches?.[id]
+      if (existing) {
+        if (existing.input !== JSON.stringify(input)) throw ApiError.conflict('requestId was reused for different input')
+        return existing
+      }
+      this.store.batches ??= {}
+      return this.store.batches[id] = { id, callerSessionId, requestId: input.requestId, revision: 1, state: 'review', sessions, input: JSON.stringify(input), stopEpoch: this.store.stopEpochs?.[caller.rootSessionId] ?? 0 }
+    })
+    if (explicit) return this.confirmBatch(callerSessionId, id, batch.revision)
+    for (const entry of batch.sessions) {
+      if (!explicitIds.has(entry.id) || entry.sessionId || !entry.runtime) continue
+      try {
+        const runtime = await this.deps.models!.validate(entry.runtime)
+        const created = await this.create(callerSessionId, { requestId: `batch:${input.requestId}:${entry.id}`, title: entry.title, prompt: entry.prompt, workDir: entry.workDir, runtime, model: runtime.modelId, providerId: runtime.providerId }, { id, stopEpoch: batch.stopEpoch })
+        await this.mutate(() => {
+          const current = this.batch(callerSessionId, id)
+          const target = current.sessions.find(item => item.id === entry.id)!
+          target.sessionId = created.sessionId; target.messageId = created.messageId; target.launched = true; current.revision++
+        })
+      } catch (cause) {
+        await this.mutate(() => { const current = this.batch(callerSessionId, id); current.sessions.find(item => item.id === entry.id)!.error = cause instanceof Error ? cause.message : String(cause); current.revision++ })
+      }
+    }
+    return (await this.listBatches(callerSessionId)).find(item => item.id === id)!
+  }
+
+  async updateBatch(callerSessionId: string, id: string, revision: number, selections: Array<{ id: string; runtime: SessionRuntimeSelection }>): Promise<SessionDelegationBatch> {
+    if (!this.deps.models) throw ApiError.conflict('Model selection is unavailable')
+    const resolved = await Promise.all(selections.map(async item => ({ ...item, runtime: await this.deps.models!.validate(item.runtime) })))
+    await this.mutate(() => {
+      const batch = this.batch(callerSessionId, id, revision)
+      if (batch.state !== 'review' && batch.state !== 'failed') throw ApiError.conflict('This batch cannot be edited')
+      for (const item of resolved) {
+        const entry = batch.sessions.find(entry => entry.id === item.id)
+        if (!entry || entry.launched) throw ApiError.conflict('Task is unavailable or already launched')
+        entry.runtime = item.runtime; delete entry.error
+      }
+      batch.state = 'review'; batch.revision++; delete batch.error
+    })
+    return (await this.listBatches(callerSessionId)).find(item => item.id === id)!
+  }
+
+  async cancelBatch(callerSessionId: string, id: string, revision: number): Promise<SessionDelegationBatch> {
+    await this.mutate(() => {
+      const batch = this.batch(callerSessionId, id, revision)
+      if (batch.state === 'launched' || batch.state === 'launching') throw ApiError.conflict('Batch has already started')
+      batch.state = 'cancelled'; batch.revision++
+      for (const entry of batch.sessions) if (entry.messageId && !entry.launched) {
+        const message = this.store.messages.find(message => message.id === entry.messageId)
+        if (message && message.status !== 'consumed') message.status = 'cancelled'
+      }
+    })
+    return (await this.listBatches(callerSessionId)).find(item => item.id === id)!
+  }
+
+  /**
+   * The model's tool call waits for the launch: it needs the new session ids.
+   * The UI passes `wait: false` and returns once the batch is launching.
+   * Creating each workspace and starting its CLI can take far longer than a
+   * dialog should stay open, and the batch's state already reports the outcome.
+   */
+  async confirmBatch(callerSessionId: string, id: string, revision: number, options: { wait?: boolean } = {}): Promise<SessionDelegationBatch> {
+    if (!this.deps.models) throw ApiError.conflict('Model selection is unavailable')
+    await this.ready; await this.tail
+    const snapshot = structuredClone(this.batch(callerSessionId, id))
+    if (snapshot.state === 'launched') return (await this.listBatches(callerSessionId)).find(item => item.id === id)!
+    if (snapshot.state !== 'review' && snapshot.state !== 'failed') throw ApiError.conflict('Batch cannot be started')
+    const runtimes = await Promise.all(snapshot.sessions.map(item => {
+      if (!item.runtime) throw ApiError.badRequest('Choose a model for every task')
+      return item.launched ? Promise.resolve(item.runtime) : this.deps.models!.validate(item.runtime)
+    }))
+    await this.mutate(() => {
+      const batch = this.batch(callerSessionId, id, revision)
+      const caller = this.ensureMember(callerSessionId)
+      if (caller.stopped || (this.store.stopEpochs?.[caller.rootSessionId] ?? 0) !== batch.stopEpoch) throw ApiError.conflict('Delegation was stopped; submit a new batch')
+      if (batch.state !== 'review' && batch.state !== 'failed') throw ApiError.conflict('Batch cannot be started')
+      batch.state = 'launching'; batch.revision++; delete batch.error
+      batch.sessions.forEach((item, index) => { item.runtime = runtimes[index]! })
+    })
+    const launch = this.launchBatch(callerSessionId, id, snapshot, runtimes)
+    if (options.wait === false) launch.catch(error => console.error('[SessionCollaboration] Batch launch failed', error))
+    else await launch
+    return (await this.listBatches(callerSessionId)).find(item => item.id === id)!
+  }
+
+  private async launchBatch(callerSessionId: string, id: string, snapshot: StoredBatch, runtimes: SessionRuntimeSelection[]): Promise<void> {
+    try {
+      for (const entry of snapshot.sessions) {
+        const runtime = runtimes[snapshot.sessions.indexOf(entry)]!
+        if (entry.sessionId) {
+          if (!entry.launched) {
+            if (!this.deps.runtime.apply) throw ApiError.conflict('Runtime changes are unavailable')
+            await this.deps.runtime.apply(entry.sessionId, runtime)
+            await this.mutate(() => { this.store.members[entry.sessionId!]!.runtime = runtime })
+          }
+          continue
+        }
+        const requestId = `batch:${snapshot.requestId}:${entry.id}`
+        await this.mutate(() => {
+          const prior = this.store.creations?.[`${callerSessionId}:${requestId}`]
+          // A recorded failure is definite; uncertain pending creations are never retried.
+          if (prior?.failure) delete this.store.creations![`${callerSessionId}:${requestId}`]
+        })
+        this.heldCreations.add(`${callerSessionId}:${requestId}`)
+        try {
+          const created = await this.create(callerSessionId, { requestId, title: entry.title, prompt: entry.prompt, workDir: entry.workDir, model: runtime.modelId, providerId: runtime.providerId, runtime }, { id, stopEpoch: snapshot.stopEpoch })
+          await this.mutate(() => { const target = this.batch(callerSessionId, id).sessions.find(item => item.id === entry.id)!; target.sessionId = created.sessionId; target.messageId = created.messageId })
+        } finally { this.heldCreations.delete(`${callerSessionId}:${requestId}`) }
+      }
+      // Revalidate after workspace creation; a deleted provider must never fall back.
+      await Promise.all(runtimes.filter((_, index) => !snapshot.sessions[index]!.launched).map(runtime => this.deps.models!.validate(runtime)))
+      await this.mutate(() => {
+        const batch = this.batch(callerSessionId, id)
+        const caller = this.ensureMember(callerSessionId)
+        if (caller.stopped || (this.store.stopEpochs?.[caller.rootSessionId] ?? 0) !== batch.stopEpoch) throw ApiError.conflict('Delegation was stopped')
+        for (const entry of batch.sessions) { if (entry.launched) continue; const member = this.store.members[entry.sessionId!]!; member.stopped = false; member.state = 'queued'; entry.launched = true }
+        batch.state = 'launched'; batch.revision++
+      })
+      await this.pump()
+    } catch (cause) {
+      await this.mutate(() => { const batch = this.batch(callerSessionId, id); batch.state = 'failed'; batch.revision++; batch.error = cause instanceof Error ? cause.message : String(cause) })
+    }
+  }
+
+  /** As with confirmBatch, the UI passes `wait: false`: stopping and restarting sessions reports through the change's state. */
+  async changeModels(callerSessionId: string, input: SessionModelChangeInput, options: { wait?: boolean } = {}): Promise<SessionModelChange> {
+    if (!input.requestId?.trim() || !Array.isArray(input.selections) || !input.selections.length || input.selections.length > 8 || new Set(input.selections.map(item => item.sessionId)).size !== input.selections.length) throw ApiError.badRequest('Choose between one and eight distinct sessions')
+    if (!this.deps.models || !this.deps.runtime.apply || !this.deps.runtime.stopAndWait) throw ApiError.conflict('Runtime changes are unavailable')
+    if (input.mode !== undefined && input.mode !== 'after_turn' && input.mode !== 'immediate') throw ApiError.badRequest('Invalid change mode')
+    const id = `${callerSessionId}:${input.requestId}`
+    await this.ready; await this.tail
+    const existing = this.store.modelChanges?.[id]
+    if (existing) {
+      if (existing.input !== JSON.stringify(input)) throw ApiError.conflict('requestId was reused for different input')
+      return (await this.listModelChanges(callerSessionId)).find(item => item.id === id)!
+    }
+    const changeFence = await this.mutate(() => {
+      const caller = this.store.members[callerSessionId]
+      if (!caller) throw ApiError.notFound('Collaboration not found')
+      return {
+        root: caller.rootSessionId, epoch: this.store.stopEpochs?.[caller.rootSessionId] ?? 0,
+        userInputVersions: input.selections.map(item => ({ sessionId: item.sessionId, version: this.userInputs.get(item.sessionId) ?? 0 })),
+      }
+    })
+    const selections = await Promise.all(input.selections.map(async item => ({ ...item, runtime: await this.deps.models!.validate(item.runtime) })))
+    await this.mutate(() => {
+      // Validation yields to other requests. Preserve the winner's identity and
+      // state even when it already finished applying before this request resumes.
+      const existing = this.store.modelChanges?.[id]
+      if (existing) {
+        if (existing.input !== JSON.stringify(input)) throw ApiError.conflict('requestId was reused for different input')
+        return
+      }
+      const caller = this.store.members[callerSessionId]
+      if (!caller) throw ApiError.notFound('Collaboration not found')
+      if (caller.rootSessionId !== changeFence.root || (this.store.stopEpochs?.[caller.rootSessionId] ?? 0) !== changeFence.epoch || changeFence.userInputVersions.some(item => (this.userInputs.get(item.sessionId) ?? 0) !== item.version)) throw ApiError.conflict('Model change was stopped or superseded by user input while validating models')
+      for (const item of selections) {
+        const member = this.store.members[item.sessionId]
+        if (!member || member.rootSessionId !== caller.rootSessionId || member.sessionId === caller.rootSessionId) throw ApiError.badRequest('Only this collaboration’s child sessions can be changed')
+        if (Object.values(this.store.modelChanges ?? {}).some(change => ['pending', 'applying'].includes(change.state) && change.selections.some(selection => selection.sessionId === item.sessionId))) throw ApiError.conflict('A model change is already pending')
+      }
+      this.store.modelChanges ??= {}
+      this.store.modelChanges[id] = { id, callerSessionId, requestId: input.requestId, revision: 1, mode: input.mode ?? 'after_turn', resume: input.resume !== false, selections, state: 'pending', input: JSON.stringify(input), stopEpoch: this.store.stopEpochs?.[caller.rootSessionId] ?? 0 }
+    })
+    const processing = this.processPendingModelChanges()
+    if (options.wait === false) processing.catch(error => console.error('[SessionCollaboration] Model change failed', error))
+    else await processing
+    return (await this.listModelChanges(callerSessionId)).find(item => item.id === id)!
+  }
+
+  async cancelModelChange(callerSessionId: string, id: string, revision: number): Promise<SessionModelChange> {
+    await this.mutate(() => {
+      const change = this.store.modelChanges?.[id]
+      if (!change || change.callerSessionId !== callerSessionId) throw ApiError.notFound('Model change not found')
+      if (change.revision !== revision || change.state !== 'pending') throw ApiError.conflict('Model change is no longer pending')
+      change.state = 'cancelled'; change.revision++
+    })
+    await this.pump()
+    return (await this.listModelChanges(callerSessionId)).find(item => item.id === id)!
+  }
+
+  async processPendingModelChanges(): Promise<void> {
+    await this.ready; await this.tail
+    for (const change of Object.values(this.store.modelChanges ?? {})) {
+      if (change.state !== 'pending' || this.changeOperations.has(change.id)) continue
+      if (change.mode === 'after_turn' && change.selections.some(item => {
+        const state = this.store.members[item.sessionId]?.state
+        const live = this.deps.runtime.getState?.(item.sessionId)
+        return live ? live !== 'idle' : ['running', 'blocked'].includes(state ?? '')
+      })) continue
+      const operation = this.applyModelChange(change.id)
+      this.changeOperations.set(change.id, operation)
+      try { await operation } finally { this.changeOperations.delete(change.id) }
+    }
+  }
+
+  private async applyModelChange(id: string): Promise<void> {
+    const change = await this.mutate(() => {
+      const item = this.store.modelChanges![id]!
+      if (item.state !== 'pending') return null
+      item.state = 'applying'; item.revision++
+      item.continuations = item.mode === 'immediate' ? item.selections.filter(selection => {
+        const member = this.store.members[selection.sessionId]!
+        return ['running', 'blocked'].includes(member.state) && this.store.messages.some(message => message.targetSessionId === selection.sessionId && message.status === 'consumed')
+      }).map(selection => selection.sessionId) : []
+      for (const selection of item.selections) {
+        const member = this.store.members[selection.sessionId]!
+        if (item.continuations.includes(selection.sessionId)) { member.continuationId ??= randomUUID(); member.continuationSourceSessionId = item.callerSessionId }
+        member.stopped = true; member.state = 'stopped'
+      }
+      return item
+    })
+    if (!change) return
+    try {
+      if (change.mode === 'immediate') {
+        const outcomes = await Promise.allSettled(change.selections.map(item => this.deps.runtime.stopAndWait!(item.sessionId)))
+        const failed = outcomes.find(item => item.status === 'rejected')
+        if (failed?.status === 'rejected') throw failed.reason
+      }
+      const stopVersions = new Map(change.selections.map(item => [item.sessionId, this.userInputs.get(item.sessionId) ?? 0]))
+      const runtimes = await Promise.all(change.selections.map(item => this.deps.models!.validate(item.runtime)))
+      for (let index = 0; index < change.selections.length; index++) {
+        const sessionId = change.selections[index]!.sessionId
+        await this.deps.runtime.apply!(sessionId, runtimes[index]!)
+        await this.mutate(() => { this.store.members[sessionId]!.runtime = runtimes[index]! })
+      }
+      await this.mutate(() => {
+        const current = this.store.modelChanges![id]!
+        current.state = 'applied'; current.revision++
+        for (const item of current.selections) this.store.members[item.sessionId]!.runtime = item.runtime
+        const root = this.store.members[current.callerSessionId]!.rootSessionId
+        if (!current.resume || (this.store.stopEpochs?.[root] ?? 0) !== current.stopEpoch || current.selections.some(item => (this.userInputs.get(item.sessionId) ?? 0) !== stopVersions.get(item.sessionId))) return
+        for (const item of current.selections) {
+          const member = this.store.members[item.sessionId]!
+          member.stopped = false; member.state = 'idle'
+          for (const message of this.store.messages) if (message.targetSessionId === item.sessionId && message.status === 'queued') {
+            delete message.error; delete message.errorCode
+          }
+          this.appendPendingContinuation(member)
+        }
+      })
+      await this.pump()
+    } catch (cause) {
+      await this.mutate(() => { const current = this.store.modelChanges![id]!; current.state = 'failed'; current.revision++; current.error = cause instanceof Error ? cause.message : String(cause) })
+    }
   }
 
   async list(options: { query?: string; limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<unknown> {
@@ -299,12 +686,13 @@ export class SessionCollaborationService {
       ...(message?.error ? { error: message.error } : {}), ...(message?.errorCode ? { errorCode: message.errorCode } : {}) }
   }
 
-  async create(callerSessionId: string, input: CollaborationCreateInput): Promise<CollaborationCreateResult> {
+  async create(callerSessionId: string, input: CollaborationCreateInput, batchFence?: { id: string; stopEpoch: number }): Promise<CollaborationCreateResult> {
     if (!input.prompt?.trim()) throw ApiError.badRequest('prompt is required')
     if (!await this.deps.sessions.exists(callerSessionId)) throw ApiError.notFound('Caller session not found')
     const creationFence = await this.mutate(() => {
       const caller = this.ensureMember(callerSessionId)
       if (caller.stopped) throw ApiError.conflict('Caller session was stopped; new user input is required')
+      if (batchFence && ((this.store.stopEpochs?.[caller.rootSessionId] ?? 0) !== batchFence.stopEpoch || this.store.batches?.[batchFence.id]?.state === 'cancelled')) throw ApiError.conflict('Delegation was stopped or cancelled')
       return { root: caller.rootSessionId, epoch: this.store.stopEpochs?.[caller.rootSessionId] ?? 0 }
     })
     const creationKey = input.requestId ? `${callerSessionId}:${input.requestId}` : undefined
@@ -336,10 +724,11 @@ export class SessionCollaborationService {
       const parent = this.ensureMember(callerSessionId)
       const member = this.ensureMember(created.sessionId, parent.rootSessionId, callerSessionId)
       member.title = collaborationSessionTitle(input)
+      if (input.runtime) member.runtime = input.runtime
       // Stop may arrive while workspace/session creation awaits. Keep the
       // independently created session visible, but do not launch stale work.
-      member.stopped = parent.stopped
-      member.state = parent.stopped ? 'stopped' : 'queued'
+      member.stopped = parent.stopped || Boolean(input.requestId && this.heldCreations.has(`${callerSessionId}:${input.requestId}`))
+      member.state = member.stopped ? 'stopped' : 'queued'
       const message = this.append(callerSessionId, created.sessionId, input.prompt, 'assignment')
       if ((this.store.stopEpochs?.[creationFence.root] ?? 0) !== creationFence.epoch) {
         message.status = 'cancelled'
@@ -355,6 +744,7 @@ export class SessionCollaborationService {
 
   async send(callerSessionId: string, targetSessionId: string, content: string, messageId?: string): Promise<CollaborationMessage> {
     if (!content?.trim()) throw ApiError.badRequest('content is required')
+    if (callerSessionId === targetSessionId) throw ApiError.badRequest('A session cannot send a message to itself')
     if (!await this.deps.sessions.exists(targetSessionId)) throw ApiError.notFound('Target session not found')
     const message = await this.mutate(() => {
       if (this.ensureMember(callerSessionId).stopped) throw ApiError.conflict('Caller session was stopped; new user input is required')
@@ -385,6 +775,17 @@ export class SessionCollaborationService {
       messages: this.store.messages.filter(message => !ids || ids.has(message.targetSessionId) || ids.has(message.sourceSessionId)) })
   }
 
+  /** Small persisted projection: dashboard polling must not clone messages or hydrate titles. */
+  async listCompletionStates(): Promise<SessionCompletionState[]> {
+    await this.ready
+    await this.tail
+    return Object.values(this.store.members).map(member => ({
+      id: member.sessionId,
+      state: member.state,
+      ...(member.completedAt ? { completedAt: member.completedAt } : {}),
+    }))
+  }
+
   async wait(afterRevision: number, sessionIds?: string[], timeoutMs = COLLABORATION_WAIT_DEFAULT_MS, signal?: AbortSignal, callerSessionId?: string): Promise<CollaborationSnapshot> {
     if (signal?.aborted) throw signal.reason
     const requestedTimeoutMs = timeoutMs
@@ -392,6 +793,15 @@ export class SessionCollaborationService {
     const noteTimeout = (snapshot: CollaborationSnapshot): CollaborationSnapshot => requestedTimeoutMs === clampedTimeoutMs ? snapshot : { ...snapshot, requestedTimeoutMs, timeoutMs: clampedTimeoutMs, guidance: [`Requested timeout of ${requestedTimeoutMs}ms was clamped to ${clampedTimeoutMs}ms.`, snapshot.guidance].filter(Boolean).join('\n\n') }
     const inputVersion = callerSessionId ? this.userInputs.get(callerSessionId) ?? 0 : 0
     const current = await this.status(sessionIds)
+    if (sessionIds?.length && callerSessionId && this.deps.sessions.teamMemberIdentities) {
+      // A team lead that waits on its own members' names or worker session ids
+      // would block for the full timeout: nothing here ever updates them,
+      // because members report through teammate messages instead.
+      const team = new Set(await Promise.resolve(this.deps.sessions.teamMemberIdentities(callerSessionId)).catch(() => []))
+      if (sessionIds.every(id => team.has(id) && !this.store.members[id])) {
+        return noteTimeout({ ...this.projectWait(current, afterRevision), guidance: UNKNOWN_WAIT_TARGET_GUIDANCE })
+      }
+    }
     const caller = callerSessionId ? this.store.members[callerSessionId] : undefined
     if (caller && caller.sessionId !== caller.rootSessionId) {
       const workers = Object.values(this.store.members).filter(member => member.rootSessionId === caller.rootSessionId && member.sessionId !== member.rootSessionId)
@@ -458,6 +868,11 @@ export class SessionCollaborationService {
     await this.mutate(() => {
       this.userAdmissions.delete(sessionId)
       const member = this.ensureMember(sessionId); member.stopped = true; member.state = 'stopped'
+      // Applying changes issue their own runtime Stop. Only pending changes are
+      // cancelled here, so an internal stop cannot cancel the active transition.
+      for (const change of Object.values(this.store.modelChanges ?? {})) if (change.state === 'pending' && change.selections.some(item => item.sessionId === sessionId)) {
+        change.state = 'cancelled'; change.revision++
+      }
       for (const message of this.store.messages) if (message.targetSessionId === sessionId && message.status === 'accepted') {
         message.status = 'queued'
         delete message.error
@@ -467,6 +882,33 @@ export class SessionCollaborationService {
     for (const listener of this.listeners) listener()
   }
 
+  private fenceDeletedSession(sessionId: string): void {
+    this.userAdmissions.delete(sessionId)
+    const member = this.store.members[sessionId]
+    if (member) { member.stopped = true; member.state = 'stopped' }
+    for (const batch of Object.values(this.store.batches ?? {})) {
+      if (batch.callerSessionId === sessionId && (batch.state === 'review' || batch.state === 'failed')) {
+        batch.state = 'cancelled'; batch.revision++
+      }
+    }
+    for (const change of Object.values(this.store.modelChanges ?? {})) {
+      if (change.state === 'pending' && (change.callerSessionId === sessionId || change.selections.some(item => item.sessionId === sessionId))) {
+        change.state = 'cancelled'; change.revision++
+      }
+    }
+    for (const message of this.store.messages) {
+      if (message.targetSessionId === sessionId && (message.status === 'queued' || message.status === 'accepted')) message.status = 'cancelled'
+    }
+  }
+
+  /** Deletion is permanent; an unreachable allocation card cannot await approval. */
+  async onDeleted(sessionId: string): Promise<void> {
+    this.userInputs.set(sessionId, (this.userInputs.get(sessionId) ?? 0) + 1)
+    this.missingDecisionCallers.add(sessionId)
+    powerActivityClock.changed()
+    await this.mutate(() => this.fenceDeletedSession(sessionId))
+  }
+
   async stopGroup(sessionId: string): Promise<void> {
     const ids = await this.mutate(() => {
       const root = this.ensureMember(sessionId).rootSessionId
@@ -474,7 +916,8 @@ export class SessionCollaborationService {
       this.store.stopEpochs[root] = (this.store.stopEpochs[root] ?? 0) + 1
       const ids = Object.values(this.store.members).filter(member => member.rootSessionId === root).map(member => member.sessionId)
       const targets = new Set(ids)
-      for (const id of ids) { this.userAdmissions.delete(id); const member = this.ensureMember(id); member.stopped = true; member.state = 'stopped' }
+      for (const change of Object.values(this.store.modelChanges ?? {})) if (change.state === 'pending' && change.selections.some(item => targets.has(item.sessionId))) { change.state = 'cancelled'; change.revision++ }
+      for (const id of ids) { this.userAdmissions.delete(id); const member = this.ensureMember(id); member.stopped = true; member.state = 'stopped'; delete member.continuationId; delete member.continuationSourceSessionId }
       for (const message of this.store.messages) {
         if (targets.has(message.targetSessionId) && (message.status === 'queued' || message.status === 'accepted')) message.status = 'cancelled'
       }
@@ -489,9 +932,16 @@ export class SessionCollaborationService {
     if (failures.length) throw ApiError.conflict(`Stopped collaboration wakeups, but ${failures.length} runtime stop request(s) failed`)
   }
 
+  private appendPendingContinuation(member: CollaborationMember): void {
+    if (!member.continuationId) return
+    this.append(member.continuationSourceSessionId ?? member.parentSessionId ?? member.sessionId, member.sessionId, 'Continue the interrupted task from the saved conversation. Check the latest tool results and current state before acting; do not repeat completed actions or assume an interrupted operation failed.', 'message', member.continuationId)
+    delete member.continuationId; delete member.continuationSourceSessionId
+  }
+
   async resume(sessionId: string): Promise<void> {
     await this.mutate(() => {
       const member = this.ensureMember(sessionId); member.stopped = false; member.state = 'idle'
+      this.appendPendingContinuation(member)
       for (const message of this.store.messages) if (message.targetSessionId === sessionId) { delete message.error; delete message.errorCode }
     })
     await this.pump()
@@ -499,8 +949,10 @@ export class SessionCollaborationService {
 
   /** Reserve manual worker capacity using the same serialized state as background dispatch. */
   async admitUserTurn(sessionId: string, canAdmit: () => boolean = () => true): Promise<{ release(): Promise<void> }> {
+    await this.ready; await this.tail
     const token = Symbol(sessionId)
     const previous = await this.mutate(() => {
+      if (Object.values(this.store.modelChanges ?? {}).some(change => (change.state === 'pending' || change.state === 'applying') && change.selections.some(item => item.sessionId === sessionId))) throw ApiError.conflict('Model change in progress; wait before sending a new message')
       if (!canAdmit()) throw ApiError.conflict('Session turn was cancelled before admission')
       const member = this.ensureMember(sessionId)
       const previous = this.userAdmissions.get(sessionId)?.previous ?? { state: member.state, stopped: member.stopped }
@@ -526,7 +978,9 @@ export class SessionCollaborationService {
   async onUserInput(sessionId: string, options: { dispatch?: boolean } = {}): Promise<void> {
     this.userInputs.set(sessionId, (this.userInputs.get(sessionId) ?? 0) + 1)
     await this.mutate(() => {
+      if (Object.values(this.store.modelChanges ?? {}).some(change => change.state === 'applying' && change.selections.some(item => item.sessionId === sessionId))) return
       const member = this.ensureMember(sessionId); member.stopped = false; member.state = 'running'
+      delete member.continuationId; delete member.continuationSourceSessionId
       for (const message of this.store.messages) if (message.targetSessionId === sessionId && message.status === 'queued') { delete message.error; delete message.errorCode }
     })
     for (const listener of this.listeners) listener()
@@ -548,28 +1002,40 @@ export class SessionCollaborationService {
 
   async onSessionState(sessionId: string, state: CollaborationState, result?: string, eventId?: string): Promise<void> {
     await this.mutate(() => {
-      this.userAdmissions.delete(sessionId)
       const member = this.ensureMember(sessionId)
+      // Replayed terminal events cannot move a completion into another day, or
+      // complete a newer turn that has already started on this session.
+      if (state === 'completed' && eventId && member.completionResultId === eventId) return
+      this.userAdmissions.delete(sessionId)
       const changed = member.state !== state || member.result !== result
+      if (state === 'completed' && !member.stopped && (changed || eventId || !member.completedAt)) {
+        member.completedAt = (this.deps.now?.() ?? new Date()).toISOString()
+        member.completionResultId = eventId
+      }
       if (!member.stopped) member.state = state
       if (result !== undefined) member.result = result
       if (changed && !member.stopped && member.rootSessionId !== sessionId && ['completed', 'blocked', 'failed'].includes(state)) {
         this.append(sessionId, member.rootSessionId, result || `Session ${sessionId} is ${state}.`, state as 'completed' | 'blocked' | 'failed', eventId)
       }
     })
+    await this.processPendingModelChanges()
     await this.pump()
   }
 
   /** Call once during host startup, before accepting new work. Never clears persisted Stop fences. */
   async recover(): Promise<void> {
+    await this.loadForPowerActivity()
     await this.mutate(() => {
       for (const member of Object.values(this.store.members)) {
-        if (member.state === 'running' || member.state === 'queued' || member.state === 'blocked' || this.store.messages.some(message => message.targetSessionId === member.sessionId && (message.status === 'queued' || message.status === 'accepted'))) {
+        if (this.pausesOnRecovery(member)) {
           member.state = 'stopped'
           member.stopped = true
         }
       }
       for (const message of this.store.messages) if (message.status === 'accepted') message.status = 'queued'
+      for (const batch of Object.values(this.store.batches ?? {})) if (batch.state === 'launching') { batch.state = 'failed'; batch.revision++; batch.error = 'Startup was interrupted; review before retrying' }
+      for (const change of Object.values(this.store.modelChanges ?? {})) if (change.state === 'applying' || change.state === 'pending') { change.state = 'failed'; change.revision++; change.error = 'Runtime change was interrupted; sessions remain paused' }
+      for (const sessionId of this.missingDecisionCallers) this.fenceDeletedSession(sessionId)
     })
   }
 
@@ -588,6 +1054,7 @@ export class SessionCollaborationService {
           if (message.status !== 'queued' || message.error) continue
           const member = this.store.members[message.targetSessionId]
           if (!member || member.stopped || member.state === 'blocked' || this.userAdmissions.has(member.sessionId)) continue
+          if (Object.values(this.store.modelChanges ?? {}).some(change => (change.state === 'pending' || change.state === 'applying') && change.selections.some(item => item.sessionId === member.sessionId))) continue
           const liveState = this.deps.runtime.getState?.(member.sessionId)
           if (liveState === 'blocked') continue
           const running = liveState ? liveState === 'running' : member.state === 'running'
@@ -601,6 +1068,8 @@ export class SessionCollaborationService {
       })
       if (!admission) return
       try {
+        const selectedRuntime = this.store.members[admission.message.targetSessionId]?.runtime
+        if (selectedRuntime && this.deps.models) await this.deps.models.validate(selectedRuntime)
         if (admission.running) await this.deps.runtime.enqueue(admission.message.targetSessionId, admission.message)
         else await this.deps.runtime.start(admission.message.targetSessionId, admission.message)
       } catch (error) {

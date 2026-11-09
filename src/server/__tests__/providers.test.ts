@@ -10,22 +10,18 @@ import { ProviderService } from '../services/providerService.js'
 import { readActiveProviderManagedEnv } from '../services/providerRuntimeEnv.js'
 import { handleProvidersApi } from '../api/providers.js'
 import { handleProxyRequest } from '../proxy/handler.js'
+import { resetOpenAIChatImageSupportForTests } from '../proxy/openaiChatImageSupport.js'
+import { resetOpenAIChatReasoningFieldSupportForTests } from '../proxy/openaiChatReasoningFieldSupport.js'
+import { diagnosticsService } from '../services/diagnosticsService.js'
 import {
   clearTraceCaptureStateForTests,
   drainTraceCaptureForTests,
   setTraceAppendBeforeWriteHookForTests,
   traceCaptureService,
 } from '../services/traceCaptureService.js'
-import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import type { CreateProviderInput } from '../types/provider.js'
-import {
-  IMAGE_GENERATION_API_KEY_ENV_KEY,
-  IMAGE_GENERATION_BASE_URL_ENV_KEY,
-  IMAGE_GENERATION_MODEL_ENV_KEY,
-  IMAGE_GENERATION_PROVIDER_ID_ENV_KEY,
-  IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY,
-} from '../../services/imageGeneration/config.js'
 import { buildComputerUseTools } from '../../vendor/computer-use-mcp/tools.js'
+import { GROK_MODEL_CATALOG, setGrokRuntimeModelCatalog } from '../../services/grokAuth/models.js'
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -40,11 +36,16 @@ async function setup() {
   process.env.CLAUDE_CONFIG_DIR = tmpDir
   process.env.HOME = tmpDir
   clearTraceCaptureStateForTests()
+  resetOpenAIChatImageSupportForTests()
+  resetOpenAIChatReasoningFieldSupportForTests()
 }
 
 async function teardown() {
   await drainTraceCaptureForTests()
   clearTraceCaptureStateForTests()
+  // Diagnostics resolve their path when the queued write runs; flush them
+  // while CLAUDE_CONFIG_DIR still points at the temp dir.
+  await diagnosticsService.drainForMigration()
   if (originalConfigDir !== undefined) {
     process.env.CLAUDE_CONFIG_DIR = originalConfigDir
   } else {
@@ -104,24 +105,15 @@ function sampleInput(overrides?: Partial<CreateProviderInput>): CreateProviderIn
   }
 }
 
-function echoFlowDir(): string {
-  return getEchoFlowInternalDir(tmpDir)
-}
-
 /** Read the settings.json written to the temp config dir */
 async function readSettings(): Promise<Record<string, unknown>> {
-  const raw = await fs.readFile(path.join(echoFlowDir(), 'settings.json'), 'utf-8')
+  const raw = await fs.readFile(path.join(tmpDir, 'echoflow-code', 'settings.json'), 'utf-8')
   return JSON.parse(raw) as Record<string, unknown>
-}
-
-async function writeSettings(settings: Record<string, unknown>): Promise<void> {
-  await fs.mkdir(echoFlowDir(), { recursive: true })
-  await fs.writeFile(path.join(echoFlowDir(), 'settings.json'), JSON.stringify(settings), 'utf-8')
 }
 
 /** Read the providers.json written to the temp config dir */
 async function readProvidersConfig(): Promise<Record<string, unknown>> {
-  const raw = await fs.readFile(path.join(echoFlowDir(), 'providers.json'), 'utf-8')
+  const raw = await fs.readFile(path.join(tmpDir, 'echoflow-code', 'providers.json'), 'utf-8')
   return JSON.parse(raw) as Record<string, unknown>
 }
 
@@ -247,35 +239,35 @@ describe('ProviderService', () => {
       const result = await svc.listProviders()
       expect(result).toEqual({
         providers: [],
-        activeId: 'claude-official',
-        providerOrder: ['claude-official', 'openai-official', 'grok-official'],
+        activeId: null,
+        providerOrder: ['claude-official', 'openai-official', 'grok-official', 'deepseek-account'],
       })
     })
 
     test('should recover from a malformed providers index after an upgrade', async () => {
-      await fs.mkdir(echoFlowDir(), { recursive: true })
-      await fs.writeFile(path.join(echoFlowDir(), 'providers.json'), '{not json', 'utf-8')
+      await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+      await fs.writeFile(path.join(tmpDir, 'echoflow-code', 'providers.json'), '{not json', 'utf-8')
 
       const svc = new ProviderService()
       const result = await svc.listProviders()
-      const files = await fs.readdir(echoFlowDir())
+      const files = await fs.readdir(path.join(tmpDir, 'echoflow-code'))
 
       expect(result).toEqual({
         providers: [],
-        activeId: 'claude-official',
-        providerOrder: ['claude-official', 'openai-official', 'grok-official'],
+        activeId: null,
+        providerOrder: ['claude-official', 'openai-official', 'grok-official', 'deepseek-account'],
       })
       expect(files.some((name) => name.startsWith('providers.json.invalid-'))).toBe(true)
     })
 
     test('should normalize a legacy activeProviderId field', async () => {
-      await fs.mkdir(echoFlowDir(), { recursive: true })
+      await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
       const provider = {
         id: 'legacy-provider',
         ...sampleInput({ name: 'Legacy Provider' }),
       }
       await fs.writeFile(
-        path.join(echoFlowDir(), 'providers.json'),
+        path.join(tmpDir, 'echoflow-code', 'providers.json'),
         JSON.stringify({ activeProviderId: provider.id, providers: [provider] }),
         'utf-8',
       )
@@ -350,7 +342,7 @@ describe('ProviderService', () => {
       const svc = new ProviderService()
       await svc.addProvider(sampleInput())
 
-      await expect(fs.readFile(path.join(echoFlowDir(), 'settings.json'), 'utf-8')).rejects.toThrow()
+      await expect(fs.readFile(path.join(tmpDir, 'echoflow-code', 'settings.json'), 'utf-8')).rejects.toThrow()
     })
 
     test('custom providers keep thinking compatibility without narrowing CLI effort', async () => {
@@ -493,7 +485,7 @@ describe('ProviderService', () => {
 
       const settings = await readSettings()
       const env = settings.env as Record<string, string>
-      expect(env.ECHOFLOW_SEND_DISABLED_THINKING).toBeUndefined()
+      expect(env.CC_HAHA_SEND_DISABLED_THINKING).toBeUndefined()
       expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
         'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
       )
@@ -555,6 +547,7 @@ describe('ProviderService', () => {
       }))
 
       expect(provider.imageGeneration).toEqual({
+        protocol: 'openai_images',
         model: 'image-model',
         baseUrl: 'https://images.example.test/v1',
         apiKey: 'image-secret',
@@ -562,6 +555,30 @@ describe('ProviderService', () => {
       const config = await readProvidersConfig()
       expect((config.providers as Array<{ imageGeneration?: unknown }>)[0]?.imageGeneration)
         .toEqual(provider.imageGeneration)
+    })
+
+    test('persists and updates the image protocol without losing future image settings', async () => {
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput({
+        imageGeneration: {
+          protocol: 'gemini_native', model: 'gemini-image-model', futureSetting: { keep: true },
+          baseUrl: 'https://images.example.test', apiKey: 'old-image-secret',
+        },
+      }))
+      expect(provider.imageGeneration?.protocol).toBe('gemini_native')
+      const updated = await svc.updateProvider(provider.id, {
+        imageGeneration: { protocol: 'xai_images', model: 'grok-image-model' },
+      })
+      expect(updated.imageGeneration).toEqual({
+        protocol: 'xai_images', model: 'grok-image-model', futureSetting: { keep: true },
+      })
+      expect((await svc.getProvider(provider.id)).imageGeneration).toEqual(updated.imageGeneration)
+      const modelOnlyUpdate = await svc.updateProvider(provider.id, {
+        imageGeneration: { model: 'another-image-model' },
+      })
+      expect(modelOnlyUpdate.imageGeneration).toEqual({
+        protocol: 'xai_images', model: 'another-image-model', futureSetting: { keep: true },
+      })
     })
   })
 
@@ -579,9 +596,9 @@ describe('ProviderService', () => {
 
     describe('ChatGPT Official provider metadata', () => {
       test('normalizes the built-in ChatGPT provider as an active provider id', async () => {
-        await fs.mkdir(echoFlowDir(), { recursive: true })
+        await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
         await fs.writeFile(
-          path.join(echoFlowDir(), 'providers.json'),
+          path.join(tmpDir, 'echoflow-code', 'providers.json'),
           JSON.stringify({ activeId: 'openai-official', providers: [] }),
           'utf-8',
         )
@@ -684,9 +701,9 @@ describe('ProviderService', () => {
         const settings = await readSettings()
         expect(config.activeId).toBe('openai-official')
         const env = settings.env as Record<string, string>
-        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBe('1')
+        expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBe('1')
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBe(
-          path.join(echoFlowDir(), 'openai-oauth.json'),
+          path.join(tmpDir, 'cc-haha', 'openai-oauth.json'),
         )
         expect(env.ANTHROPIC_MODEL).toBe('gpt-6-sol')
         expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-6-luna')
@@ -696,6 +713,7 @@ describe('ProviderService', () => {
         expect(JSON.parse(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toEqual({
           'gpt-6-sol': 258_400,
           'gpt-6.1-sol': 258_400,
+          'gpt-6.1-terra': 475_000,
           'gpt-6-luna': 258_400,
           'gpt-5.6-sol': 353_400,
           'gpt-5.6-terra': 353_400,
@@ -730,9 +748,9 @@ describe('ProviderService', () => {
 
         const settings = await readSettings()
         const env = settings.env as Record<string, string>
-        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBe('1')
+        expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBe('1')
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBe(
-          path.join(echoFlowDir(), 'openai-oauth.json'),
+          path.join(tmpDir, 'cc-haha', 'openai-oauth.json'),
         )
         expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
         expect(env.ANTHROPIC_API_KEY).toBeUndefined()
@@ -740,9 +758,9 @@ describe('ProviderService', () => {
       })
 
       test('auth status reports ChatGPT Official from the desktop OpenAI token file', async () => {
-        await fs.mkdir(echoFlowDir(), { recursive: true })
+        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
         await fs.writeFile(
-          path.join(echoFlowDir(), 'openai-oauth.json'),
+          path.join(tmpDir, 'cc-haha', 'openai-oauth.json'),
           JSON.stringify({
             accessToken: 'openai-access',
             refreshToken: 'openai-refresh',
@@ -760,6 +778,29 @@ describe('ProviderService', () => {
           hasAuth: true,
           source: 'openai-oauth',
           activeProvider: 'ChatGPT Official',
+        })
+      })
+
+      test('auth status reports Claude Official from the desktop Claude token file', async () => {
+        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+        await fs.writeFile(
+          path.join(tmpDir, 'cc-haha', 'oauth.json'),
+          JSON.stringify({
+            accessToken: 'claude-access',
+            refreshToken: 'claude-refresh',
+            expiresAt: Date.now() + 60 * 60_000,
+            scopes: [],
+            subscriptionType: 'pro',
+          }),
+          'utf-8',
+        )
+
+        const svc = new ProviderService()
+
+        await expect(svc.checkAuthStatus()).resolves.toMatchObject({
+          hasAuth: true,
+          source: 'claude-oauth',
+          activeProvider: 'Claude Official',
         })
       })
 
@@ -782,8 +823,7 @@ describe('ProviderService', () => {
         await svc.activateProvider(provider.id)
 
         const env = (await readSettings()).env as Record<string, string>
-        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
-        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
+        expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBeUndefined()
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBeUndefined()
         expect(env.ANTHROPIC_BASE_URL).toBe('https://api.example.com')
         expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-test-key-123')
@@ -791,10 +831,36 @@ describe('ProviderService', () => {
     })
 
     describe('Grok Official provider metadata', () => {
+      test('keeps discovered capabilities in launch env and removes stale snapshots from settings', async () => {
+        const catalog = [{
+          value: 'grok-future-release', label: 'Future', description: '',
+          supportsReasoningEffort: true, reasoningEffort: 'low', reasoningEfforts: ['low', 'xhigh', 'max'],
+        }]
+        setGrokRuntimeModelCatalog(catalog)
+        try {
+          const svc = new ProviderService()
+          await svc.updateManagedSettings({ env: {
+            CC_HAHA_GROK_MODEL_CATALOG: 'stale-catalog', USER_CUSTOM_ENV: 'preserved',
+          } })
+          await svc.activateProvider('grok-official')
+          const persistedEnv = (await readSettings()).env as Record<string, string>
+          expect(persistedEnv.CC_HAHA_GROK_MODEL_CATALOG).toBeUndefined()
+          expect(persistedEnv.USER_CUSTOM_ENV).toBe('preserved')
+          const runtimeEnv = await svc.getProviderRuntimeEnv('grok-official')
+          expect(JSON.parse(runtimeEnv.CC_HAHA_GROK_MODEL_CATALOG!)).toEqual(catalog)
+
+          await svc.updateManagedSettings({ env: { ...persistedEnv, CC_HAHA_GROK_MODEL_CATALOG: 'stale-catalog' } })
+          await svc.activateOfficial()
+          expect(((await readSettings()).env as Record<string, string>).CC_HAHA_GROK_MODEL_CATALOG).toBeUndefined()
+        } finally {
+          setGrokRuntimeModelCatalog(GROK_MODEL_CATALOG)
+        }
+      })
+
       test('normalizes the built-in Grok provider and appends it to legacy provider order', async () => {
-        await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+        await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
         await fs.writeFile(
-          path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'),
+          path.join(tmpDir, 'echoflow-code', 'providers.json'),
           JSON.stringify({
             activeId: 'grok-official',
             providers: [],
@@ -812,6 +878,7 @@ describe('ProviderService', () => {
           'claude-official',
           'openai-official',
           'grok-official',
+          'deepseek-account',
         ])
       })
 
@@ -840,22 +907,22 @@ describe('ProviderService', () => {
         const config = await readProvidersConfig()
         const env = (await readSettings()).env as Record<string, string>
         expect(config.activeId).toBe('grok-official')
-        expect(env.ECHOFLOW_GROK_OAUTH_PROVIDER).toBe('1')
+        expect(env.CC_HAHA_GROK_OAUTH_PROVIDER).toBe('1')
         expect(env.GROK_OAUTH_FILE).toBe(
-          path.join(tmpDir, 'echoflow-code', 'grok-oauth.json'),
+          path.join(tmpDir, 'cc-haha', 'grok-oauth.json'),
         )
         expect(env.ANTHROPIC_MODEL).toBe('grok-4.7')
         expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('grok-4.7')
         expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('grok-4.7')
         expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('grok-4.7')
-        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
+        expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBeUndefined()
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBeUndefined()
       })
 
       test('auth status reports Grok Official from the isolated Grok token file', async () => {
-        await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
         await fs.writeFile(
-          path.join(tmpDir, 'echoflow-code', 'grok-oauth.json'),
+          path.join(tmpDir, 'cc-haha', 'grok-oauth.json'),
           JSON.stringify({
             accessToken: 'grok-access',
             refreshToken: 'grok-refresh',
@@ -885,6 +952,130 @@ describe('ProviderService', () => {
           source: 'none',
           activeProvider: 'Grok Official',
         })
+      })
+    })
+
+    describe('DeepSeek Account provider', () => {
+      test('is a built-in Anthropic-compatible provider on the deepseek preset models', async () => {
+        const svc = new ProviderService()
+        const provider = await svc.getProvider('deepseek-account')
+
+        expect(provider).toMatchObject({
+          id: 'deepseek-account',
+          presetId: 'deepseek',
+          name: 'DeepSeek Account',
+          apiKey: '',
+          apiFormat: 'anthropic',
+          baseUrl: 'https://api.deepseek.com/anthropic',
+          runtimeKind: 'deepseek_oauth',
+        })
+        expect(provider.models).toEqual({
+          main: 'deepseek-flash[1m]',
+          fable: 'deepseek-flash[1m]',
+          haiku: 'deepseek-flash[1m]',
+          sonnet: 'deepseek-flash[1m]',
+          opus: 'deepseek-flash[1m]',
+        })
+        expect(provider.modelContextWindows?.['deepseek-flash']).toBe(1_000_000)
+      })
+
+      test('a CLI reading an index the startup migration has not rewritten yet gets account model ids', async () => {
+        await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+        await fs.writeFile(
+          path.join(tmpDir, 'echoflow-code', 'providers.json'),
+          JSON.stringify({
+            schemaVersion: 7,
+            activeId: 'deepseek-account',
+            providers: [],
+            officialProviderModels: {
+              'deepseek-account': {
+                main: 'deepseek-v4-pro[1m]',
+                haiku: 'deepseek-v4-flash',
+                sonnet: 'deepseek-v4-pro[1m]',
+                opus: 'deepseek-v4-pro[1m]',
+              },
+            },
+          }),
+          'utf-8',
+        )
+
+        const env = readActiveProviderManagedEnv(tmpDir)
+        expect(env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('deepseek-flash')
+        expect(env?.ANTHROPIC_MODEL).toBe('deepseek-v4-pro[1m]')
+        expect(env?.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe(
+          'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+        )
+      })
+
+      test('activation writes account markers and never an API key or bearer token', async () => {
+        const svc = new ProviderService()
+        await svc.activateProvider('grok-official')
+        await svc.activateProvider('deepseek-account')
+
+        const config = await readProvidersConfig()
+        const env = (await readSettings()).env as Record<string, string>
+        expect(config.activeId).toBe('deepseek-account')
+        expect(env.CC_HAHA_DEEPSEEK_OAUTH_PROVIDER).toBe('1')
+        expect(env.DEEPSEEK_OAUTH_FILE).toBe(
+          path.join(tmpDir, 'cc-haha', 'deepseek-oauth.json'),
+        )
+        expect(env.ANTHROPIC_BASE_URL).toBe('https://api.deepseek.com/anthropic')
+        for (const key of [
+          'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_FABLE_MODEL',
+          'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL',
+          'ANTHROPIC_DEFAULT_OPUS_MODEL',
+        ]) {
+          expect(env[key]).toBe('deepseek-flash[1m]')
+        }
+        expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+        expect(env.ANTHROPIC_API_KEY).toBe('deepseek-oauth-dummy-key')
+        // The previously active OAuth provider's markers are cleared.
+        expect(env.CC_HAHA_GROK_OAUTH_PROVIDER).toBeUndefined()
+        expect(env.GROK_OAUTH_FILE).toBeUndefined()
+      })
+
+      test('does not leak into proxy routing and reports auth from its own grant file', async () => {
+        const svc = new ProviderService()
+        await svc.activateProvider('deepseek-account')
+        await expect(svc.getProviderForProxy()).resolves.toBeNull()
+        await expect(svc.getProviderForProxy('deepseek-account')).resolves.toBeNull()
+
+        await expect(svc.checkAuthStatus()).resolves.toMatchObject({
+          hasAuth: false,
+          source: 'none',
+          activeProvider: 'DeepSeek Account',
+        })
+
+        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+        await fs.writeFile(
+          path.join(tmpDir, 'cc-haha', 'deepseek-oauth.json'),
+          JSON.stringify({
+            token: 'dsh_test_account_token',
+            issuer: 'https://platform.deepseek.com',
+            deviceId: 'device-1',
+          }),
+          'utf-8',
+        )
+        await expect(svc.checkAuthStatus()).resolves.toMatchObject({
+          hasAuth: true,
+          source: 'deepseek-oauth',
+          activeProvider: 'DeepSeek Account',
+        })
+      })
+
+      test('keeps the model mapping a user saved for the built-in provider', async () => {
+        const svc = new ProviderService()
+        await svc.updateOfficialProviderModels('deepseek-account', {
+          main: 'deepseek-v4-flash',
+          haiku: 'deepseek-v4-flash',
+          sonnet: 'deepseek-v4-flash',
+          opus: 'deepseek-v4-flash',
+        })
+        await svc.activateProvider('deepseek-account')
+
+        const env = (await readSettings()).env as Record<string, string>
+        expect(env.ANTHROPIC_MODEL).toBe('deepseek-v4-flash')
+        expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('deepseek-v4-flash')
       })
     })
 
@@ -1020,32 +1211,6 @@ describe('ProviderService', () => {
       expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.5')
     })
 
-    test('should activate EchoFlow provider with preconfigured Claude models', async () => {
-      const svc = new ProviderService()
-      const provider = await svc.addProvider(sampleInput({
-        presetId: 'echoflowai',
-        name: 'EchoFlowAPI',
-        baseUrl: 'https://api.echoflowai.cc',
-        models: {
-          main: 'claude-sonnet-4-6',
-          haiku: 'claude-haiku-4-5',
-          sonnet: 'claude-sonnet-4-6',
-          opus: 'claude-opus-4-7',
-        },
-      }))
-
-      await svc.activateProvider(provider.id)
-
-      const settings = await readSettings()
-      const env = settings.env as Record<string, string>
-      expect(env.ANTHROPIC_BASE_URL).toBe('https://api.echoflowai.cc')
-      expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-test-key-123')
-      expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
-      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-4-5')
-      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-6')
-      expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-7')
-    })
-
     test('updating active provider should override and clear model context windows', async () => {
       const svc = new ProviderService()
       const added = await svc.addProvider(sampleInput({
@@ -1091,19 +1256,19 @@ describe('ProviderService', () => {
       let settings = await readSettings()
       let env = settings.env as Record<string, string>
       expect(env).toMatchObject({
-        [IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]: 'openai_images',
-        [IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]: added.id,
-        [IMAGE_GENERATION_BASE_URL_ENV_KEY]: 'https://images.example.test/v1',
-        [IMAGE_GENERATION_API_KEY_ENV_KEY]: 'image-secret',
-        [IMAGE_GENERATION_MODEL_ENV_KEY]: 'image-model',
+        CC_HAHA_IMAGE_PROVIDER_KIND: 'openai_images',
+        CC_HAHA_IMAGE_PROVIDER_ID: added.id,
+        CC_HAHA_IMAGE_BASE_URL: 'https://images.example.test/v1',
+        CC_HAHA_IMAGE_API_KEY: 'image-secret',
+        CC_HAHA_IMAGE_MODEL: 'image-model',
       })
 
       const updated = await svc.updateProvider(added.id, { imageGeneration: null })
       expect(updated.imageGeneration).toBeUndefined()
       settings = await readSettings()
       env = settings.env as Record<string, string>
-      expect(env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]).toBeUndefined()
-      expect(env[IMAGE_GENERATION_API_KEY_ENV_KEY]).toBeUndefined()
+      expect(env.CC_HAHA_IMAGE_PROVIDER_KIND).toBeUndefined()
+      expect(env.CC_HAHA_IMAGE_API_KEY).toBeUndefined()
     })
   })
 
@@ -1181,6 +1346,7 @@ describe('ProviderService', () => {
         'claude-official',
         a.id,
         'grok-official',
+        'deepseek-account',
       ])
 
       expect(result.providerOrder).toEqual([
@@ -1189,6 +1355,7 @@ describe('ProviderService', () => {
         'claude-official',
         a.id,
         'grok-official',
+        'deepseek-account',
       ])
       expect(result.providers.map((p) => p.id)).toEqual([b.id, a.id])
 
@@ -1199,6 +1366,7 @@ describe('ProviderService', () => {
         'claude-official',
         a.id,
         'grok-official',
+        'deepseek-account',
       ])
 
       const config = await readProvidersConfig()
@@ -1208,6 +1376,7 @@ describe('ProviderService', () => {
         'claude-official',
         a.id,
         'grok-official',
+        'deepseek-account',
       ])
     })
 
@@ -1423,8 +1592,8 @@ describe('ProviderService', () => {
     })
 
     test('proxy providers keep transient desktop auth out of persisted settings', async () => {
-      const originalLocalAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
-      process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+      const originalLocalAccessToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
+      process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
 
       try {
         const svc = new ProviderService()
@@ -1445,9 +1614,53 @@ describe('ProviderService', () => {
         }
       } finally {
         if (originalLocalAccessToken === undefined) {
-          delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+          delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
         } else {
-          process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
+          process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
+        }
+      }
+    })
+
+    test.each([
+      ['xuanshuapi', 'https://www.xuanshuapi.com', 'claude-sonnet-5'],
+      ['fennoai', 'https://api.fenno.ai', 'claude-sonnet-5'],
+      ['qiniuai', 'https://api.qnaigc.com', 'deepseek/deepseek-v4-pro'],
+    ])('keeps legacy %s providers editable and usable after retirement', async (presetId, baseUrl, model) => {
+      // This is an old on-disk record: auth/context fields were not always persisted.
+      const legacyProvider = {
+        id: `saved-${presetId}`,
+        ...sampleInput({ presetId, baseUrl, models: { main: model, haiku: model, sonnet: model, opus: model } }),
+      }
+      await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+      await fs.writeFile(path.join(tmpDir, 'echoflow-code', 'providers.json'), JSON.stringify({
+        providers: [legacyProvider],
+        activeId: legacyProvider.id,
+      }))
+
+      const svc = new ProviderService()
+      expect((await svc.listProviders()).providers).toEqual([expect.objectContaining(legacyProvider)])
+
+      await svc.updateProvider(legacyProvider.id, { name: 'Renamed saved provider' })
+      await svc.activateProvider(legacyProvider.id)
+      const restarted = new ProviderService()
+      expect(await restarted.getProvider(legacyProvider.id)).toMatchObject({
+        ...legacyProvider,
+        name: 'Renamed saved provider',
+      })
+      expect((await restarted.listProviders()).activeId).toBe(legacyProvider.id)
+
+      const runtimeEnv = await restarted.getProviderRuntimeEnv(legacyProvider.id)
+      const settingsEnv = (await readSettings()).env as Record<string, string>
+      for (const env of [runtimeEnv, settingsEnv]) {
+        expect(env).toMatchObject({
+          ANTHROPIC_BASE_URL: baseUrl,
+          ANTHROPIC_AUTH_TOKEN: legacyProvider.apiKey,
+          ANTHROPIC_API_KEY: '',
+          ANTHROPIC_MODEL: model,
+        })
+        expect(JSON.parse(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)[model]).toBe(1000000)
+        if (presetId === 'xuanshuapi') {
+          expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-sonnet-5')
         }
       }
     })
@@ -1455,46 +1668,38 @@ describe('ProviderService', () => {
     test('should include preset default env on activation and runtime env', async () => {
       const svc = new ProviderService()
       const provider = await svc.addProvider(sampleInput({
-        presetId: 'deepseek',
-        baseUrl: 'https://api.deepseek.com/anthropic',
+        presetId: 'shengsuanyun',
+        baseUrl: 'https://router.shengsuanyun.com/api',
       }))
 
       await svc.activateProvider(provider.id)
 
       const settings = await readSettings()
       const env = settings.env as Record<string, string>
-      // After upstream merge, defaultEnv is empty, so we get system defaults with xhigh_effort
-      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
-      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
-      expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
+      expect(env.API_TIMEOUT_MS).toBe('3000000')
+      expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1')
       expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
       expect(JSON.parse(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toEqual({
-        'deepseek-v4-pro[1m]': 1000000,
-        'deepseek-v4-pro': 1000000,
-        'deepseek-v4-flash': 1000000,
-        'deepseek-chat': 1000000,
-        'deepseek-reasoner': 1000000,
+        'anthropic/claude-sonnet-4.6': 1000000,
+        'anthropic/claude-haiku-4.5:thinking': 200000,
+        'anthropic/claude-opus-4.7': 1000000,
       })
 
       const runtimeEnv = await svc.getProviderRuntimeEnv(provider.id)
-      expect(runtimeEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
-      expect(runtimeEnv.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
-      expect(runtimeEnv.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
+      expect(runtimeEnv.API_TIMEOUT_MS).toBe('3000000')
+      expect(runtimeEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1')
       expect(runtimeEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
       expect(JSON.parse(runtimeEnv.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toEqual({
-        'deepseek-v4-pro[1m]': 1000000,
-        'deepseek-v4-pro': 1000000,
-        'deepseek-v4-flash': 1000000,
-        'deepseek-chat': 1000000,
-        'deepseek-reasoner': 1000000,
+        'anthropic/claude-sonnet-4.6': 1000000,
+        'anthropic/claude-haiku-4.5:thinking': 200000,
+        'anthropic/claude-opus-4.7': 1000000,
       })
 
       await svc.activateOfficial()
       const clearedSettings = await readSettings()
       const clearedEnv = (clearedSettings.env as Record<string, string> | undefined) ?? {}
-      expect(clearedEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBeUndefined()
-      expect(clearedEnv.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBeUndefined()
-      expect(clearedEnv.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBeUndefined()
+      expect(clearedEnv.API_TIMEOUT_MS).toBeUndefined()
+      expect(clearedEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined()
       expect(clearedEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
       expect(clearedEnv.CLAUDE_CODE_ATTRIBUTION_HEADER).toBeUndefined()
       expect(clearedEnv.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS).toBeUndefined()
@@ -1519,7 +1724,7 @@ describe('ProviderService', () => {
 
       expect(status).toEqual({
         hasAuth: true,
-        source: 'echoflow-provider',
+        source: 'cc-haha-provider',
         activeProvider: provider.name,
       })
     })
@@ -1536,7 +1741,7 @@ describe('ProviderService', () => {
 
       expect(status).toEqual({
         hasAuth: true,
-        source: 'echoflow-provider',
+        source: 'cc-haha-provider',
         activeProvider: provider.name,
       })
     })
@@ -1560,9 +1765,9 @@ describe('ProviderService', () => {
 
     test('should preserve existing settings.json fields on activation', async () => {
       // Pre-seed settings with an extra field
-      await fs.mkdir(echoFlowDir(), { recursive: true })
+      await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
       await fs.writeFile(
-        path.join(echoFlowDir(), 'settings.json'),
+        path.join(tmpDir, 'echoflow-code', 'settings.json'),
         JSON.stringify({ theme: 'dark', env: { CUSTOM_VAR: 'keep-me' } }),
       )
 
@@ -1580,8 +1785,8 @@ describe('ProviderService', () => {
     })
 
     test('should recover malformed managed settings before activation sync', async () => {
-      await fs.mkdir(echoFlowDir(), { recursive: true })
-      await fs.writeFile(path.join(echoFlowDir(), 'settings.json'), '{not json', 'utf-8')
+      await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+      await fs.writeFile(path.join(tmpDir, 'echoflow-code', 'settings.json'), '{not json', 'utf-8')
 
       const svc = new ProviderService()
       const provider = await svc.addProvider(sampleInput())
@@ -1590,7 +1795,7 @@ describe('ProviderService', () => {
 
       const settings = await readSettings()
       const env = settings.env as Record<string, string>
-      const files = await fs.readdir(echoFlowDir())
+      const files = await fs.readdir(path.join(tmpDir, 'echoflow-code'))
 
       expect(env.ANTHROPIC_BASE_URL).toBe('https://api.example.com')
       expect(files.some((name) => name.startsWith('settings.json.invalid-'))).toBe(true)
@@ -1619,31 +1824,176 @@ describe('ProviderService', () => {
     })
   })
 
-  // ─── getProviderRuntimeEnv ───────────────────────────────────────────────
+  // ─── checkAuthStatus(providerId) ─────────────────────────────────────────
 
-  describe('getProviderRuntimeEnv', () => {
-    test('routes an otherwise-direct Anthropic provider through the proxy when local redaction is enabled', async () => {
-      await fs.writeFile(
-        path.join(tmpDir, 'settings.json'),
-        JSON.stringify({ localRedaction: { enabled: true, personalInfo: false, customWords: [] } }),
-        'utf-8',
-      )
-      const svc = new ProviderService()
-      const provider = await svc.addProvider(sampleInput({ supportsNestedToolResultMedia: true }))
+  describe('checkAuthStatus for an explicitly selected provider', () => {
+    let originalApiKey: string | undefined
+    let originalAuthToken: string | undefined
 
-      const env = await svc.getProviderRuntimeEnv(provider.id)
-
-      expect(env.ANTHROPIC_BASE_URL).toContain(`/proxy/providers/${provider.id}`)
+    beforeEach(() => {
+      originalApiKey = process.env.ANTHROPIC_API_KEY
+      originalAuthToken = process.env.ANTHROPIC_AUTH_TOKEN
+      delete process.env.ANTHROPIC_API_KEY
+      delete process.env.ANTHROPIC_AUTH_TOKEN
     })
 
-    test('routes through the proxy when the local redaction settings cannot be parsed', async () => {
-      await fs.writeFile(path.join(tmpDir, 'settings.json'), '{not json', 'utf-8')
+    afterEach(() => {
+      if (originalApiKey === undefined) delete process.env.ANTHROPIC_API_KEY
+      else process.env.ANTHROPIC_API_KEY = originalApiKey
+      if (originalAuthToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN
+      else process.env.ANTHROPIC_AUTH_TOKEN = originalAuthToken
+    })
+
+    async function writeGrant(file: string, value: Record<string, unknown>) {
+      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+      await fs.writeFile(path.join(tmpDir, 'cc-haha', file), JSON.stringify(value), 'utf-8')
+    }
+
+    async function writeOriginalSettingsAuth() {
+      await fs.writeFile(
+        path.join(tmpDir, 'settings.json'),
+        JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'fake-original-settings-token' } }),
+        'utf-8',
+      )
+    }
+
+    test('a saved provider with its own key has auth while the global default has none', async () => {
       const svc = new ProviderService()
-      const provider = await svc.addProvider(sampleInput({ supportsNestedToolResultMedia: true }))
+      const provider = await svc.addProvider(sampleInput())
 
-      const env = await svc.getProviderRuntimeEnv(provider.id)
+      // Global default: Claude Official without OAuth or ambient credentials.
+      await expect(svc.checkAuthStatus()).resolves.toEqual({ hasAuth: false, source: 'none' })
+      await expect(svc.checkAuthStatus(provider.id)).resolves.toEqual({
+        hasAuth: true,
+        source: 'cc-haha-provider',
+        activeProvider: 'Test Provider',
+      })
+    })
 
-      expect(env.ANTHROPIC_BASE_URL).toContain(`/proxy/providers/${provider.id}`)
+    test('a saved provider without its own key ignores ambient credentials', async () => {
+      const svc = new ProviderService()
+      const keyless = await svc.addProvider(sampleInput({ name: 'Keyless', apiKey: '' }))
+      process.env.ANTHROPIC_API_KEY = 'fake-ambient-env-key'
+      await writeOriginalSettingsAuth()
+
+      // The global check keeps its historical fallback to ambient credentials.
+      await expect(svc.checkAuthStatus()).resolves.toEqual({ hasAuth: true, source: 'env' })
+      // A session pinned to this provider runs on the provider's own env.
+      await expect(svc.checkAuthStatus(keyless.id)).resolves.toEqual({
+        hasAuth: false,
+        source: 'none',
+        activeProvider: 'Keyless',
+      })
+
+      await svc.activateProvider(keyless.id)
+      await expect(svc.checkAuthStatus()).resolves.toEqual({ hasAuth: true, source: 'env' })
+      delete process.env.ANTHROPIC_API_KEY
+      await expect(svc.checkAuthStatus()).resolves.toEqual({ hasAuth: true, source: 'original-settings' })
+      await expect(svc.checkAuthStatus(keyless.id)).resolves.toEqual({
+        hasAuth: false,
+        source: 'none',
+        activeProvider: 'Keyless',
+      })
+    })
+
+    test('claude-official counts its desktop OAuth, then the settings file its CLI reads, never inherited env or the active provider key', async () => {
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput())
+      await svc.activateProvider(provider.id)
+      await expect(svc.checkAuthStatus()).resolves.toMatchObject({ hasAuth: true, source: 'cc-haha-provider' })
+
+      await expect(svc.checkAuthStatus('claude-official')).resolves.toEqual({ hasAuth: false, source: 'none' })
+      // An expired grant that cannot be refreshed is not a credential.
+      await writeGrant('oauth.json', {
+        accessToken: 'fake-expired-access',
+        refreshToken: '',
+        expiresAt: Date.now() - 60 * 60_000,
+        scopes: [],
+      })
+      await expect(svc.checkAuthStatus('claude-official')).resolves.toEqual({ hasAuth: false, source: 'none' })
+
+      // The CLI started for this pick runs without the server's inherited
+      // ANTHROPIC_* variables, so they would only end in "Not logged in".
+      for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] as const) {
+        process.env[name] = 'fake-ambient-env-credential'
+        await expect(svc.checkAuthStatus('claude-official')).resolves.toEqual({ hasAuth: false, source: 'none' })
+        delete process.env[name]
+      }
+      // The original settings file is applied by that CLI itself, so it counts.
+      await writeOriginalSettingsAuth()
+      await expect(svc.checkAuthStatus('claude-official')).resolves.toEqual({ hasAuth: true, source: 'original-settings' })
+
+      await writeGrant('oauth.json', {
+        accessToken: 'fake-claude-access',
+        refreshToken: 'fake-claude-refresh',
+        expiresAt: Date.now() + 60 * 60_000,
+        scopes: [],
+        subscriptionType: 'pro',
+      })
+      await expect(svc.checkAuthStatus('claude-official')).resolves.toEqual({
+        hasAuth: true,
+        source: 'claude-oauth',
+        activeProvider: 'Claude Official',
+      })
+    })
+
+    test('an explicit claude-official pick drops the env fallback the Claude Official global default keeps', async () => {
+      const svc = new ProviderService()
+      for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] as const) {
+        process.env[name] = 'fake-ambient-env-credential'
+        // The global default (activeId null) keeps its historical answer.
+        await expect(svc.checkAuthStatus()).resolves.toEqual({ hasAuth: true, source: 'env' })
+        await expect(svc.checkAuthStatus('claude-official')).resolves.toEqual({ hasAuth: false, source: 'none' })
+        delete process.env[name]
+      }
+
+      await writeOriginalSettingsAuth()
+      await expect(svc.checkAuthStatus()).resolves.toEqual({ hasAuth: true, source: 'original-settings' })
+      await expect(svc.checkAuthStatus('claude-official')).resolves.toEqual({ hasAuth: true, source: 'original-settings' })
+    })
+
+    test('built-in account providers count only their own grant files', async () => {
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput())
+      await svc.activateProvider(provider.id)
+      process.env.ANTHROPIC_API_KEY = 'fake-ambient-env-key'
+      await writeOriginalSettingsAuth()
+
+      const builtIns = [
+        ['openai-official', 'ChatGPT Official', 'openai-oauth'],
+        ['grok-official', 'Grok Official', 'grok-oauth'],
+        ['deepseek-account', 'DeepSeek Account', 'deepseek-oauth'],
+      ] as const
+      for (const [id, name] of builtIns) {
+        await expect(svc.checkAuthStatus(id)).resolves.toEqual({ hasAuth: false, source: 'none', activeProvider: name })
+      }
+
+      const expiresAt = Date.now() + 60 * 60_000
+      await writeGrant('openai-oauth.json', {
+        accessToken: 'fake-openai-access', refreshToken: 'fake-openai-refresh', expiresAt,
+        email: 'user@example.com', accountId: 'acct_fixture',
+      })
+      await writeGrant('grok-oauth.json', {
+        accessToken: 'fake-grok-access', refreshToken: 'fake-grok-refresh', expiresAt,
+        email: 'grok@example.com', clientId: 'grok-client',
+      })
+      await writeGrant('deepseek-oauth.json', {
+        token: 'dsh_fake_account_token', issuer: 'https://platform.deepseek.com', deviceId: 'device-fixture',
+      })
+      for (const [id, name, source] of builtIns) {
+        await expect(svc.checkAuthStatus(id)).resolves.toEqual({ hasAuth: true, source, activeProvider: name })
+      }
+    })
+
+    test('an unknown provider id has no auth and is not echoed back', async () => {
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput())
+      await svc.activateProvider(provider.id)
+      process.env.ANTHROPIC_API_KEY = 'fake-ambient-env-key'
+
+      for (const id of ['missing-provider', '../providers.json', 'x'.repeat(4096)]) {
+        await expect(svc.checkAuthStatus(id)).resolves.toEqual({ hasAuth: false, source: 'none' })
+      }
     })
   })
 
@@ -2317,33 +2667,445 @@ describe('ProviderService', () => {
 
     test.each([
       {
-        name: 'opencode non-vision model',
-        baseUrl: 'https://opencode.ai/zen',
+        name: 'DeepSeek schema error relayed by OpenCode Go',
+        baseUrl: 'https://opencode.ai/zen/go/v1',
         model: 'deepseek-v4-flash',
+        status: 400,
+        error: 'Error from provider (DeepSeek): Failed to deserialize the JSON body into the target type: messages[0]: unknown variant `image_url`, expected `text` at line 1 column 120',
       },
       {
         name: 'classic DeepSeek text model',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-v4-pro',
+        status: 400,
+        error: 'This model does not support image input',
       },
-    ])('uses text-only Computer Use content for $name', async ({ baseUrl, model }) => {
-      const body = await captureOpenAIChatRequest({
-        baseUrl,
+      {
+        name: 'generic gateway validation error',
+        baseUrl: 'https://gateway.example.test/v1',
+        model: 'text-model',
+        status: 422,
+        error: "messages.0.content.1.type: Input should be 'text'; received 'image_url'",
+      },
+    ])('retries without images once $name rejects them, then stays text-only for that model', async ({ baseUrl, model, status, error }) => {
+      const originalFetch = globalThis.fetch
+      const calls: Array<Record<string, unknown>> = []
+      globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        calls.push(body)
+        if (JSON.stringify(body).includes('image_url')) {
+          return Response.json({ error: { type: 'invalid_request_error', message: error } }, { status })
+        }
+        return Response.json({
+          id: 'chatcmpl-text-only',
+          object: 'chat.completion',
+          created: 0,
+          model: body.model,
+          choices: [{ index: 0, message: { role: 'assistant', content: 'described from text' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        })
+      }) as typeof fetch
+
+      try {
+        const otherModel = `${model}-sibling`
+        const svc = new ProviderService()
+        const provider = await svc.addProvider(sampleInput({
+          apiFormat: 'openai_chat',
+          baseUrl,
+          models: { main: model, haiku: otherModel, sonnet: model, opus: model },
+        }))
+        await svc.activateProvider(provider.id)
+        const send = (requestModel: string) => {
+          const req = new Request('http://localhost:3456/proxy/v1/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Claude-Code-Session-Id': `image-retry-${requestModel}` },
+            body: JSON.stringify({
+              model: requestModel,
+              max_tokens: 64,
+              messages: [{
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'Describe this picture.' },
+                  { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'rejected-picture' } },
+                ],
+              }],
+            }),
+          })
+          return handleProxyRequest(req, new URL(req.url))
+        }
+
+        const first = await send(model)
+        expect(first.status).toBe(200)
+        expect(await first.json()).toMatchObject({ content: [{ type: 'text', text: 'described from text' }] })
+        expect(calls).toHaveLength(2)
+        expect(JSON.stringify(calls[0])).toContain('data:image/png;base64,rejected-picture')
+        expect(calls[1].messages).toEqual([{
+          role: 'user',
+          content: 'Describe this picture.\n[Image omitted: the upstream rejected image input for this model.]\n',
+        }])
+
+        const trace = await waitForCompletedProxyTrace(`image-retry-${model}`)
+        expect(trace.calls.map(call => call.response?.status).sort()).toEqual([200, status].sort())
+        await diagnosticsService.drainForMigration()
+        const [learned] = (await diagnosticsService.readRecentEvents(20))
+          .filter(event => event.type === 'openai_chat_image_input_disabled')
+        expect(learned).toMatchObject({ severity: 'info', details: { model, httpStatus: status } })
+        expect(JSON.stringify(learned)).not.toContain('sk-test-key-123')
+
+        // The rejection is remembered: later turns skip the failing attempt.
+        const second = await send(model)
+        expect(second.status).toBe(200)
+        expect(calls).toHaveLength(3)
+        expect(JSON.stringify(calls[2])).not.toContain('image_url')
+        expect(JSON.stringify(calls[2])).not.toContain('rejected-picture')
+
+        // The learned limit belongs to that model, not to the whole endpoint.
+        await send(otherModel)
+        expect(calls[3].model).toBe(otherModel)
+        expect(JSON.stringify(calls[3])).toContain('data:image/png;base64,rejected-picture')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    describe('reasoning fields the upstream refuses', () => {
+      const thinkingRefusal = {
+        error: {
+          param: 'thinking',
+          type: 'invalid_request_error',
+          message: 'Upstream request failed: [unsupported_parameter] Unrecognized request argument supplied: thinking.',
+        },
+      }
+      const effortRefusal = {
+        error: {
+          param: 'reasoning_effort',
+          type: 'invalid_request_error',
+          message: 'Upstream request failed: [unsupported_parameter] Unrecognized request argument supplied: reasoning_effort.',
+        },
+      }
+      const completion = (model: unknown) => Response.json({
+        id: 'chatcmpl-reasoning',
+        object: 'chat.completion',
+        created: 0,
         model,
-        content: [{
-          type: 'image',
-          source: { type: 'base64', media_type: 'image/jpeg', data: 'private-screenshot-data' },
-        }],
+        choices: [{ index: 0, message: { role: 'assistant', content: 'hi' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
       })
 
-      const messages = body.messages as Array<Record<string, unknown>>
-      expect(messages[0]).toEqual({
-        role: 'tool',
-        tool_call_id: 'computer_1',
-        content: '\n[Image omitted: this OpenAI-compatible chat endpoint only supports text content.]\n',
+      async function setupOpenCodeGo(model: string, sibling: string) {
+        const svc = new ProviderService()
+        const provider = await svc.addProvider(sampleInput({
+          apiFormat: 'openai_chat',
+          baseUrl: 'https://opencode.ai/zen/go/v1',
+          models: { main: model, haiku: sibling, sonnet: model, opus: model },
+        }))
+        await svc.activateProvider(provider.id)
+        // What Claude Code sends with thinking on: a budget plus an effort level.
+        return (requestModel: string) => {
+          const req = new Request('http://localhost:3456/proxy/v1/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: requestModel,
+              max_tokens: 32000,
+              thinking: { type: 'enabled', budget_tokens: 31999 },
+              output_config: { effort: 'medium' },
+              messages: [{ role: 'user', content: 'hello' }],
+            }),
+          })
+          return handleProxyRequest(req, new URL(req.url))
+        }
+      }
+
+      test('retries without the thinking toggle for a model that rejects it, then stays that way for that model', async () => {
+        const originalFetch = globalThis.fetch
+        const calls: Array<Record<string, unknown>> = []
+        globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+          const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+          calls.push(body)
+          if (body.model === 'cat-jam-free' && body.thinking !== undefined) {
+            return Response.json(thinkingRefusal, { status: 400 })
+          }
+          return completion(body.model)
+        }) as typeof fetch
+
+        try {
+          const send = await setupOpenCodeGo('cat-jam-free', 'deepseek-flash')
+
+          const first = await send('cat-jam-free')
+          expect(first.status).toBe(200)
+          expect(await first.json()).toMatchObject({ content: [{ type: 'text', text: 'hi' }] })
+          expect(calls).toHaveLength(2)
+          expect(calls[0]!.thinking).toEqual({ type: 'enabled' })
+          expect(calls[1]!.thinking).toBeUndefined()
+          // Only the refused field is dropped; the effort the user chose survives.
+          expect(calls[1]!.reasoning_effort).toBe('medium')
+
+          await diagnosticsService.drainForMigration()
+          const [learned] = (await diagnosticsService.readRecentEvents(20))
+            .filter(event => event.type === 'openai_chat_reasoning_field_disabled')
+          expect(learned).toMatchObject({ severity: 'info', details: { model: 'cat-jam-free', field: 'thinking', httpStatus: 400 } })
+          expect(JSON.stringify(learned)).not.toContain('sk-test-key-123')
+
+          // Remembered: the next turn skips the failing attempt.
+          expect((await send('cat-jam-free')).status).toBe(200)
+          expect(calls).toHaveLength(3)
+          expect(calls[2]!.thinking).toBeUndefined()
+
+          // The limit belongs to that model; DeepSeek on the same gateway keeps the toggle.
+          expect((await send('deepseek-flash')).status).toBe(200)
+          expect(calls).toHaveLength(4)
+          expect(calls[3]!.model).toBe('deepseek-flash')
+          expect(calls[3]!.thinking).toEqual({ type: 'enabled' })
+        } finally {
+          globalThis.fetch = originalFetch
+        }
       })
-      expect(JSON.stringify(body)).not.toContain('private-screenshot-data')
-      expect(JSON.stringify(body)).not.toContain('image_url')
+
+      test('drops each refused field in turn until the request is accepted', async () => {
+        const originalFetch = globalThis.fetch
+        const calls: Array<Record<string, unknown>> = []
+        globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+          const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+          calls.push(body)
+          if (body.thinking !== undefined) return Response.json(thinkingRefusal, { status: 400 })
+          if (body.reasoning_effort !== undefined) return Response.json(effortRefusal, { status: 400 })
+          return completion(body.model)
+        }) as typeof fetch
+
+        try {
+          const send = await setupOpenCodeGo('cat-jam-free', 'deepseek-flash')
+
+          expect((await send('cat-jam-free')).status).toBe(200)
+          expect(calls).toHaveLength(3)
+          expect(calls[2]!.thinking).toBeUndefined()
+          expect(calls[2]!.reasoning_effort).toBeUndefined()
+
+          expect((await send('cat-jam-free')).status).toBe(200)
+          expect(calls).toHaveLength(4)
+          expect(calls[3]!.thinking).toBeUndefined()
+          expect(calls[3]!.reasoning_effort).toBeUndefined()
+        } finally {
+          globalThis.fetch = originalFetch
+        }
+      })
+
+      test('surfaces the error when the resend without the field fails too, and does not remember the field', async () => {
+        const originalFetch = globalThis.fetch
+        const calls: Array<Record<string, unknown>> = []
+        globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+          calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+          return Response.json({
+            error: { param: 'thinking', type: 'invalid_request_error', message: 'thinking budget_tokens must be smaller than max_tokens' },
+          }, { status: 400 })
+        }) as typeof fetch
+
+        try {
+          const send = await setupOpenCodeGo('cat-jam-free', 'deepseek-flash')
+
+          const first = await send('cat-jam-free')
+          expect(first.status).toBe(400)
+          expect(JSON.stringify(await first.json())).toContain('budget_tokens must be smaller')
+          expect(calls).toHaveLength(2)
+          expect(calls[1]!.thinking).toBeUndefined()
+
+          // Nothing was learned from a resend that also failed.
+          await send('cat-jam-free')
+          expect(calls).toHaveLength(4)
+          expect(calls[2]!.thinking).toEqual({ type: 'enabled' })
+        } finally {
+          globalThis.fetch = originalFetch
+        }
+      })
+    })
+
+    test.each([
+      { name: 'an oversized image', status: 400, error: 'image exceeds maximum allowed size', withImage: true },
+      {
+        name: 'an unsupported image format',
+        status: 400,
+        error: "You uploaded an unsupported image. Please make sure your image has of one the following formats: ['png', 'jpeg', 'gif', 'webp'].",
+        withImage: true,
+      },
+      { name: 'an unsupported image MIME type', status: 400, error: "Invalid image_url: unsupported MIME type 'image/heic'", withImage: true },
+      { name: 'a server failure', status: 500, error: 'image input is not supported right now', withImage: true },
+      { name: 'a request without images', status: 400, error: 'This model does not support image input', withImage: false },
+    ])('surfaces $name without dropping images from later requests', async ({ status, error, withImage }) => {
+      const originalFetch = globalThis.fetch
+      const calls: Array<Record<string, unknown>> = []
+      globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+        calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return Response.json({ error: { type: 'invalid_request_error', message: error } }, { status })
+      }) as typeof fetch
+
+      try {
+        const svc = new ProviderService()
+        const provider = await svc.addProvider(sampleInput({
+          apiFormat: 'openai_chat',
+          baseUrl: 'https://opencode.ai/zen/go/v1',
+          models: { main: 'deepseek-flash', haiku: 'deepseek-flash', sonnet: 'deepseek-flash', opus: 'deepseek-flash' },
+        }))
+        await svc.activateProvider(provider.id)
+        const send = (content: unknown) => {
+          const req = new Request('http://localhost:3456/proxy/v1/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'deepseek-flash', max_tokens: 64, messages: [{ role: 'user', content }] }),
+          })
+          return handleProxyRequest(req, new URL(req.url))
+        }
+        const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'kept-picture' } }
+
+        const res = await send(withImage ? [{ type: 'text', text: 'Look.' }, image] : 'Look.')
+        expect(res.status).toBe(status)
+        expect(JSON.stringify(await res.json())).toContain(error)
+        expect(calls).toHaveLength(1)
+
+        // The next turn still offers its image to the model first.
+        await send([{ type: 'text', text: 'Look again.' }, image])
+        expect(JSON.stringify(calls[1])).toContain('data:image/png;base64,kept-picture')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test.each([
+      'https://api.deepseek.com',
+      'https://opencode.ai/zen/v1',
+      'https://opencode.ai/zen/go/v1',
+      'https://gateway.example.test/v1',
+    ].flatMap(baseUrl => ['deepseek-v4-pro', 'deepseek-flash', 'glm-5.3'].map(model => ({ baseUrl, model }))))(
+      'offers images to $model at $baseUrl before any rejection',
+      async ({ baseUrl, model }) => {
+        // Guard: image support must never be predicted from host or model names.
+        const body = await captureOpenAIChatRequest({
+          baseUrl,
+          model,
+          contentSource: 'user',
+          content: [
+            { type: 'text', text: 'Look.' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'guard-picture' } },
+          ],
+        })
+
+        expect(JSON.stringify(body)).toContain('data:image/png;base64,guard-picture')
+        expect(JSON.stringify(body)).not.toContain('Image omitted:')
+      },
+    )
+
+    test('keeps offering images when the text-only resend fails for another reason', async () => {
+      const originalFetch = globalThis.fetch
+      const calls: Array<Record<string, unknown>> = []
+      globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        calls.push(body)
+        return JSON.stringify(body).includes('image_url')
+          ? Response.json({ error: { message: 'This model does not support image input' } }, { status: 400 })
+          : Response.json({ error: { message: 'Rate limit reached' } }, { status: 429 })
+      }) as typeof fetch
+
+      try {
+        const svc = new ProviderService()
+        const provider = await svc.addProvider(sampleInput({
+          apiFormat: 'openai_chat',
+          baseUrl: 'https://opencode.ai/zen/go/v1',
+          models: { main: 'deepseek-flash', haiku: 'deepseek-flash', sonnet: 'deepseek-flash', opus: 'deepseek-flash' },
+        }))
+        await svc.activateProvider(provider.id)
+        const send = () => {
+          const req = new Request('http://localhost:3456/proxy/v1/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'deepseek-flash',
+              max_tokens: 64,
+              messages: [{
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'Look.' },
+                  { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'retry-picture' } },
+                ],
+              }],
+            }),
+          })
+          return handleProxyRequest(req, new URL(req.url))
+        }
+
+        const first = await send()
+        expect(first.status).toBe(429)
+        expect(calls).toHaveLength(2)
+
+        await send()
+        expect(JSON.stringify(calls[2])).toContain('data:image/png;base64,retry-picture')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test('resends a streaming request without images after an image rejection', async () => {
+      const originalFetch = globalThis.fetch
+      const encoder = new TextEncoder()
+      const calls: Array<Record<string, unknown>> = []
+      globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        calls.push(body)
+        if (JSON.stringify(body).includes('image_url')) {
+          return Response.json({
+            error: { message: 'Error from provider (DeepSeek): unknown variant `image_url`, expected `text`' },
+          }, { status: 400 })
+        }
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode([
+              'data: {"id":"chatcmpl-stream-retry","object":"chat.completion.chunk","model":"deepseek-flash","choices":[{"index":0,"delta":{"role":"assistant","content":"text answer"},"finish_reason":null}]}',
+              '',
+              'data: {"id":"chatcmpl-stream-retry","object":"chat.completion.chunk","model":"deepseek-flash","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}',
+              '',
+              'data: [DONE]',
+              '',
+            ].join('\n')))
+            controller.close()
+          },
+        }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+      }) as typeof fetch
+
+      try {
+        const svc = new ProviderService()
+        const provider = await svc.addProvider(sampleInput({
+          apiFormat: 'openai_chat',
+          baseUrl: 'https://opencode.ai/zen/go/v1',
+          models: { main: 'deepseek-flash', haiku: 'deepseek-flash', sonnet: 'deepseek-flash', opus: 'deepseek-flash' },
+        }))
+        await svc.activateProvider(provider.id)
+        const req = new Request('http://localhost:3456/proxy/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'deepseek-flash[1m]',
+            max_tokens: 64,
+            stream: true,
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'text', text: 'Look.' },
+                { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'stream-picture' } },
+              ],
+            }],
+          }),
+        })
+
+        const res = await handleProxyRequest(req, new URL(req.url))
+        expect(res.status).toBe(200)
+        expect(res.headers.get('Content-Type')).toBe('text/event-stream')
+        const text = await res.text()
+        expect(text).toContain('text answer')
+        expect(text).toContain('message_stop')
+        expect(calls).toHaveLength(2)
+        expect(calls[1].stream).toBe(true)
+        expect(JSON.stringify(calls[1])).not.toContain('stream-picture')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
     })
 
     test.each([
@@ -2378,6 +3140,10 @@ describe('ProviderService', () => {
       { model: 'space-bunny-free', contentSource: 'tool' },
       { model: 'space-bunny-free[1m]', contentSource: 'user' },
       { model: 'space-bunny-free[1m]', contentSource: 'tool' },
+      { model: 'deepseek-flash', contentSource: 'user' },
+      { model: 'deepseek-flash', contentSource: 'tool' },
+      { model: 'deepseek-flash[1m]', contentSource: 'user' },
+      { model: 'some-future-model', contentSource: 'tool' },
     ] as const)('forwards OpenCode Go images for $model from $contentSource content', async ({ model, contentSource }) => {
       const body = await captureOpenAIChatRequest({
         baseUrl: 'https://opencode.ai/zen/go/v1',
@@ -2691,6 +3457,85 @@ describe('ProviderService', () => {
       })
     }
 
+    // #1816: a gateway that versions its own root (Volcengine Ark /api/v3, Zhipu
+    // /api/paas/v4) serves OpenAI routes directly under it; a second /v1 is a 404.
+    for (const apiFormat of ['openai_chat', 'openai_responses'] as const) {
+      const endpoint = apiFormat === 'openai_chat' ? 'chat/completions' : 'responses'
+      for (const [basePath, upstreamPath] of [
+        ['/api/v3', `/api/v3/${endpoint}`],
+        ['/api/coding/v3/', `/api/coding/v3/${endpoint}`],
+        ['/api/paas/v4', `/api/paas/v4/${endpoint}`],
+        ['/v1', `/v1/${endpoint}`],
+        ['', `/v1/${endpoint}`],
+      ]) {
+        test(`${apiFormat} base URL ${basePath || '(root)'} reaches ${upstreamPath} in connectivity and proxy requests (#1816)`, async () => {
+          const requests: Array<{ path: string; authorization: string | null }> = []
+          const server = Bun.serve({
+            hostname: '127.0.0.1',
+            port: 0,
+            fetch(req) {
+              const requestPath = new URL(req.url).pathname
+              requests.push({ path: requestPath, authorization: req.headers.get('authorization') })
+              if (requestPath !== upstreamPath) {
+                return Response.json({ error: { message: 'Unknown endpoint' } }, { status: 404 })
+              }
+              return Response.json(apiFormat === 'openai_chat'
+                ? {
+                    id: 'chatcmpl-1',
+                    object: 'chat.completion',
+                    created: 0,
+                    model: 'model-main',
+                    choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+                    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+                  }
+                : {
+                    id: 'resp_1',
+                    object: 'response',
+                    created_at: 0,
+                    model: 'model-main',
+                    status: 'completed',
+                    output: [{
+                      type: 'message',
+                      id: 'msg_1',
+                      role: 'assistant',
+                      status: 'completed',
+                      content: [{ type: 'output_text', text: 'ok', annotations: [] }],
+                    }],
+                    usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+                  })
+            },
+          })
+
+          try {
+            const svc = new ProviderService()
+            const provider = await svc.addProvider(sampleInput({
+              baseUrl: `http://127.0.0.1:${server.port}${basePath}`,
+              apiFormat,
+            }))
+            const result = await svc.testProvider(provider.id)
+            expect(result.connectivity.success).toBe(true)
+            expect(result.proxy?.success).toBe(true)
+
+            const req = new Request(`http://localhost/proxy/providers/${provider.id}/v1/messages`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' },
+              body: JSON.stringify({ model: 'model-main', max_tokens: 16, messages: [{ role: 'user', content: 'hello' }] }),
+            })
+            const response = await handleProxyRequest(req, new URL(req.url))
+            expect(response.status).toBe(200)
+            expect((await response.json() as { type?: string }).type).toBe('message')
+            // Connectivity, proxy-pipeline probe, and the forwarded request.
+            expect(requests).toEqual(Array.from({ length: 3 }, () => ({
+              path: upstreamPath,
+              authorization: 'Bearer sk-test-key-123',
+            })))
+          } finally {
+            server.stop(true)
+          }
+        })
+      }
+    }
+
     test('should use auth strategy headers for Anthropic-compatible tests', async () => {
       const originalFetch = globalThis.fetch
       const calls: Array<{ url: string; headers: Record<string, string> }> = []
@@ -2938,7 +3783,6 @@ describe('ProviderService', () => {
     })
 
     test('bypasses inherited system proxy when testing direct provider endpoints', async () => {
-      await fs.mkdir(tmpDir, { recursive: true })
       await fs.writeFile(
         path.join(tmpDir, 'settings.json'),
         JSON.stringify({
@@ -3007,7 +3851,6 @@ describe('ProviderService', () => {
     })
 
     test.each([180_000, 14_400_000, 21_600_000])('should use the configured network timeout for provider tests (%i ms)', async timeoutMs => {
-      await fs.mkdir(tmpDir, { recursive: true })
       await fs.writeFile(
         path.join(tmpDir, 'settings.json'),
         JSON.stringify({
@@ -3077,18 +3920,147 @@ describe('Providers API', () => {
   test('GET /api/providers should list added providers', async () => {
     // Seed a provider via service
     const svc = new ProviderService()
-    await svc.addProvider(sampleInput({ apiKey: 'sk-test' }))
+    await svc.addProvider(sampleInput())
 
     const { req, url, segments } = makeRequest('GET', '/api/providers')
     const res = await handleProvidersApi(req, url, segments)
 
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { providers: { name: string; apiKey: string; hasApiKey?: boolean; keyPreview?: string }[] }
+    const body = (await res.json()) as { providers: { name: string; apiKey: string }[] }
     expect(body.providers).toHaveLength(1)
     expect(body.providers[0].name).toBe('Test Provider')
-    expect(body.providers[0].apiKey).toBe('')
-    expect(body.providers[0].hasApiKey).toBe(true)
-    expect(body.providers[0].keyPreview).toBe('sk-••••')
+    expect(body.providers[0].apiKey).toBe('sk-test-key-123')
+  })
+
+  test('GET /api/providers preserves a drag across built-in rows after reopening settings', async () => {
+    const svc = new ProviderService()
+    const a = await svc.addProvider(sampleInput({ name: 'A' }))
+    const b = await svc.addProvider(sampleInput({ name: 'B' }))
+    await svc.activateProvider(a.id)
+    const draggedOrder = ['grok-official', b.id, 'claude-official', 'openai-official', a.id, 'deepseek-account']
+
+    const reorder = makeRequest('PUT', '/api/providers/reorder', { orderedIds: draggedOrder })
+    const reorderRes = await handleProvidersApi(reorder.req, reorder.url, reorder.segments)
+    expect(reorderRes.status).toBe(200)
+    expect(((await reorderRes.json()) as { providerOrder: string[] }).providerOrder).toEqual(draggedOrder)
+    expect((await readProvidersConfig()).providerOrder).toEqual(draggedOrder)
+    expect((await new ProviderService().listProviders()).providerOrder).toEqual(draggedOrder)
+
+    // Reopening Settings refetches this route, rather than the reorder response.
+    const { req, url, segments } = makeRequest('GET', '/api/providers')
+    const res = await handleProvidersApi(req, url, segments)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      providers: { id: string }[]
+      providerOrder: string[]
+      activeId: string | null
+    }
+    expect(body.providerOrder).toEqual(draggedOrder)
+    expect(body.providers.map((provider) => provider.id)).toEqual([b.id, a.id])
+    expect(body.activeId).toBe(a.id)
+  })
+
+  test('GET /api/providers preserves built-in positions after a legacy saved-only reorder', async () => {
+    const svc = new ProviderService()
+    const a = await svc.addProvider(sampleInput({ name: 'A' }))
+    const b = await svc.addProvider(sampleInput({ name: 'B' }))
+    await svc.reorderProviders(['grok-official', b.id, 'claude-official', 'openai-official', a.id, 'deepseek-account'])
+
+    const reorder = makeRequest('PUT', '/api/providers/reorder', { orderedIds: [a.id, b.id] })
+    const reorderRes = await handleProvidersApi(reorder.req, reorder.url, reorder.segments)
+    expect(reorderRes.status).toBe(200)
+
+    const { req, url, segments } = makeRequest('GET', '/api/providers')
+    const res = await handleProvidersApi(req, url, segments)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { providers: { id: string }[]; providerOrder: string[] }
+    expect(body.providerOrder).toEqual([
+      'grok-official', a.id, 'claude-official', 'openai-official', b.id, 'deepseek-account',
+    ])
+    expect(body.providers.map((provider) => provider.id)).toEqual([a.id, b.id])
+  })
+
+  test('GET /api/providers carries the DeepSeek account mapping the user saved', async () => {
+    const list = async () => {
+      const { req, url, segments } = makeRequest('GET', '/api/providers')
+      return (await (await handleProvidersApi(req, url, segments)).json()) as {
+        deepSeekAccountModels: Record<string, string>
+      }
+    }
+    expect((await list()).deepSeekAccountModels).toMatchObject({
+      main: 'deepseek-flash[1m]',
+      fable: 'deepseek-flash[1m]',
+      haiku: 'deepseek-flash[1m]',
+      sonnet: 'deepseek-flash[1m]',
+      opus: 'deepseek-flash[1m]',
+    })
+
+    const saved = {
+      main: 'deepseek-flash',
+      haiku: 'deepseek-flash',
+      sonnet: 'deepseek-v4-pro',
+      opus: 'deepseek-v4-pro',
+    }
+    await new ProviderService().updateOfficialProviderModels('deepseek-account', saved)
+    expect((await list()).deepSeekAccountModels).toEqual(saved)
+  })
+
+  // ─── GET /api/providers/auth-status ──────────────────────────────────────
+
+  test('GET /api/providers/auth-status scopes the check to providerId and never returns keys', async () => {
+    const originalApiKey = process.env.ANTHROPIC_API_KEY
+    const originalAuthToken = process.env.ANTHROPIC_AUTH_TOKEN
+    delete process.env.ANTHROPIC_API_KEY
+    delete process.env.ANTHROPIC_AUTH_TOKEN
+    try {
+      const svc = new ProviderService()
+      const keyed = await svc.addProvider(sampleInput({ name: 'Keyed', apiKey: 'sk-fixture-secret-123' }))
+      const keyless = await svc.addProvider(sampleInput({ name: 'Keyless', apiKey: '' }))
+      await svc.activateProvider(keyed.id)
+      // Every explicit pick below is judged beside an inherited server credential,
+      // which no CLI started for an explicit provider receives.
+      process.env.ANTHROPIC_API_KEY = 'fake-server-env-key'
+      const authStatus = async (query: string) => {
+        const { req, url, segments } = makeRequest('GET', `/api/providers/auth-status${query}`)
+        const res = await handleProvidersApi(req, url, segments)
+        expect(res.status).toBe(200)
+        const text = await res.text()
+        for (const secret of ['sk-fixture-secret-123', 'fake-server-env-key', 'fake-settings-token']) {
+          expect(text).not.toContain(secret)
+        }
+        return JSON.parse(text) as Record<string, unknown>
+      }
+      const globalDefault = { hasAuth: true, source: 'cc-haha-provider', activeProvider: 'Keyed' }
+
+      // Without (or with a blank) providerId the global default is evaluated as before.
+      expect(await authStatus('')).toEqual(globalDefault)
+      expect(await authStatus('?providerId=')).toEqual(globalDefault)
+      expect(await authStatus('?providerId=%20%20')).toEqual(globalDefault)
+
+      const keylessStatus = { hasAuth: false, source: 'none', activeProvider: 'Keyless' }
+      expect(await authStatus(`?providerId=${encodeURIComponent(keyless.id)}`)).toEqual(keylessStatus)
+      expect(await authStatus(`?providerId=${encodeURIComponent(` ${keyless.id} `)}`)).toEqual(keylessStatus)
+      expect(await authStatus(`?providerId=${encodeURIComponent(keyed.id)}`)).toEqual(globalDefault)
+      expect(await authStatus('?providerId=claude-official')).toEqual({ hasAuth: false, source: 'none' })
+      expect(await authStatus('?providerId=openai-official')).toEqual({
+        hasAuth: false, source: 'none', activeProvider: 'ChatGPT Official',
+      })
+      expect(await authStatus('?providerId=not-a-provider')).toEqual({ hasAuth: false, source: 'none' })
+
+      // The original settings file is read by the Claude Official CLI itself.
+      await fs.writeFile(
+        path.join(tmpDir, 'settings.json'),
+        JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'fake-settings-token' } }),
+        'utf-8',
+      )
+      expect(await authStatus('?providerId=claude-official')).toEqual({ hasAuth: true, source: 'original-settings' })
+      expect(await authStatus(`?providerId=${encodeURIComponent(keyless.id)}`)).toEqual(keylessStatus)
+    } finally {
+      if (originalApiKey === undefined) delete process.env.ANTHROPIC_API_KEY
+      else process.env.ANTHROPIC_API_KEY = originalApiKey
+      if (originalAuthToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN
+      else process.env.ANTHROPIC_AUTH_TOKEN = originalAuthToken
+    }
   })
 
   // ─── POST /api/providers ─────────────────────────────────────────────────
@@ -3102,7 +4074,6 @@ describe('Providers API', () => {
       apiFormat: 'anthropic',
       autoCompactWindow: 64000,
       disableExperimentalBetas: true,
-      imageGeneration: { model: 'image-model', apiKey: 'sk-image-secret' },
       models: {
         main: 'gpt-4',
         haiku: 'gpt-4-haiku',
@@ -3118,8 +4089,6 @@ describe('Providers API', () => {
     expect(body.provider.models.main).toBe('gpt-4')
     expect(body.provider.autoCompactWindow).toBe(64000)
     expect(body.provider.disableExperimentalBetas).toBe(true)
-    expect(JSON.stringify(body)).not.toContain('sk-test')
-    expect(JSON.stringify(body)).not.toContain('sk-image-secret')
   })
 
   test('POST /api/providers should return 400 for invalid input', async () => {
@@ -3152,6 +4121,7 @@ describe('Providers API', () => {
       'claude-official',
       'openai-official',
       'grok-official',
+      'deepseek-account',
     ])
   })
 
@@ -3394,4 +4364,784 @@ describe('Providers API', () => {
 
     expect(res.status).toBe(405)
   })
+})
+
+describe('custom OpenAI request contract (offline fixtures)', () => {
+  beforeEach(setup)
+  afterEach(teardown)
+
+  const apiKey = 'sk-apismart-offline-fixture'
+
+  async function createCustomOpenAI() {
+    const preset = {
+      id: 'custom', name: 'Custom OpenAI fixture', baseUrl: 'https://openai-fixture.example.test/v1',
+      apiFormat: 'openai_chat' as const,
+      defaultModels: { main: 'deepseek-v4-pro-0813', haiku: 'deepseek-v4-flash-0731-tem', sonnet: 'deepseek-v4-pro-0813', opus: 'deepseek-v4-pro-0813' },
+    }
+    // Exercise the same API boundary as the desktop's save action.
+    const { req, url, segments } = makeRequest('POST', '/api/providers', {
+      presetId: preset.id, name: preset.name, baseUrl: preset.baseUrl,
+      apiFormat: preset.apiFormat, apiKey, models: preset.defaultModels,
+    })
+    const result = await handleProvidersApi(req, url, segments)
+    expect(result.status).toBe(201)
+    const saved = await result.json()
+    return { preset, provider: saved.provider }
+  }
+
+  async function proxy(providerId: string, body: Record<string, unknown>) {
+    const { req, url } = makeRequest('POST', `/proxy/providers/${providerId}/v1/messages`, body)
+    return handleProxyRequest(req, url)
+  }
+
+  test('custom provider save, model fetch, connectivity, and actual chat all use exactly one /v1', async () => {
+    const { preset, provider } = await createCustomOpenAI()
+    const originalFetch = globalThis.fetch
+    const calls: Array<{ url: string; method: string | undefined; body: any }> = []
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${apiKey}`)
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined
+      calls.push({ url, method: init?.method, body })
+      if (url === 'https://openai-fixture.example.test/v1/models' && init?.method === 'GET') {
+        return Response.json({ object: 'list', data: [
+          { id: 'deepseek-v4-pro-0813', object: 'model', owned_by: 'deepseek' },
+          { id: 'deepseek-v4-flash-0731-tem', object: 'model', owned_by: 'deepseek' },
+        ] })
+      }
+      if (url !== 'https://openai-fixture.example.test/v1/chat/completions' || init?.method !== 'POST') {
+        return Response.json({ error: 'Wrong request endpoint' }, { status: 404 })
+      }
+      return Response.json({
+        id: 'chatcmpl-offline', object: 'chat.completion', model: body.model,
+        choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+      })
+    }) as typeof fetch
+    try {
+      const catalog = makeRequest('POST', '/api/providers/models', { baseUrl: preset.baseUrl, apiKey })
+      const models = await handleProvidersApi(catalog.req, catalog.url, catalog.segments)
+      expect(models.status).toBe(200)
+      expect(await models.json()).toMatchObject({ ok: true, models: [
+        { id: 'deepseek-v4-flash-0731-tem' }, { id: 'deepseek-v4-pro-0813' },
+      ] })
+      const check = await new ProviderService().testProviderConfig({
+        baseUrl: preset.baseUrl, apiKey, apiFormat: preset.apiFormat, modelId: preset.defaultModels.main,
+      })
+      expect(check.connectivity.success).toBe(true)
+      expect(check.proxy?.success).toBe(true)
+      for (const model of [preset.defaultModels.main, preset.defaultModels.haiku]) {
+        const response = await proxy(provider.id, {
+          model, max_tokens: 64, system: 'Be helpful.', messages: [{ role: 'user', content: 'hello' }],
+        })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toMatchObject({
+          model, content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn',
+        })
+        expect(calls.at(-1)?.body).toMatchObject({ model, stream: false, messages: [
+          { role: 'system', content: 'Be helpful.' }, { role: 'user', content: 'hello' },
+        ] })
+      }
+      expect(calls.map(call => call.url)).toEqual([
+        'https://openai-fixture.example.test/v1/models',
+        ...Array(4).fill('https://openai-fixture.example.test/v1/chat/completions'),
+      ])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('streamed tool calls survive the proxy and their result is sent back with DeepSeek reasoning', async () => {
+    const { preset, provider } = await createCustomOpenAI()
+    const originalFetch = globalThis.fetch
+    const calls: any[] = []
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe('https://openai-fixture.example.test/v1/chat/completions')
+      expect(init?.method).toBe('POST')
+      expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${apiKey}`)
+      calls.push(JSON.parse(String(init?.body)))
+      const chunks = calls.length === 1 ? [
+        { delta: { role: 'assistant', reasoning_content: 'Need the weather.' } },
+        { delta: { tool_calls: [{ index: 0, id: 'call_weather', type: 'function', function: { name: 'weather', arguments: '{"city":' } }] } },
+        { delta: { tool_calls: [{ index: 0, function: { arguments: '"Paris"}' } }] } },
+        { delta: {}, finish_reason: 'tool_calls' },
+      ] : [
+        { delta: { role: 'assistant', content: 'It is sunny.' } },
+        { delta: {}, finish_reason: 'stop' },
+      ]
+      const data = chunks.map(choice => `data: ${JSON.stringify({
+        id: 'chatcmpl-offline-tool', object: 'chat.completion.chunk', model: preset.defaultModels.main,
+        choices: [{ index: 0, ...choice }],
+      })}\n\n`).join('') + 'data: [DONE]\n\n'
+      return new Response(data, { headers: { 'Content-Type': 'text/event-stream' } })
+    }) as typeof fetch
+    try {
+      const tool = { name: 'weather', description: 'Get weather', input_schema: {
+        type: 'object', properties: { city: { type: 'string' } }, required: ['city'],
+      } }
+      const first = await proxy(provider.id, { model: preset.defaultModels.main, stream: true, max_tokens: 64,
+        messages: [{ role: 'user', content: 'Weather in Paris?' }], tools: [tool], tool_choice: { type: 'auto' },
+      })
+      expect(first.status).toBe(200)
+      const events = (await first.text()).split('\n\n').flatMap(block => {
+        const data = block.split('\n').find(line => line.startsWith('data: '))?.slice(6)
+        return data ? [JSON.parse(data)] : []
+      })
+      expect(calls[0]).toMatchObject({ stream: true, stream_options: { include_usage: true },
+        tools: [{ type: 'function', function: { name: 'weather', parameters: tool.input_schema } }], tool_choice: 'auto',
+      })
+      expect(events).toContainEqual(expect.objectContaining({ type: 'content_block_start', content_block: {
+        type: 'tool_use', id: 'call_weather', name: 'weather', input: {},
+      } }))
+      const toolInput = events.filter(event => event.delta?.type === 'input_json_delta')
+        .map(event => event.delta.partial_json).join('')
+      expect(JSON.parse(toolInput)).toEqual({ city: 'Paris' })
+      const thinking = events.filter(event => event.delta?.type === 'thinking_delta')
+        .map(event => event.delta.thinking).join('')
+      expect(thinking).toBe('Need the weather.')
+      expect(events.find(event => event.type === 'message_delta')?.delta.stop_reason).toBe('tool_use')
+      expect(events.at(-1)?.type).toBe('message_stop')
+      const second = await proxy(provider.id, { model: preset.defaultModels.main, stream: true, max_tokens: 64,
+        messages: [
+          { role: 'user', content: 'Weather in Paris?' },
+          { role: 'assistant', content: [
+            { type: 'thinking', thinking },
+            { type: 'tool_use', id: 'call_weather', name: 'weather', input: JSON.parse(toolInput) },
+          ] },
+          { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_weather', content: 'sunny' }] },
+        ], tools: [tool],
+      })
+      expect(second.status).toBe(200)
+      expect(await second.text()).toContain('It is sunny.')
+      expect(calls[1].messages).toEqual([
+        { role: 'user', content: 'Weather in Paris?' },
+        { role: 'assistant', content: null, reasoning_content: 'Need the weather.', tool_calls: [
+          { id: 'call_weather', type: 'function', function: { name: 'weather', arguments: '{"city":"Paris"}' } },
+        ] },
+        { role: 'tool', tool_call_id: 'call_weather', content: 'sunny' },
+      ])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+})
+
+/**
+ * A custom Anthropic-compatible endpoint must stay a direct connection:
+ * the CLI and the connectivity probe must reach
+ * https://anthropic-fixture.example.test/api/v1/messages — exactly one /v1 — over Bearer, with
+ * ANTHROPIC_API_KEY cleared so no inherited x-api-key rides along, and with the
+ * local proxy staying out of the path entirely. These tests pin that contract
+ * against offline fixtures.
+ */
+describe('custom Anthropic request contract (offline fixtures)', () => {
+  beforeEach(setup)
+  afterEach(teardown)
+
+  const apiKey = 'sk-or-v1-offline-fixture'
+
+  async function loadPreset() {
+    return {
+      id: 'custom', name: 'Custom Anthropic fixture', baseUrl: 'https://anthropic-fixture.example.test/api',
+      apiFormat: 'anthropic' as const, authStrategy: 'auth_token' as const,
+      defaultModels: { main: 'anthropic/claude-sonnet-5.5', haiku: 'anthropic/claude-sonnet-5.5', sonnet: 'anthropic/claude-sonnet-5.5', opus: 'anthropic/claude-opus-5.5' },
+      modelContextWindows: { 'anthropic/claude-sonnet-5.5': 1000000, 'anthropic/claude-opus-5.5': 1000000 },
+    }
+  }
+
+  async function createProvider() {
+    const preset = await loadPreset()
+    // Exercised through the same API boundary the desktop's save action uses.
+    const { req, url, segments } = makeRequest('POST', '/api/providers', {
+      presetId: preset.id,
+      name: preset.name,
+      baseUrl: preset.baseUrl,
+      apiFormat: preset.apiFormat,
+      authStrategy: preset.authStrategy,
+      apiKey,
+      models: preset.defaultModels,
+      modelContextWindows: preset.modelContextWindows,
+    })
+    const result = await handleProvidersApi(req, url, segments)
+    expect(result.status).toBe(201)
+    const saved = await result.json()
+    return { preset, provider: saved.provider as { id: string } }
+  }
+
+  test('activation configures the CLI for a direct Bearer connection, not the local proxy', async () => {
+    const { provider } = await createProvider()
+    const activate = makeRequest('POST', `/api/providers/${provider.id}/activate`)
+    const activated = await handleProvidersApi(activate.req, activate.url, activate.segments)
+    expect(activated.status).toBe(200)
+
+    const env = (await readSettings()).env as Record<string, string>
+    // The saved custom root excludes /v1/messages, which the CLI appends.
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://anthropic-fixture.example.test/api')
+    expect(env.ANTHROPIC_BASE_URL).not.toContain('127.0.0.1')
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe(apiKey)
+    // Left over from an inherited key, this would be read as an Anthropic credential.
+    expect(env.ANTHROPIC_API_KEY).toBe('')
+    expect(JSON.parse(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toMatchObject({
+      'anthropic/claude-sonnet-5.5': 1000000,
+      'anthropic/claude-opus-5.5': 1000000,
+    })
+  })
+
+  test('the connectivity probe reaches /api/v1/messages over Bearer and stops after one request', async () => {
+    const preset = await loadPreset()
+    const originalFetch = globalThis.fetch
+    const calls: Array<{ url: string; headers: Headers; body: any }> = []
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body)),
+      })
+      return Response.json({
+        id: 'msg-offline', type: 'message', role: 'assistant', model: preset.defaultModels.main,
+        stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }],
+        usage: { input_tokens: 3, output_tokens: 1 },
+      })
+    }) as typeof fetch
+    try {
+      const result = await new ProviderService().testProviderConfig({
+        presetId: preset.id,
+        baseUrl: preset.baseUrl,
+        apiKey,
+        modelId: preset.defaultModels.main,
+        apiFormat: preset.apiFormat,
+        authStrategy: preset.authStrategy,
+      })
+      expect(result.connectivity.success).toBe(true)
+      expect(result.connectivity.modelUsed).toBe('anthropic/claude-sonnet-5.5')
+      // An anthropic-format provider reaches the custom endpoint directly, so there is no
+      // proxy step to validate and the probe must not fire a second request.
+      expect(result.proxy).toBeUndefined()
+      expect(calls).toHaveLength(1)
+      expect(calls[0].url).toBe('https://anthropic-fixture.example.test/api/v1/messages')
+      expect(calls[0].headers.get('authorization')).toBe(`Bearer ${apiKey}`)
+      expect(calls[0].headers.get('x-api-key')).toBeNull()
+      expect(calls[0].headers.get('anthropic-version')).toBe('2023-06-01')
+      expect(calls[0].body).toMatchObject({ model: 'anthropic/claude-sonnet-5.5', max_tokens: 16 })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+})
+
+/**
+ * OpenCode Go binds the wire format to the URL path and does no cross-protocol
+ * translation, so one provider record has to reach three different endpoints
+ * depending on the model. These tests pin that contract: which URL each model
+ * family reaches, which credential header goes with it, and the client-identity
+ * headers the gateway refuses to serve without.
+ */
+describe('OpenCode Go preset request contract', () => {
+  beforeEach(setup)
+  afterEach(teardown)
+
+  const apiKey = 'sk-opencode-go-offline-fixture'
+  const SESSION_ID = 'session-opencode-go-1'
+
+  async function loadPreset() {
+    const { PROVIDER_PRESETS } = await import('../config/providerPresets.js')
+    const preset = PROVIDER_PRESETS.find(item => item.id === 'opencode-go')
+    expect(preset).toBeDefined()
+    return preset!
+  }
+
+  async function createProvider(overrides?: { presetId?: string; apiFormat?: string }) {
+    const preset = await loadPreset()
+    const { req, url, segments } = makeRequest('POST', '/api/providers', {
+      presetId: overrides?.presetId ?? preset.id,
+      name: preset.name,
+      baseUrl: preset.baseUrl,
+      apiFormat: overrides?.apiFormat ?? preset.apiFormat,
+      apiKey,
+      models: preset.defaultModels,
+    })
+    const result = await handleProvidersApi(req, url, segments)
+    expect(result.status).toBe(201)
+    const saved = await result.json()
+    return { preset, provider: saved.provider as { id: string } }
+  }
+
+  type UpstreamCall = { url: string; headers: Headers; body: any }
+
+  /**
+   * Records every upstream call and answers with a payload matching the endpoint
+   * that was reached, so a misrouted request surfaces as a transform failure
+   * rather than being masked by a permissive stub.
+   */
+  function stubUpstream(calls: UpstreamCall[]) {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined
+      calls.push({ url, headers: new Headers(init?.headers), body })
+      if (url.endsWith('/chat/completions')) {
+        return Response.json({
+          id: 'chatcmpl-offline', object: 'chat.completion', model: body?.model,
+          choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+        })
+      }
+      if (url.endsWith('/responses')) {
+        return Response.json({
+          id: 'resp-offline', object: 'response', status: 'completed', model: body?.model,
+          output: [{ type: 'message', id: 'msg-1', role: 'assistant', status: 'completed',
+            content: [{ type: 'output_text', text: 'ok', annotations: [] }] }],
+          usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 },
+        })
+      }
+      if (url.endsWith('/messages')) {
+        return Response.json({
+          id: 'msg-offline', type: 'message', role: 'assistant', model: body?.model,
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'ok' }],
+          usage: { input_tokens: 3, output_tokens: 1 },
+        })
+      }
+      const geminiResponse = {
+        candidates: [{ content: { role: 'model', parts: [{ text: 'ok' }] }, finishReason: 'STOP' }],
+        usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 1, totalTokenCount: 4 },
+      }
+      if (url.endsWith(':generateContent')) return Response.json(geminiResponse)
+      if (url.endsWith(':streamGenerateContent?alt=sse')) {
+        return new Response(`data: ${JSON.stringify(geminiResponse)}\r\n\r\n`, {
+          headers: { 'Content-Type': 'text/event-stream' },
+        })
+      }
+      return Response.json({ error: 'Wrong request endpoint' }, { status: 404 })
+    }) as typeof fetch
+    return () => { globalThis.fetch = originalFetch }
+  }
+
+  async function proxy(providerId: string, body: Record<string, unknown>, headers?: Record<string, string>) {
+    const req = new Request(`http://localhost:3456/proxy/providers/${providerId}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-claude-code-session-id': SESSION_ID, ...headers },
+      body: JSON.stringify(body),
+    })
+    return handleProxyRequest(req, new URL(req.url))
+  }
+
+  test('routes each model family to the endpoint the gateway serves it on, with that endpoint credential', async () => {
+    const { provider } = await createProvider()
+    const calls: UpstreamCall[] = []
+    const restore = stubUpstream(calls)
+    try {
+      const cases = [
+        { model: 'glm-5.3', endpoint: '/zen/go/v1/chat/completions', credential: 'bearer' },
+        { model: 'kimi-k3', endpoint: '/zen/go/v1/chat/completions', credential: 'bearer' },
+        { model: 'minimax-m3', endpoint: '/zen/go/v1/messages', credential: 'x-api-key' },
+        { model: 'qwen3.8-max', endpoint: '/zen/go/v1/messages', credential: 'x-api-key' },
+        { model: 'union-alpha', endpoint: '/zen/go/v1/messages', credential: 'x-api-key' },
+        { model: 'grok-4.6', endpoint: '/zen/go/v1/responses', credential: 'bearer' },
+        { model: 'gpt-5.6-luna', endpoint: '/zen/go/v1/responses', credential: 'bearer' },
+      ] as const
+
+      for (const { model, endpoint, credential } of cases) {
+        calls.length = 0
+        const response = await proxy(provider.id, {
+          model, max_tokens: 32, messages: [{ role: 'user', content: 'hello' }],
+        })
+        expect(response.status, `${model} status`).toBe(200)
+        // The response is transformed back into an Anthropic message for the CLI.
+        expect(await response.json(), `${model} body`).toMatchObject({
+          type: 'message', model, content: [{ type: 'text', text: 'ok' }],
+        })
+        expect(calls, `${model} calls`).toHaveLength(1)
+        expect(new URL(calls[0].url).pathname, `${model} endpoint`).toBe(endpoint)
+        expect(calls[0].body.model, `${model} upstream model`).toBe(model)
+
+        const headers = calls[0].headers
+        if (credential === 'x-api-key') {
+          expect(headers.get('x-api-key'), `${model} x-api-key`).toBe(apiKey)
+          // The Messages path parses only x-api-key; a Bearer there is ignored.
+          expect(headers.get('authorization'), `${model} must not send Bearer`).toBeNull()
+        } else {
+          expect(headers.get('authorization'), `${model} bearer`).toBe(`Bearer ${apiKey}`)
+          expect(headers.get('x-api-key'), `${model} must not send x-api-key`).toBeNull()
+        }
+      }
+    } finally {
+      restore()
+    }
+  })
+
+  test('sends the per-conversation session id and own client id on every path', async () => {
+    const { provider } = await createProvider()
+    const calls: UpstreamCall[] = []
+    const restore = stubUpstream(calls)
+    try {
+      for (const model of ['glm-5.3', 'minimax-m3', 'grok-4.6', 'gemini-4-argon-contributor']) {
+        calls.length = 0
+        const response = await proxy(provider.id, {
+          model, max_tokens: 32, messages: [{ role: 'user', content: 'hello' }],
+        })
+        expect(response.status, `${model} status`).toBe(200)
+        // Without this the gateway answers 400 MissingSessionID on every path.
+        expect(calls[0].headers.get('x-opencode-session'), `${model} session`).toBe(SESSION_ID)
+        // Identify as this client, never as a generic HTTP library or the CLI we fork.
+        expect(calls[0].headers.get('user-agent'), `${model} ua`).toMatch(/^echoflow-code\//)
+        expect(calls[0].headers.get('user-agent'), `${model} ua`).not.toContain('claude-cli/')
+      }
+    } finally {
+      restore()
+    }
+  })
+
+  // The gateway rejects Gemini on every OpenAI and Anthropic path with
+  // `ModelProtocolUnsupported`; it serves it only over Google generateContent,
+  // which lives outside /zen/go/v1.
+  test('serves Gemini over Google generateContent with the Gemini credential header', async () => {
+    const { provider } = await createProvider()
+    const calls: UpstreamCall[] = []
+    const restore = stubUpstream(calls)
+    try {
+      // The id as the CLI sends it for a 1M-context slot.
+      const response = await proxy(provider.id, {
+        model: 'gemini-4-argon-contributor[1m]', max_tokens: 32, messages: [{ role: 'user', content: 'hello' }],
+      })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({
+        type: 'message', model: 'gemini-4-argon-contributor', stop_reason: 'end_turn',
+        content: [{ type: 'text', text: 'ok' }],
+      })
+      expect(calls).toHaveLength(1)
+      expect(calls[0].url).toBe('https://opencode.ai/inference/go/google/v1beta/models/gemini-4-argon-contributor:generateContent')
+      expect(calls[0].headers.get('x-goog-api-key')).toBe(apiKey)
+      expect(calls[0].headers.get('authorization')).toBeNull()
+      expect(calls[0].headers.get('x-opencode-session')).toBe(SESSION_ID)
+      expect(calls[0].headers.get('user-agent')).toMatch(/^echoflow-code\//)
+      expect(calls[0].body).toEqual({
+        contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+        generationConfig: { maxOutputTokens: 32 },
+      })
+    } finally {
+      restore()
+    }
+  })
+
+  test('streams Gemini and follows a response split across requests', async () => {
+    const { provider } = await createProvider()
+    const calls: UpstreamCall[] = []
+    const originalFetch = globalThis.fetch
+    const frames = [
+      { candidates: [{ content: { role: 'model', parts: [{ text: 'Hello' }] }, finishReason: 'CONTINUATION', continuationToken: 'token-1' }] },
+      { candidates: [{ content: { role: 'model', parts: [{ text: ' there' }] }, finishReason: 'STOP' }] },
+    ]
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) })
+      return new Response(`data: ${JSON.stringify(frames[calls.length - 1])}\r\n\r\n`, {
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    }) as typeof fetch
+    try {
+      const response = await proxy(provider.id, {
+        model: 'gemini-4-argon-contributor', max_tokens: 32, stream: true,
+        thinking: { type: 'adaptive' }, output_config: { effort: 'xhigh' },
+        messages: [{ role: 'user', content: 'hello' }],
+      })
+      expect(response.status).toBe(200)
+      const text = await response.text()
+      expect(text).toContain('"text":"Hello"')
+      expect(text).toContain('"text":" there"')
+      expect(text).toContain('"stop_reason":"end_turn"')
+      expect(text).toContain('event: message_stop')
+
+      expect(calls).toHaveLength(2)
+      expect(calls[0].url).toBe('https://opencode.ai/inference/go/google/v1beta/models/gemini-4-argon-contributor:streamGenerateContent?alt=sse')
+      expect(calls[0].body.generationConfig.thinkingConfig).toEqual({ includeThoughts: true, thinkingLevel: 'high' })
+      // The continuation is the same request plus the token, on the same session.
+      expect(calls[1].url).toBe(calls[0].url)
+      expect(calls[1].body).toEqual({ ...calls[0].body, continuationToken: 'token-1' })
+      expect(calls[1].headers.get('x-opencode-session')).toBe(SESSION_ID)
+      expect(calls[1].headers.get('x-goog-api-key')).toBe(apiKey)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('reports every Gemini failure to the CLI as an error, never as a reply', async () => {
+    const { provider } = await createProvider()
+    const originalFetch = globalThis.fetch
+    const sse = (chunk: unknown) => new Response(`data: ${JSON.stringify(chunk)}\r\n\r\n`, {
+      headers: { 'Content-Type': 'text/event-stream' },
+    })
+    const cases: Array<{
+      name: string
+      stream: boolean
+      upstream: Array<() => Response>
+      status: number
+      message: string
+    }> = [
+      {
+        name: 'quota exhausted',
+        stream: false,
+        upstream: [() => Response.json({ error: { code: 429, message: 'Resource exhausted', status: 'RESOURCE_EXHAUSTED' } }, { status: 429 })],
+        // The upstream status reaches the CLI so its rate-limit retry applies.
+        status: 429,
+        message: 'Upstream returned HTTP 429: {"error":{"code":429,"message":"Resource exhausted"',
+      },
+      {
+        name: 'connection failure',
+        stream: true,
+        upstream: [() => { throw new TypeError('fetch failed') }],
+        status: 502,
+        message: 'fetch failed',
+      },
+      {
+        name: 'stream without a body',
+        stream: true,
+        upstream: [() => new Response(null, { status: 200 })],
+        status: 502,
+        message: 'Upstream returned no body for stream',
+      },
+      {
+        name: 'malformed function call with no output',
+        stream: false,
+        upstream: [() => Response.json({ candidates: [{ finishReason: 'MALFORMED_FUNCTION_CALL' }] })],
+        status: 502,
+        message: 'Gemini stopped with MALFORMED_FUNCTION_CALL',
+      },
+      {
+        name: 'refused continuation',
+        stream: true,
+        upstream: [
+          () => sse({ candidates: [{ content: { role: 'model', parts: [{ text: 'Partial' }] }, finishReason: 'CONTINUATION', continuationToken: 'token-1' }] }),
+          () => Response.json({ error: { code: 500, message: 'backend unavailable', status: 'INTERNAL' } }, { status: 500 }),
+        ],
+        // Headers were already sent; the failure arrives as the stream's error event.
+        status: 200,
+        message: 'Gemini continuation returned HTTP 500: backend unavailable',
+      },
+    ]
+    try {
+      for (const { name, stream, upstream, status, message } of cases) {
+        let call = 0
+        globalThis.fetch = (async () => upstream[call++]!()) as unknown as typeof fetch
+        const response = await proxy(provider.id, {
+          model: 'gemini-4-argon-contributor', max_tokens: 32, stream, messages: [{ role: 'user', content: 'hello' }],
+        })
+        expect(response.status, name).toBe(status)
+        const text = await response.text()
+        const reported = response.headers.get('content-type')?.includes('json') ? JSON.parse(text).error.message : text
+        expect(reported, name).toContain(message)
+        expect(text, name).not.toContain('message_stop')
+        expect(call, name).toBe(upstream.length)
+      }
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('reports a Gemini policy block as a refusal rather than an error the CLI would retry', async () => {
+    const { provider } = await createProvider()
+    const originalFetch = globalThis.fetch
+    try {
+      for (const stream of [false, true]) {
+        let calls = 0
+        globalThis.fetch = (async () => {
+          calls++
+          const body = { candidates: [{ finishReason: 'SAFETY' }] }
+          return stream
+            ? new Response(`data: ${JSON.stringify(body)}\r\n\r\n`, { headers: { 'Content-Type': 'text/event-stream' } })
+            : Response.json(body)
+        }) as unknown as typeof fetch
+        const response = await proxy(provider.id, {
+          model: 'gemini-4-argon-contributor', max_tokens: 32, stream, messages: [{ role: 'user', content: 'hello' }],
+        })
+        expect(response.status, `stream=${stream}`).toBe(200)
+        expect(await response.text(), `stream=${stream}`).toContain('"stop_reason":"refusal"')
+        expect(calls, `stream=${stream}`).toBe(1)
+      }
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('omits the session header rather than sending an empty one without a conversation', async () => {
+    const { provider } = await createProvider()
+    const calls: UpstreamCall[] = []
+    const restore = stubUpstream(calls)
+    try {
+      const req = new Request(`http://localhost:3456/proxy/providers/${provider.id}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'glm-5.3', max_tokens: 32, messages: [{ role: 'user', content: 'hi' }] }),
+      })
+      expect((await handleProxyRequest(req, new URL(req.url))).status).toBe(200)
+      expect(calls[0].headers.get('x-opencode-session')).toBeNull()
+    } finally {
+      restore()
+    }
+  })
+
+  test('does not run the nested-media compatibility rewrite on a per-model Messages route', async () => {
+    const { provider } = await createProvider()
+    const calls: UpstreamCall[] = []
+    const restore = stubUpstream(calls)
+    try {
+      const response = await proxy(provider.id, {
+        model: 'minimax-m3',
+        max_tokens: 32,
+        messages: [{
+          role: 'user',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: 'tool-1',
+            content: [
+              { type: 'text', text: 'screenshot' },
+              { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+            ],
+          }],
+        }],
+      })
+      expect(response.status).toBe(200)
+      // A native Messages endpoint accepts nested media, so lifting it out would
+      // be an unrequested rewrite of the caller's request.
+      expect(calls[0].body.messages[0].content[0]).toMatchObject({
+        type: 'tool_result',
+        content: [
+          { type: 'text', text: 'screenshot' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+        ],
+      })
+    } finally {
+      restore()
+    }
+  })
+
+  test('keeps forwarding an anthropic-format provider without per-model rules as before', async () => {
+    const { provider } = await createProvider({ presetId: 'custom', apiFormat: 'anthropic' })
+    const calls: UpstreamCall[] = []
+    const restore = stubUpstream(calls)
+    try {
+      // No per-model override and nesting supported: the CLI talks to the
+      // upstream directly, so the proxy is not the right entry point.
+      const response = await proxy(provider.id, {
+        model: 'glm-5.3', max_tokens: 32, messages: [{ role: 'user', content: 'hi' }],
+      })
+      expect(response.status).toBe(400)
+      expect(calls).toHaveLength(0)
+    } finally {
+      restore()
+    }
+  })
+
+  test('does not leak the gateway client headers onto an unrelated provider', async () => {
+    const { provider } = await createProvider({ presetId: 'custom', apiFormat: 'openai_chat' })
+    const calls: UpstreamCall[] = []
+    const restore = stubUpstream(calls)
+    try {
+      const response = await proxy(provider.id, {
+        model: 'glm-5.3', max_tokens: 32, messages: [{ role: 'user', content: 'hi' }],
+      })
+      expect(response.status).toBe(200)
+      expect(calls[0].url).toBe('https://opencode.ai/zen/go/v1/chat/completions')
+      expect(calls[0].headers.get('x-opencode-session')).toBeNull()
+      expect(calls[0].headers.get('user-agent') ?? '').not.toMatch(/^echoflow-code\//)
+    } finally {
+      restore()
+    }
+  })
+
+  test('the connectivity probe resolves the per-model protocol and sends the session header', async () => {
+    const calls: UpstreamCall[] = []
+    const restore = stubUpstream(calls)
+    try {
+      const service = new ProviderService()
+      for (const [model, endpoint] of [
+        ['glm-5.3', '/chat/completions'],
+        ['minimax-m3', '/messages'],
+        ['grok-4.6', '/responses'],
+        ['gemini-4-argon-contributor', '/inference/go/google/v1beta/models/gemini-4-argon-contributor:generateContent'],
+      ] as const) {
+        calls.length = 0
+        const result = await service.testProviderConfig({
+          baseUrl: 'https://opencode.ai/zen/go/v1',
+          apiKey,
+          modelId: model,
+          apiFormat: 'openai_chat',
+          presetId: 'opencode-go',
+        })
+        expect(result.connectivity.success, `${model} connectivity`).toBe(true)
+        expect(result.proxy?.success, `${model} pipeline`).toBe(true)
+        expect(calls.every(call => call.url.endsWith(endpoint)), `${model} endpoints`).toBe(true)
+        expect(calls.every(call => call.headers.get('x-opencode-session')), `${model} session`).toBe(true)
+      }
+    } finally {
+      restore()
+    }
+  })
+
+  test('a record apiFormat that contradicts the preset cannot disable per-model routing', async () => {
+    // cc-switch imports default the record to anthropic, and the edit form lets it
+    // be changed by hand. Either way the preset owns the decision, because one
+    // recorded value cannot express a per-model split — and a record that won would
+    // send every model down one endpoint with no session header.
+    const { provider } = await createProvider({ presetId: 'opencode-go', apiFormat: 'anthropic' })
+    const calls: UpstreamCall[] = []
+    const restore = stubUpstream(calls)
+    try {
+      for (const [model, endpoint] of [
+        ['glm-5.3', '/zen/go/v1/chat/completions'],
+        ['minimax-m3', '/zen/go/v1/messages'],
+      ] as const) {
+        calls.length = 0
+        const response = await proxy(provider.id, {
+          model, max_tokens: 32, messages: [{ role: 'user', content: 'hello' }],
+        })
+        expect(response.status, `${model} status`).toBe(200)
+        expect(new URL(calls[0].url).pathname, `${model} endpoint`).toBe(endpoint)
+        expect(calls[0].headers.get('x-opencode-session'), `${model} session`).toBe(SESSION_ID)
+      }
+    } finally {
+      restore()
+    }
+  })
+
+  test('preset client headers win over headers the caller passed in', async () => {
+    // The anthropic path forwards the caller's custom headers, so a client that
+    // sends its own user agent or session id would otherwise out-rank the values
+    // the gateway requires.
+    const { provider } = await createProvider()
+    const calls: UpstreamCall[] = []
+    const restore = stubUpstream(calls)
+    try {
+      const response = await proxy(
+        provider.id,
+        { model: 'minimax-m3', max_tokens: 32, messages: [{ role: 'user', content: 'hello' }] },
+        { 'user-agent': 'some-third-party-sdk/1.0', 'x-opencode-session': 'caller-supplied-bogus' },
+      )
+      expect(response.status).toBe(200)
+      expect(calls[0].headers.get('user-agent')).toMatch(/^echoflow-code\//)
+      expect(calls[0].headers.get('x-opencode-session')).toBe(SESSION_ID)
+    } finally {
+      restore()
+    }
+  })
+
+  test('resolves the probe format from the preset even when the payload contradicts it', async () => {
+    const calls: UpstreamCall[] = []
+    const restore = stubUpstream(calls)
+    try {
+      const result = await new ProviderService().testProviderConfig({
+        baseUrl: 'https://opencode.ai/zen/go/v1',
+        apiKey,
+        modelId: 'glm-5.3',
+        apiFormat: 'anthropic',
+        presetId: 'opencode-go',
+      })
+      expect(result.connectivity.success).toBe(true)
+      expect(result.proxy?.success).toBe(true)
+      expect(calls.every(call => call.url.endsWith('/chat/completions'))).toBe(true)
+      expect(calls.every(call => call.headers.get('x-opencode-session'))).toBe(true)
+    } finally {
+      restore()
+    }
+  })
+
 })

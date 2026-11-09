@@ -370,12 +370,22 @@ describe('EchoFlow account API', () => {
       expect(body.provider.apiKey).not.toBe('server-dedicated-key')
       expect(body.provider.apiKey).not.toBe('client-forged-key')
       expect(JSON.stringify(body)).not.toContain('client-image-secret')
+      expect(JSON.stringify(body)).not.toContain('server-dedicated-key')
+      expect(body.provider).toMatchObject({
+        credentialSource: {
+          kind: 'echoflow-token',
+          endpoint: 'dedicated',
+          tokenId: 'same-token',
+          tokenName: 'Dedicated key',
+        },
+      })
 
-      const stored = await readStoredJson<{ providers: Array<{ presetId: string; baseUrl: string; apiKey: string }> }>('providers.json')
+      const stored = await readStoredJson<{ providers: Array<{ presetId: string; baseUrl: string; apiKey: string; credentialSource: unknown }> }>('providers.json')
       expect(stored.providers).toEqual([expect.objectContaining({
         presetId: 'echoflowai',
         baseUrl: 'https://expapi.echoflowai.cc',
         apiKey: 'sk-server-dedicated-key',
+        credentialSource: { kind: 'echoflow-token', endpoint: 'dedicated', tokenId: 'same-token', tokenName: 'Dedicated key' },
       })])
     } finally {
       globalThis.fetch = originalFetch
@@ -753,6 +763,31 @@ describe('EchoFlow credential bridge', () => {
 })
 
 describe('EchoFlow credential bridge through the router', () => {
+  test('blocks remote browsers before any credential side effect', async () => {
+    const originalFetch = globalThis.fetch
+    let fetchCalls = 0
+    globalThis.fetch = mock(async () => {
+      fetchCalls += 1
+      return Response.json({ success: true, data: { id: 106452, username: 'site-user' } })
+    }) as typeof fetch
+
+    try {
+      const url = new URL('http://localhost:3456/api/echoflow/account/credential')
+      const req = new Request(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-echoflow-site-session-bridge': 'bridge-token' },
+        body: JSON.stringify({ endpoint: 'main', kind: 'session', cookie: 'session=private-site-cookie', userId: '106452' }),
+      })
+      const response = await handleApiRequest(req, url, { remoteBrowser: true })
+
+      expect(response.status).toBe(403)
+      expect(fetchCalls).toBe(0)
+      expect((await new EchoFlowApiService().getAccounts()).main).toBeNull()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   // The desktop posts credentials through the real router, not straight into
   // the handler: routeApiRequest used to lose `context` on the way in and every
   // EchoFlow request answered 500 instead of reaching this handler.

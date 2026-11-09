@@ -7,6 +7,8 @@ export const BUSINESS_ERROR_CODES = {
   REQUEST_TOO_LARGE: 'request_too_large',
   PROMPT_TOO_LONG: 'prompt_too_long',
   AUTO_MODE_UNAVAILABLE: 'auto_mode_unavailable',
+  UPSTREAM_STREAM_INTERRUPTED: 'upstream_stream_interrupted',
+  AUTOCOMPACT_THRASHING: 'autocompact_thrashing',
 } as const
 
 export type BusinessErrorCode =

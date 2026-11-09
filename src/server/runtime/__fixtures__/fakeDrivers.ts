@@ -18,6 +18,83 @@ import {
 } from '../contract.js'
 import { createEventStamper } from '../eventStamp.js'
 
+/**
+ * Independent in-memory implementation, only a test fixture. It deliberately
+ * uses lazy send acquisition, whole messages, and identical native/product ids.
+ * This is not a second production engine or a wrapper around createFakeDriver.
+ */
+export function createMemoryContractDriver(): RuntimeDriver {
+  const capabilities = dshBaselineCapabilities()
+  for (const group of Object.values(capabilities)) {
+    for (const capability of Object.values(group)) capability.state = 'unsupported'
+  }
+  capabilities.prompt.text.state = 'native'
+  capabilities.prompt.image.state = 'native'
+  capabilities.session.close.state = 'native'
+  capabilities.session.list.state = 'native'
+  capabilities.session.resume.state = 'native'
+  return {
+    engineId: 'dsh',
+    driverId: 'dsh-acp',
+    async probe() {
+      return { ok: true, version: null, agentVersion: null, protocolVersion: null, error: null }
+    },
+    async start({ runId }) {
+      const sessions = new Map<string, RuntimeSession>()
+      const listeners = new Set<(exit: { code: number | null; signal: string | null }) => void>()
+      let closed = false
+      function sessionFor(sessionId: string, nativeSessionId = sessionId): RuntimeSession {
+        const stamp = createEventStamper({ sessionId, runId })
+        let active = false
+        return {
+          nativeSessionId,
+          capabilities,
+          async *send(input) {
+            if (active) throw new RuntimeBusyError()
+            if (input.text === 'approval fixture') throw new UnsupportedRuntimeCapabilityError('approval.tool')
+            active = true
+            try {
+              yield stamp({ kind: 'assistant.message', text: input.attachments?.length ? 'image received' : 'whole answer', native: null })
+              yield stamp({ kind: 'turn.completed', reason: 'end_turn', native: null })
+            } finally {
+              active = false
+            }
+          },
+          onEngineTurn() { return () => {} },
+          async respondApproval() { throw new UnsupportedRuntimeCapabilityError('approval.tool') },
+          async interrupt() { return { status: active ? 'unsupported' : 'not-running', forcedTerminate: false } },
+          async close() { active = false },
+        }
+      }
+      return {
+        capabilities,
+        async openSession({ sessionId }) {
+          const session = sessionFor(sessionId)
+          sessions.set(session.nativeSessionId, session)
+          return session
+        },
+        async resumeSession({ sessionId, nativeSessionId }) {
+          if (!sessions.has(nativeSessionId)) throw new Error('unknown native session')
+          return sessionFor(sessionId, nativeSessionId)
+        },
+        async *listSessions() {
+          for (const nativeSessionId of sessions.keys()) yield { nativeSessionId }
+        },
+        async close() {
+          if (closed) return
+          closed = true
+          for (const session of sessions.values()) await session.close()
+          for (const listener of listeners) listener({ code: 0, signal: null })
+        },
+        onExit(listener) {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        },
+      }
+    },
+  }
+}
+
 type FakeShape = 'dsh' | 'minimal'
 
 type FakeInput = { sessionId: string; runId: string; nativeSessionId: string }

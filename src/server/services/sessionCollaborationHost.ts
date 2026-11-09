@@ -1,27 +1,48 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
+import { listLeadTeamMemberIdentities } from '../../utils/swarm/teamHelpers.js'
 import { sessionService } from './sessionService.js'
 import { SearchService } from './searchService.js'
+import { SettingsService } from './settingsService.js'
 import { conversationService } from './conversationService.js'
 import { getRepositoryContext } from './repositoryLaunchService.js'
 import { SessionCollaborationService } from './sessionCollaborationService.js'
 import { registerSessionTurnAdmissionGuard, observeSessionTurns, type SessionTurnEvent } from './sessionTurnEvents.js'
-import { getRuntimeSettings, getSessionTurnState, isSessionTurnStopped, stopSessionTurn, submitSessionTurn, sendToSession } from '../ws/handler.js'
+import { getSessionTurnState, isSessionTurnStopped, stopSessionTurn, submitSessionTurn, sendToSession } from '../ws/handler.js'
+import { listSessionModels, resolveSessionRuntime, validateSessionRuntime, type SessionRuntimeInput } from './sessionModelCatalog.js'
+import { matchesDelegationUserInstruction } from './sessionDelegationEvidence.js'
+import { applyCollaborationRuntime, stopCollaborationRuntime, getCollaborationRuntime } from '../ws/handler.js'
 import { ApiError } from '../middleware/errorHandler.js'
+import { powerActivityClock } from './powerActivityClock.js'
+import { migrationMaintenance } from '../migrationMaintenance.js'
+
+/** Explicit choices do not depend on a parent provider that may have been removed. */
+export async function resolveCollaborationRuntime(callerSessionId: string, input: SessionRuntimeInput) {
+  const inherited = !input.runtime && input.model === undefined && input.providerId === undefined
+  return resolveSessionRuntime(input, inherited ? await getCollaborationRuntime(callerSessionId) : { providerId: null, modelId: '' })
+}
 
 const searchService = new SearchService()
+const settingsService = new SettingsService()
 
 let endpoint = { serverHost: '127.0.0.1', serverPort: 0 }
-type OpenService = { path: string; service: SessionCollaborationService; ready: Promise<void> }
-
-let current: OpenService | undefined
-let opening: { path: string; promise: Promise<OpenService> } | undefined
+type CollaborationOwner = { path: string; service: SessionCollaborationService; ready: Promise<void>; loaded: boolean; recovery?: Promise<void>; recovering: boolean }
+let current: CollaborationOwner | undefined
 let unsubscribe: (() => void) | undefined
+let pendingTurnEvents = 0
+
+/** Startup reads persisted decisions; polling never recovers or dispatches work. */
+export function hasSessionCollaborationPowerActivity(): boolean {
+  return pendingTurnEvents > 0 || (!!current && (!current.loaded || current.recovering
+    || (current.recovery ? current.service.hasPendingPowerWork() : current.service.hasPendingPowerDecisions(true))))
+}
 
 export function configureSessionCollaborationHost(serverHost: string, serverPort: number): () => void {
   endpoint = { serverHost, serverPort }
   unsubscribe?.()
+  // A scheduled task may finish before the first renderer/session access.
+  // Read persisted decisions now, including in migration validation mode.
+  void getSessionCollaborationOwner().ready.catch(error => console.error('[SessionCollaboration] State load failed', error))
   let eventTail: Promise<void> = Promise.resolve()
   const removeGuard = registerSessionTurnAdmissionGuard(async (sessionId, canAdmit) => {
     // Previously emitted lifecycle events belong before this new reservation.
@@ -30,139 +51,166 @@ export function configureSessionCollaborationHost(serverHost: string, serverPort
   })
   let disposed = false
   unsubscribe = observeSessionTurns(event => {
+    pendingTurnEvents += 1
     eventTail = eventTail.then(async () => {
       if (disposed) return
       await handleSessionCollaborationEvent(await getSessionCollaborationService(), event)
-    }).catch(error => console.error('[SessionCollaboration] Event failed', error))
+    }).catch(error => console.error('[SessionCollaboration] Event failed', error)).finally(() => {
+      pendingTurnEvents -= 1
+      if (pendingTurnEvents === 0) powerActivityClock.changed()
+    })
   })
   return () => { disposed = true; removeGuard(); unsubscribe?.(); unsubscribe = undefined; current = undefined }
 }
 
-async function openSessionCollaborationService(path: string): Promise<OpenService> {
-  const service = new SessionCollaborationService({
-    statePath: path,
-    sessions: {
-      async list({ query, limit, offset, signal }) {
-        const needle = query?.trim() ?? ''
-        // Metadata ranking and the body lookup are both synchronous SQLite.
-        // Whichever is still pending once this elapses is skipped so the
-        // picker cannot hold the process while other requests wait.
-        const deadlineMs = Date.now() + 300
-        const metadata = await sessionService.searchSessionMetadata(needle, { limit, offset, signal, deadlineMs })
-        signal?.throwIfAborted()
-        // A full metadata page already answers the picker. Do not wait for
-        // full-text matches (or canonical transcript validation) to display it.
-        if (!needle) return metadata
-        if (metadata.truncated || metadata.sessions.length === limit || Date.now() > deadlineMs) {
-          return { ...metadata, truncated: true, totalIsLowerBound: true }
-        }
-        const content = await searchService.searchSessionSuggestions(needle, { limit: 100, signal, deadlineMs })
-        signal?.throwIfAborted()
-        const details = new Map(sessionService.getSessionSuggestionMetadata(content.sessions.map(item => item.sessionId)).map(item => [item.id, item]))
-        const normalized = needle.toLowerCase()
-        const seen = new Set<string>()
-        const bodyOnly = content.sessions.flatMap(item => {
-          const detail = details.get(item.sessionId)
-          // The metadata page is authoritative for title/project matches;
-          // filter these from content pages too so pagination cannot repeat them.
-          if (seen.has(item.sessionId)) return []
-          seen.add(item.sessionId)
-          if (detail && [detail.id, detail.title, detail.workDir ?? '', detail.projectPath].some(value => value.toLowerCase().includes(normalized))) return []
-          return [detail ?? { id: item.sessionId, title: item.sessionId, projectPath: item.projectPath, modifiedAt: item.modifiedAt }]
-        })
-        const bodyOffset = Math.max(0, offset - metadata.total)
-        return {
-          sessions: [...metadata.sessions, ...bodyOnly.slice(bodyOffset, bodyOffset + limit - metadata.sessions.length)],
-          total: metadata.total + bodyOnly.length,
-          truncated: content.truncated,
-          totalIsLowerBound: content.truncated || content.indexUnavailable,
-          indexUnavailable: content.indexUnavailable,
-        }
+function getSessionCollaborationOwner(): CollaborationOwner {
+  const path = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'cc-haha', 'session-collaboration', 'state.json')
+  if (!current || current.path !== path) {
+    const service = new SessionCollaborationService({
+      statePath: path,
+      models: {
+        list: listSessionModels,
+        parentRuntime: getCollaborationRuntime,
+        resolve: resolveCollaborationRuntime,
+        validate: validateSessionRuntime,
       },
-      read: (sessionId, options) => sessionService.getSessionHistoryPage(sessionId, { ...options, projectContext: false }),
-      exists: async sessionId => Boolean(await sessionService.getSessionSummary(sessionId)),
-      titles: sessionIds => {
-        const titles: Record<string, string> = {}
-        // The index can briefly contain both the source placeholder and the
-        // worktree transcript. Rows are newest-first; keep the first useful
-        // title instead of letting an older duplicate or Untitled overwrite it.
-        for (const item of sessionService.getSessionSuggestionMetadata(sessionIds)) {
-          const title = item.title.trim()
-          if (!title) continue
-          if (!(item.id in titles) || titles[item.id] === 'Untitled Session') {
-            titles[item.id] = title
+      sessions: {
+        async verifyUserInstruction(sessionId, evidence) {
+          const page = await sessionService.getSessionHistoryPage(sessionId, { limit: 100, projectContext: false })
+          return matchesDelegationUserInstruction(page.messages, evidence)
+        },
+        async list({ query, limit, offset, signal }) {
+          const needle = query?.trim() ?? ''
+          // Metadata ranking and the body lookup are both synchronous SQLite.
+          // Whichever is still pending once this elapses is skipped so the
+          // picker cannot hold the process while other requests wait.
+          const deadlineMs = Date.now() + 300
+          const metadata = await sessionService.searchSessionMetadata(needle, { limit, offset, signal, deadlineMs })
+          signal?.throwIfAborted()
+          // A full metadata page already answers the picker. Do not wait for
+          // full-text matches (or canonical transcript validation) to display it.
+          if (!needle) return metadata
+          if (metadata.truncated || metadata.sessions.length === limit || Date.now() > deadlineMs) {
+            return { ...metadata, truncated: true, totalIsLowerBound: true }
           }
-        }
-        return titles
+          const content = await searchService.searchSessionSuggestions(needle, { limit: 100, signal, deadlineMs })
+          signal?.throwIfAborted()
+          const details = new Map(sessionService.getSessionSuggestionMetadata(content.sessions.map(item => item.sessionId)).map(item => [item.id, item]))
+          const normalized = needle.toLowerCase()
+          const seen = new Set<string>()
+          const bodyOnly = content.sessions.flatMap(item => {
+            const detail = details.get(item.sessionId)
+            // The metadata page is authoritative for title/project matches;
+            // filter these from content pages too so pagination cannot repeat them.
+            if (seen.has(item.sessionId)) return []
+            seen.add(item.sessionId)
+            if (detail && [detail.id, detail.title, detail.workDir ?? '', detail.projectPath].some(value => value.toLowerCase().includes(normalized))) return []
+            return [detail ?? { id: item.sessionId, title: item.sessionId, projectPath: item.projectPath, modifiedAt: item.modifiedAt }]
+          })
+          const bodyOffset = Math.max(0, offset - metadata.total)
+          return {
+            sessions: [...metadata.sessions, ...bodyOnly.slice(bodyOffset, bodyOffset + limit - metadata.sessions.length)],
+            total: metadata.total + bodyOnly.length,
+            truncated: content.truncated,
+            totalIsLowerBound: content.truncated || content.indexUnavailable,
+            indexUnavailable: content.indexUnavailable,
+          }
+        },
+        read: (sessionId, options) => sessionService.getSessionHistoryPage(sessionId, { ...options, projectContext: false }),
+        exists: async sessionId => Boolean(await sessionService.getSessionSummary(sessionId)),
+        existsForPower: sessionId => sessionService.hasSessionStrict(sessionId),
+        titles: sessionIds => {
+          const titles: Record<string, string> = {}
+          // The index can briefly contain both the source placeholder and the
+          // worktree transcript. Rows are newest-first; keep the first useful
+          // title instead of letting an older duplicate or Untitled overwrite it.
+          for (const item of sessionService.getSessionSuggestionMetadata(sessionIds)) {
+            const title = item.title.trim()
+            if (!title) continue
+            if (!(item.id in titles) || titles[item.id] === 'Untitled Session') {
+              titles[item.id] = title
+            }
+          }
+          return titles
+        },
+        teamMemberIdentities: listLeadTeamMemberIdentities,
+        async create(callerSessionId, input) {
+          const workDir = input.workDir ?? await sessionService.getSessionWorkDir(callerSessionId)
+          if (!workDir) throw new ApiError(409, 'The source session working directory is unavailable', 'SESSION_WORKSPACE_UNAVAILABLE')
+          // Inherit permissions independently of model selection: a removed parent
+          // provider must not block a valid replacement chosen for this child.
+          const [repository, source] = await Promise.all([getRepositoryContext(workDir), sessionService.getSessionLaunchInfo(callerSessionId)])
+          const permissionMode = source?.permissionMode ?? await settingsService.getPermissionMode()
+          if (repository.state !== 'ok' && repository.state !== 'not_git_repo') throw new ApiError(400, `Cannot resolve the target repository (${repository.state}); no session was created`, 'SESSION_REPOSITORY_UNAVAILABLE')
+          const selection = input.runtime
+            ? await validateSessionRuntime(input.runtime)
+            : await resolveCollaborationRuntime(callerSessionId, input)
+          const created = await sessionService.createSession(workDir, repository.state === 'ok' ? { worktree: true } : undefined, permissionMode)
+          await sessionService.appendSessionMetadata(created.sessionId, {
+            workDir: created.workDir, customTitle: input.title ?? input.prompt.slice(0, 80),
+            permissionMode, runtimeProviderId: selection.providerId,
+            runtimeModelId: selection.modelId, effortLevel: selection.effortLevel, openAIFastMode: selection.openAIFastMode ?? false,
+          })
+          return created
+        },
       },
-      async create(callerSessionId, input) {
-        const workDir = input.workDir ?? await sessionService.getSessionWorkDir(callerSessionId)
-        if (!workDir) throw new ApiError(409, 'The source session working directory is unavailable', 'SESSION_WORKSPACE_UNAVAILABLE')
-        const [repository, runtime] = await Promise.all([getRepositoryContext(workDir), getRuntimeSettings(callerSessionId)])
-        if (repository.state !== 'ok' && repository.state !== 'not_git_repo') throw new ApiError(400, `Cannot resolve the target repository (${repository.state}); no session was created`, 'SESSION_REPOSITORY_UNAVAILABLE')
-        const created = await sessionService.createSession(workDir, repository.state === 'ok' ? { worktree: true } : undefined, runtime.permissionMode)
-        await sessionService.appendSessionMetadata(created.sessionId, {
-          workDir: created.workDir, customTitle: input.title ?? input.prompt.slice(0, 80),
-          permissionMode: runtime.permissionMode, runtimeProviderId: input.providerId !== undefined ? input.providerId : runtime.providerId,
-          runtimeModelId: input.model ?? runtime.model, effortLevel: runtime.effort,
-        })
-        return created
-      },
-    },
-    runtime: {
-      getState: getSessionTurnState,
-      async start(sessionId, message) {
-        if (!endpoint.serverPort) throw new Error('Desktop session host is not running')
-        const ack = await submitSessionTurn(sessionId, message.content, { ...endpoint, messageId: message.id, sourceSessionId: message.sourceSessionId, canSend: () => service.canDeliver(message.id) })
-        if (ack.status === 'consumed') {
-          await service.onMessageConsumed(message.id, sessionId)
-          await service.onSessionState(sessionId, 'idle')
-        }
-      },
-      async enqueue(sessionId, message) {
-        const result = await conversationService.requestControl(sessionId, {
-          subtype: 'enqueue_session_message', message_id: message.id,
-          sender_session_id: message.sourceSessionId, text: message.content,
-        }, 10_000, undefined, () => !isSessionTurnStopped(sessionId) && service.canDeliver(message.id))
-        if (result.status !== 'queued' && result.status !== 'consumed') throw new Error('CLI did not acknowledge the session message')
-        if (result.status === 'consumed') await service.onMessageConsumed(message.id, sessionId)
-        else if (getSessionTurnState(sessionId) === 'idle' && service.canDeliver(message.id)) {
+      runtime: {
+        apply: applyCollaborationRuntime,
+        stopAndWait: stopCollaborationRuntime,
+        getState: getSessionTurnState,
+        async start(sessionId, message) {
+          if (!endpoint.serverPort) throw new Error('Desktop session host is not running')
+          await getCollaborationRuntime(sessionId)
           const ack = await submitSessionTurn(sessionId, message.content, { ...endpoint, messageId: message.id, sourceSessionId: message.sourceSessionId, canSend: () => service.canDeliver(message.id) })
           if (ack.status === 'consumed') {
             await service.onMessageConsumed(message.id, sessionId)
             await service.onSessionState(sessionId, 'idle')
           }
-        }
+        },
+        async enqueue(sessionId, message) {
+          const result = await conversationService.requestControl(sessionId, {
+            subtype: 'enqueue_session_message', message_id: message.id,
+            sender_session_id: message.sourceSessionId, text: message.content,
+          }, 10_000, undefined, () => !isSessionTurnStopped(sessionId) && service.canDeliver(message.id))
+          if (result.status !== 'queued' && result.status !== 'consumed') throw new Error('CLI did not acknowledge the session message')
+          if (result.status === 'consumed') await service.onMessageConsumed(message.id, sessionId)
+          else if (getSessionTurnState(sessionId) === 'idle' && service.canDeliver(message.id)) {
+            const ack = await submitSessionTurn(sessionId, message.content, { ...endpoint, messageId: message.id, sourceSessionId: message.sourceSessionId, canSend: () => service.canDeliver(message.id) })
+            if (ack.status === 'consumed') {
+              await service.onMessageConsumed(message.id, sessionId)
+              await service.onSessionState(sessionId, 'idle')
+            }
+          }
+        },
+        async stop(sessionId) { stopSessionTurn(sessionId) },
       },
-      async stop(sessionId) { stopSessionTurn(sessionId) },
-    },
-  })
-  const opened = { path, service, ready: service.recover() }
-  current = opened
-  return opened
+    })
+    const owner: CollaborationOwner = { path, service, ready: Promise.resolve(), loaded: false, recovering: false }
+    current = owner
+    powerActivityClock.changed()
+    owner.ready = service.loadForPowerActivity().then(() => {
+      owner.loaded = true
+      if (current === owner) powerActivityClock.changed()
+    })
+  }
+  return current
 }
 
 export async function getSessionCollaborationService(): Promise<SessionCollaborationService> {
-  const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
-  const path = join(getEchoFlowInternalDir(configDir), 'session-collaboration', 'state.json')
-  // Callers use the record they awaited rather than re-reading `current`: the
-  // host's dispose clears it, and a config-dir change can make two opens race.
-  let opened = current?.path === path ? current : undefined
-  if (!opened) {
-    // Opening awaits the legacy adoption, so concurrent first callers would
-    // each build a service — and each recover would rewrite the same store
-    // from its own snapshot. Share the in-flight open instead.
-    if (opening?.path !== path) {
-      opening = {
-        path,
-        promise: openSessionCollaborationService(path)
-          .finally(() => { if (opening?.path === path) opening = undefined }),
-      }
-    }
-    opened = await opening.promise
+  const owner = getSessionCollaborationOwner()
+  await owner.ready
+  // Validation may inspect the loaded state but must not rewrite it. Normal
+  // API/admission access owns recovery, and migration drain waits for its writes.
+  if (!migrationMaintenance.isActive && !owner.recovery) {
+    owner.recovering = true
+    powerActivityClock.changed()
+    owner.recovery = migrationMaintenance.track(owner.service.recover().then(() => {
+      owner.recovering = false
+      if (current === owner) powerActivityClock.changed()
+    }))
   }
-  await opened.ready
-  return opened.service
+  await owner.recovery
+  return owner.service
 }
 
 export async function handleSessionCollaborationEvent(service: SessionCollaborationService, event: SessionTurnEvent): Promise<boolean> {
@@ -172,13 +220,17 @@ export async function handleSessionCollaborationEvent(service: SessionCollaborat
   if (event.type === 'user-input') { await service.onUserInput(event.sessionId, { dispatch: false }); return false }
   if (event.type === 'input-committed') { await service.onSessionState(event.sessionId, 'running'); return false }
   if (event.type === 'stopped') { await service.onStopped(event.sessionId); return false }
+  if (event.type === 'deleted') { await service.onDeleted(event.sessionId); return false }
   const message = event.message
   let collaborationStateChanged = false
   if (message.type === 'system' && message.subtype === 'session_message_receipt' && message.status === 'consumed') {
     await service.onMessageConsumed(message.message_id, event.sessionId)
     collaborationStateChanged = true
   } else if (message.type === 'result') {
-    await service.onSessionState(event.sessionId, message.is_error ? 'failed' : 'completed',
+    // Nested results and incomplete envelopes are not proof that the root turn succeeded.
+    if (message.parent_tool_use_id || typeof message.is_error !== 'boolean') return false
+    const succeeded = !message.is_error && (!message.subtype || message.subtype === 'success')
+    await service.onSessionState(event.sessionId, succeeded ? 'completed' : 'failed',
       String(message.result ?? message.errors?.join('\n') ?? '').slice(0, 8000), message.uuid)
     collaborationStateChanged = true
   } else if (message.type === 'control_request' && message.request?.subtype === 'can_use_tool') {

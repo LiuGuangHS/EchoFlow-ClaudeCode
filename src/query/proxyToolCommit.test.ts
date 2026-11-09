@@ -7,10 +7,10 @@ import { createSandboxedTestEnvironment } from '../../scripts/pr/test-environmen
 import type { Tool, ToolUseContext } from '../Tool.js'
 import type { QueryParams } from '../query.js'
 
-const scenarios = ['chat-eof', 'chat-length', 'chat-error', 'chat-completed', 'responses-incomplete', 'responses-failed', 'responses-done-only', 'anthropic-duplicate', 'anthropic-eof', 'anthropic-truncated', 'chat-malformed-corrected', 'chat-malformed-repeated', 'chat-mixed-corrected'] as const
+const scenarios = ['chat-eof', 'chat-length', 'chat-error', 'chat-completed', 'responses-incomplete', 'responses-failed', 'responses-done-only', 'anthropic-duplicate', 'anthropic-eof', 'anthropic-terminal-without-stop', 'anthropic-truncated', 'chat-malformed-corrected', 'chat-malformed-repeated', 'chat-mixed-corrected'] as const
 type Scenario = typeof scenarios[number]
 const resultPrefix = 'PROXY_TOOL_COMMIT_RESULT:'
-const childScenario = process.env.ECHOFLOW_PROXY_TOOL_COMMIT_SCENARIO
+const childScenario = process.env.CC_HAHA_PROXY_TOOL_COMMIT_SCENARIO
 
 // Loading the real query graph in a shared Bun test process can cache runtime
 // modules before later mock.module tests install their fixtures. Keep every
@@ -61,7 +61,9 @@ async function runScenario(root: string, scenario: Scenario) {
         + event('content_block_stop', { index })
         + event('content_block_stop', { index })
     }
-    wire += event('message_delta', { delta: { stop_reason: scenario === 'anthropic-truncated' ? 'max_tokens' : 'tool_use', stop_sequence: null }, usage: { output_tokens: 5 } })
+    // anthropic-eof ends before any stop_reason; anthropic-terminal-without-stop
+    // sends the terminal stop_reason but loses message_stop (#1481).
+    if (scenario !== 'anthropic-eof') wire += event('message_delta', { delta: { stop_reason: scenario === 'anthropic-truncated' ? 'max_tokens' : 'tool_use', stop_sequence: null }, usage: { output_tokens: 5 } })
     if (scenario === 'anthropic-duplicate') wire += event('message_stop', {})
   }
   if (scenario === 'chat-error') wire += `data: ${JSON.stringify({ error: { type: 'server_error', message: 'fixture upstream failure' } })}\n\n`
@@ -189,7 +191,7 @@ for (const scenario of scenarios) {
     const child = Bun.spawn([process.execPath, '--no-env-file', 'test', fileURLToPath(import.meta.url)], {
       cwd: root,
       env: createSandboxedTestEnvironment(root, {
-        ECHOFLOW_PROXY_TOOL_COMMIT_SCENARIO: scenario,
+        CC_HAHA_PROXY_TOOL_COMMIT_SCENARIO: scenario,
         NODE_ENV: 'production',
         CLAUDE_CODE_SIMPLE: '1',
         CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
@@ -203,12 +205,7 @@ for (const scenario of scenarios) {
       }),
       stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
     })
-    // Hang guard, not a performance budget: the child boots a real query
-    // graph and legitimately runs 6–13s quiet, so under a loaded machine 15s
-    // was not always enough and the kill turned a slow run into a failure.
-    // Keep the guard below the per-test timeout so a slow run can never be
-    // killed first.
-    const timeout = setTimeout(() => child.kill('SIGKILL'), 45_000)
+    const timeout = setTimeout(() => child.kill('SIGKILL'), 15_000)
     try {
       const [exitCode, stdout, stderr] = await Promise.all([
         child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
@@ -244,7 +241,7 @@ for (const scenario of scenarios) {
         }
         return
       }
-      const success = scenario === 'chat-completed' || scenario === 'responses-done-only' || scenario === 'anthropic-duplicate'
+      const success = scenario === 'chat-completed' || scenario === 'responses-done-only' || scenario === 'anthropic-duplicate' || scenario === 'anthropic-terminal-without-stop'
       expect(result.executions).toBe(success ? 1 : 0)
       expect(result.committedToolIds).toEqual(success ? ['call_fixture'] : [])
       const target = join(root, `${scenario}.txt`)
@@ -257,5 +254,5 @@ for (const scenario of scenarios) {
       await child.exited
       await rm(root, { recursive: true, force: true })
     }
-  }, 60_000)
+  }, 20_000)
 }

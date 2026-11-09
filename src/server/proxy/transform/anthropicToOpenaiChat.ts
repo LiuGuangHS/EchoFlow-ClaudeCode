@@ -18,7 +18,7 @@ import { stripLeadingBillingHeader } from './billingHeader.js'
 import { normalizeOpenAIReasoningEffort } from './effort.js'
 import { resolveRequestCompatibility, type RequestCompatibilityOptions } from './requestCompatibility.js'
 
-type OpenAIChatImageContentMode = 'vision' | 'text_only'
+export type OpenAIChatImageContentMode = 'vision' | 'text_only'
 
 // Synthetic text parts (degraded documents, search results) carry an internal
 // marker so serializers can preserve their boundaries. The marker is removed
@@ -28,6 +28,8 @@ type UserTextPart = OpenAIChatContentPart & { synthetic?: boolean }
 export type OpenAIChatTransformOptions = RequestCompatibilityOptions & {
   roundTripReasoningContent?: boolean
   passThinkingToggle?: boolean
+  // Defaults to sending. Turned off for a model whose upstream refused the field.
+  passReasoningEffort?: boolean
   passSamplingParams?: boolean
   imageContentMode?: OpenAIChatImageContentMode
 }
@@ -35,7 +37,7 @@ export type OpenAIChatTransformOptions = RequestCompatibilityOptions & {
 // Synthetic degradation text carries its own separators: the parts are
 // joined without a separator, so a notice must not glue itself to the
 // surrounding user text.
-const OMITTED_IMAGE_TEXT = '\n[Image omitted: this OpenAI-compatible chat endpoint only supports text content.]\n'
+const OMITTED_IMAGE_TEXT = '\n[Image omitted: the upstream rejected image input for this model.]\n'
 const FILE_IMAGE_OMITTED_TEXT = '\n[Image omitted: file-based image source is not supported by this endpoint.]\n'
 const MEDIA_RESULT_ATTACHED_TEXT = 'Media result attached after this tool result.'
 const DOCUMENT_TEXT_INLINE_LIMIT = 2000
@@ -133,13 +135,16 @@ export function anthropicToOpenaiChat(
       result.reasoning_effort = 'high'
     }
     if (options.passThinkingToggle) {
-      result.thinking = { type: body.thinking.type }
+      result.thinking = {
+        type: body.thinking.type === 'adaptive' ? 'enabled' : body.thinking.type,
+      }
     }
   }
   const outputConfigEffort = normalizeOpenAIReasoningEffort(body.output_config?.effort)
   if (compatibility.passReasoning && outputConfigEffort !== undefined) {
     result.reasoning_effort = outputConfigEffort
   }
+  if (options.passReasoningEffort === false) delete result.reasoning_effort
 
   if (compatibility.parallelToolCalls !== undefined && result.tools?.length) {
     result.parallel_tool_calls = compatibility.parallelToolCalls
@@ -553,7 +558,7 @@ function documentContentToParts(
  * string when neither is set, otherwise a newline-terminated prefix so the
  * document body follows on its own line.
  */
-function documentProvenanceText(document: { title?: string; context?: string }): string {
+export function documentProvenanceText(document: { title?: string; context?: string }): string {
   const lines = [
     ...(document.title ? [`[Document: ${document.title}]`] : []),
     ...(document.context ? [`[Document context: ${document.context}]`] : []),
@@ -576,7 +581,7 @@ function toImageUrl(block: Extract<AnthropicContentBlock, { type: 'image' }>): {
  * Flatten an Anthropic search_result block into its visible text (title,
  * body, source URL), matching the official schema where `source` is a string.
  */
-function searchResultToText(block: Extract<AnthropicContentBlock, { type: 'search_result' }>): string {
+export function searchResultToText(block: Extract<AnthropicContentBlock, { type: 'search_result' }>): string {
   const contentText = Array.isArray(block.content)
     ? block.content.filter((part): part is { type: 'text'; text: string } => part.type === 'text').map(part => part.text)
     : []

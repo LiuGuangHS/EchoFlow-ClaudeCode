@@ -1,4 +1,6 @@
 import { isOpenAIReasoningModel } from '../../shared/modelReasoning.js'
+import { isEnvTruthy } from '../../utils/envUtils.js'
+import { readProviderEnv } from '../../utils/model/providerEnvScope.js'
 
 export const OPENAI_DEFAULT_MAIN_MODEL = 'gpt-6-sol'
 export const OPENAI_DEFAULT_SONNET_MODEL = 'gpt-6-sol'
@@ -7,10 +9,15 @@ export const OPENAI_DEFAULT_OPUS_MODEL = 'gpt-6-astra'
 export const OPENAI_CODEX_EFFECTIVE_CONTEXT_PERCENT = 95
 export const OPENAI_CODEX_STANDARD_CONTEXT_WINDOW = 272_000
 export const OPENAI_CODEX_FRONTIER_CONTEXT_WINDOW = 372_000
+export const OPENAI_CODEX_EXTENDED_CONTEXT_WINDOW = 500_000
 export const OPENAI_CODEX_LARGE_CONTEXT_WINDOW = 1_000_000
 export const OPENAI_CODEX_SPARK_CONTEXT_WINDOW = 128_000
 export const OPENAI_CODEX_STANDARD_EFFECTIVE_CONTEXT_WINDOW = Math.floor(
   (OPENAI_CODEX_STANDARD_CONTEXT_WINDOW * OPENAI_CODEX_EFFECTIVE_CONTEXT_PERCENT) /
+    100,
+)
+export const OPENAI_CODEX_EXTENDED_EFFECTIVE_CONTEXT_WINDOW = Math.floor(
+  (OPENAI_CODEX_EXTENDED_CONTEXT_WINDOW * OPENAI_CODEX_EFFECTIVE_CONTEXT_PERCENT) /
     100,
 )
 export const OPENAI_CODEX_LARGE_EFFECTIVE_CONTEXT_WINDOW = Math.floor(
@@ -46,7 +53,7 @@ export const OPENAI_REASONING_EFFORTS = [
 export type OpenAIReasoningEffort = (typeof OPENAI_REASONING_EFFORTS)[number]
 
 export const OPENAI_CODEX_REASONING_EFFORT_ENV_KEY =
-  'ECHOFLOW_OPENAI_REASONING_EFFORT'
+  'CC_HAHA_OPENAI_REASONING_EFFORT'
 
 const GPT_5_6_REASONING_EFFORTS: OpenAIReasoningEffort[] = [
   'low',
@@ -99,6 +106,15 @@ export const OPENAI_CODEX_MODEL_CATALOG: OpenAIModelCatalogEntry[] = [
     defaultReasoningEffort: 'low',
     supportedReasoningEfforts: GPT_5_6_REASONING_EFFORTS,
     contextWindow: OPENAI_CODEX_STANDARD_EFFECTIVE_CONTEXT_WINDOW,
+  },
+  {
+    value: 'gpt-6.1-terra',
+    label: 'GPT-6.1 Terra',
+    description: 'GPT-6.1 Terra Codex model',
+    descriptionForModel: 'GPT-6.1 Terra - Codex model with an extended context window',
+    defaultReasoningEffort: 'low',
+    supportedReasoningEfforts: GPT_5_6_REASONING_EFFORTS,
+    contextWindow: OPENAI_CODEX_EXTENDED_EFFECTIVE_CONTEXT_WINDOW,
   },
   {
     value: 'gpt-5.6-sol',
@@ -213,7 +229,10 @@ export function resolveOpenAIReasoningEffortWithPriority(
 }
 
 export function isOpenAIResponsesModel(model: string): boolean {
-  return isOpenAIReasoningModel(model)
+  // The official runtime selects the transport even for newly published IDs
+  // and Claude tier aliases, so capability checks must follow that same route.
+  return isEnvTruthy(readProviderEnv('CC_HAHA_OPENAI_OAUTH_PROVIDER')) ||
+    isOpenAIReasoningModel(model)
 }
 
 export function resolveOpenAICodexModel(model: string): string {
@@ -221,9 +240,13 @@ export function resolveOpenAICodexModel(model: string): string {
     return process.env.OPENAI_CODEX_MODEL.trim()
   }
 
-  const normalized = model.trim().toLowerCase()
-  if (isOpenAIResponsesModel(normalized)) {
-    return model
+  const requested = model.trim()
+  const normalized = requested.toLowerCase()
+  // A remote catalog may advertise a new naming scheme before this client
+  // ships. Only Claude compatibility aliases need mapping; preserve real IDs.
+  if (normalized && !normalized.startsWith('claude-') &&
+    !['default', 'main', 'haiku', 'sonnet', 'opus', 'fable'].includes(normalized)) {
+    return requested
   }
 
   if (normalized.includes('haiku')) {
@@ -256,6 +279,8 @@ export function getOpenAIModelDisplayName(model: string): string | null {
       return 'GPT-6 Astra'
     case 'gpt-6.1-sol':
       return 'GPT-6.1-Sol'
+    case 'gpt-6.1-terra':
+      return 'GPT-6.1 Terra'
     case 'gpt-6-sol':
       return 'GPT-6-Sol'
     case 'gpt-6-luna':
@@ -305,6 +330,10 @@ export function getOpenAICodexContextWindowForModel(
 
   if (normalized === 'gpt-6.1-sol' || normalized === 'gpt-6-sol' || normalized === 'gpt-6-luna') {
     return OPENAI_CODEX_STANDARD_EFFECTIVE_CONTEXT_WINDOW
+  }
+
+  if (normalized === 'gpt-6.1-terra') {
+    return OPENAI_CODEX_EXTENDED_EFFECTIVE_CONTEXT_WINDOW
   }
 
   if (

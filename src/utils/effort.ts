@@ -17,6 +17,7 @@ import {
   isOpenAIResponsesModel,
 } from 'src/services/openaiAuth/models.js'
 import { GROK_MODEL_CATALOG, getGrokRuntimeModelCatalog } from 'src/services/grokAuth/models.js'
+import { readProviderEnv } from './model/providerEnvScope.js'
 
 export type EffortLevel = RuntimeEffortLevel | 'xhigh'
 
@@ -70,6 +71,9 @@ export function modelSupportsEffort(model: string): boolean {
   if (grokEntry) {
     return grokEntry.supportsReasoningEffort !== false
   }
+  // Restored official sessions can start before discovery completes. Preserve
+  // their selected effort until actual Grok metadata can constrain it.
+  if (isEnvTruthy(readProviderEnv('CC_HAHA_GROK_OAUTH_PROVIDER'))) return true
   // Supported by a subset of Claude 4 models
   if (shouldTrustBuiltInClaudeCapabilityList() && (
     m.includes('opus-4-6') ||
@@ -79,6 +83,7 @@ export function modelSupportsEffort(model: string): boolean {
     m.includes('opus-4-5') ||
     m.includes('sonnet-4-6') ||
     m.includes('sonnet-5') ||
+    m.includes('haiku-5') ||
     m.includes('fable-5') ||
     m.includes('mythos-5') ||
     m.includes('mythos-preview')
@@ -117,12 +122,14 @@ export function modelSupportsXHighEffort(model: string): boolean {
   if (grokEntry) {
     return grokEntry.reasoningEfforts?.includes('xhigh') ?? false
   }
+  if (isEnvTruthy(readProviderEnv('CC_HAHA_GROK_OAUTH_PROVIDER'))) return true
   const m = model.toLowerCase()
   return shouldTrustBuiltInClaudeCapabilityList() && (
     m.includes('opus-4-7') ||
     m.includes('opus-5') ||
     m.includes('opus-4-8') ||
     m.includes('sonnet-5') ||
+    m.includes('haiku-5') ||
     m.includes('fable-5') ||
     m.includes('mythos-5')
   )
@@ -142,6 +149,7 @@ export function modelSupportsMaxEffort(model: string): boolean {
   if (grokEntry) {
     return grokEntry.reasoningEfforts?.includes('max') ?? false
   }
+  if (isEnvTruthy(readProviderEnv('CC_HAHA_GROK_OAUTH_PROVIDER'))) return true
   const m = model.toLowerCase()
   if (shouldTrustBuiltInClaudeCapabilityList() && (
     m.includes('opus-4-6') ||
@@ -150,6 +158,7 @@ export function modelSupportsMaxEffort(model: string): boolean {
     m.includes('opus-4-8') ||
     m.includes('sonnet-4-6') ||
     m.includes('sonnet-5') ||
+    m.includes('haiku-5') ||
     m.includes('fable-5') ||
     m.includes('mythos-5') ||
     m.includes('mythos-preview')
@@ -435,10 +444,14 @@ export function getDefaultEffortForModel(
   // the model launch DRI and research. Default effort is a sensitive setting
   // that can greatly affect model quality and bashing.
 
-  // Claude Code runs Opus 5.5 and Sonnet 5.5 at medium; the API default for
-  // Sonnet 5.5 is high, so it must be sent explicitly.
+  // Claude Code runs Opus 5.5, Sonnet 5.5 and Haiku 5.5 at medium; the API
+  // default for Sonnet 5.5 is high, so it must be sent explicitly.
   const canonicalModel = getCanonicalName(model)
-  if (canonicalModel === 'claude-opus-5-5' || canonicalModel === 'claude-sonnet-5-5') {
+  if (
+    canonicalModel === 'claude-opus-5-5' ||
+    canonicalModel === 'claude-sonnet-5-5' ||
+    canonicalModel === 'claude-haiku-5-5'
+  ) {
     return 'medium'
   }
 

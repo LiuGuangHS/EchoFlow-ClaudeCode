@@ -6,23 +6,19 @@ import { getSettingsForSource, updateSettingsForSource } from '../../utils/setti
 import { clearAllCaches } from '../../utils/plugins/cacheUtils.js'
 import { cacheAndRegisterPlugin } from '../../utils/plugins/pluginInstallationHelpers.js'
 import { loadAllPluginsCacheOnly } from '../../utils/plugins/pluginLoader.js'
-import { addMarketplaceSource, clearMarketplacesCache, loadKnownMarketplacesConfig, saveKnownMarketplacesConfig } from '../../utils/plugins/marketplaceManager.js'
+import { addMarketplaceSource, clearMarketplacesCache, loadKnownMarketplacesConfig } from '../../utils/plugins/marketplaceManager.js'
 import { isPluginBlockedByPolicy } from '../../utils/plugins/pluginPolicy.js'
 import { uninstallPluginOp } from '../plugins/pluginOperations.js'
 import { getRemoteRecipe } from './remoteCatalog.js'
 import { buildRemotePlugin } from './remoteConnector.js'
 import { getSkillRecipe } from './skillCatalog.js'
 import { readSkillBundleFiles } from './skillAdapter.js'
-import type { ConnectorDefinition, ConnectorId, ConnectorInstallation } from './types.js'
+import type { ConnectorDefinition, ConnectorInstallation } from './types.js'
 
-const MARKETPLACE = 'echoflow-connectors'
-/** The namespace released builds wrote before the rename. Their installed marketplace must keep working. */
-const RETIRED_MARKETPLACE = `ha${'ha'}-connectors`
-const recipes: Record<ConnectorId, { name: string; help: string; task: string }> = {
-  feishu: { name: '飞书 / Feishu', help: 'calendar --help', task: 'Read the user’s calendar agenda with calendar +agenda. Discover document commands with docs --help.' },
-  dingtalk: { name: '钉钉 / DingTalk', help: 'calendar +agenda --help', task: 'For today’s agenda use calendar +agenda --format json. The account needs calendar access and any required organization approval. Discover other domains with --help before use.' },
-  wecom: { name: '企业微信 / WeCom', help: 'calendar schedules list --help', task: 'List calendar schedules with calendar schedules list --begin-time <start> --end-time <end>, using the requested time window and this version’s documented time format. Omitted dates default to the next 30 days, not today. This command already returns JSON; do not append an unsupported --format flag. Discover other domains with --help before use.' },
-}
+import { nativeConnectorRecipes as recipes, renderNativeConnectorSkill } from './nativeConnectorSkill.js'
+
+const MARKETPLACE = 'haha-connectors'
+
 
 // All three connectors share one local marketplace and user settings entry.
 // Serialize bridge writes so simultaneous preparation does not lose an entry.
@@ -45,13 +41,6 @@ function pluginName(definition: ConnectorDefinition): string {
   return expected
 }
 
-function shellQuote(value: string) {
-  return `'${value.replace(/'/g, `'"'"'`)}'`
-}
-
-function powershellQuote(value: string) {
-  return `'${value.replace(/'/g, "''")}'`
-}
 
 export function renderConnectorSkill(definition: ConnectorDefinition, installation: ConnectorInstallation): string {
   const bundle = getSkillRecipe(definition.id, definition.version)
@@ -91,46 +80,7 @@ Use read-only discovery first. Business writes (messages, documents, transaction
 
 Official documentation: ${definition.homepage}
 `
-  const recipe = recipes[definition.id]!
-  const command = [installation.command, ...installation.args]
-  // Only adapter-owned non-secret environment entries belong in skill text.
-  const environment = Object.entries(installation.env).filter(([key]) => ['DWS_CONFIG_DIR', 'DWS_KEYCHAIN_DIR', 'DWS_DISABLE_KEYCHAIN'].includes(key))
-  const bashCommand = [...environment.map(([key, value]) => `${key}=${shellQuote(value)}`), ...command.map(shellQuote)].join(' ')
-  const windowsCommand = `${environment.map(([key, value]) => `$env:${key} = ${powershellQuote(value)}; `).join('')}& ${command.map(powershellQuote).join(' ')}`
-  return `---
-name: ${pluginName(definition)}
-description: Use ${recipe.name} through the desktop-managed connector when the user requests its documents, calendar, or collaboration services.
----
-
-# ${recipe.name}
-
-This skill belongs to the desktop connector. The desktop manages installation and account connection. Use the pinned executable below; do not install a global CLI, change accounts, or delete configuration directories.
-
-## Invocation
-
-On macOS / a POSIX shell:
-
-\`\`\`sh
-${bashCommand} ${recipe.help}
-\`\`\`
-
-On Windows PowerShell:
-
-\`\`\`powershell
-${windowsCommand} ${recipe.help}
-\`\`\`
-
-Keep the executable path, environment and prefix arguments when appending a command. Request JSON output where supported and inspect this version's --help instead of guessing parameters. ${recipe.task}
-
-## Account and permissions
-
-Use the connected account only. A successful login does not grant every business permission. If authentication expires or required scopes are missing, explain the service's error and direct the user to the desktop connector's connection flow. Do not print tokens, perform login from a task, or read credential files.
-
-Prefer read-only discovery. Send messages, edit documents, create events, or perform other writes only when the user's request authorizes that action. Show errors accurately; never claim a business operation succeeded from login status alone.
-
-Official documentation: ${definition.homepage}
-Pinned package: ${definition.packageName}@${definition.version}
-`
+  return renderNativeConnectorSkill(definition, installation)
 }
 
 async function writeAtomic(file: string, content: string | Uint8Array) {
@@ -143,29 +93,10 @@ async function writeAtomic(file: string, content: string | Uint8Array) {
   }
 }
 
-/**
- * An older release registered the managed marketplace under the retired
- * namespace. Rename that entry so the plugins it installed keep resolving
- * under the current plugin id instead of looking uninstalled.
- */
-async function renameRetiredMarketplaceRegistration(root: string) {
-  const known = await loadKnownMarketplacesConfig()
-  const retired = known[RETIRED_MARKETPLACE]
-  if (!retired) return
-  if (known[MARKETPLACE]) {
-    delete known[RETIRED_MARKETPLACE]
-  } else {
-    known[MARKETPLACE] = retired
-    delete known[RETIRED_MARKETPLACE]
-  }
-  await saveKnownMarketplacesConfig(known)
-  clearMarketplacesCache()
-}
-
 async function assertMarketplaceOwnership(root: string) {
   const existing = (await loadKnownMarketplacesConfig())[MARKETPLACE]
   if (existing && (existing.source.source !== 'directory' || resolve(existing.source.path) !== resolve(root))) {
-    throw new Error('The echoflow-connectors marketplace name is already used by another source')
+    throw new Error('The haha-connectors marketplace name is already used by another source')
   }
 }
 
@@ -188,7 +119,6 @@ export function installConnectorPlugin(definition: ConnectorDefinition, installa
     const bundleFiles = bundle ? await readSkillBundleFiles(bundle, installation.directory) : []
     const root = rootDirectory()
     await assertMarketplaceOwnership(root)
-    await renameRetiredMarketplaceRegistration(root)
     if (isPluginBlockedByPolicy(definition.pluginId)) throw new Error('This connector plugin is disabled by organization policy')
     const pluginRoot = join(root, 'plugins', name)
     await mkdir(join(root, '.claude-plugin'), { recursive: true })
@@ -212,8 +142,7 @@ export function installConnectorPlugin(definition: ConnectorDefinition, installa
     let entries: Array<{ name: string; source: string; version: string }> = []
     try {
       const previous = JSON.parse(await readFile(marketFile, 'utf8'))
-      if (previous.name !== MARKETPLACE && previous.name !== RETIRED_MARKETPLACE) throw new Error('Invalid managed connector marketplace')
-      if (!Array.isArray(previous.plugins)) throw new Error('Invalid managed connector marketplace')
+      if (previous.name !== MARKETPLACE || !Array.isArray(previous.plugins)) throw new Error('Invalid managed connector marketplace')
       entries = previous.plugins
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -221,7 +150,7 @@ export function installConnectorPlugin(definition: ConnectorDefinition, installa
     const entry = { name, source: `./plugins/${name}`, version, strict: true }
     await writeAtomic(marketFile, JSON.stringify({
       name: MARKETPLACE,
-      owner: { name: 'EchoFlow Code' },
+      owner: { name: 'Claude Code Haha' },
       plugins: [...entries.filter(item => item.name !== name), entry],
     }, null, 2))
     clearMarketplacesCache()
@@ -267,9 +196,8 @@ export function removeConnectorPlugin(definition: ConnectorDefinition): Promise<
     const marketFile = join(rootDirectory(), '.claude-plugin', 'marketplace.json')
     try {
       const market = JSON.parse(await readFile(marketFile, 'utf8'))
-      if (market.name !== MARKETPLACE && market.name !== RETIRED_MARKETPLACE) throw new Error('Invalid managed connector marketplace')
-      if (!Array.isArray(market.plugins)) throw new Error('Invalid managed connector marketplace')
-      await writeAtomic(marketFile, JSON.stringify({ ...market, name: MARKETPLACE, plugins: market.plugins.filter((entry: { name: string }) => entry.name !== name) }, null, 2))
+      if (market.name !== MARKETPLACE || !Array.isArray(market.plugins)) throw new Error('Invalid managed connector marketplace')
+      await writeAtomic(marketFile, JSON.stringify({ ...market, plugins: market.plugins.filter((entry: { name: string }) => entry.name !== name) }, null, 2))
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }

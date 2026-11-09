@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { getAgentModel } from './agent.js'
+import { getAgentModel, getMainThreadAgentModelSetting } from './agent.js'
 
 const originalSubagentModel = process.env.CLAUDE_CODE_SUBAGENT_MODEL
 
@@ -17,7 +17,7 @@ describe('getAgentModel', () => {
 
     expect(
       getAgentModel('haiku', 'claude-sonnet-4-6', undefined, 'default'),
-    ).toBe('claude-haiku-4-5-20251001')
+    ).toBe('claude-haiku-5-5')
     expect(
       getAgentModel('inherit', 'claude-sonnet-4-6', undefined, 'default'),
     ).toBe('claude-sonnet-4-6')
@@ -53,5 +53,16 @@ describe('getAgentModel', () => {
     expect(
       getAgentModel('inherit', 'claude-sonnet-4-6', undefined, 'default'),
     ).toBe('claude-sonnet-4-6')
+  })
+})
+
+describe('getMainThreadAgentModelSetting', () => {
+  test('keeps the session model for an Agent pinned to another provider', () => {
+    // The pinned model belongs to that provider; as the main thread there is
+    // no provider route, so sending it would ask the session for a model it lacks.
+    expect(getMainThreadAgentModelSetting({ model: 'deepseek-v4-pro', provider: 'deepseek-direct' })).toBeUndefined()
+    expect(getMainThreadAgentModelSetting({ model: 'opus' })).toBe('opus')
+    expect(getMainThreadAgentModelSetting({ model: 'inherit' })).toBeUndefined()
+    expect(getMainThreadAgentModelSetting(undefined)).toBeUndefined()
   })
 })

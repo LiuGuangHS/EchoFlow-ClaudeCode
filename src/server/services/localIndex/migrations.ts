@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite'
 
-export const LOCAL_INDEX_SCHEMA_VERSION = 6
+export const LOCAL_INDEX_SCHEMA_VERSION = 8
 export const LOCAL_INDEX_SCHEMA_UNSUPPORTED =
   'LOCAL_INDEX_SCHEMA_UNSUPPORTED' as const
 
@@ -190,13 +190,17 @@ ALTER TABLE sessions ADD COLUMN session_api_format TEXT;
 
 // Hide independently persisted team workers from the task sidebar without
 // removing their transcript lookup or entry locators. Older sessions remain visible.
-// Model configuration and runtime identity are separate session metadata. These nullable columns
-// preserve old indexes while allowing the index to return the same metadata as JSONL parsing.
 const SCHEMA_V6 = `
 ALTER TABLE sessions ADD COLUMN is_team_worker INTEGER NOT NULL DEFAULT 0 CHECK (is_team_worker IN (0, 1));
-ALTER TABLE sessions ADD COLUMN model_config_id TEXT;
-ALTER TABLE sessions ADD COLUMN model_config_json TEXT;
-ALTER TABLE sessions ADD COLUMN runtime_instance_id TEXT;
+`
+
+// Nullable for transcripts created before per-session Fast mode was available.
+const SCHEMA_V7 = `
+ALTER TABLE sessions ADD COLUMN openai_fast_mode INTEGER CHECK (openai_fast_mode IN (0, 1));
+`
+
+const SCHEMA_V8 = `
+ALTER TABLE sessions ADD COLUMN agent_profile TEXT NOT NULL DEFAULT 'standard' CHECK (agent_profile IN ('standard', 'lean'));
 `
 
 const MIGRATIONS = [
@@ -206,6 +210,8 @@ const MIGRATIONS = [
   { version: 4, sql: SCHEMA_V4 },
   { version: 5, sql: SCHEMA_V5 },
   { version: 6, sql: SCHEMA_V6 },
+  { version: 7, sql: SCHEMA_V7 },
+  { version: 8, sql: SCHEMA_V8 },
 ] as const
 
 export class UnsupportedLocalIndexSchemaError extends Error {

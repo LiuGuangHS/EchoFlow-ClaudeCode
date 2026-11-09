@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { buildRemotePlugin, createRemoteConnectorBridge, saveRemoteApiKey, type RemoteConnectorDependencies, type RemoteConnectorRecipe } from './remoteConnector.js'
 import { resolvePluginMcpEnvironment, addPluginScopeToServers } from '../../utils/plugins/mcpPluginIntegration.js'
 
-const recipe = (auth: RemoteConnectorRecipe['auth']): RemoteConnectorRecipe => ({ id: 'maps-fixture', pluginId: 'office-maps-fixture@echoflow-connectors', version: '1.0.0', endpoint: 'https://official.example/mcp?format=0', transport: 'http', auth })
+const recipe = (auth: RemoteConnectorRecipe['auth']): RemoteConnectorRecipe => ({ id: 'maps-fixture', pluginId: 'office-maps-fixture@haha-connectors', version: '1.0.0', endpoint: 'https://official.example/mcp?format=0', transport: 'http', auth })
 function fixture() {
   const options: Record<string, Record<string, string>> = { 'another-plugin@other': { apiKey: 'keep-other-secret' } }
   const calls: Array<{ kind: string, name: string, config?: unknown }> = []

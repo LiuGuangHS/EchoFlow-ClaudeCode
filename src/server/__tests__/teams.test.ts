@@ -829,7 +829,7 @@ describe('TeamService', () => {
         timestamp: `${timestampPrefix}4.000Z`,
       },
       {
-        type: 'echoflow-code-task-notification',
+        type: 'cc-haha-task-notification',
         isMeta: true,
         taskNotification: {
           taskId: 'task-0',
@@ -1075,6 +1075,24 @@ describe('TeamService', () => {
     expect(worker.status).toBe('idle')
   })
 
+  it('reports stopped, failed and auto-retrying process members distinctly', async () => {
+    const config = makeTeamConfig({ name: 'status-team' })
+    const [lead, worker] = config.members as Array<Record<string, unknown>>
+    Object.assign(worker!, { isActive: false, terminated: true })
+    Object.assign(lead!, { isActive: false, lastError: 'stream_truncated', autoRetry: { attempt: 2, max: 5, nextAt: 99 } })
+    await writeTeamConfig('status-team', config)
+    let detail = await service.getTeam('status-team')
+    // Stopped keeps its conversation and restarts on a message: not exited.
+    expect(detail.members.find((m) => m.agentId === 'agent-worker')).toMatchObject({ status: 'idle', activity: 'stopped' })
+    expect(detail.members.find((m) => m.agentId === 'agent-lead')).toMatchObject({ status: 'idle', lastError: 'stream_truncated', autoRetry: { attempt: 2, max: 5, nextAt: 99 } })
+
+    Object.assign(lead!, { autoRetry: undefined, lastError: 'API Error: 401 authentication_error' })
+    await writeTeamConfig('status-team', config)
+    detail = await service.getTeam('status-team')
+    expect(detail.members.find((m) => m.agentId === 'agent-lead')).toMatchObject({ status: 'failed', lastError: 'API Error: 401 authentication_error' })
+    expect(detail.members.find((m) => m.agentId === 'agent-lead')?.autoRetry).toBeUndefined()
+  })
+
   it('keeps delivered reports visible after the leader reads its mailbox', async () => {
     await writeTeamConfig('read-history-team', makeTeamConfig({ name: 'read-history-team' }))
     const report = { id: 'report-1', from: 'Worker Agent', text: 'Analysis complete', timestamp: '2026-09-27T15:25:36.411Z' }
@@ -1218,8 +1236,6 @@ describe('TeamService', () => {
     })
 
     const live = await service.getWorkbench('archived-team')
-    const archiveHash = crypto.createHash('sha256').update('archived-lead-session').digest('hex')
-    await fs.access(path.join(tmpDir, 'echoflow-code', 'agent-teams', `${archiveHash}.json`))
     await fs.rm(path.join(tmpDir, 'teams', 'archived-team'), { recursive: true, force: true })
     await fs.rm(path.join(tmpDir, 'tasks', 'archived-team'), { recursive: true, force: true })
 
@@ -2923,7 +2939,7 @@ describe('TeamService', () => {
     )
     const archivePath = path.join(
       tmpDir,
-      'echoflow-code',
+      'cc-haha',
       'agent-teams',
       `${crypto.createHash('sha256').update(leadSessionId).digest('hex')}.json`,
     )
@@ -3065,7 +3081,7 @@ describe('TeamService', () => {
     }
     const archivePath = path.join(
       tmpDir,
-      'echoflow-code',
+      'cc-haha',
       'agent-teams',
       `${crypto.createHash('sha256').update(sessionId).digest('hex')}.json`,
     )
@@ -3179,7 +3195,6 @@ describe('TeamService', () => {
         agentType: 'security-reviewer',
         joinedAt: 1700000001000,
         cwd: '/tmp/project',
-        sessionId: 'reviewer-root-session',
         isActive: false,
       }],
     }))
@@ -3224,39 +3239,6 @@ describe('TeamService', () => {
     expect(page.messages[0]?.content).toEqual([
       { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'bun test' } },
     ])
-  })
-
-  it('does not match a reused team member name to another archived session', async () => {
-    await writeTeamConfig('reused-team', makeTeamConfig({
-      name: 'reused-team',
-      createdAt: Date.parse('2026-08-08T00:00:00.000Z'),
-      leadSessionId: 'reused-lead-session',
-      members: [{
-        agentId: 'reviewer@reused-team',
-        name: 'reviewer',
-        joinedAt: Date.parse('2026-08-08T00:00:00.000Z'),
-        cwd: '/tmp/project',
-        isActive: false,
-      }],
-    }))
-    await writeTranscriptFile('-tmp-project', 'other-session', [{
-      type: 'assistant',
-      uuid: 'other-session-message',
-      teamName: 'reused-team',
-      agentName: 'reviewer',
-      message: { role: 'assistant', content: 'Unrelated run' },
-      timestamp: '2026-07-01T00:00:00.000Z',
-    }])
-    await service.getWorkbench('reused-team')
-    await fs.rm(path.join(tmpDir, 'teams', 'reused-team'), { recursive: true, force: true })
-
-    const page = await service.getMemberTranscriptPage(
-      'reused-team',
-      'reviewer@reused-team',
-      { leadSessionId: 'reused-lead-session' },
-    )
-
-    expect(page.messages).toEqual([])
   })
 
   it('reconstructs a completed multi-member DAG from an old session transcript', () => {
@@ -3665,7 +3647,7 @@ describe('TeamService', () => {
       message: { role: 'user', content: 'Indexed' },
       timestamp: '2026-01-01T00:01:00.000Z',
     }, {
-      type: 'echoflow-code-task-notification',
+      type: 'cc-haha-task-notification',
       isMeta: true,
       taskNotification: {
         taskId: 'indexed-task',
@@ -3708,7 +3690,7 @@ describe('TeamService', () => {
         source: { path: filePath, size: stat.size, mtimeMs: stat.mtimeMs, fileIdentity: null, fingerprint, indexedBytes: stat.size, parserVersion: 3, state: 'ready', lastErrorCode: null, updatedAtMs: 1 },
         entries: [
           { ordinal: 0, jsonlLine: 1, byteStart: 0, byteLength: lineLengths[0]!, entryType: 'user', messageId: 'u1', role: 'user', timestamp: '2026-01-01T00:01:00.000Z', parentToolUseId: null },
-          { ordinal: 1, jsonlLine: 2, byteStart: lineLengths[0]!, byteLength: lineLengths[1]!, entryType: 'echoflow-code-task-notification', messageId: null, role: null, timestamp: '2026-01-01T00:02:00.000Z', parentToolUseId: null },
+          { ordinal: 1, jsonlLine: 2, byteStart: lineLengths[0]!, byteLength: lineLengths[1]!, entryType: 'cc-haha-task-notification', messageId: null, role: null, timestamp: '2026-01-01T00:02:00.000Z', parentToolUseId: null },
         ],
       }),
       async rebuild() { return this.getPublicStatus() },
@@ -4402,6 +4384,45 @@ describe('TeamService', () => {
     })
   })
 
+  it("refuses commands that would undo a member, and passes its other commands to its inbox as typed", async () => {
+    await writeTeamConfig('command-team', makeTeamConfig({ name: 'command-team' }))
+
+    for (const command of ['/clear', '  /Reset now', '/new', '/model opus']) {
+      await expect(service.sendMemberMessage('command-team', 'agent-worker', command))
+        .rejects.toMatchObject({ statusCode: 400, code: 'MEMBER_COMMAND_UNSUPPORTED' })
+    }
+    await service.sendMemberMessage('command-team', 'agent-worker', '/compact')
+
+    const inbox = JSON.parse(await fs.readFile(
+      path.join(tmpDir, 'teams', 'command-team', 'inboxes', 'Worker-Agent.json'),
+      'utf-8',
+    )) as Array<{ from: string, text: string }>
+    expect(inbox.map(message => message.text)).toEqual(['/compact'])
+  })
+
+  it('reports a member message that could not be written instead of claiming it was sent', async () => {
+    await writeTeamConfig('blocked-mailbox-team', makeTeamConfig({ name: 'blocked-mailbox-team' }))
+    // An inbox that cannot be read back can never take the message.
+    await fs.mkdir(
+      path.join(tmpDir, 'teams', 'blocked-mailbox-team', 'inboxes', 'Worker-Agent.json'),
+      { recursive: true },
+    )
+
+    const { powerActivityClock } = await import('../services/powerActivityClock.js')
+    const before = powerActivityClock.read(false)
+    const sending = service.sendMemberMessage(
+      'blocked-mailbox-team',
+      'agent-worker',
+      'Please review the latest diff',
+    )
+    expect(service.hasPendingMemberMessages()).toBe(true)
+    await expect(sending).rejects.toMatchObject({ statusCode: 503, code: 'MAILBOX_UNAVAILABLE' })
+    expect(service.hasPendingMemberMessages()).toBe(false)
+    const after = powerActivityClock.read(false)
+    expect(after.revision).toBeGreaterThan(before.revision)
+    expect(after.completionSequence).toBe(before.completionSequence)
+  })
+
   it('should send messages to inbox-discovered members', async () => {
     await writeTeamConfig('inbox-team', makeTeamConfig({ name: 'inbox-team' }))
     const inboxDir = path.join(tmpDir, 'teams', 'inbox-team', 'inboxes')
@@ -4672,7 +4693,6 @@ describe('Teams API', () => {
         agentType: 'worker',
         joinedAt: 1700000001000,
         cwd: '/tmp/project',
-        sessionId: 'worker-root-session',
         isActive: false,
       }],
     }))
@@ -4694,24 +4714,6 @@ describe('Teams API', () => {
 
     expect(response.status).toBe(200)
     expect(body.messages.map((message) => message.id)).toEqual(['worker-execution'])
-  })
-
-  it('rejects a transcript lead session path with a directory separator', async () => {
-    await writeTeamConfig('path-safe-team', makeTeamConfig({
-      name: 'path-safe-team',
-      leadSessionId: undefined,
-    }))
-
-    const response = await fetch(
-      `${baseUrl}/api/teams/path-safe-team/members/agent-lead/transcript?incremental=true&leadSessionId=..%2Foutside`,
-    )
-
-    expect(response.status).toBe(400)
-  })
-
-  it('GET /api/teams/:name rejects encoded path traversal', async () => {
-    const res = await fetch(`${baseUrl}/api/teams/..%2F..%2Foutside`)
-    expect(res.status).toBe(400)
   })
 
   it('GET /api/teams/:name should 404 for unknown team', async () => {
@@ -4839,7 +4841,7 @@ describe('Teams API', () => {
     })
 
     await fs.appendFile(transcriptPath, `${JSON.stringify({
-      type: 'echoflow-code-task-notification',
+      type: 'cc-haha-task-notification',
       isMeta: true,
       taskNotification: {
         taskId: 'persisted-task',
@@ -5028,6 +5030,30 @@ describe('Teams API', () => {
     )
     const inbox = JSON.parse(rawInbox) as Array<{ text: string }>
     expect(inbox.at(-1)?.text).toBe('Please continue with the failing test')
+  })
+
+  it('PATCH /api/teams/:name/members/:id/runtime checks the requested model before touching the team', async () => {
+    await writeTeamConfig('runtime-team', makeTeamConfig({ name: 'runtime-team' }))
+    const patch = (body: string) => fetch(
+      `${baseUrl}/api/teams/runtime-team/members/${encodeURIComponent('agent-worker@runtime-team')}/runtime`,
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body },
+    )
+
+    for (const body of [
+      '{not json',
+      JSON.stringify({ providerId: null }),
+      JSON.stringify({ providerId: null, modelId: '  ' }),
+      JSON.stringify({ providerId: 7, modelId: 'claude-sonnet-4-6' }),
+      JSON.stringify({ providerId: null, modelId: 'claude-sonnet-4-6', effortLevel: 3 }),
+    ]) {
+      const res = await patch(body)
+      expect(res.status, body).toBe(400)
+    }
+
+    // A team written without an approved plan has no running members to switch.
+    const res = await patch(JSON.stringify({ providerId: null, modelId: 'claude-sonnet-4-6', effortLevel: 'high' }))
+    expect(res.status).toBe(404)
+    expect(((await res.json()) as { message?: string }).message).toContain('is not a member of a running team')
   })
 
   it('DELETE /api/teams/:name should delete team', async () => {

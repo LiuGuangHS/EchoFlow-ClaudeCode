@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url'
 const SOURCE_PATHS = [
   fileURLToPath(new URL('../ws/handler.ts', import.meta.url)),
   fileURLToPath(new URL('../ws/agentTaskState.ts', import.meta.url)),
+  fileURLToPath(new URL('../ws/mobileActivityClock.ts', import.meta.url)),
 ]
 const CLEANUP_ENTRY = 'cleanupSessionRuntimeState'
 
@@ -42,33 +43,33 @@ const CONTAINERS: Record<string, Classification> = {
   activeAgentTasks: { kind: 'cleared' },
   activeBackgroundTaskIds: { kind: 'cleared' },
   activeCliRuns: { kind: 'cleared' },
+  cliRunsAwaitingBackgroundTasks: { kind: 'cleared' },
   activeNonAgentTasks: { kind: 'cleared' },
   activeUserTurns: { kind: 'cleared' },
-  appliedModelConfigIds: { kind: 'cleared' },
   agentStopRequestedSessions: { kind: 'cleared' },
-  cliRuntimeOverrides: { kind: 'cleared' },
-  deferredCliRuntimeRestarts: { kind: 'cleared' },
+  nonAgentStopRequestedSessions: { kind: 'cleared' },
   authoritativeStoppedTaskIds: { kind: 'cleared' },
+  backgroundTaskCleanupTimers: { kind: 'cleared' },
   deferredPermissionModes: { kind: 'cleared' },
   deferredRuntimeRestarts: { kind: 'cleared' },
   interruptedSessionChats: { kind: 'cleared' },
   lastResolvedStartupWorkDirs: { kind: 'cleared' },
   legacyQueuedSessionChats: { kind: 'cleared' },
-  desiredModelConfigIds: { kind: 'cleared' },
-  modelApplyGenerations: { kind: 'cleared' },
-  modelConfigRequests: { kind: 'cleared' },
+  mobileActivityClock: { kind: 'cleared' },
   pendingInterruptedTurnResults: { kind: 'cleared' },
-  pendingRuntimeConfigValidations: { kind: 'cleared' },
   prewarmIdleTimers: { kind: 'cleared' },
   prewarmPendingSessions: { kind: 'cleared' },
   prewarmedSessions: { kind: 'cleared' },
   rejectedRuntimeConfigs: { kind: 'cleared' },
   runtimeExitStoppedSessions: { kind: 'cleared' },
+  runtimeExitFailedSessions: { kind: 'cleared' },
   runtimeOverrides: { kind: 'cleared' },
+  strictCollaborationRuntimeSessions: { kind: 'cleared' },
   runtimeTransitionPromises: { kind: 'cleared' },
   sessionDisconnectWatchers: { kind: 'cleared' },
   sessionSlashCommands: { kind: 'cleared' },
   sessionStartupPromises: { kind: 'cleared' },
+  startupDeferredDisconnectCleanups: { kind: 'cleared' },
   sessionStopRequested: { kind: 'cleared' },
   sessionStreamStates: { kind: 'cleared' },
   sessionTitleState: { kind: 'cleared' },
@@ -87,6 +88,10 @@ const CONTAINERS: Record<string, Classification> = {
   interruptedTurnResultMessages: {
     kind: 'not-session-state',
     reason: 'WeakMap keyed by the CLI message object, so entries die with the message.',
+  },
+  scheduledTurnResults: {
+    kind: 'not-session-state',
+    reason: 'WeakMap keyed by the terminal CLI message; provenance survives callback ordering and is collected with that message.',
   },
   validPermissionModes: {
     kind: 'not-session-state',
@@ -125,7 +130,8 @@ const source = sources.join('\n')
 function declaredContainers(): string[] {
   return sources
     .flatMap((text) => [
-      ...text.matchAll(/^(?:export )?const ([a-zA-Z][a-zA-Z0-9]*) = new (?:Map|Set|WeakMap|WeakSet)\b/gm),
+      // The clock owns a private map behind the same delete/clear lifecycle.
+      ...text.matchAll(/^(?:export )?const ([a-zA-Z][a-zA-Z0-9]*) = new (?:Map|Set|WeakMap|WeakSet|MobileActivityClock)\b/gm),
     ])
     .map((match) => match[1])
     .sort()

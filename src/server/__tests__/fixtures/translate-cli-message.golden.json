@@ -345,8 +345,7 @@
         {
           "type": "error",
           "message": "Prompt is too long",
-          "code": "invalid_request",
-          "businessErrorCode": "prompt_too_long"
+          "code": "invalid_request"
         }
       ]
     },
@@ -570,11 +569,6 @@
             "task_id": "task_golden",
             "description": "build the thing"
           }
-        },
-        {
-          "type": "status",
-          "state": "tool_executing",
-          "verb": "build the thing"
         }
       ]
     },
@@ -591,11 +585,6 @@
             "task_id": "task_golden",
             "progress": "halfway"
           }
-        },
-        {
-          "type": "status",
-          "state": "tool_executing",
-          "verb": "Task in progress"
         }
       ]
     },

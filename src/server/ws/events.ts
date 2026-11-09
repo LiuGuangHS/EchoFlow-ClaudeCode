@@ -1,3 +1,4 @@
+import type { ScheduledTaskMetadata } from '../../utils/scheduledTaskMessage.js'
 /**
  * WebSocket event type definitions
  *
@@ -19,7 +20,7 @@ export type PermissionMode =
 export type ClientMessage =
   | { type: 'prewarm_session' }
   | { type: 'sync_state' }
-  | { type: 'user_message'; content: string; attachments?: AttachmentRef[]; sessionReferences?: { sessionId: string }[] }
+  | { type: 'user_message'; content: string; attachments?: AttachmentRef[]; sessionReferences?: { sessionId: string }[]; powerActivityLeaseId?: string }
   | {
       type: 'permission_response'
       requestId: string
@@ -33,7 +34,7 @@ export type ClientMessage =
       // applied in-process via the SDK set_model control request before the
       // allow response; cross-provider switches approve → interrupt → restart
       // the CLI with the new env → auto-continue execution.
-      runtimeOverride?: { providerId: string | null; modelId: string; effortLevel?: string }
+      runtimeOverride?: { providerId: string | null; modelId: string; effortLevel?: string; openAIFastMode?: boolean }
     }
   | {
       type: 'computer_use_permission_response'
@@ -41,19 +42,7 @@ export type ClientMessage =
       response: ComputerUsePermissionResponse
     }
   | { type: 'set_permission_mode'; mode: PermissionMode }
-  | { type: 'set_runtime_config'; providerId: string | null; modelId: string; effortLevel?: string }
-  | {
-      type: 'set_model_config'
-      configId?: string
-      config?: {
-        providerId: string | null
-        modelId: string
-        effortLevel?: string
-      }
-      requestId: string
-    }
-  | { type: 'restart_runtime'; requestId: string; reason?: string }
-  | { type: 'set_cli_runtime'; cliRuntimeId: 'bundled' | 'installed' }
+  | { type: 'set_runtime_config'; providerId: string | null; modelId: string; effortLevel?: string; openAIFastMode?: boolean }
   | { type: 'stop_generation' }
   | { type: 'ask_user_question_activity'; requestId: string }
   | { type: 'stop_background_task'; taskId: string }
@@ -73,10 +62,6 @@ export type AttachmentRef = {
 // ============================================================================
 
 export const RUNTIME_CONFIG_APPLIED_EVENT = 'runtime_config_applied' as const
-export const MODEL_CONFIG_APPLIED_EVENT = 'model_config_applied' as const
-export const MODEL_CONFIG_APPLY_FAILED_EVENT = 'model_config_apply_failed' as const
-export const RUNTIME_STATUS_EVENT = 'runtime_status' as const
-export const CLI_RUNTIME_APPLIED_EVENT = 'cli_runtime_applied' as const
 
 export type ServerMessage =
   | { type: 'connected'; sessionId: string }
@@ -105,6 +90,8 @@ export type ServerMessage =
       input: unknown
       description?: string
       displayName?: string
+      /** Server epoch milliseconds; null cancels a previously announced automatic-answer timer. */
+      autoAnswerDeadline?: number | null
     }
   | {
       type: 'computer_use_permission_request'
@@ -123,8 +110,8 @@ export type ServerMessage =
       computerUseRequestIds: string[]
       turnActive: boolean
     }
-  | { type: 'user_message_replay'; content: string; sessionReferences?: { sessionId: string }[] }
-  | { type: 'message_complete'; usage: TokenUsage; timing?: TurnTiming }
+  | { type: 'user_message_replay'; content: string; sessionReferences?: { sessionId: string }[]; scheduledTask?: ScheduledTaskMetadata }
+  | { type: 'message_complete'; usage: TokenUsage; timing?: TurnTiming; scheduledTask?: ScheduledTaskMetadata }
   /**
    * `text` is a fragment when the CLI streams `thinking_delta`, and a whole block when
    * it hands over a finished `thinking` block. The client has to concatenate the first
@@ -132,42 +119,14 @@ export type ServerMessage =
    * the renderer to guess from content.
    */
   | { type: 'thinking'; text: string; complete?: boolean }
-  | { type: 'status'; state: ChatState; verb?: string; attemptStart?: boolean }
+  | { type: 'status'; state: ChatState; verb?: string; attemptStart?: boolean; compactProgress?: { outputChars: number } }
   | {
       type: typeof RUNTIME_CONFIG_APPLIED_EVENT
-      requestedConfig?: { providerId: string | null; modelId: string; effortLevel?: string }
+      requestedConfig?: { providerId: string | null; modelId: string; effortLevel?: string; openAIFastMode?: boolean }
       providerId: string | null
       modelId: string
       effortLevel?: string
-    }
-  | {
-      type: typeof MODEL_CONFIG_APPLIED_EVENT
-      requestId: string
-      configId: string
-      application: 'noop' | 'in_place' | 'runtime_restart' | 'deferred'
-      runtimeInstanceId: string
-      providerId: string | null
-      modelId: string
-      effortLevel?: string
-    }
-  | {
-      type: typeof MODEL_CONFIG_APPLY_FAILED_EVENT
-      requestId: string
-      configId: string
-      previousConfigId?: string
-      code: string
-      message: string
-    }
-  | {
-      type: typeof RUNTIME_STATUS_EVENT
-      runtimeInstanceId: string
-      state: 'starting' | 'ready' | 'busy' | 'stopping' | 'stopped' | 'error'
-      processGeneration: number
-      reason?: string
-    }
-  | {
-      type: typeof CLI_RUNTIME_APPLIED_EVENT
-      cliRuntimeId: 'bundled' | 'installed'
+      openAIFastMode?: boolean
     }
   // CLI 是权限模式的唯一真相来源。当 CLI 内部 mode 变化（如 ExitPlanMode 后
   // 恢复到进入 plan 前的模式、Shift+Tab 切换）时，把新模式回传给前端，让桌面端
@@ -181,6 +140,7 @@ export type ServerMessage =
       errorStatus: number | null
       errorType?: string
       errorMessage?: string
+      requestId?: string
     }
   // 流式请求失败、CLI 已降级为非流式重试。非流式响应要等完整生成才返回，
   // 期间没有任何增量输出，前端据此显示"慢速模式"轻提示而不是裸转圈。
@@ -196,6 +156,8 @@ export type ServerMessage =
   | { type: 'team_deleted'; teamName: string; incarnationId?: string; leadSessionId?: string; createdAt?: number }
   | { type: 'task_update'; taskId: string; status: string; progress?: string }
   | { type: 'session_title_updated'; sessionId: string; title: string }
+  /** Predicted next user prompt for the composer; sent after a turn ends. */
+  | { type: 'prompt_suggestion'; suggestion: string }
 
 export type AgentRunStreamMessage =
   | { type: 'content_start'; blockType: 'text' | 'tool_use'; toolName?: string; toolUseId?: string; originalToolUseId?: string; parentToolUseId?: string }
@@ -203,8 +165,8 @@ export type AgentRunStreamMessage =
   | { type: 'tool_use_complete'; toolName: string; toolUseId: string; originalToolUseId?: string; input: unknown; parentToolUseId?: string }
   | { type: 'tool_result'; toolUseId: string; originalToolUseId?: string; content: unknown; isError: boolean; parentToolUseId?: string }
   | { type: 'thinking'; text: string; complete?: boolean }
-  | { type: 'status'; state: ChatState; verb?: string; attemptStart?: boolean }
-  | { type: 'api_retry'; attempt: number; maxRetries: number; retryDelayMs: number; errorStatus: number | null; errorType?: string; errorMessage?: string }
+  | { type: 'status'; state: ChatState; verb?: string; attemptStart?: boolean; compactProgress?: { outputChars: number } }
+  | { type: 'api_retry'; attempt: number; maxRetries: number; retryDelayMs: number; errorStatus: number | null; errorType?: string; errorMessage?: string; requestId?: string }
   | { type: 'streaming_fallback'; cause: StreamingFallbackCause }
   | { type: 'error'; message: string; code: string; retryable?: boolean; businessErrorCode?: string }
 
@@ -246,8 +208,15 @@ export type TeamMemberStatus = {
    * Omitted when the watcher cannot tell, so a receiver keeps whatever the last
    * full team read established rather than being told the member went quiet.
    */
-  activity?: 'active' | 'idle' | 'exited' | 'unknown'
+  activity?: 'active' | 'idle' | 'exited' | 'stopped' | 'unknown'
   currentTask?: string
+  /**
+   * Why the member's last turn failed; `null` says it has recovered. Only the
+   * process-backed (desktop) runtime records it.
+   */
+  lastError?: string | null
+  /** A pending automatic continuation after a transient provider failure; `null` once settled. */
+  autoRetry?: { attempt: number; max: number; nextAt: number } | null
 }
 
 export type ComputerUseGrantFlags = {

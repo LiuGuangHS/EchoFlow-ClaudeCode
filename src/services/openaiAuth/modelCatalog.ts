@@ -1,9 +1,13 @@
+import { createHash } from 'node:crypto'
+import { getProxyFetchOptions } from '../../utils/proxy.js'
 import {
   OPENAI_CODEX_API_ENDPOINT,
-  OPENAI_CODEX_CLIENT_VERSION,
   OPENAI_CODEX_ORIGINATOR,
-  OPENAI_CODEX_TOKEN_USER_AGENT,
 } from './client.js'
+import {
+  clearOpenAICodexClientVersionCache,
+  resolveOpenAICodexClientVersion,
+} from './clientVersion.js'
 import { createModelCatalogCache } from '../modelCatalogCache.js'
 import { ensureFreshOpenAITokens } from './index.js'
 import { getOpenAIOAuthTokens } from './storage.js'
@@ -45,6 +49,7 @@ type RemoteModelInfo = {
 
 function normalizeRemoteModel(model: RemoteModelInfo): OpenAIModelCatalogEntry | null {
   if (
+    !model ||
     typeof model.slug !== 'string' ||
     !model.slug.trim() ||
     model.visibility !== 'list'
@@ -102,6 +107,8 @@ export type OpenAIModelCatalogTokens = {
 export async function fetchOpenAICodexModelCatalog(
   fetchOverride: typeof fetch = globalThis.fetch,
   suppliedTokens?: OpenAIModelCatalogTokens | null,
+  proxyUrl?: string | null,
+  options?: { refreshClientVersion?: boolean },
 ): Promise<OpenAIModelCatalogEntry[]> {
   const tokens = suppliedTokens === undefined
     ? await ensureFreshOpenAITokens()
@@ -110,13 +117,18 @@ export async function fetchOpenAICodexModelCatalog(
     throw new Error('OpenAI OAuth token is unavailable')
   }
 
+  const clientVersion = await resolveOpenAICodexClientVersion({
+    fetchOverride,
+    proxyUrl,
+    forceRefresh: options?.refreshClientVersion,
+  })
   const url = new URL(OPENAI_CODEX_MODELS_ENDPOINT)
-  url.searchParams.set('client_version', OPENAI_CODEX_CLIENT_VERSION)
+  url.searchParams.set('client_version', clientVersion)
   const headers = new Headers({
     Accept: 'application/json',
     Authorization: `Bearer ${tokens.accessToken}`,
     originator: OPENAI_CODEX_ORIGINATOR,
-    'User-Agent': OPENAI_CODEX_TOKEN_USER_AGENT,
+    'User-Agent': `codex-cli/${clientVersion}`,
   })
   if (tokens.accountId) {
     headers.set('ChatGPT-Account-Id', tokens.accountId)
@@ -125,7 +137,9 @@ export async function fetchOpenAICodexModelCatalog(
   const response = await fetchOverride(url, {
     method: 'GET',
     headers,
+    redirect: 'error',
     signal: AbortSignal.timeout(MODEL_CATALOG_TIMEOUT_MS),
+    ...(proxyUrl === undefined ? {} : getProxyFetchOptions({ proxyUrl, targetUrl: url })),
   })
   if (!response.ok) {
     throw new Error(`OpenAI models endpoint returned HTTP ${response.status}`)
@@ -144,17 +158,22 @@ export async function fetchOpenAICodexModelCatalog(
 export async function getOpenAICodexModelCatalog(options?: {
   fetchOverride?: typeof fetch
   forceRefresh?: boolean
+  throwOnError?: boolean
+  resolveProxyUrl?: () => Promise<string | null | undefined>
   /** Explicit desktop credentials; null must never fall through to CLI storage. */
   tokens?: OpenAIModelCatalogTokens | null
 }): Promise<OpenAIModelCatalogEntry[]> {
   const tokens = options?.tokens === undefined ? getOpenAIOAuthTokens() : options.tokens
   const accountKey = tokens
-    ? tokens.accountId ?? tokens.email ?? 'authenticated-default'
+    ? createHash('sha256').update(tokens.accessToken).digest('hex')
     : 'logged-out'
   return catalogCache.resolve({
     accountKey,
     fetchCatalog: async () => {
-      const models = await fetchOpenAICodexModelCatalog(options?.fetchOverride, options?.tokens)
+      const models = await fetchOpenAICodexModelCatalog(
+        options?.fetchOverride, options?.tokens, await options?.resolveProxyUrl?.(),
+        { refreshClientVersion: options?.forceRefresh },
+      )
       if (models.length === 0) {
         throw new Error('OpenAI models endpoint returned no visible models')
       }
@@ -162,9 +181,11 @@ export async function getOpenAICodexModelCatalog(options?: {
     },
     fallback: OPENAI_CODEX_MODEL_CATALOG,
     ...(options?.forceRefresh ? { forceRefresh: true } : {}),
+    ...(options?.throwOnError ? { throwOnError: true } : {}),
   })
 }
 
 export function clearOpenAICodexModelCatalogCache(): void {
   catalogCache.clear()
+  clearOpenAICodexClientVersionCache()
 }

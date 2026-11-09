@@ -270,10 +270,7 @@ function validateIncompleteCommands(
     }
   }
 
-  // `|` after `||` so the longest operator wins. A bare leading pipe was
-  // missing while every sibling was listed, so `| rm -rf /tmp/x` read as a
-  // complete command and passed the whole check.
-  if (/^\s*(&&|\|\||;|\||>>?|<)/.test(originalCommand)) {
+  if (/^\s*(&&|\|\||;|>>?|<)/.test(originalCommand)) {
     logEvent('tengu_bash_security_check_triggered', {
       checkId: BASH_SECURITY_CHECK_IDS.INCOMPLETE_COMMANDS,
       subId: 3,

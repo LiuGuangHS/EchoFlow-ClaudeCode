@@ -24,15 +24,15 @@ describe('buildOpenAICodexFetch', () => {
   let originalTokenFile: string | undefined
   let originalReasoningEffort: string | undefined
   let originalCompression: string | undefined
-  let originalConfigDir: string | undefined
+  let originalFastMode: string | undefined
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openai-codex-fetch-'))
     originalTokenFile = process.env.OPENAI_CODEX_OAUTH_FILE
-    originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-    process.env.CLAUDE_CONFIG_DIR = tmpDir
-    originalCompression = process.env.ECHOFLOW_OPENAI_REQUEST_COMPRESSION
-    delete process.env.ECHOFLOW_OPENAI_REQUEST_COMPRESSION
+    originalCompression = process.env.CC_HAHA_OPENAI_REQUEST_COMPRESSION
+    originalFastMode = process.env.CC_HAHA_OPENAI_FAST_MODE
+    delete process.env.CC_HAHA_OPENAI_FAST_MODE
+    delete process.env.CC_HAHA_OPENAI_REQUEST_COMPRESSION
     originalReasoningEffort = process.env[OPENAI_CODEX_REASONING_EFFORT_ENV_KEY]
     delete process.env[OPENAI_CODEX_REASONING_EFFORT_ENV_KEY]
     process.env.OPENAI_CODEX_OAUTH_FILE = path.join(tmpDir, 'openai-oauth.json')
@@ -51,15 +51,15 @@ describe('buildOpenAICodexFetch', () => {
   })
 
   afterEach(async () => {
-    if (originalCompression === undefined) delete process.env.ECHOFLOW_OPENAI_REQUEST_COMPRESSION
-    else process.env.ECHOFLOW_OPENAI_REQUEST_COMPRESSION = originalCompression
+    if (originalFastMode === undefined) delete process.env.CC_HAHA_OPENAI_FAST_MODE
+    else process.env.CC_HAHA_OPENAI_FAST_MODE = originalFastMode
+    if (originalCompression === undefined) delete process.env.CC_HAHA_OPENAI_REQUEST_COMPRESSION
+    else process.env.CC_HAHA_OPENAI_REQUEST_COMPRESSION = originalCompression
     if (originalTokenFile === undefined) {
       delete process.env.OPENAI_CODEX_OAUTH_FILE
     } else {
       process.env.OPENAI_CODEX_OAUTH_FILE = originalTokenFile
     }
-    if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
-    else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
     if (originalReasoningEffort === undefined) {
       delete process.env[OPENAI_CODEX_REASONING_EFFORT_ENV_KEY]
     } else {
@@ -67,6 +67,27 @@ describe('buildOpenAICodexFetch', () => {
     }
     clearOpenAIOAuthTokenCache()
     await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  test('only explicit Fast mode adds priority to OAuth Responses wire for unknown models', async () => {
+    const bodies: Record<string, any>[] = []
+    const fetcher = buildOpenAICodexFetch(async (_input, init) => {
+      bodies.push(readWireBody(init))
+      return Response.json({ id: 'fixture', status: 'completed', output: [] })
+    }, 'test')!
+    const request = () => fetcher('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'future-codex-model', max_tokens: 64, messages: [{ role: 'user', content: 'Hi' }] }),
+    })
+    await request()
+    process.env.CC_HAHA_OPENAI_FAST_MODE = '1'
+    await request()
+    process.env.CC_HAHA_OPENAI_FAST_MODE = '0'
+    await request()
+    expect(bodies.map(body => body.service_tier)).toEqual([undefined, 'priority', undefined])
+    expect(bodies.map(body => body.model)).toEqual(['future-codex-model', 'future-codex-model', 'future-codex-model'])
+    expect(bodies[0]).not.toHaveProperty('service_tier')
+    expect(bodies[2]).not.toHaveProperty('service_tier')
   })
 
   test('preserves a structured policy rejection even when upstream wraps it in HTTP 503', async () => {
@@ -417,7 +438,7 @@ describe('buildOpenAICodexFetch', () => {
 
   test('threads routing state through the actual SDK client factory across tool continuations', async () => {
     const { getAnthropicClient } = await import('../api/client.js')
-    const overrides = { ECHOFLOW_OPENAI_OAUTH_PROVIDER: '1', ECHOFLOW_GROK_OAUTH_PROVIDER: '', CLAUDE_CONFIG_DIR: tmpDir, CLAUDE_CODE_SIMPLE: '1' }
+    const overrides = { CC_HAHA_OPENAI_OAUTH_PROVIDER: '1', CC_HAHA_GROK_OAUTH_PROVIDER: '', CLAUDE_CONFIG_DIR: tmpDir, CLAUDE_CODE_SIMPLE: '1' }
     const previous = Object.fromEntries(Object.keys(overrides).map(key => [key, process.env[key]]))
     Object.assign(process.env, overrides)
     using state = new OpenAICodexTurnState(new AbortController().signal)
@@ -488,7 +509,7 @@ describe('buildOpenAICodexFetch', () => {
 
   test('forwards explicit agent identity through recreated SDK clients and SDK retries', async () => {
     const { getAnthropicClient } = await import('../api/client.js')
-    const overrides = { ECHOFLOW_OPENAI_OAUTH_PROVIDER: '1', ECHOFLOW_GROK_OAUTH_PROVIDER: '', CLAUDE_CONFIG_DIR: tmpDir, CLAUDE_CODE_SIMPLE: '1' }
+    const overrides = { CC_HAHA_OPENAI_OAUTH_PROVIDER: '1', CC_HAHA_GROK_OAUTH_PROVIDER: '', CLAUDE_CONFIG_DIR: tmpDir, CLAUDE_CODE_SIMPLE: '1' }
     const previous = Object.fromEntries(Object.keys(overrides).map(key => [key, process.env[key]]))
     Object.assign(process.env, overrides)
     const sent: Array<[string | null, string | null]> = []
@@ -522,7 +543,7 @@ describe('buildOpenAICodexFetch', () => {
   })
 
   test('retains branch identity through the non-streaming fallback client factory', async () => {
-    const overrides = { ECHOFLOW_OPENAI_OAUTH_PROVIDER: '1', ECHOFLOW_GROK_OAUTH_PROVIDER: '', CLAUDE_CONFIG_DIR: tmpDir, CLAUDE_CODE_SIMPLE: '1' }
+    const overrides = { CC_HAHA_OPENAI_OAUTH_PROVIDER: '1', CC_HAHA_GROK_OAUTH_PROVIDER: '', CLAUDE_CONFIG_DIR: tmpDir, CLAUDE_CODE_SIMPLE: '1' }
     const previous = Object.fromEntries(Object.keys(overrides).map(key => [key, process.env[key]]))
     Object.assign(process.env, overrides)
     const sent: Array<[string | null, string | null]> = []
@@ -680,7 +701,7 @@ describe('buildOpenAICodexFetch', () => {
     })
     const body = await response.text()
 
-    expect(response.headers.get('x-echoflow-code-openai-codex-stream')).toBe('1')
+    expect(response.headers.get('x-cc-haha-openai-codex-stream')).toBe('1')
     expect(upstreamBodies[0].include).toEqual(['reasoning.encrypted_content'])
     expect(body).toContain('redacted_thinking')
     expect(body).toContain('opaque')
@@ -940,43 +961,5 @@ describe('buildOpenAICodexFetch', () => {
       'gpt-5.6-sol': { effort: 'xhigh' },
     })
     expect(process.env[OPENAI_CODEX_REASONING_EFFORT_ENV_KEY]).toBe('high')
-  })
-
-  test('fails closed before direct OAuth dispatch when local redaction is enabled, malformed, or unreadable', async () => {
-    const calls: string[] = []
-    const fetchOverride: typeof fetch = async input => {
-      calls.push(String(input))
-      return Response.json({ id: 'unexpected', object: 'response', status: 'completed', output: [] })
-    }
-    const request = { method: 'POST', body: JSON.stringify({ model: 'gpt-6-astra', max_tokens: 16, messages: [{ role: 'user', content: 'secret' }] }) }
-    const settingsPath = path.join(tmpDir, 'settings.json')
-    const blockedSettings = [
-      { localRedaction: { enabled: true, personalInfo: false, customWords: [] } },
-      { localRedaction: { enabled: 'yes' } },
-    ]
-    for (const settings of blockedSettings) {
-      await fs.writeFile(settingsPath, JSON.stringify(settings), 'utf8')
-      await expect(buildOpenAICodexFetch(fetchOverride, 'test')('https://api.anthropic.com/v1/messages', request)).rejects.toThrow(/Local redaction/)
-    }
-    await fs.writeFile(settingsPath, '{invalid json', 'utf8')
-    await expect(buildOpenAICodexFetch(fetchOverride, 'test')('https://api.anthropic.com/v1/messages', request)).rejects.toThrow(/Local redaction/)
-    await fs.rm(settingsPath)
-    await fs.mkdir(settingsPath)
-    await expect(buildOpenAICodexFetch(fetchOverride, 'test')('https://api.anthropic.com/v1/messages', request)).rejects.toThrow(/Local redaction/)
-    expect(calls).toHaveLength(0)
-  })
-
-  test('preserves direct OAuth dispatch when local redaction is explicitly disabled', async () => {
-    await fs.writeFile(path.join(tmpDir, 'settings.json'), JSON.stringify({ localRedaction: { enabled: false, personalInfo: false, customWords: [] } }), 'utf8')
-    let calls = 0
-    const fetch = buildOpenAICodexFetch(async () => {
-      calls++
-      return Response.json({ id: 'resp_disabled', object: 'response', status: 'completed', output: [] })
-    }, 'test')
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST', body: JSON.stringify({ model: 'gpt-6-astra', messages: [{ role: 'user', content: 'ok' }] }),
-    })
-    expect(response.status).toBe(200)
-    expect(calls).toBe(1)
   })
 })

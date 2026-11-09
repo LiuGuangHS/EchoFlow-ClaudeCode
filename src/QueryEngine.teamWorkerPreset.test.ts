@@ -49,10 +49,10 @@ function engine() {
   return { instance, state: () => state, nextEngine: () => new QueryEngine(config as any) }
 }
 beforeEach(() => { inputOptions = undefined; queryOptions = undefined; mcpCalls = 0; skillCalls = 0; missingMcp = false; skillName = 'review'
-  process.env.ECHOFLOW_TEAM_WORKER = '1'
-  process.env.ECHOFLOW_TEAM_WORKER_OMIT_CLAUDE_MD = '1'
-  process.env.ECHOFLOW_TEAM_WORKER_PRESET_TYPE = 'plugin:reviewer'
-  process.env.ECHOFLOW_TEAM_WORKER_PRESET_SOURCE = 'plugin'
+  process.env.CC_HAHA_TEAM_WORKER = '1'
+  process.env.CC_HAHA_TEAM_WORKER_OMIT_CLAUDE_MD = '1'
+  process.env.CC_HAHA_TEAM_WORKER_PRESET_TYPE = 'plugin:reviewer'
+  process.env.CC_HAHA_TEAM_WORKER_PRESET_SOURCE = 'plugin'
 })
 afterAll(() => {
   mock.module('./query.js', () => originals.query)
@@ -89,7 +89,7 @@ test('approved worker initializes preset only on first released headless task an
   expect(skillCalls).toBe(1)
 })
 test('ordinary headless agents retain project context and do not activate worker presets', async () => {
-  delete process.env.ECHOFLOW_TEAM_WORKER
+  delete process.env.CC_HAHA_TEAM_WORKER
   const normal = engine()
   await submit(normal.instance)
   expect(mcpCalls).toBe(0)
@@ -111,7 +111,7 @@ test('missing MCP or skill fails the released task before reaching the model', a
   expect(worker.state().sessionHooks.size).toBe(0)
 })
 test('workers retain project instructions unless their approved preset opts out', async () => {
-  process.env.ECHOFLOW_TEAM_WORKER_OMIT_CLAUDE_MD = '0'
+  process.env.CC_HAHA_TEAM_WORKER_OMIT_CLAUDE_MD = '0'
   await submit(engine().instance)
   expect(queryOptions.userContext.claudeMd).toBe('private project instructions')
 })

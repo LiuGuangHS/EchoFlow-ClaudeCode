@@ -1,7 +1,6 @@
 import { SettingsService } from './settingsService.js'
-import { ManagedSettingsService } from './managedSettingsService.js'
+import type { ProviderProxyConfig } from '../types/provider.js'
 import { getProxyFetchOptions, getProxyUrl } from '../../utils/proxy.js'
-import { normalizeLocalRedactionSettings } from '../../shared/localRedactionSettings.js'
 
 export type NetworkProxyMode = 'direct' | 'system' | 'manual'
 
@@ -47,8 +46,18 @@ export function resolveStreamMaxDurationMs(
 ): number {
   return Math.max(MIN_STREAM_MAX_DURATION_MS, Number(apiTimeoutMs) || 0)
 }
-export const SYSTEM_PROXY_URL_ENV = 'ECHOFLOW_SYSTEM_PROXY_URL'
-export const SYSTEM_PROXY_ERROR_ENV = 'ECHOFLOW_SYSTEM_PROXY_ERROR'
+// Inactivity budget for one tool call's JSON arguments. The model emits them a
+// complete key/value at a time, so a long `content` string produces no event
+// until it is finished; a fixed 120s killed large file writes (#1536). It
+// follows the user's "请求超时" and never drops below the original 120s.
+export const MIN_STREAM_TOOL_INPUT_DURATION_MS = 120_000
+export function resolveStreamToolInputDurationMs(
+  apiTimeoutMs: string | number | undefined,
+): number {
+  return Math.max(MIN_STREAM_TOOL_INPUT_DURATION_MS, Number(apiTimeoutMs) || 0)
+}
+export const SYSTEM_PROXY_URL_ENV = 'CC_HAHA_SYSTEM_PROXY_URL'
+export const SYSTEM_PROXY_ERROR_ENV = 'CC_HAHA_SYSTEM_PROXY_ERROR'
 
 const DEFAULT_NETWORK_SETTINGS: NetworkSettings = {
   aiRequestTimeoutMs: DEFAULT_AI_REQUEST_TIMEOUT_MS,
@@ -102,6 +111,28 @@ export function normalizeNetworkSettings(settings: unknown): NetworkSettings {
     aiRequestTimeoutMs: parseTimeoutMs(network.aiRequestTimeoutMs),
     proxy: parseProxy(network.proxy),
   }
+}
+
+/**
+ * Overlay a saved provider's proxy override onto the global network settings.
+ *
+ * `follow_global` (or an absent override — every provider created before this
+ * field existed) keeps the global proxy untouched. `direct` pins the provider
+ * to a direct connection regardless of the global mode; `manual` routes it
+ * through the provider's own URL. Only the proxy block changes — the request
+ * timeout stays global.
+ */
+export function resolveProviderNetworkSettings(
+  base: NetworkSettings,
+  providerProxy: ProviderProxyConfig | undefined | null,
+): NetworkSettings {
+  if (!providerProxy || providerProxy.mode === 'follow_global') return base
+  if (providerProxy.mode === 'direct') {
+    return { ...base, proxy: { mode: 'direct', url: '' } }
+  }
+  const url = providerProxy.url?.trim() ?? ''
+  if (!url) return base
+  return { ...base, proxy: { mode: 'manual', url } }
 }
 
 export function getManualNetworkProxyUrl(settings: NetworkSettings): string | undefined {
@@ -204,25 +235,6 @@ export function getNetworkProxyFetchOptions(
 }
 
 export async function loadNetworkSettings(): Promise<NetworkSettings> {
-  const [userSettings, managedSettings] = await Promise.all([
-    new SettingsService().getUserSettings(),
-    new ManagedSettingsService().readSettings(),
-  ])
-  const userNetwork = userSettings.network && typeof userSettings.network === 'object'
-    ? userSettings.network
-    : {}
-  const managedNetwork = managedSettings.network && typeof managedSettings.network === 'object'
-    ? managedSettings.network
-    : {}
-  const settings = {
-    ...userSettings,
-    ...managedSettings,
-    network: { ...userNetwork, ...managedNetwork },
-  }
+  const settings = await new SettingsService().getUserSettings()
   return normalizeNetworkSettings(settings)
-}
-
-export async function isLocalRedactionEnabled(): Promise<boolean> {
-  const userSettings = await new SettingsService().getUserSettings()
-  return normalizeLocalRedactionSettings(userSettings.localRedaction).enabled
 }

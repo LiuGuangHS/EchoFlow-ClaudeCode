@@ -4,20 +4,18 @@ import { createServer } from 'node:net'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { gunzipSync } from 'node:zlib'
+import { inspect } from 'node:util'
 import { handleDiagnosticsApi } from '../api/diagnostics.js'
-import { DiagnosticsService, diagnosticsService } from '../services/diagnosticsService.js'
-import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
+import { DiagnosticsService, diagnosticsService, getOpenLogDirCommand } from '../services/diagnosticsService.js'
 import { createSandboxedTestEnvironment } from '../../../scripts/pr/test-environment.js'
+import { appendHostDiagnostic } from '../../../desktop/electron/services/sidecarManager.js'
+import { createFeishuLogger } from '../../../adapters/feishu/logger.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
 
-function diagnosticsDir(): string {
-  return path.join(getEchoFlowInternalDir(tmpDir), 'diagnostics')
-}
-
 beforeEach(async () => {
-  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-code-diagnostics-test-'))
+  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-diagnostics-test-'))
   originalConfigDir = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = tmpDir
 })
@@ -138,7 +136,7 @@ describe('DiagnosticsService', () => {
       },
     })
 
-    const raw = await fs.readFile(path.join(diagnosticsDir(), 'diagnostics.jsonl'), 'utf-8')
+    const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'diagnostics.jsonl'), 'utf-8')
     expect(raw).toContain('cli_start_failed')
     expect(raw).toContain('[REDACTED]')
     expect(raw).toContain('https://[REDACTED]@example.com:8443/api')
@@ -147,7 +145,7 @@ describe('DiagnosticsService', () => {
     expect(raw).not.toContain('p%40ss')
     expect(raw).not.toContain(os.homedir())
 
-    const runtime = await fs.readFile(path.join(diagnosticsDir(), 'runtime-errors.log'), 'utf-8')
+    const runtime = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'runtime-errors.log'), 'utf-8')
     expect(runtime).toContain('cli_start_failed')
     expect(runtime).toContain('"nested"')
     expect(runtime).toContain('[REDACTED]')
@@ -177,7 +175,7 @@ describe('DiagnosticsService', () => {
     const service = new DiagnosticsService()
     const unrelatedDir = path.join(tmpDir, 'unrelated-diagnostics-target')
     const unrelatedFile = path.join(unrelatedDir, 'diagnostics.jsonl')
-    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
     await fs.mkdir(unrelatedDir, { mode: 0o755 })
     await fs.writeFile(unrelatedFile, 'unrelated\n', { mode: 0o644 })
     await fs.symlink(unrelatedDir, service.getLogDir(), 'dir')
@@ -213,13 +211,13 @@ describe('DiagnosticsService', () => {
     const service = new DiagnosticsService()
     await service.recordEvent({ type: 'some_unclassified_event', summary: 'no severity given' })
 
-    const raw = await fs.readFile(path.join(diagnosticsDir(), 'diagnostics.jsonl'), 'utf-8')
+    const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'diagnostics.jsonl'), 'utf-8')
     const event = JSON.parse(raw.trim().split('\n').at(-1)!)
     expect(event.severity).toBe('info')
 
     // info events stay out of the warning/error runtime log
     await expect(
-      fs.readFile(path.join(diagnosticsDir(), 'runtime-errors.log'), 'utf-8'),
+      fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'runtime-errors.log'), 'utf-8'),
     ).rejects.toThrow()
   })
 
@@ -388,9 +386,9 @@ describe('DiagnosticsService', () => {
 
   test('exports a single diagnostics tarball without provider secrets', async () => {
     const service = new DiagnosticsService()
-    await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
     await fs.writeFile(
-      path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'),
+      path.join(tmpDir, 'cc-haha', 'providers.json'),
       JSON.stringify({
         activeId: 'provider-1',
         providers: [{
@@ -413,7 +411,7 @@ describe('DiagnosticsService', () => {
       details: { accessToken: 'provider-secret' },
     })
     await fs.writeFile(
-      path.join(diagnosticsDir(), 'cli-diagnostics.jsonl'),
+      path.join(tmpDir, 'cc-haha', 'diagnostics', 'cli-diagnostics.jsonl'),
       '{"event":"cli_streaming_idle_timeout","data":{"authorization":"Bearer provider-secret"}}\n',
       'utf-8',
     )
@@ -438,64 +436,11 @@ describe('DiagnosticsService', () => {
     expect(archiveText).not.toContain('provider-secret')
   })
 
-  test('includes bounded local-index state in the exported bundle', async () => {
-    const service = new DiagnosticsService()
-    const statusSpy = spyOn(service, 'getLocalIndexStatus').mockReturnValue({
-      mode: 'on',
-      state: 'degraded',
-      discovered: 12,
-      indexed: 10,
-      degradedSources: 2,
-      databaseBytes: 4096,
-      walBytes: 1024,
-      lastUpdatedAt: '2026-07-15T00:00:00.000Z',
-      lastErrorCode: 'SQLITE_BUSY',
-    })
-    try {
-      const bundle = await service.exportBundle()
-      const archiveText = gunzipSync(await fs.readFile(bundle.path)).toString('utf-8')
-      const localIndex = JSON.parse(readTarEntry(await fs.readFile(bundle.path), 'local-index-status.json'))
-
-      expect(localIndex).toEqual({
-        available: true,
-        mode: 'on',
-        state: 'degraded',
-        discovered: 12,
-        indexed: 10,
-        degradedSources: 2,
-        databaseBytes: 4096,
-        walBytes: 1024,
-        lastUpdatedAt: '2026-07-15T00:00:00.000Z',
-        lastErrorCode: 'SQLITE_BUSY',
-      })
-      expect(archiveText).toContain('local-index-status.json')
-      expect(JSON.stringify(localIndex)).not.toContain(tmpDir)
-    } finally {
-      statusSpy.mockRestore()
-    }
-  })
-
-  test('exports without local-index state when its status is unavailable', async () => {
-    const service = new DiagnosticsService()
-    const statusSpy = spyOn(service, 'getLocalIndexStatus').mockImplementation(() => {
-      throw new Error(`private index path: ${tmpDir}`)
-    })
-    try {
-      const bundle = await service.exportBundle()
-      const localIndex = JSON.parse(readTarEntry(await fs.readFile(bundle.path), 'local-index-status.json'))
-
-      expect(localIndex).toEqual({ available: false })
-      expect(JSON.stringify(localIndex)).not.toContain(tmpDir)
-    } finally {
-      statusSpy.mockRestore()
-    }
-  })
-
   test('redacts secret-bearing provider metadata from the exported summary', async () => {
     const service = new DiagnosticsService()
-    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'echoflow-code', 'providers.json'),
+      path.join(tmpDir, 'cc-haha', 'providers.json'),
       JSON.stringify({
         activeId: 'provider-sk-proj-ACTIVESECRET',
         providers: [{
@@ -530,9 +475,9 @@ describe('DiagnosticsService', () => {
       `ghr_${'C'.repeat(36)}`,
       'xoxb-1234567890-1234567890-abcdefghijkl',
     ]
-    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'echoflow-code', 'providers.json'),
+      path.join(tmpDir, 'cc-haha', 'providers.json'),
       JSON.stringify({
         activeId: secrets[0],
         providers: [{
@@ -640,6 +585,105 @@ describe('DiagnosticsService', () => {
     expect(hostLog).not.toContain('ELECTRON_SECRET')
     expect(hostLog).not.toContain('/Users/alice')
     expect(Buffer.byteLength(hostLog)).toBeLessThanOrEqual(256 * 1024 + 64)
+  })
+
+  test('rescans legacy JSON and escaped Axios logs when exporting without altering the source', async () => {
+    const service = new DiagnosticsService()
+    const credentials = {
+      app_id: 'fixture-export-app', APP_SECRET: 'fixture-export-secret',
+      nested: { token: 'fixture-export-token', API_KEY: 'fixture-export-key', password: 'fixture-export-password', Authorization: 'Basic fixture-export-auth' },
+    }
+    const raw = `AxiosError: Request failed with status code 400\nmethod: post\npath: /open-apis/auth/v3/tenant_access_token/internal\n${JSON.stringify(credentials, null, 2)}\ndata: ${JSON.stringify(JSON.stringify(credentials))}\n    at request (adapter.ts:42:7)\n`
+    await fs.mkdir(service.getLogDir(), { recursive: true })
+    await fs.writeFile(service.getElectronHostPath(), raw)
+    const bundle = await service.exportBundle()
+    const archive = await fs.readFile(bundle.path)
+    const hostLog = readTarEntry(archive, 'electron-host.log')
+    for (const secret of ['fixture-export-app', 'fixture-export-secret', 'fixture-export-token', 'fixture-export-key', 'fixture-export-password', 'fixture-export-auth']) {
+      expect(hostLog).not.toContain(secret)
+    }
+    for (const safe of ['AxiosError', 'post', '400', '/open-apis/auth/v3/tenant_access_token/internal', 'adapter.ts:42:7']) {
+      expect(hostLog).toContain(safe)
+    }
+    expect(await fs.readFile(service.getElectronHostPath(), 'utf-8')).toBe(raw)
+    expect(readTarEntry(archive, 'README.txt')).toContain('Review every file before sharing')
+  })
+
+  test('carries a real Feishu SDK failure through child stdio, host persistence and diagnostic export', async () => {
+    const service = new DiagnosticsService()
+    const child = Bun.spawn([
+      process.execPath, '--no-env-file',
+      path.resolve(import.meta.dir, '../../../adapters/feishu/__tests__/fixtures/safe-logging.ts'),
+    ], {
+      env: createSandboxedTestEnvironment(path.join(tmpDir, 'adapter-home'), {
+        FEISHU_APP_ID: 'issue1720-fixture-app-id', FEISHU_APP_SECRET: 'issue1720-fixture-app-secret',
+        FEISHU_ENCRYPT_KEY: 'issue1720-fixture-encrypt-key', FEISHU_VERIFICATION_TOKEN: 'issue1720-fixture-verification-token',
+      }),
+      stdout: 'pipe', stderr: 'pipe',
+    })
+    const capture = async (stream: ReadableStream<Uint8Array>, channel: string) => {
+      const reader = stream.getReader()
+      const decoder = new TextDecoder()
+      let output = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const chunk = decoder.decode(value, { stream: true })
+        output += chunk
+        appendHostDiagnostic(service.getElectronHostPath(), `[claude-adapters:feishu] [${channel}] ${chunk}`, { homeDir: tmpDir })
+      }
+      return output
+    }
+    const [stdout, stderr, code] = await Promise.all([capture(child.stdout, 'stdout'), capture(child.stderr, 'stderr'), child.exited])
+    expect({ code, stderr: code ? stderr : '' }).toEqual({ code: 0, stderr: '' })
+    expect(stdout).toContain('TOKEN_REQUESTS=1')
+    const persisted = await fs.readFile(service.getElectronHostPath(), 'utf-8')
+    const bundle = await service.exportBundle()
+    const exported = readTarEntry(await fs.readFile(bundle.path), 'electron-host.log')
+    for (const surface of [stdout + stderr, persisted, exported]) {
+      for (const secret of ['issue1720-fixture-app-id', 'issue1720-fixture-app-secret', 'issue1720-fixture-encrypt-key', 'issue1720-fixture-verification-token', 'fixture-authorization', 'fixture-url-query', 'fixture-request-body', 'fixture-response-body']) expect(surface).not.toContain(secret)
+      for (const safe of ['/open-apis/auth/v3/tenant_access_token/internal', 'POST', '400', 'ERR_BAD_REQUEST']) expect(surface).toContain(safe)
+    }
+  })
+
+  test('redacts prose, inspect strings and full headers across logging and legacy export', async () => {
+    const service = new DiagnosticsService()
+    const inputs = [
+      "Error: Can't complete request\n{ token: 'fixture-prose-secret', status: 400 }",
+      inspect({ password: 'start\n' + 'fixture-multiline-secret'.repeat(8), status: 400 }),
+      inspect({ app_secret: `begin'fixture-backtick-secret"end`, status: 400 }),
+      'Cookie: first=fixture-cookie-one; session=fixture-cookie-two\nstatus: 400',
+      ...['null', 'true', 'false', 'true-user'].map(name => `Cookie: ${name}=fixture-cookie-one; session=fixture-cookie-two\nstatus: 400`),
+      'Authorization: Digest username="fixture-user", response="fixture-digest-secret"\nstatus: 400',
+    ]
+    const output: string[] = []
+    const capture = spyOn(console, 'error').mockImplementation((...args) => { output.push(args.join(' ')) })
+    try {
+      for (const input of inputs) createFeishuLogger().error(new Error(input))
+    } finally { capture.mockRestore() }
+    for (const line of output) appendHostDiagnostic(service.getElectronHostPath(), line, { homeDir: tmpDir })
+    const persisted = await fs.readFile(service.getElectronHostPath(), 'utf-8')
+    const exported = readTarEntry(await fs.readFile((await service.exportBundle()).path), 'electron-host.log')
+    await fs.writeFile(service.getElectronHostPath(), inputs.join('\n'))
+    const legacy = readTarEntry(await fs.readFile((await service.exportBundle()).path), 'electron-host.log')
+    for (const surface of [output.join('\n'), persisted, exported, legacy]) {
+      for (const secret of ['fixture-prose-secret', 'fixture-multiline-secret', 'fixture-backtick-secret', 'fixture-cookie-one', 'fixture-cookie-two', 'fixture-user', 'fixture-digest-secret']) expect(surface).not.toContain(secret)
+      expect(surface).toContain("Can't complete request")
+      expect(surface).toContain('status: 400')
+    }
+  })
+
+  test('retains safe diagnostics after repeated host writes and export of redacted headers', async () => {
+    const service = new DiagnosticsService()
+    appendHostDiagnostic(service.getElectronHostPath(), 'AxiosError: request failed\nCookie: session=fixture-session-cookie\nstatus: 400\nmethod: POST\npath: /open-apis/auth/v3/tenant_access_token/internal\n at request (adapter.ts:42:7)')
+    const firstWrite = await fs.readFile(service.getElectronHostPath(), 'utf-8')
+    const exported = readTarEntry(await fs.readFile((await service.exportBundle()).path), 'electron-host.log')
+    appendHostDiagnostic(service.getElectronHostPath(), 'following event')
+    const secondWrite = await fs.readFile(service.getElectronHostPath(), 'utf-8')
+    for (const surface of [firstWrite, exported, secondWrite]) {
+      expect(surface).not.toContain('fixture-session-cookie')
+      for (const safe of ['status: 400', 'method: POST', 'path: /open-apis/auth/v3/tenant_access_token/internal', 'adapter.ts:42:7']) expect(surface).toContain(safe)
+    }
   })
 
   test('bounds active diagnostic surfaces and recent exports under the advertised directory cap', async () => {
@@ -923,7 +967,7 @@ describe('DiagnosticsService', () => {
     expect(archiveText).not.toContain(secret)
   })
 
-  test('keeps fatal startup errors visible on stderr while recording diagnostics', { timeout: 20_000 }, async () => {
+  test('keeps fatal startup errors visible on stderr while recording diagnostics', async () => {
     const port = await getPort()
     const serverArgs = ['bun', '--no-env-file', 'run', 'src/server/index.ts', '--host', '127.0.0.1', '--port', String(port)]
     // This spawns a *real* server, not the in-process test runner. Strip the
@@ -956,11 +1000,15 @@ describe('DiagnosticsService', () => {
       ])
 
       expect(exitCode).toBe(1)
-      expect(stdout).toBe('')
+      // The module-load marker is the only stdout line before the bind fails;
+      // the failure itself must stay on stderr.
+      expect(stdout.trim()).toMatch(
+        /^\[Server\] modules loaded \d+ ms after process start; binding 127\.0\.0\.1:\d+$/,
+      )
       expect(stderr).toContain('[Server] Uncaught exception:')
       expect(stderr).toContain(`Failed to start server. Is port ${port} in use?`)
 
-      const raw = await fs.readFile(path.join(diagnosticsDir(), 'diagnostics.jsonl'), 'utf-8')
+      const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'diagnostics.jsonl'), 'utf-8')
       expect(raw).toContain('server_uncaught_exception')
       expect(raw).toContain(`Failed to start server. Is port ${port} in use?`)
     } finally {
@@ -1043,7 +1091,7 @@ describe('diagnostics API', () => {
     const statusRes = await handleDiagnosticsApi(statusReq.req, statusReq.url, statusReq.segments)
     expect(statusRes.status).toBe(200)
     const status = await statusRes.json() as { logDir: string; cliDiagnosticsPath: string; recentErrorCount: number }
-    expect(status.logDir).toContain(path.join('echoflow-code', 'diagnostics'))
+    expect(status.logDir).toContain(path.join('cc-haha', 'diagnostics'))
     expect(status.cliDiagnosticsPath).toContain('cli-diagnostics.jsonl')
     expect(status.recentErrorCount).toBe(1)
 
@@ -1116,9 +1164,9 @@ describe('diagnostics API', () => {
   })
 
   test('returns a deterministic share-safe GitHub issue report', async () => {
-    await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
     await fs.writeFile(
-      path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'),
+      path.join(tmpDir, 'cc-haha', 'providers.json'),
       JSON.stringify({
         activeId: 'provider-issue-report',
         providers: [{
@@ -1163,5 +1211,27 @@ describe('diagnostics API', () => {
     expect(body.report).not.toContain('token=x')
     expect(body.report).not.toContain('PRIVATE_ASSISTANT_REPLY')
     expect(body.report).not.toContain('PRIVATE_SDK_RESULT')
+  })
+})
+
+describe('opening the log directory', () => {
+  test('launches the file manager directly on every platform', () => {
+    expect(getOpenLogDirCommand('win32', 'C:\\logs')).toEqual(['explorer.exe', 'C:\\logs'])
+    expect(getOpenLogDirCommand('darwin', '/logs')).toEqual(['open', '/logs'])
+    expect(getOpenLogDirCommand('linux', '/logs')).toEqual(['xdg-open', '/logs'])
+  })
+
+  test('never hides the launched file manager window', async () => {
+    const spawn = spyOn(Bun, 'spawn').mockImplementation((() => ({})) as unknown as typeof Bun.spawn)
+    try {
+      const service = new DiagnosticsService()
+      await service.openLogDir()
+      expect(spawn).toHaveBeenCalledTimes(1)
+      const [command, options] = spawn.mock.calls[0] as unknown as [string[], Record<string, unknown>]
+      expect(command).toEqual(getOpenLogDirCommand(process.platform, service.getLogDir()))
+      expect(options.windowsHide).toBeUndefined()
+    } finally {
+      spawn.mockRestore()
+    }
   })
 })

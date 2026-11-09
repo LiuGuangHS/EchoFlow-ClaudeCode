@@ -3,7 +3,6 @@ import { anthropicToOpenaiResponses } from '../../server/proxy/transform/anthrop
 import { openaiResponsesStreamToAnthropic } from '../../server/proxy/streaming/openaiResponsesStreamToAnthropic.js'
 import { openaiResponsesStreamToAnthropicResponse } from '../../server/proxy/streaming/openaiResponsesStreamToAnthropicResponse.js'
 import type { AnthropicRequest } from '../../server/proxy/transform/types.js'
-import { assertDirectTransportAllowed } from '../localRedactionGuard.js'
 import { ensureFreshGrokTokens, forceRefreshGrokTokens } from './refresh.js'
 import {
   getGrokRuntimeModelCatalog,
@@ -62,7 +61,6 @@ export function buildGrokFetch(
     const url = input instanceof Request ? new URL(input.url) : new URL(String(input))
     if (!url.pathname.endsWith('/v1/messages')) return inner(input, init)
 
-    await assertDirectTransportAllowed()
     const originalBody = await readAnthropicBody(input, init)
     const requestedModel = resolveGrokModel(originalBody.model)
     // One conversation must route to one cache entry, or every turn re-bills

@@ -38,8 +38,7 @@ import { callHelper } from './helperBridge.js'
 const SCREENSHOT_JPEG_QUALITY = 0.75
 const MOVE_SETTLE_MS = 50
 const hostBundleId =
-  process.env.ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID ||
-  CLI_HOST_BUNDLE_ID
+  process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID || CLI_HOST_BUNDLE_ID
 
 type PythonDisplayGeometry = DisplayGeometry
 
@@ -334,7 +333,7 @@ export function createCliExecutor(opts: {
 }): ComputerExecutor {
   if (!isComputerUseSupportedPlatform()) {
     throw new Error(
-      `createCliExecutor called on ${process.platform}. Computer control is only supported on macOS and Windows.`,
+      `createCliExecutor called on ${process.platform}. Computer control is only supported on macOS, Windows and Linux.`,
     )
   }
 

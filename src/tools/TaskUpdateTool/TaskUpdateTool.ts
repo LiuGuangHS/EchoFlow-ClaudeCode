@@ -1,6 +1,7 @@
 import { feature } from 'bun:bundle'
 import { z } from 'zod/v4'
 import { isTeamExecutionApproved, readTeamPlan } from '../../utils/swarm/teamPlanStore.js'
+import { isValidTeamFile, readTeamFileAsync } from '../../utils/swarm/teamHelpers.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
 import { buildTool, type ToolDef } from '../../Tool.js'
 import { isAgentSwarmsEnabled } from '../../utils/agentSwarmsEnabled.js'
@@ -9,6 +10,7 @@ import {
   getTaskCompletedHookMessage,
 } from '../../utils/hooks.js'
 import { lazySchema } from '../../utils/lazySchema.js'
+import { getAgentProfile } from '../../utils/agentProfile.js'
 import {
   deleteTaskWithCommit,
   getTask,
@@ -24,6 +26,7 @@ import {
   getAgentName,
   getTeammateColor,
   getTeamName,
+  isTeammate,
 } from '../../utils/teammate.js'
 import { writeToMailbox } from '../../utils/teammateMailbox.js'
 import { VERIFICATION_AGENT_TYPE } from '../AgentTool/constants.js'
@@ -95,7 +98,9 @@ export const TaskUpdateTool = buildTool({
     return DESCRIPTION
   },
   async prompt() {
-    return PROMPT
+    return getAgentProfile() === 'lean'
+      ? 'Update a task by taskId. Read its latest state first. Set in_progress when starting and completed only when fully done and verified; leave incomplete or blocked work in_progress. Use deleted to remove an obsolete task. You may also edit details and dependencies. Metadata is merged; null deletes a key.'
+      : PROMPT
   },
   get inputSchema(): InputSchema {
     return inputSchema()
@@ -161,6 +166,56 @@ export const TaskUpdateTool = buildTool({
           updatedFields: [],
           error: 'Task not found',
         },
+      }
+    }
+
+    // An assignment wakes only the named teammate. Accepting an invented
+    // name strands work in an inbox nobody reads while its dependents wait.
+    // Historical attribution and unchanged orphan assignments remain editable.
+    if (
+      teamName && owner && owner !== existingTask.owner &&
+      status !== 'deleted' && (status ?? existingTask.status) !== 'completed'
+    ) {
+      const storedTeam = await readTeamFileAsync(teamName)
+      const team = isValidTeamFile(storedTeam) ? storedTeam : null
+      const onRoster = owner === 'team-lead' ||
+        team?.members.some(member => member.name === owner) ||
+        Object.values(context.getAppState().teamContext?.teammates ?? {})
+          .some(member => member.name === owner)
+      if (team && !onRoster) {
+        const plan = await readTeamPlan(teamName).catch(() => null)
+        const staged = plan && ['draft', 'review_pending', 'launching'].includes(plan.state) &&
+          plan.members.some(member => member.name === owner)
+        if (!staged) {
+          return { data: { success: false, taskId, updatedFields: [], error: `No teammate named '${owner}' is currently on team '${teamName}'. Assign an existing teammate or ask the lead to spawn one first.` } }
+        }
+      }
+    }
+
+    // A teammate cannot start or finish a task ahead of the tasks it waits on;
+    // without this the list's dependencies are only a suggestion, and a member
+    // marks its blocked task in progress while the work it needs is unwritten.
+    // The lead is not held to it: it coordinates, and may decide a dependency
+    // no longer matters.
+    if (
+      isTeammate() &&
+      (status === 'in_progress' || status === 'completed') &&
+      status !== existingTask.status &&
+      existingTask.blockedBy.length > 0
+    ) {
+      const unresolved = new Set(
+        (await listTasks(taskListId)).filter(task => task.status !== 'completed').map(task => task.id),
+      )
+      const waitingOn = existingTask.blockedBy.filter(id => unresolved.has(id))
+      if (waitingOn.length > 0) {
+        return {
+          data: {
+            success: false,
+            taskId,
+            updatedFields: [],
+            error: `Task #${taskId} waits on ${waitingOn.map(id => `#${id}`).join(', ')}, not completed yet. Do not work on it or change its status until then; TaskList shows which of your tasks are ready.`,
+          },
+        }
       }
     }
 
@@ -399,7 +454,7 @@ export const TaskUpdateTool = buildTool({
         '\n\nTask completed. Call TaskList now to find your next available task or see if your work unblocked others.'
     }
 
-    if (verificationNudgeNeeded) {
+    if (verificationNudgeNeeded && getAgentProfile() !== 'lean') {
       resultContent += `\n\nNOTE: You just closed out 3+ tasks and none of them was a verification step. Before writing your final summary, spawn the verification agent (subagent_type="${VERIFICATION_AGENT_TYPE}"). You cannot self-assign PARTIAL by listing caveats in your summary — only the verifier issues a verdict.`
     }
 

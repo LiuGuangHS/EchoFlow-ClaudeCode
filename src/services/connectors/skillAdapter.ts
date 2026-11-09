@@ -42,7 +42,7 @@ export async function readSkillBundleFiles(recipe: SkillBundleRecipe, directory:
 
 export function createSkillBundleAdapter(definition: ConnectorDefinition, root: string, recipe: SkillBundleRecipe, download = downloadVerified): ConnectorAdapter {
   validateRecipe(recipe)
-  if (definition.id !== recipe.id || definition.version !== recipe.version || definition.pluginId !== `office-${recipe.id}@echoflow-connectors`) throw new Error('Invalid managed skill identity')
+  if (definition.id !== recipe.id || definition.version !== recipe.version || definition.pluginId !== `office-${recipe.id}@haha-connectors`) throw new Error('Invalid managed skill identity')
   const directory = join(resolve(root), 'bundles', recipe.id, recipe.version)
   const installation: ConnectorInstallation = { directory, command: '', args: [], env: {} }
   const validate = (value: ConnectorInstallation) => {

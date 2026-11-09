@@ -1,0 +1,309 @@
+import { afterEach, expect, test } from 'bun:test'
+import { spawn, spawnSync, type ChildProcess } from 'child_process'
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { spawnWithParentProcessGuard } from './parentProcessGuard.js'
+
+const directories: string[] = []
+const children: ChildProcess[] = []
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+afterEach(() => {
+  for (const child of children.splice(0)) {
+    if (!child.pid) continue
+    try { process.kill(-child.pid, 'SIGKILL') } catch {}
+    try { child.kill('SIGKILL') } catch {}
+  }
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
+})
+
+function fixtureDirectory(): string {
+  const directory = mkdtempSync(join(tmpdir(), 'shell-parent-guard-'))
+  directories.push(directory)
+  return directory
+}
+
+function exited(child: ChildProcess): Promise<number | null> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(child.exitCode)
+  return new Promise((resolve, reject) => {
+    child.once('exit', code => resolve(code))
+    child.once('error', reject)
+  })
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for fixture process')
+    await wait(10)
+  }
+}
+
+function ticks(path: string): number {
+  try { return readFileSync(path, 'utf8').trim().split('\n').length } catch { return 0 }
+}
+
+function publishedPid(path: string): number | undefined {
+  try {
+    const pid = Number(readFileSync(path, 'utf8'))
+    return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined
+  } catch {
+    return undefined
+  }
+}
+
+test.skipIf(process.platform === 'win32')('kills a detached shell and its descendants after the runtime receives SIGKILL', async () => {
+  const directory = fixtureDirectory()
+  const output = join(directory, 'ticks')
+  const pidPath = join(directory, 'child-pid')
+  const cleanupPidPath = join(directory, 'cleanup-pid')
+  const publishPidPath = join(directory, 'publish-pid')
+  const fixture = join(directory, 'runtime.ts')
+  writeFileSync(fixture, `
+    import { existsSync, openSync, writeFileSync } from 'fs'
+    import { spawnWithParentProcessGuard } from ${JSON.stringify(import.meta.dir + '/parentProcessGuard.ts')}
+    const child = spawnWithParentProcessGuard('/bin/sh', ['-c', 'while true; do echo alive; sleep 0.02; done', 'shell'], {
+      detached: true,
+      stdio: ['pipe', openSync(${JSON.stringify(output)}, 'a'), 'ignore'],
+    })
+    writeFileSync(${JSON.stringify(cleanupPidPath)}, String(child.pid))
+    while (!existsSync(${JSON.stringify(publishPidPath)})) await Bun.sleep(10)
+    writeFileSync(${JSON.stringify(pidPath)}, String(child.pid))
+    setInterval(() => {}, 1000)
+  `)
+  // Write through an inherited file fd, as background Shell.exec does. Pipe
+  // output would stop when the CLI dies even if its shell kept running.
+  const runtime = spawn(process.execPath, ['--no-env-file', fixture], {
+    cwd: directory,
+    env: { PATH: process.env.PATH, HOME: directory, CLAUDE_CONFIG_DIR: join(directory, 'config') },
+    detached: true,
+    stdio: 'ignore',
+  })
+  children.push(runtime)
+  let shellPid: number | undefined
+  let cleanupPid: number | undefined
+  let publicationRequested = false
+  const readyForKill = () => {
+    shellPid = publishedPid(pidPath)
+    return shellPid !== undefined && ticks(output) >= 3
+  }
+  try {
+    // Ticks can arrive before spawn returns and the runtime publishes its PID.
+    // Hold publication behind a file latch to exercise that ordering without
+    // adding another stdio fd (see the Bun fd-3 regression below).
+    await waitUntil(() => {
+      cleanupPid = publishedPid(cleanupPidPath)
+      if (!publicationRequested && cleanupPid !== undefined && ticks(output) >= 3) {
+        expect(readyForKill()).toBe(false)
+        writeFileSync(pidPath, '')
+        expect(readyForKill()).toBe(false)
+        writeFileSync(publishPidPath, 'ready')
+        publicationRequested = true
+      }
+      return readyForKill()
+    })
+    expect(shellPid).toBe(cleanupPid)
+    runtime.kill('SIGKILL')
+    await exited(runtime)
+    expect(runtime.signalCode).toBe('SIGKILL')
+    // The guardian polls the runtime once per second.
+    await waitUntil(() => {
+      try { process.kill(-shellPid!, 0); return false } catch { return true }
+    }, 4_000)
+    const afterExit = ticks(output)
+    await wait(150)
+    expect(ticks(output)).toBe(afterExit)
+  } finally {
+    try { process.kill(-runtime.pid!, 'SIGKILL') } catch {}
+    try { runtime.kill('SIGKILL') } catch {}
+    await exited(runtime)
+    const groupPid = cleanupPid ?? publishedPid(cleanupPidPath) ?? shellPid
+    if (groupPid) {
+      try { process.kill(-groupPid, 'SIGKILL') } catch {}
+      await waitUntil(() => {
+        try { process.kill(-groupPid, 0); return false } catch { return true }
+      }, 4_000)
+    }
+  }
+})
+
+test.skipIf(process.platform === 'win32')('runs back-to-back commands without the guard killing any of them', async () => {
+  // An extra stdio pipe made Bun fail "Failed to connect" inside spawn() and
+  // the guardian SIGKILL roughly a quarter of healthy commands. Collecting a
+  // finished child's fd-3 socket closed an fd number a newer spawn had reused,
+  // so this test must not retain finished children (Shell.exec doesn't).
+  const directory = fixtureDirectory()
+  const rejections: unknown[] = []
+  const onRejection = (reason: unknown) => { rejections.push(reason) }
+  process.on('unhandledRejection', onRejection)
+  const outcomes: string[] = []
+  try {
+    for (let i = 0; i < 200; i++) {
+      const output = join(directory, `out-${i}`)
+      const fd = openSync(output, 'a')
+      let child: ChildProcess
+      try {
+        child = spawnWithParentProcessGuard('/bin/sh', ['-c', 'echo ok'], {
+          detached: true,
+          stdio: ['pipe', fd, fd],
+        })
+      } finally {
+        closeSync(fd)
+      }
+      const code = await exited(child)
+      outcomes.push(`${code}:${child.signalCode}:${readFileSync(output, 'utf8').trim()}`)
+    }
+  } finally {
+    process.off('unhandledRejection', onRejection)
+  }
+  expect(outcomes.filter(outcome => outcome !== '0:null:ok')).toEqual([])
+  expect(rejections).toEqual([])
+}, 30_000)
+
+test.skipIf(process.platform === 'win32')('a short command does not wait out the guardian poll', async () => {
+  // Where /bin/sh is dash (Ubuntu), `jobs -p` is empty inside the guardian's
+  // TERM trap, so every command waited for the in-flight `sleep 1` to finish.
+  for (let i = 0; i < 3; i++) {
+    const started = performance.now()
+    const child = spawnWithParentProcessGuard('/bin/sh', ['-c', 'exit 3'], { detached: true, stdio: 'ignore' })
+    expect(await exited(child)).toBe(3)
+    expect(performance.now() - started).toBeLessThan(500)
+  }
+})
+
+test.skipIf(process.platform === 'win32')('stops a guardian poll that does not act on TERM', async () => {
+  // A poll that has forked but not yet exec'd still runs the shell's TERM
+  // handler and swallows the signal. A stopped poll ignores TERM the same way,
+  // deterministically: only SIGKILL ends it, so a TERM-only trap hangs here
+  // under dash (Ubuntu CI). bash's `kill` also continues a stopped job, so a
+  // bash /bin/sh (macOS) passes either way.
+  const child = spawnWithParentProcessGuard('/bin/sh', ['-c', 'read line; exit 4'], {
+    detached: true,
+    stdio: ['pipe', 'ignore', 'ignore'],
+  })
+  children.push(child)
+  const pollPid = (): number | undefined => {
+    const listing = spawnSync('ps', ['-A', '-o', 'pid=,pgid=,comm='], { encoding: 'utf8' }).stdout
+    for (const line of listing.split('\n')) {
+      const [pid, pgid, comm] = line.trim().split(/\s+/)
+      if (Number(pgid) === child.pid && comm?.endsWith('sleep')) return Number(pid)
+    }
+    return undefined
+  }
+  await waitUntil(() => pollPid() !== undefined)
+  process.kill(pollPid()!, 'SIGSTOP')
+  const started = performance.now()
+  child.stdin!.end('done\n')
+  expect(await Promise.race([exited(child), wait(3_000).then(() => 'hung')])).toBe(4)
+  expect(performance.now() - started).toBeLessThan(500)
+})
+
+test.skipIf(process.platform === 'win32')('does not spin when the command environment has no sleep on PATH', async () => {
+  // The guardian runs with the command's env. Without a fallback PATH,
+  // `sleep 1 &` failed instantly and the poll loop forked as fast as it could.
+  const child = spawnWithParentProcessGuard('/bin/sleep', ['1.5'], {
+    detached: true,
+    env: { PATH: '/nonexistent' },
+    stdio: ['ignore', 'ignore', 'ignore'],
+  })
+  children.push(child)
+  await wait(1_000)
+  const descendants = spawnSync('pgrep', ['-P', String(child.pid)]).stdout.toString().split('\n').filter(Boolean)
+  const cpuSeconds = descendants.map(pid => {
+    const time = spawnSync('ps', ['-o', 'time=', '-p', pid]).stdout.toString().trim()
+    const [minutes, seconds] = time.split(':')
+    return Number(minutes) * 60 + Number(seconds)
+  })
+  expect(descendants.length).toBeGreaterThan(0)
+  expect(Math.max(...cpuSeconds)).toBeLessThan(0.2)
+  expect(await exited(child)).toBe(0)
+})
+
+test.skipIf(process.platform === 'win32')('preserves stdin, arguments, bare wait, stdout, stderr and the exit code', async () => {
+  const child = spawnWithParentProcessGuard('/bin/sh', ['-c',
+    'IFS= read -r line; sleep 0.02 & wait; printf "%s|%s|%s\\n" "$line" "$1" "$GUARD_TEST_VALUE"; echo err >&2; exit 7',
+    'sandbox-wrapper', 'literal $value `command` "quotes"',
+  ], {
+    detached: true,
+    env: { ...process.env, GUARD_TEST_VALUE: 'env value' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  children.push(child)
+  let stdout = ''
+  let stderr = ''
+  child.stdout!.on('data', data => { stdout += data })
+  child.stderr!.on('data', data => { stderr += data })
+  child.stdin!.end('user input\n')
+  expect(await exited(child)).toBe(7)
+  expect(stdout).toBe('user input|literal $value `command` "quotes"|env value\n')
+  expect(stderr).toBe('err\n')
+})
+
+test.skipIf(process.platform === 'win32')('preserves file output and leaves no process group after normal completion', async () => {
+  const output = join(fixtureDirectory(), 'output')
+  const fd = openSync(output, 'a')
+  let child: ChildProcess
+  try {
+    child = spawnWithParentProcessGuard('/bin/sh', ['-c', 'echo stdout; echo stderr >&2; exit 0'], {
+      detached: true,
+      stdio: ['pipe', fd, fd],
+    })
+    children.push(child)
+  } finally {
+    closeSync(fd)
+  }
+  expect(await exited(child)).toBe(0)
+  expect(readFileSync(output, 'utf8')).toBe('stdout\nstderr\n')
+  expect(() => process.kill(-child.pid!, 0)).toThrow()
+})
+
+test.skipIf(process.platform === 'win32')('preserves an existing sandbox wrapper and does not expose the lifetime fd to commands', async () => {
+  const child = spawnWithParentProcessGuard('/bin/sh', ['-c',
+    'exec /bin/sh -c "$1" "$2" "$3"', 'sandbox-wrapper',
+    'if (: <&3) 2>/dev/null; then echo leaked; exit 1; fi; printf "%s\\n" "$1"',
+    'inner-shell', 'literal $arg `command` "quoted"',
+  ], {
+    detached: false,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  children.push(child)
+  let stdout = ''
+  child.stdout!.on('data', data => { stdout += data })
+  expect(await exited(child)).toBe(0)
+  expect(stdout).toBe('literal $arg `command` "quoted"\n')
+})
+
+for (const action of ['terminate', 'abort'] as const) {
+  test.skipIf(process.platform === 'win32')(`reaps the target and guardian when the supervisor is ${action === 'abort' ? 'aborted' : 'terminated'}`, async () => {
+    const output = join(fixtureDirectory(), 'ticks')
+    const fd = openSync(output, 'a')
+    const controller = new AbortController()
+    let child: ChildProcess
+    try {
+      child = spawnWithParentProcessGuard('/bin/sh', ['-c', 'while true; do echo alive; sleep 0.02; done'], {
+        detached: true,
+        signal: controller.signal,
+        stdio: ['pipe', fd, fd],
+      })
+      children.push(child)
+    } finally {
+      closeSync(fd)
+    }
+    const errors: Error[] = []
+    child.on('error', error => { errors.push(error) })
+    const exit = new Promise(resolve => child.once('exit', resolve))
+    await waitUntil(() => ticks(output) >= 3)
+    if (action === 'abort') controller.abort()
+    else child.kill('SIGTERM')
+    await exit
+    await waitUntil(() => {
+      try { process.kill(-child.pid!, 0); return false } catch { return true }
+    })
+    const afterExit = ticks(output)
+    await wait(75)
+    expect(ticks(output)).toBe(afterExit)
+    if (action === 'abort') expect(errors[0]?.name).toBe('AbortError')
+    else expect(errors).toHaveLength(0)
+  })
+}

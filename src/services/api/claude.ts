@@ -58,7 +58,7 @@ import {
   splitSysPromptPrefix,
   toolToAPISchema,
 } from "../../utils/api.js";
-import { getOauthAccountInfo } from "../../utils/auth.js";
+import { getOauthAccountUuid } from "../../utils/auth.js";
 import {
   getBedrockExtraBodyParamsBetas,
   getMergedBetas,
@@ -74,6 +74,7 @@ import { resolveAppliedEffort } from "../../utils/effort.js";
 import { isEnvTruthy } from "../../utils/envUtils.js";
 import { errorMessage } from "../../utils/errors.js";
 import { computeFingerprintFromMessages } from "../../utils/fingerprint.js";
+import { normalizeImagesForAPI } from '../../utils/imageValidation.js'
 import { captureAPIRequest, logError } from "../../utils/log.js";
 import {
   createSystemStreamingFallbackMessage,
@@ -83,9 +84,11 @@ import {
   normalizeMessagesForAPI,
   stripAdvisorBlocks,
   stripCallerFieldFromAssistantMessage,
+  stripSignatureBlocksAfterModelChange,
   stripToolReferenceBlocksFromUserMessage,
 } from "../../utils/messages.js";
 import {
+  getCanonicalName,
   getDefaultOpusModel,
   getDefaultSonnetModel,
   getSmallFastModel,
@@ -159,6 +162,7 @@ import {
   modelSupportsAdvisor,
 } from "src/utils/advisor.js";
 import { getAgentContext } from "src/utils/agentContext.js";
+import { getAgentProfile } from "src/utils/agentProfile.js";
 import { isClaudeAISubscriber } from "src/utils/auth.js";
 import {
   getToolSearchBetaHeader,
@@ -195,6 +199,7 @@ import { endQueryProfile, queryCheckpoint } from "src/utils/queryProfiler.js";
 import {
   modelSupportsAdaptiveThinking,
   modelUsesBoundThinking,
+  modelRejectsManualThinking,
   modelRequiresThinking,
   modelSupportsThinking,
   resolveModelThinkingEnabled,
@@ -227,7 +232,11 @@ import {
   stopSessionActivity,
 } from "../../utils/sessionActivity.js";
 import { isOpenAIPolicyError } from "../openaiAuth/policyError.js"
-import { shouldTriggerNonStreamingFallbackForEmptyStream } from "./streamFallback.js";
+import {
+  shouldTriggerNonStreamingFallbackForEmptyStream,
+  StreamEndedEarlyError,
+  type StreamEndedEarlyEvidence,
+} from "./streamFallback.js";
 import { StreamAssistantCommitBuffer } from "./streamAssistantCommitBuffer.js";
 import {
   commitOutputLimitResponse,
@@ -267,6 +276,12 @@ import {
   getErrorMessageIfRefusal,
 } from "./errors.js";
 import {
+  isTextOnlyImageModel,
+  rememberTextOnlyImageModel,
+  replaceImagesForTextOnlyModel,
+} from "./imageInputRefusals.js";
+import { isImageInputRefusalMessage } from "./unsupportedImageInput.js";
+import {
   EMPTY_USAGE,
   type GlobalCacheStrategy,
   logAPIError,
@@ -280,15 +295,19 @@ import {
   checkResponseForCacheBreak,
   recordPromptState,
 } from "./promptCacheBreakDetection.js";
+import { recordPromptSnapshot } from "./promptSnapshot.js";
 import { withStreamRetry } from "./streamRetry.js";
+import { readProviderEnv, withRequestProviderRoute } from "../../utils/model/providerEnvScope.js";
 import {
+  type ApiAttemptBudget,
   CannotRetryError,
   FallbackTriggeredError,
+  getStreamRetryKind,
   is529Error,
-  isRetryableStreamError,
+  isRetryableStreamTransportError,
+  isStreamRequestRejection,
   RetriableStreamError,
   type RetryContext,
-  shouldRetryStreamAfterTransportDisconnect,
   withRetry,
 } from "./withRetry.js";
 
@@ -502,7 +521,7 @@ export function configureEffortParams(
     // Native Claude defaults to high effort when this field is omitted, and
     // historically sends it explicitly for stable request behavior. OpenAI
     // Responses is different: its Desktop session effort lives in
-    // ECHOFLOW_OPENAI_REASONING_EFFORT and its catalog has per-model defaults.
+    // CC_HAHA_OPENAI_REASONING_EFFORT and its catalog has per-model defaults.
     // Writing a synthetic `high` here would make the transport mistake that
     // fallback for an explicit request value and override both layers.
     if (isOpenAIResponsesModel(model)) return
@@ -529,11 +548,11 @@ export function configureEffortParams(
 }
 
 function shouldSuppressEffortOutputConfig(): boolean {
-  if (!isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS)) {
+  if (!isEnvTruthy(readProviderEnv('CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS'))) {
     return false
   }
 
-  const baseUrl = process.env.ANTHROPIC_BASE_URL ?? ''
+  const baseUrl = readProviderEnv('ANTHROPIC_BASE_URL') ?? ''
   try {
     const url = new URL(baseUrl)
     const proxyPath = url.pathname.replace(/\/+$/, '')
@@ -605,7 +624,7 @@ export function getAPIMetadata() {
       ...extra,
       device_id: getOrCreateUserID(),
       // Only include OAuth account UUID when actively using OAuth authentication
-      account_uuid: getOauthAccountInfo()?.accountUuid ?? "",
+      account_uuid: getOauthAccountUuid(),
       session_id: getSessionId(),
     }),
   };
@@ -790,6 +809,8 @@ export type Options = {
   // so the model can pace itself. `remaining` is computed by the caller
   // (query.ts decrements across the agentic loop).
   taskBudget?: { total: number; remaining?: number };
+  /** Shared across every retry layer of this request (see ApiAttemptBudget). */
+  apiAttemptBudget?: ApiAttemptBudget;
 };
 
 export async function queryModelWithoutStreaming({
@@ -815,16 +836,17 @@ export async function queryModelWithoutStreaming({
   for await (const message of withStreamingVCR(messages, async function* () {
     yield* withStreamRetry(
       () =>
-        queryModel(
+        withRequestProviderRoute(options.model, queryModel(
           messages,
           systemPrompt,
           thinkingConfig,
           tools,
           signal,
           options,
-        ),
+        )),
       options.model,
       messages,
+      { signal, apiAttemptBudget: options.apiAttemptBudget },
     );
   })) {
     if (message.type === "assistant") {
@@ -865,16 +887,17 @@ export async function* queryModelWithStreaming({
   return yield* withStreamingVCR(messages, async function* () {
     yield* withStreamRetry(
       () =>
-        queryModel(
+        withRequestProviderRoute(options.model, queryModel(
           messages,
           systemPrompt,
           thinkingConfig,
           tools,
           signal,
           options,
-        ),
+        )),
       options.model,
       messages,
+      { signal, apiAttemptBudget: options.apiAttemptBudget },
     );
   });
 }
@@ -931,6 +954,7 @@ export async function* executeNonStreamingRequest(
     signal: AbortSignal;
     initialConsecutive529Errors?: number;
     querySource?: QuerySource;
+    apiAttemptBudget?: ApiAttemptBudget;
   },
   paramsFromContext: (context: RetryContext) => BetaMessageStreamParams,
   onAttempt: (attempt: number, start: number, maxOutputTokens: number) => void,
@@ -1007,6 +1031,7 @@ export async function* executeNonStreamingRequest(
       signal: retryOptions.signal,
       initialConsecutive529Errors: retryOptions.initialConsecutive529Errors,
       querySource: retryOptions.querySource,
+      apiAttemptBudget: retryOptions.apiAttemptBudget,
     },
   );
 
@@ -1230,7 +1255,7 @@ async function* queryModel(
   }
 
   let advisorModel: string | undefined;
-  if (isAgenticQuery && isAdvisorEnabled()) {
+  if (getAgentProfile() !== "lean" && isAgenticQuery && isAdvisorEnabled()) {
     let advisorOption = options.advisorModel;
 
     const advisorExperiment = getExperimentAdvisorModels();
@@ -1415,8 +1440,10 @@ async function* queryModel(
   });
 
   queryCheckpoint("query_message_normalization_start");
+  // Every caller replays history through here (main loop, compaction, away
+  // summary), so another model's signed thinking is dropped at this boundary.
   let messagesForAPI = normalizeMessagesForAPI(
-    messages,
+    stripSignatureBlocksAfterModelChange(messages, options.model),
     filteredTools,
     options.model,
   );
@@ -1469,6 +1496,17 @@ async function* queryModel(
     messagesForAPI,
     API_MAX_MEDIA_PER_REQUEST,
   );
+
+  const provider = getAPIProvider()
+  messagesForAPI = await normalizeImagesForAPI(messagesForAPI, {
+    countDocuments: provider === 'bedrock' || provider === 'vertex',
+  })
+
+  // A model that recently refused images and then accepted the same request
+  // without them gets placeholders up front instead of failing first.
+  if (isTextOnlyImageModel(options.model)) {
+    messagesForAPI = replaceImagesForTextOnlyModel(messagesForAPI);
+  }
 
   // Instrumentation: Track message count after normalization
   logEvent("tengu_api_after_normalize", {
@@ -1641,6 +1679,16 @@ async function* queryModel(
     });
   }
 
+  // Desktop-only prompt snapshot sidecar for the trajectory view. Gated and
+  // fire-and-forget internally: never awaited, never throws.
+  recordPromptSnapshot({
+    systemPrompt,
+    tools: allTools,
+    model: options.model,
+    querySource: options.querySource,
+    agentId: options.agentId,
+  });
+
   const newContext: LLMRequestNewContext | undefined = isBetaTracingEnabled()
     ? {
         systemPrompt: systemPrompt.join("\n\n"),
@@ -1665,6 +1713,7 @@ async function* queryModel(
   let stream: Stream<BetaRawMessageStreamEvent> | undefined = undefined;
   let streamRequestId: string | null | undefined = undefined;
   let clientRequestId: string | undefined = undefined;
+  let imagesOmittedForRetry = false;
   // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins -- Response is available in Node 18+ and is used by the SDK
   let streamResponse: Response | undefined = undefined;
 
@@ -1719,8 +1768,11 @@ async function* queryModel(
       retryContext?.maxTokensOverride ||
       options.maxOutputTokensOverride ||
       getMaxOutputTokensForModel(options.model)
+    // CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING only selects a manual budget, so it
+    // cannot apply to models that reject budget_tokens.
     const usesAdaptiveThinking =
       (modelRequiresThinking(options.model) ||
+        modelRejectsManualThinking(options.model) ||
         !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING)) &&
       modelSupportsAdaptiveThinking(options.model)
     // Manual thinking needs at least 1024 tokens and room for the answer.
@@ -1756,11 +1808,12 @@ async function* queryModel(
     // The installed SDK's effort type predates xhigh, which configureEffortParams supports.
     const configuredEffort = outputConfig.effort as string | null | undefined
 
-    // Opus 5 rejects disabled thinking above high effort. Preserve the user's
-    // explicit thinking choice and use the highest compatible effort instead.
+    // Opus 5 and Haiku 5.5 reject disabled thinking above high effort. Preserve
+    // the user's explicit thinking choice and use the highest compatible effort.
+    const modelId = getCanonicalName(options.model)
     if (
       sendsExplicitDisabledThinking &&
-      options.model.toLowerCase().includes('claude-opus-5') &&
+      (modelId.includes('claude-opus-5') || modelId.includes('claude-haiku-5-5')) &&
       (configuredEffort === 'xhigh' || configuredEffort === 'max')
     ) {
       outputConfig.effort = 'high'
@@ -1986,10 +2039,14 @@ async function* queryModel(
   let costUSD = 0;
   let hasStreamingUsage = false;
   let stopReason: BetaStopReason | null = null;
+  // True while the last content-bearing event was a message_delta carrying a
+  // stop_reason. Gateways that omit the blank line after their final SSE event
+  // lose message_stop inside the SDK decoder (#1481); like the official CLI, a
+  // reply whose stop_reason was not followed by more content is complete.
+  let stopReasonIsTerminal = false;
   const completedBlockIndexes = new Set<number>();
   const completedToolUseIds = new Set<string>();
   const handledStopReasons = new Set<BetaStopReason>();
-  let incompleteStream = false;
   let didFallBackToNonStreaming = false;
   let fallbackMessage: AssistantMessage | undefined;
   let maxOutputTokens = 0;
@@ -2032,6 +2089,12 @@ async function* queryModel(
         isFastModeRequest = context.fastMode ?? false;
         start = Date.now();
         attemptStartTimes.push(start);
+        if (context.withoutImages && !imagesOmittedForRetry) {
+          // Swap the shared request history, not just these params: a final
+          // failure is then classified against what was actually sent.
+          messagesForAPI = replaceImagesForTextOnlyModel(messagesForAPI);
+          imagesOmittedForRetry = true;
+        }
         // Client has been created by withRetry's getClient() call. This fires
         // once per attempt; on retries the client is usually cached (withRetry
         // only calls getClient() again after auth errors), so the delta from
@@ -2087,6 +2150,16 @@ async function* queryModel(
         ...(isFastModeEnabled() ? { fastMode: isFastMode } : false),
         signal,
         querySource: options.querySource,
+        apiAttemptBudget: options.apiAttemptBudget,
+        // Only an explicit refusal of image input, on a request that carried
+        // images, earns the image-free re-send, and only its success is
+        // remembered: other 400/422s (a malformed history block, one bad
+        // image, a one-off failure) say nothing about the model's vision.
+        shouldRetryWithoutImages: (error) =>
+          error instanceof APIError &&
+          (error.status === 400 || error.status === 422) &&
+          isImageInputRefusalMessage(error.message) &&
+          replaceImagesForTextOnlyModel(messagesForAPI) !== messagesForAPI,
       },
     );
 
@@ -2100,6 +2173,12 @@ async function* queryModel(
       }
     } while (!e.done);
     stream = e.value as Stream<BetaRawMessageStreamEvent>;
+    if (imagesOmittedForRetry) {
+      rememberTextOnlyImageModel(options.model);
+      logForDebugging(
+        `${options.model} refused image input and accepted the request without images; omitting images for this model`,
+      );
+    }
 
     // reset state
     newMessages.length = 0;
@@ -2109,6 +2188,7 @@ async function* queryModel(
     contentBlocks.length = 0;
     usage = EMPTY_USAGE;
     stopReason = null;
+    stopReasonIsTerminal = false;
     isAdvisorInProgress = false;
 
     // Streaming idle timeout watchdog: abort the stream if no chunks arrive
@@ -2206,7 +2286,13 @@ async function* queryModel(
       }
       // Snapshot the active budget so a fire reports the value it was armed
       // with, even if the phase (first-token → idle) flips between arm and fire.
-      const idleMs = currentStreamIdleTimeoutMs;
+      // While a tool_use input is open, the upstream emits its JSON one complete
+      // key/value at a time and only pings in between (the SDK drops pings), so
+      // a long `content` value is legitimately silent. The tool-input guard owns
+      // that gap; the idle budget must not cut it shorter (#1536).
+      const idleMs = toolInputDurationGuard.hasActiveInput()
+        ? Math.max(currentStreamIdleTimeoutMs, STREAM_TOOL_INPUT_MAX_DURATION_MS)
+        : currentStreamIdleTimeoutMs;
       const warningMs = idleMs / 2;
       streamIdleWarningTimer = setTimeout(
         (warnMs) => {
@@ -2377,6 +2463,7 @@ async function* queryModel(
             break;
           }
           case "content_block_start":
+            stopReasonIsTerminal = false;
             switch (part.content_block.type) {
               case "tool_use":
                 contentBlocks[part.index] = {
@@ -2384,6 +2471,7 @@ async function* queryModel(
                   input: "",
                 };
                 toolInputDurationGuard.start(part.index);
+                resetStreamIdleTimer();
                 break;
               case "server_tool_use":
                 contentBlocks[part.index] = {
@@ -2436,6 +2524,7 @@ async function* queryModel(
             }
             break;
           case "content_block_delta": {
+            stopReasonIsTerminal = false;
             const contentBlock = contentBlocks[part.index];
             const delta = part.delta as typeof part.delta | ConnectorTextDelta;
             if (!contentBlock) {
@@ -2558,8 +2647,10 @@ async function* queryModel(
           }
           case "content_block_stop": {
             if (completedBlockIndexes.has(part.index)) continue;
+            stopReasonIsTerminal = false;
             completedBlockIndexes.add(part.index);
             toolInputDurationGuard.stop(part.index);
+            resetStreamIdleTimer();
             const contentBlock = contentBlocks[part.index];
             if (!contentBlock) {
               logEvent("tengu_streaming_error", {
@@ -2646,6 +2737,7 @@ async function* queryModel(
             const isNewStopReason = hasStopReason && !handledStopReasons.has(part.delta.stop_reason);
             if (hasStopReason) {
               stopReason = part.delta.stop_reason;
+              stopReasonIsTerminal = true;
               handledStopReasons.add(stopReason);
             }
 
@@ -2769,6 +2861,24 @@ async function* queryModel(
           );
       }
 
+      // Recorded on an early-EOF error so the surfaced message shows whether
+      // the provider cut the reply mid-block or only dropped message_stop.
+      // Count open blocks before preservePartialText closes partial text.
+      const openBlockCountAtEof = contentBlocks.filter(
+        (block, index) => block && !completedBlockIndexes.has(index),
+      ).length;
+      const streamEndEvidence = (): StreamEndedEarlyEvidence => {
+        const snapshot = streamWatchdogState.snapshot();
+        return {
+          eventCount: snapshot.eventCount,
+          lastEventType: snapshot.lastEventType ?? null,
+          stopReason,
+          messageStopReceived: snapshot.messageStopReceived,
+          openBlockCount: openBlockCountAtEof,
+          elapsedMs: Date.now() - start,
+        };
+      };
+
       // Preserve visible text when the socket closes before its block_stop.
       // Never synthesize a completed tool or unsigned thinking block from EOF.
       preservePartialText();
@@ -2794,7 +2904,8 @@ async function* queryModel(
       // That's a legitimate empty response, not an incomplete stream. However,
       // stop_reason=tool_use with no completed tool block is incomplete: some
       // OpenAI-compatible streams send only finish_reason=tool_calls, and we
-      // need the non-streaming fallback to recover the full tool call.
+      // need the non-streaming fallback (or, without it, a re-sent stream) to
+      // recover the full tool call.
       if (
         shouldTriggerNonStreamingFallbackForEmptyStream({
           hasMessageStart: partialMessage !== undefined,
@@ -2804,10 +2915,10 @@ async function* queryModel(
       ) {
         logForDebugging(
           !partialMessage
-            ? "Stream completed without receiving message_start event - triggering non-streaming fallback"
+            ? "Stream completed without receiving message_start event"
             : stopReason === "tool_use"
-              ? "Stream completed with tool_use stop but no completed tool block - triggering non-streaming fallback"
-            : "Stream completed with message_start but no content blocks completed - triggering non-streaming fallback",
+              ? "Stream completed with tool_use stop but no completed tool block"
+            : "Stream completed with message_start but no content blocks completed",
           { level: "error" },
         );
         logEvent("tengu_stream_no_events", {
@@ -2816,19 +2927,21 @@ async function* queryModel(
           request_id: (streamRequestId ??
             "unknown") as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
         });
-        throw new Error("Stream ended without receiving any events");
+        throw new StreamEndedEarlyError("no_events", streamEndEvidence());
       }
 
       // A clean socket EOF is not a successful Anthropic response. Explicit
       // output limits already have a recovery message and may omit message_stop.
+      // A missing message_stop alone is tolerated once the stop_reason was the
+      // last content event (see stopReasonIsTerminal).
       if (
         stopReason !== "max_tokens" &&
         stopReason !== "model_context_window_exceeded" &&
-        (!streamWatchdogState.snapshot().messageStopReceived || stopReason === null ||
+        ((!streamWatchdogState.snapshot().messageStopReceived && !stopReasonIsTerminal) ||
+          stopReason === null ||
           contentBlocks.some((block, index) => block && !completedBlockIndexes.has(index)))
       ) {
-        incompleteStream = true;
-        throw new Error("Provider stream ended before completing the response");
+        throw new StreamEndedEarlyError("incomplete", streamEndEvidence());
       }
 
       // No tool boundary was crossed, so completed thinking/text blocks were
@@ -2899,12 +3012,61 @@ async function* queryModel(
       // A safety rejection is terminal, including for non-streaming fallback.
       if (isOpenAIPolicyError(streamingError)) throw streamingError
 
-      // Never replay a response after server-side work began or a local tool
-      // completed. Keep displayable blocks, but discard uncommitted local tools.
-      // Completed partial text on a clean EOF is also surfaced with an error,
-      // rather than silently accepted or replaced by a second response.
-      if (incompleteStream || assistantCommitBuffer.hasCrossedSideEffectBoundary() ||
-          streamWatchdogState.snapshot().serverToolUseStarted) {
+      // When the flag is enabled, skip the non-streaming fallback and let the
+      // error propagate to withRetry. The mid-stream fallback causes double tool
+      // execution when streaming tool execution is active: the partial stream
+      // starts a tool, then the non-streaming retry produces the same tool_use
+      // and runs it again. See inc-4258.
+      const disableFallback =
+        isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK) ||
+        getFeatureValue_CACHED_MAY_BE_STALE(
+          "tengu_disable_streaming_to_non_streaming_fallback",
+          false,
+        );
+
+      // The attempt can be discarded and re-sent as a new stream only while
+      // nothing from it reached the consumer and no server-side tool work
+      // began. A completed local tool_use does not close that window: the
+      // commit buffer holds it until the response completes, and query.ts only
+      // executes tools from yielded assistant messages, so it has not run.
+      const canReplay =
+        !assistantCommitBuffer.hasCommitted() &&
+        !streamWatchdogState.snapshot().serverToolUseStarted;
+      const streamEndedIncomplete =
+        streamingError instanceof StreamEndedEarlyError &&
+        streamingError.reason === "incomplete";
+      const retryKind = getStreamRetryKind({
+        error: streamingError,
+        canReplay,
+        streamIdleAborted,
+        signalAborted: signal.aborted,
+        // The fallback below never replays an attempt that completed a tool
+        // block, so such a truncation can only recover as a new stream.
+        nonStreamingFallbackAvailable:
+          !disableFallback &&
+          !assistantCommitBuffer.hasCrossedSideEffectBoundary(),
+        transientRetryAllowed:
+          newMessages.length === 0 ||
+          canRetryOpenAICodexStreamWithBufferedContent(
+            streamResponse as Response | undefined,
+            !canReplay,
+          ),
+      });
+
+      // Never replay a response through the non-streaming fallback after it
+      // committed output, server-side work began or a local tool completed.
+      // Keep displayable blocks, but discard uncommitted local tools. Partial
+      // text from a clean EOF that cannot be re-streamed is also surfaced with
+      // an error, rather than silently accepted or replaced by a second response.
+      // A request the upstream rejected inside the stream is surfaced as well:
+      // the non-streaming copy would get the same answer.
+      if (
+        retryKind === null &&
+        (!canReplay ||
+          streamEndedIncomplete ||
+          assistantCommitBuffer.hasCrossedSideEffectBoundary() ||
+          isStreamRequestRejection(streamingError))
+      ) {
         for (const committedMessage of assistantCommitBuffer.flushWithoutToolUse()) {
           yield committedMessage;
         }
@@ -2967,89 +3129,36 @@ async function* queryModel(
         }
       }
 
-      // A watchdog stall is recoverable while the failed attempt is still
-      // side-effect-free. Completed thinking/text and partial local tool JSON
-      // stay buffered, so re-establishing the stream cannot duplicate a tool.
-      // A completed local tool block or any server-side tool activity closes
-      // this retry boundary permanently for the attempt.
-      if (
-        streamIdleAborted &&
-        streamingError instanceof StreamWatchdogTimeoutError &&
-        streamingError.safeToRetryStream() &&
-        !assistantCommitBuffer.hasCrossedSideEffectBoundary() &&
-        !signal.aborted
-      ) {
-        logForDebugging(
-          `Watchdog timeout before content/tool output, will retry stream: ${errorMessage(
-            streamingError,
-          )}`,
-          { level: "warn" },
-        );
-        throw new RetriableStreamError(streamingError, assistantCommitBuffer.flush());
-      }
-
-      // The socket under the stream died mid-response (stale pooled keep-alive
-      // connection, proxy/NAT dropping a reused one, upstream edge reset). It
-      // arrives as a bare transport error inside the SSE body, so withRetry
-      // (stream creation only) and isRetryableStreamError (SSE error payloads)
-      // both miss it, and with the non-streaming fallback disabled the turn
-      // would die on a fault a plain re-send clears. Recover on the same
-      // side-effect boundary the watchdog retry uses.
-      if (
-        shouldRetryStreamAfterTransportDisconnect({
-          error: streamingError,
-          hasCrossedSideEffectBoundary:
-            assistantCommitBuffer.hasCrossedSideEffectBoundary(),
-          streamIdleAborted,
-          signalAborted: signal.aborted,
-        })
-      ) {
+      // A recoverable failure — an idle stall, a dead socket, a truncated or
+      // cleanly closed stream, an upstream api_error/overloaded_error — arrives
+      // inside the SSE body, so withRetry (stream creation only) misses it, and
+      // with the non-streaming fallback disabled the turn would die on a fault
+      // a plain re-send clears. withStreamRetry re-sends it with backoff.
+      if (retryKind !== null) {
         // Nothing arrived at all, so the connection was already dead when the
         // request went out — the pool is serving closed sockets. Stop reusing
         // it so the retry opens a fresh one. A disconnect after message_start
         // is a live connection that broke later; that pool stays trusted.
-        if (partialMessage === undefined) {
+        if (
+          partialMessage === undefined &&
+          isRetryableStreamTransportError(streamingError)
+        ) {
           disableKeepAlive();
         }
         logForDebugging(
-          `Mid-stream transport disconnect before any tool output, will retry stream: ${errorMessage(
+          `Mid-stream ${retryKind} failure before any output was committed, will retry stream: ${errorMessage(
             streamingError,
           )}`,
           { level: "warn" },
         );
-        throw new RetriableStreamError(streamingError, assistantCommitBuffer.flush());
-      }
-
-      if (
-        (newMessages.length === 0 ||
-          canRetryOpenAICodexStreamWithBufferedContent(
-            streamResponse as Response | undefined,
-            assistantCommitBuffer.hasCrossedSideEffectBoundary(),
-          )) &&
-        !streamIdleAborted &&
-        !signal.aborted &&
-        isRetryableStreamError(streamingError)
-      ) {
-        logForDebugging(
-          `Transient mid-stream error before any output, will retry stream: ${errorMessage(
-            streamingError,
-          )}`,
-          { level: "warn" },
+        // Completed text/thinking ride along for a retries-exhausted error; an
+        // uncommitted local tool_use is dropped with the attempt.
+        throw new RetriableStreamError(
+          streamingError,
+          assistantCommitBuffer.flushWithoutToolUse(),
+          retryKind,
         );
-        throw new RetriableStreamError(streamingError, assistantCommitBuffer.flush());
       }
-
-      // When the flag is enabled, skip the non-streaming fallback and let the
-      // error propagate to withRetry. The mid-stream fallback causes double tool
-      // execution when streaming tool execution is active: the partial stream
-      // starts a tool, then the non-streaming retry produces the same tool_use
-      // and runs it again. See inc-4258.
-      const disableFallback =
-        isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK) ||
-        getFeatureValue_CACHED_MAY_BE_STALE(
-          "tengu_disable_streaming_to_non_streaming_fallback",
-          false,
-        );
 
       if (disableFallback) {
         logForDebugging(
@@ -3143,6 +3252,7 @@ async function* queryModel(
           signal,
           initialConsecutive529Errors: is529Error(streamingError) ? 1 : 0,
           querySource: options.querySource,
+          apiAttemptBudget: options.apiAttemptBudget,
         },
         paramsFromContext,
         (attempt, _startTime, tokens) => {
@@ -4005,7 +4115,7 @@ function isMaxTokensCapEnabled(): boolean {
 
 export function getMaxOutputTokensForModel(model: string): number {
   const maxOutputTokens = getModelMaxOutputTokens(model);
-  const providerBudget = getConfiguredProviderOutputBudget()
+  const providerBudget = getConfiguredProviderOutputBudget(undefined, model)
   const globalBudget = Number(process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS)
   const hasValidGlobalBudget = Number.isSafeInteger(globalBudget) && globalBudget > 0
   if (!hasValidGlobalBudget && providerBudget !== undefined) {

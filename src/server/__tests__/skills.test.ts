@@ -8,9 +8,11 @@ import { invalidateComputerUseSkillGate } from '../../utils/computerUse/skillGat
 import { clearInstalledPluginsCache } from '../../utils/plugins/installedPluginsManager.js'
 import { clearPluginCache } from '../../utils/plugins/pluginLoader.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
+import { getAgentProfile, isAgentProfileCommandSupported, setAgentProfile } from '../../utils/agentProfile.js'
+import type { Command } from '../../types/command.js'
 import { handlePluginsApi } from '../api/plugins.js'
 import { handleComputerUseApi } from '../api/computer-use.js'
-import { handleSkillsApi, listSkillSlashCommands } from '../api/skills.js'
+import { handleSkillsApi, listSkillSlashCommands, type SkillSlashCommand } from '../api/skills.js'
 
 let tmpHome: string
 let originalHome: string | undefined
@@ -94,6 +96,36 @@ describe('Skills API', () => {
     await fs.rm(tmpHome, { recursive: true, force: true })
   })
 
+  it('lists draft slash commands by cwd before a session exists and respects lean', async () => {
+    const cwd = path.join(tmpHome, 'draft project')
+    await fs.mkdir(path.join(cwd, '.git'), { recursive: true })
+    await writeSkill(path.join(cwd, '.claude', 'skills'), 'draft-skill', '---\ndescription: A draft skill\n---\nUse fixtures.')
+    const request = makeRequest(`/api/skills/commands?cwd=${encodeURIComponent(cwd)}`)
+    const response = await handleSkillsApi(request.req, request.url, request.segments)
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.commands.some((command: SkillSlashCommand) => command.name === 'draft-skill')).toBe(true)
+    expect(body.commands).toContainEqual(expect.objectContaining({ name: 'debug' }))
+    expect(body.commands.some((command: SkillSlashCommand) => command.name === 'simplify')).toBe(true)
+    const leanRequest = makeRequest(`/api/skills/commands?cwd=${encodeURIComponent(cwd)}&agentProfile=lean`)
+    const leanResponse = await handleSkillsApi(leanRequest.req, leanRequest.url, leanRequest.segments)
+    expect(leanResponse.status).toBe(200)
+    expect((await leanResponse.json()).commands).toEqual(await listSkillSlashCommands(cwd, { includeCompiledIn: false, agentProfile: 'lean' }))
+    expect(getCwdState()).toBe(tmpHome)
+    const post = await handleSkillsApi(new Request(request.url, { method: 'POST' }), request.url, request.segments)
+    expect(post.status).toBe(405)
+  })
+
+  it('rejects invalid draft-command directories without falling back to the server cwd', async () => {
+    const file = path.join(tmpHome, 'not-a-directory')
+    await fs.writeFile(file, 'fixture')
+    for (const cwd of ['relative/path', path.join(tmpHome, 'missing'), file, `${tmpHome}\0bad`]) {
+      const request = makeRequest(`/api/skills/commands?cwd=${encodeURIComponent(cwd)}`)
+      const response = await handleSkillsApi(request.req, request.url, request.segments)
+      expect(response.status).toBe(400)
+    }
+  })
+
   it('isolates concurrent mention requests by project enablement and installed scope', async () => {
     const projectA = path.join(tmpHome, '普通目录 A')
     const projectB = path.join(tmpHome, '普通目录 B')
@@ -145,22 +177,22 @@ describe('Skills API', () => {
     const candidate = body.skills.find((item: { name: string }) => item.name === 'mention-fixture')
     expect(candidate.kind).toBe('skill')
     expect(candidate.modelText).toBe('Use the Skill tool with skill: "mention-fixture" for this request.')
-    expect(body.plugins.some((item: { source: string }) => item.source.endsWith('@echoflow-connectors'))).toBe(false)
+    expect(body.plugins.some((item: { source: string }) => item.source.endsWith('@haha-connectors'))).toBe(false)
   })
 
   it('offers bundled imagegen to @ mentions only when the session provider generates images', async () => {
     // The image provider is injected into each session's CLI, never into the
     // server. Nothing here may leak in from the developer's environment.
-    const imageEnvKeys = Object.keys(process.env).filter(key => key.startsWith('ECHOFLOW_IMAGE_'))
+    const imageEnvKeys = Object.keys(process.env).filter(key => key.startsWith('CC_HAHA_IMAGE_'))
     const savedImageEnv = Object.fromEntries(imageEnvKeys.map(key => [key, process.env[key]]))
     for (const key of imageEnvKeys) delete process.env[key]
     const models = { main: 'fixture-main', haiku: 'fixture-haiku', sonnet: 'fixture-sonnet', opus: 'fixture-opus' }
     const provider = (id: string, extra: Record<string, unknown> = {}) => ({
       id, presetId: 'custom', name: id, apiKey: 'fake-key', baseUrl: 'http://127.0.0.1:9/v1', models, ...extra,
     })
-    await fs.mkdir(path.join(tmpHome, '.claude', 'echoflow-code'), { recursive: true })
+    await fs.mkdir(path.join(tmpHome, '.claude', 'cc-haha'), { recursive: true })
     const writeProviders = (activeId: string | null) => fs.writeFile(
-      path.join(tmpHome, '.claude', 'echoflow-code', 'providers.json'),
+      path.join(tmpHome, '.claude', 'cc-haha', 'providers.json'),
       JSON.stringify({
         schemaVersion: 2,
         activeId,
@@ -196,7 +228,7 @@ describe('Skills API', () => {
       expect(imagegen.source).toBe('bundled')
       expect(imagegen.modelText).toBe('Use the Skill tool with skill: "imagegen" for this request.')
       // The provider decides availability without touching the server's env.
-      expect(Object.keys(process.env).some(key => key.startsWith('ECHOFLOW_IMAGE_'))).toBe(false)
+      expect(Object.keys(process.env).some(key => key.startsWith('CC_HAHA_IMAGE_'))).toBe(false)
     } finally {
       Object.assign(process.env, savedImageEnv)
     }
@@ -957,6 +989,108 @@ describe('Skills API', () => {
 
       expect(matches).toHaveLength(1)
       expect(matches[0]!.description).toBe('Mine, not the bundled one')
+    })
+  })
+
+  /**
+   * The desktop runs whatever a lean session's list offers and judges only the
+   * built-ins it adds itself (desktop/src/lib/agentProfile.ts). So every entry
+   * here must be one the lean runtime would run, however the list is asked for,
+   * and the desktop's copy of the runtime's local-command table must not drift.
+   */
+  describe('lean slash commands', () => {
+    async function leanRepo(): Promise<string> {
+      const repo = path.join(tmpHome, 'lean-workspace')
+      const commandsDir = path.join(repo, '.claude', 'commands')
+      await fs.mkdir(path.join(repo, '.git'), { recursive: true })
+      await fs.mkdir(commandsDir, { recursive: true })
+      await fs.writeFile(path.join(commandsDir, 'foo.md'), ['---', 'description: Project legacy command', 'argument-hint: <topic>', '---', '', 'Run foo.'].join('\n'))
+      await fs.writeFile(path.join(commandsDir, 'forked.md'), ['---', 'description: Forked legacy command', 'context: fork', '---', '', 'Run forked.'].join('\n'))
+      await writeSkill(path.join(repo, '.claude', 'skills'), 'inline-skill', ['---', 'description: Inline skill', '---', '', '# Inline'].join('\n'))
+      await writeSkill(path.join(repo, '.claude', 'skills'), 'forked-skill', ['---', 'description: Forked skill', 'context: fork', '---', '', '# Forked'].join('\n'))
+      return repo
+    }
+
+    function underLeanRuntime<T>(run: () => T): T {
+      const previous = getAgentProfile()
+      setAgentProfile('lean')
+      try {
+        return run()
+      } finally {
+        setAgentProfile(previous)
+      }
+    }
+
+    async function withBuiltInTable<T>(run: (builtIns: Map<string, Command>) => Promise<T>): Promise<T> {
+      // Assembling the built-in table reads auth state; a fake key stands in.
+      const originalKey = process.env.ANTHROPIC_API_KEY
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-test-not-a-real-key'
+      try {
+        const { getCompiledInCommands } = await import('../../commands.js')
+        return await run(new Map(getCompiledInCommands().map(command => [command.name, command])))
+      } finally {
+        if (originalKey === undefined) delete process.env.ANTHROPIC_API_KEY
+        else process.env.ANTHROPIC_API_KEY = originalKey
+      }
+    }
+
+    it('lists legacy custom commands as sourceless command rows, without forked ones', async () => {
+      const repo = await leanRepo()
+      // Asked the way a lean session asks (getSessionSlashCommands).
+      const lean = await listSkillSlashCommands(repo, { includeCompiledIn: false, agentProfile: 'lean' })
+
+      expect(lean).toContainEqual({ name: 'foo', description: 'Project legacy command', argumentHint: '<topic>', kind: 'command' })
+      expect(lean).toContainEqual({ name: 'inline-skill', description: 'Inline skill', kind: 'skill', source: 'project' })
+      expect(lean.map(command => command.name)).not.toContain('forked')
+      expect(lean.map(command => command.name)).not.toContain('forked-skill')
+      const standard = (await listSkillSlashCommands(repo, { includeCompiledIn: false })).map(command => command.name)
+      expect(standard).toEqual(expect.arrayContaining(['foo', 'forked', 'inline-skill', 'forked-skill']))
+    })
+
+    it('tells the skills list which skills a lean session cannot run', async () => {
+      // A new-session draft has no session list yet: it fetches the skills and
+      // lets the user choose lean afterwards, so each skill carries the answer.
+      const repo = await leanRepo()
+      const { req, url, segments } = makeRequest(`/api/skills?cwd=${encodeURIComponent(repo)}`)
+      const body = await (await handleSkillsApi(req, url, segments)).json() as {
+        skills: Array<{ name: string; context?: string; leanCompatible?: boolean }>
+      }
+
+      expect(body.skills).toContainEqual(expect.objectContaining({ name: 'inline-skill', leanCompatible: true }))
+      expect(body.skills).toContainEqual(expect.objectContaining({ name: 'forked-skill', context: 'fork', leanCompatible: false }))
+    })
+
+    it('offers no compiled-in command the lean runtime would refuse', async () => {
+      const repo = await leanRepo()
+      await withBuiltInTable(async (builtIns) => {
+        const refused = (entries: SkillSlashCommand[]) => underLeanRuntime(() => entries
+          .filter(entry => {
+            const builtIn = builtIns.get(entry.name)
+            return builtIn !== undefined && !isAgentProfileCommandSupported(builtIn)
+          })
+          .map(entry => entry.name))
+
+        // Not vacuous: a standard list carries built-ins lean refuses.
+        expect(refused(await listSkillSlashCommands(repo))).not.toEqual([])
+        const lean = await listSkillSlashCommands(repo, { agentProfile: 'lean' })
+        expect(refused(lean)).toEqual([])
+        expect(lean.map(command => command.name)).toContain('foo')
+      })
+    })
+
+    it('keeps the desktop copy of the lean local-command table in step with the runtime', async () => {
+      const { LEAN_LOCAL_COMMAND_NAMES } = await import('../../../desktop/src/lib/agentProfile.js')
+      await withBuiltInTable(async (builtIns) => {
+        const locals = [...builtIns.values()].filter(command => command.type !== 'prompt')
+        underLeanRuntime(() => {
+          // Every built-in the desktop keeps in lean is one the runtime runs...
+          expect([...LEAN_LOCAL_COMMAND_NAMES].filter(name => !isAgentProfileCommandSupported({ name, type: 'local' }))).toEqual([])
+          // ...and every local built-in the runtime keeps, the desktop keeps.
+          expect(locals
+            .filter(command => isAgentProfileCommandSupported(command) !== LEAN_LOCAL_COMMAND_NAMES.has(command.name))
+            .map(command => command.name)).toEqual([])
+        })
+      })
     })
   })
 })

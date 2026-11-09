@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConversationService } from './conversationService.js'
 import { ProviderService } from './providerService.js'
-import { sanitizePath } from '../../utils/sessionStoragePortable.js'
 import { resetTerminalShellEnvironmentCacheForTests } from '../../utils/terminalShellEnvironment.js'
 
 let home: string
@@ -14,7 +13,7 @@ beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), 'team-workers-'))
   process.env.HOME = home
   process.env.CLAUDE_CONFIG_DIR = home
-  process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV = '1'
+  process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
   resetTerminalShellEnvironmentCacheForTests()
 })
 afterEach(async () => {
@@ -76,9 +75,9 @@ test('independent configured providers produce disjoint child credentials and ro
   expect(a.ANTHROPIC_BASE_URL).not.toBe(b.ANTHROPIC_BASE_URL)
   expect(JSON.stringify(a)).not.toContain('fake-key-b')
   expect(JSON.stringify(b)).not.toContain('fake-key-a')
-  expect(a.ECHOFLOW_SESSION_COLLABORATION_TOKEN).toBe('a')
-  expect(b.ECHOFLOW_SESSION_COLLABORATION_TOKEN).toBe('b')
-  expect(a.ECHOFLOW_TEAM_REVIEW_REQUIRED).toBe('1')
+  expect(a.CC_HAHA_SESSION_COLLABORATION_TOKEN).toBe('a')
+  expect(b.CC_HAHA_SESSION_COLLABORATION_TOKEN).toBe('b')
+  expect(a.CC_HAHA_TEAM_REVIEW_REQUIRED).toBe('1')
   expect(process.env.ANTHROPIC_API_KEY).toBe('parent-key')
 })
 
@@ -131,7 +130,7 @@ test('real independent CLI processes send their first request to the approved pr
   try {
     process.env.CLAUDE_CLI_PATH = join(import.meta.dir, '__fixtures__', 'team-worker-cli.ts')
     process.env.CLAUDE_CODE_SUBAGENT_MODEL = 'wrong-inherited-model'
-    process.env.ECHOFLOW_TEAM_WORKER_OMIT_CLAUDE_MD = '1'
+    process.env.CC_HAHA_TEAM_WORKER_OMIT_CLAUDE_MD = '1'
     const providers = new ProviderService()
     const models = { main: 'cheap', sonnet: 'cheap', opus: 'capable', haiku: 'cheap' }
     const pa = await providers.addProvider({ presetId: 'custom', name: 'A', baseUrl: a.url.toString(), apiKey: 'fake-a', models })
@@ -147,9 +146,6 @@ test('real independent CLI processes send their first request to the approved pr
     }))
     await Promise.all(['worker-a', 'worker-b'].map(id => service.sendMessage(id, 'Start approved task')))
     await Promise.all(results)
-    const workerTranscriptPath = join(home, 'projects', sanitizePath(home), 'worker-a.jsonl')
-    const workerTranscript = (await readFile(workerTranscriptPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
-    expect(workerTranscript.map(record => record.entrypoint)).toContain('claude-desktop-team-worker')
     const { writeTeamFileAsync } = await import('../../utils/swarm/teamHelpers.js')
     const { TeamService } = await import('./teamService.js')
     await writeTeamFileAsync('approved', { name: 'approved', createdAt: 1, leadSessionId: 'parent', leadAgentId: 'team-lead@approved', members: [{ agentId: 'researcher@approved', name: 'researcher', joinedAt: 1, cwd: home, sessionId: 'worker-a', tmuxPaneId: '', subscriptions: [], backendType: 'process' }] })
@@ -196,73 +192,6 @@ test('approval resolves preset snapshots and model aliases against the selected 
   await expect(validateTeamPlanRuntime({ ...plan, teamName: team.name, sessionId: team.leadSessionId, incarnationId: createHash('sha256').update(JSON.stringify([team.name, team.leadSessionId, team.createdAt])).digest('hex') })).rejects.toThrow('Member already exists: reader')
 })
 
-test('team workers inherit the parent session CLI runtime instead of falling back to bundled', async () => {
-  // A parent switched to an installed Claude Code must not silently launch its
-  // Team workers on the bundled runtime: the user approved every member against
-  // the executable they chose, and the workers run the same task for it.
-  const { conversationService: runtimeService } = await import('./conversationService.js')
-  const { buildTeamWorkerStartOptions } = await import('./teamPlanRuntime.js')
-  runtimeService.sessions.set('cli-parent', { cliRuntimeId: 'installed' } as any)
-
-  const options = buildTeamWorkerStartOptions({
-    parentSessionId: 'cli-parent',
-    teamName: 'approved',
-    memberId: 'research',
-    name: 'researcher',
-    snapshot: { systemPrompt: 'Read only research', tools: ['Read'] },
-    runtime: { providerId: 'provider-b', modelId: 'cheap' },
-    permissionMode: 'default',
-  })
-
-  expect(options.cliRuntimeId).toBe('installed')
-  // Routing stays per-member: only the executable is inherited.
-  expect(options.providerId).toBe('provider-b')
-  expect(options.teamWorker?.parentSessionId).toBe('cli-parent')
-  // The suite shares one ConversationService; a leftover stub would be stopped
-  // by a later test's stopAllSessionsAndWait.
-  runtimeService.sessions.delete('cli-parent')
-})
-
-test('a leader already on the default runtime leaves workers on the server default', async () => {
-  const { conversationService: runtimeService } = await import('./conversationService.js')
-  const { buildTeamWorkerStartOptions } = await import('./teamPlanRuntime.js')
-  // A session normalizes an unset runtime to `bundled` when it starts, so the
-  // leader reads back as `bundled`. Naming that explicitly would pin the worker
-  // to the bundled executable instead of the server default it already uses.
-  runtimeService.sessions.set('default-parent', { cliRuntimeId: 'bundled' } as any)
-
-  const options = buildTeamWorkerStartOptions({
-    parentSessionId: 'default-parent',
-    teamName: 'approved',
-    memberId: 'research',
-    name: 'researcher',
-    snapshot: { systemPrompt: 'Read only research', tools: ['Read'] },
-    runtime: { providerId: 'provider-b', modelId: 'cheap' },
-    permissionMode: 'default',
-  })
-
-  expect(options.cliRuntimeId).toBeUndefined()
-  runtimeService.sessions.delete('default-parent')
-})
-
-test('a leader that is not in the runtime map leaves workers on the server default', async () => {
-  const { buildTeamWorkerStartOptions } = await import('./teamPlanRuntime.js')
-  // A leader whose process restarted has no entry, so there is nothing to
-  // inherit. Naming a runtime anyway would pin the worker to an executable the
-  // leader is no longer on.
-  const options = buildTeamWorkerStartOptions({
-    parentSessionId: 'no-such-session',
-    teamName: 'approved',
-    memberId: 'research',
-    name: 'researcher',
-    snapshot: { systemPrompt: 'Read only research', tools: ['Read'] },
-    runtime: { providerId: 'provider-b', modelId: 'cheap' },
-    permissionMode: 'default',
-  })
-
-  expect(options.cliRuntimeId).toBeUndefined()
-})
-
 test('stopping a parent stops its workers and cancels relayed pending approvals', () => {
   const service = new ConversationService() as any
   const killed: string[] = []
@@ -274,6 +203,44 @@ test('stopping a parent stops its workers and cancels relayed pending approvals'
   expect(killed).toEqual(['child', 'parent'])
   expect(service.hasSession('child')).toBe(false)
   expect(events).toContainEqual({ type: 'control_cancel_request', request_id: 'approval' })
+})
+
+test("Stop asks a lead whose team was paused to hold its teammates' mail, and interrupts any other session plainly", () => {
+  const service = new ConversationService() as any
+  const requests: Array<[string, string]> = []
+  service.sendSdkMessage = (id: string, message: any) => {
+    requests.push([id, message.request.subtype])
+    return true
+  }
+  const remove = service.addTeamRuntimeListener({ leadInterrupted: (id: string) => id === 'lead' })
+  try {
+    service.sendInterrupt('lead')
+    service.sendInterrupt('solo')
+  } finally {
+    remove()
+  }
+  expect(requests).toEqual([['lead', 'team_plan_pause'], ['solo', 'interrupt']])
+})
+
+test('a lead process that exits on its own or restarts keeps its approved workers', async () => {
+  const service = new ConversationService() as any
+  const killed: string[] = []
+  service.killProcess = (id: string) => killed.push(id)
+  service.waitForProcessOutputDrain = async () => {}
+  service.buildRuntimeExitMessage = () => 'CLI exited'
+  const proc = { exited: Promise.resolve(1) }
+  const results: any[] = []
+  service.sessions.set('parent', { proc, outputCallbacks: [(message: any) => results.push(message)], pendingPermissionRequests: new Map(), sdkMessages: [], workDir: home, permissionMode: 'default' })
+  service.sessions.set('child', { teamWorker: worker, pendingPermissionRequests: new Map() })
+  await service.handleProcessExit('parent', proc, 1)
+  expect(killed).toEqual([])
+  expect(service.hasSession('child')).toBe(true)
+  expect(results.at(-1)).toMatchObject({ type: 'result', is_error: true })
+
+  service.sessions.set('parent', { proc, outputCallbacks: [], pendingPermissionRequests: new Map() })
+  service.stopSession('parent', { keepTeamWorkers: true })
+  expect(killed).toEqual(['parent'])
+  expect(service.hasSession('child')).toBe(true)
 })
 
 test('approved roster launches, materializes canonical tasks, wakes an idle member, and cleans up', async () => {
@@ -358,6 +325,75 @@ test('approved roster launches, materializes canonical tasks, wakes an idle memb
     await stopTeamPlanRuntime(planId)
     expect(runtimeService.hasSession(result.memberIds.m1!)).toBe(false)
     expect(readTeamFile(teamName)?.members[0]?.isActive).toBe(false)
+  } finally {
+    await stopTeamPlanRuntime(planId)
+    await runtimeService.stopAllSessionsAndWait(1000)
+    ProviderService.setServerPort(oldPort)
+    bridge.stop(true)
+    upstream.stop(true)
+  }
+}, 20_000)
+
+test('a member that dies while starting fails the launch by name and reason, and the launch takes its tasks back', async () => {
+  const { createHash } = await import('node:crypto')
+  const { writeFile } = await import('node:fs/promises')
+  const { conversationService: runtimeService } = await import('./conversationService.js')
+  const { launchTeamPlanRuntime, stopTeamPlanRuntime } = await import('./teamPlanRuntime.js')
+  const { writeTeamFileAsync, readTeamFile, getTeamDir } = await import('../../utils/swarm/teamHelpers.js')
+  const { beginTaskListLifecycle, withTaskListLifecycleLock, getCanonicalTeamTaskListId, listTasks } = await import('../../utils/tasks.js')
+  let requests = 0
+  const upstream = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() { requests++; return new Response('done') } })
+  const bridge = Bun.serve<{ id: string }>({ hostname: '127.0.0.1', port: 0,
+    fetch(request, server) {
+      const url = new URL(request.url)
+      const id = url.pathname.split('/').pop()!
+      if (!runtimeService.authorizeSdkConnection(id, url.searchParams.get('token'))) return new Response('denied', { status: 401 })
+      return server.upgrade(request, { data: { id } }) ? undefined : new Response('bad', { status: 400 })
+    },
+    websocket: { open(ws) { runtimeService.attachSdkConnection(ws.data.id, ws) }, message(ws, msg) { runtimeService.handleSdkPayload(ws.data.id, String(msg)) }, close(ws) { runtimeService.detachSdkConnection(ws.data.id, ws) } },
+  })
+  const oldPort = ProviderService.getServerPort()
+  ProviderService.setServerPort(bridge.port!)
+  const planId = 'failing-plan'
+  try {
+    process.env.CLAUDE_CLI_PATH = join(import.meta.dir, '__fixtures__', 'team-worker-cli.ts')
+    process.env.FIXTURE_EXIT_ON_SET_MODEL = 'writer'
+    const provider = await new ProviderService().addProvider({ presetId: 'custom', name: 'local', baseUrl: upstream.url.toString(), apiKey: 'fake', models: { main: 'cheap', sonnet: 'cheap', opus: 'capable', haiku: 'cheap' } })
+    const teamName = 'failing-team'
+    const createdAt = Date.now()
+    await writeTeamFileAsync(teamName, { name: teamName, createdAt, leadAgentId: `team-lead@${teamName}`, leadSessionId: 'failing-parent', members: [] })
+    const taskListId = getCanonicalTeamTaskListId(teamName)
+    await withTaskListLifecycleLock(taskListId, () => beginTaskListLifecycle(taskListId, { teamName, createdAt, leadSessionId: 'failing-parent' }))
+    await runtimeService.startSession('failing-parent', home, `ws://127.0.0.1:${bridge.port}/sdk/failing-parent?token=parent`, { providerId: provider.id, model: 'cheap', teamWorker: { ...worker, parentSessionId: 'external', name: 'leader' } })
+    const member = (id: string, name: string) => ({ id, name, agentType: 'research', prompt: `Work as ${name}`, runtime: { providerId: provider.id, modelId: 'cheap' }, agentSnapshot: { systemPrompt: 'Read only', tools: ['Read'] } })
+    const members = [member('m1', 'reader'), member('m2', 'writer')]
+    const tasks = [
+      { id: 'read', subject: 'Read the notes', ownerId: 'm1', dependencies: [] },
+      { id: 'write', subject: 'Write the summary', ownerId: 'm2', dependencies: ['read'] },
+    ]
+    const plan = { schemaVersion: 1, planId, sessionId: 'failing-parent', teamName, incarnationId: createHash('sha256').update(JSON.stringify([teamName, 'failing-parent', createdAt])).digest('hex'), revision: 2, state: 'launching', workDir: home, members, tasks, leaderRuntime: members[0]!.runtime, createdAt, updatedAt: createdAt, approvedSnapshot: { revision: 1, members, tasks, leaderRuntime: members[0]!.runtime, approvedAt: Date.now(), requestId: 'approve' } } as any
+    await writeFile(join(getTeamDir(teamName), 'plan.json'), JSON.stringify(plan))
+
+    const failure = await launchTeamPlanRuntime(plan).then(() => { throw new Error('A launch with a dying member unexpectedly succeeded') }, (error: Error) => error.message)
+    // Of possibly many members, the one that failed, and what it said.
+    expect(failure).toContain('writer did not start')
+    expect(failure).toContain('code 2')
+    expect(failure).toContain('Error: fixture member could not load its settings')
+    // Nothing started: no member was instructed, none is left on the roster,
+    // and no task is left to read as work in progress.
+    expect(requests).toBe(0)
+    expect(readTeamFile(teamName)?.members).toEqual([])
+    expect(await listTasks(taskListId)).toEqual([])
+
+    // The plan is revised (the writer's task dropped) and approved again: only
+    // the revised tasks exist, so the team can finish.
+    delete process.env.FIXTURE_EXIT_ON_SET_MODEL
+    const revisedTasks = [{ id: 'read-again', subject: 'Read the notes again', ownerId: 'm1', dependencies: [] }]
+    Object.assign(plan, { revision: 4, tasks: revisedTasks, members: [members[0]] })
+    plan.approvedSnapshot = { ...plan.approvedSnapshot, revision: 3, requestId: 'second-approval', members: [members[0]], tasks: revisedTasks }
+    await writeFile(join(getTeamDir(teamName), 'plan.json'), JSON.stringify(plan))
+    await launchTeamPlanRuntime(plan)
+    expect((await listTasks(taskListId)).map(task => task.subject)).toEqual(['Read the notes again'])
   } finally {
     await stopTeamPlanRuntime(planId)
     await runtimeService.stopAllSessionsAndWait(1000)

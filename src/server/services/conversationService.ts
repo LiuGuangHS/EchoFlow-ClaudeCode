@@ -1,4 +1,8 @@
+import { sanitizeRetryDiagnosticText } from '../../services/api/errorUtils.js'
 import { closeSideChatsForParent, getSideChat, isSideChatId, SIDE_CHAT_BOUNDARY } from './sideChatRegistry.js'
+import { migrationMaintenance, waitForMigrationExit } from '../migrationMaintenance.js'
+import { powerActivityClock } from './powerActivityClock.js'
+import { SDKPromptSuggestionActivityMessageSchema } from '../../entrypoints/sdk/coreSchemas.js'
 /**
  * ConversationService — CLI subprocess manager
  *
@@ -8,18 +12,25 @@ import { closeSideChatsForParent, getSideChat, isSideChatId, SIDE_CHAT_BOUNDARY 
  */
 
 import * as fs from 'node:fs'
+import * as os from 'node:os'
 import * as path from 'node:path'
 import { ProviderService } from './providerService.js'
 import { SettingsService } from './settingsService.js'
+import type { SessionRuntimeSelection } from '../../shared/sessionDelegation.js'
 import {
   OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
   OPENAI_OAUTH_PROVIDER_ENV_KEY,
   isOpenAIOfficialProviderId,
 } from './openaiOfficialProvider.js'
 import {
+  GROK_MODEL_CATALOG_ENV_KEY,
   GROK_OAUTH_FILE_ENV_KEY,
   GROK_OAUTH_PROVIDER_ENV_KEY,
 } from './grokOfficialProvider.js'
+import {
+  DEEPSEEK_OAUTH_FILE_ENV_KEY,
+  DEEPSEEK_OAUTH_PROVIDER_ENV_KEY,
+} from './deepseekAccountProvider.js'
 import {
   OPENAI_CODEX_REASONING_EFFORT_ENV_KEY,
   isOpenAIReasoningEffort,
@@ -44,11 +55,6 @@ import {
   resolveClaudeCliLauncher,
 } from '../../utils/desktopBundledCli.js'
 import {
-  resolveClaudeCodeRuntimeId,
-  resolveClaudeCodeRuntimePath,
-  type ClaudeCodeRuntimeId,
-} from './claudeCodeRuntimeService.js'
-import {
   ASK_USER_QUESTION_CLARIFY_MESSAGE,
   ASK_USER_QUESTION_CLARIFY_WITH_QUESTIONS_PREFIX,
   PLAN_REJECTION_MESSAGE,
@@ -56,7 +62,8 @@ import {
   REJECT_MESSAGE,
   REJECT_MESSAGE_WITH_REASON_PREFIX,
 } from '../../constants/messages.js'
-import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
+import { resolveRelocatedAttachmentPath } from '../../utils/storageRelocations.js'
 import { findCanonicalGitRoot } from '../../utils/git.js'
 import { sanitizePath } from '../../utils/path.js'
 import { getProcessEnvWithTerminalShellEnvironment } from '../../utils/terminalShellEnvironment.js'
@@ -65,16 +72,18 @@ import {
   buildNetworkEnvironment,
   loadNetworkSettings,
   resolveStreamMaxDurationMs,
+  resolveStreamToolInputDurationMs,
   SYSTEM_PROXY_URL_ENV,
   type NetworkSettings,
-} from './networkSettings.js'
-import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
-import { assertDirectTransportAllowed } from '../../services/localRedactionGuard.js'
-import { readTraceCaptureSettings } from './traceCaptureService.js'
+  resolveProviderNetworkSettings,} from './networkSettings.js'
+import { readTraceCaptureSettings, traceCaptureService } from './traceCaptureService.js'
+import {
+  killWindowsProcessTree,
+  type WindowsTaskkillSpawn,
+} from '../../utils/windowsProcessTree.js'
 import { logError } from '../../utils/log.js'
 import { normalizeAutoQuestionSettings } from '../../shared/autoQuestionSettings.js'
 import { decideAutoQuestionAnswers, type AutoQuestion } from './autoQuestionDecisionService.js'
-import { ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY } from '../../utils/thinking.js'
 import {
   createImageMetadataText,
   maybeResizeAndDownsampleImageBuffer,
@@ -96,22 +105,6 @@ const CONTROL_READY_POLL_MS = 50
 const MAX_SEEN_SDK_MESSAGE_UUIDS = 2_000
 const AUTO_MEMORY_DIRNAME = 'memory'
 export const DESKTOP_CLI_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 6_000
-const DESKTOP_BRIDGE_ENV_KEYS = [
-  'ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID',
-  'ECHOFLOW_DESKTOP_SERVER_URL',
-  'ECHOFLOW_DESKTOP_AWAIT_MCP',
-  'ECHOFLOW_DESKTOP_AWAIT_MCP_TIMEOUT_MS',
-  'ECHOFLOW_SKIP_DOTENV',
-] as const
-
-// Never expose server-only credentials or runtime configuration to a CLI
-// executable selected by the user. The installed runtime is a separate trust
-// boundary and can inspect its inherited environment.
-const CHILD_PROCESS_SECRET_ENV_KEYS = [
-  'ECHOFLOW_LOCAL_ACCESS_TOKEN',
-  'ECHOFLOW_PET_ACCESS_TOKEN',
-  'ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG',
-] as const
 
 /**
  * Severity for a CLI subprocess exit, by exit code.
@@ -191,6 +184,12 @@ type SendMessageOptions = {
   canSend?: () => boolean
   messageUuid?: string
   onCommitted?: () => void
+  /**
+   * Server-generated input the user did not type (team runtime notices). The
+   * CLI then does not treat the turn as user-started, so it skips per-turn
+   * extras such as next-prompt suggestions.
+   */
+  synthetic?: boolean
 }
 
 type HandleSdkPayloadOptions = {
@@ -217,6 +216,7 @@ type TrackedPermissionRequest = {
   autoAnswerAbortController?: AbortController
   autoAnswerCancelled?: boolean
   autoAnswerCreatedAt?: number
+  autoAnswerDeadline?: number | null
   autoAnswerGeneration?: number
 }
 
@@ -289,6 +289,7 @@ function networkRoutingFingerprint(
 }
 
 type SessionProcess = {
+  runtimeSelection?: SessionRuntimeSelection
   proc: ReturnType<typeof Bun.spawn>
   outputCallbacks: SessionOutputCallback[]
   workDir: string
@@ -296,9 +297,11 @@ type SessionProcess = {
   teamWorker?: TeamWorkerStart
   providerId?: string | null
   providerConfigFingerprint?: string
+  providerAuth?: { baseUrl: string; apiKey: string; authToken: string }
   networkRoutingFingerprint: string
   networkDerivedFirstTokenTimeout: boolean
   networkDerivedStreamMaxDuration: boolean
+  networkDerivedToolInputDuration: boolean
   sdkToken: string
   sdkSocket: { send(data: string): void } | null
   sdkAttached: Promise<void>
@@ -319,11 +322,14 @@ type SessionProcess = {
   initMessage: any | null
   usesOfficialOAuth: boolean
   officialOAuthToken: string | null
-  cliRuntimeId?: ClaudeCodeRuntimeId
   officialOAuthRefreshPromise?: Promise<void>
   pendingPermissionRequests: Map<string, TrackedPermissionRequest>
   autoResolvedRequestIds?: Set<string>
   pendingControlRequests: Map<string, (reason: Error) => void>
+  /** Last value sent with `set_prompt_suggestions`; the CLI starts disabled. */
+  promptSuggestionsEnabled?: boolean
+  promptSuggestionGenerations?: Set<string>
+  promptSuggestionExited?: boolean
 }
 
 export type PendingPermissionRequest = {
@@ -334,6 +340,7 @@ export type PendingPermissionRequest = {
   input: Record<string, unknown>
   description?: string
   displayName?: string
+  autoAnswerDeadline?: number | null
 }
 
 export type TeamWorkerStart = {
@@ -344,6 +351,23 @@ export type TeamWorkerStart = {
   systemPrompt: string
   tools?: string[]
   agentDefinition?: Record<string, unknown>
+  /**
+   * Restart a worker whose process stopped by resuming its own transcript.
+   * A worker never inherits the parent's launch metadata, so resume is opt-in.
+   */
+  resume?: boolean
+}
+
+/**
+ * Hooks for the server-owned Agent Teams runtime. Workers are independent
+ * processes, so the lead's process lifecycle must not decide their fate on its
+ * own: a lead restart keeps them, and Stop lets the runtime pause them first.
+ */
+export type TeamRuntimeListener = {
+  /** Synchronously before Stop kills a lead's workers; true when it paused a running team. */
+  leadInterrupted?: (parentSessionId: string) => boolean | void
+  /** After any CLI session finished starting. */
+  sessionStarted?: (sessionId: string, info: { isTeamWorker: boolean }) => void
 }
 
 export type SessionStartOptions = {
@@ -351,10 +375,9 @@ export type SessionStartOptions = {
   permissionMode?: string
   model?: string
   effort?: string
+  openAIFastMode?: boolean
   thinking?: 'enabled' | 'adaptive' | 'disabled'
   providerId?: string | null
-  cliRuntimeId?: ClaudeCodeRuntimeId
-  persistCliRuntimeId?: boolean
   resumeInterruptedTurn?: boolean
 }
 
@@ -367,7 +390,6 @@ export class ConversationStartupError extends Error {
       | 'CLI_SESSION_CONFLICT'
       | 'CLI_START_FAILED'
       | 'CLI_SPAWN_FAILED'
-      | 'LOCAL_REDACTION_REQUIRED'
       | 'SESSION_DELETED',
     readonly retryable = false,
   ) {
@@ -376,12 +398,32 @@ export class ConversationStartupError extends Error {
   }
 }
 
+/**
+ * How a CLI's process tree is stopped. Production uses the real platform,
+ * environment and Bun.spawn; tests inject them.
+ */
+export type ConversationServiceProcessDeps = {
+  platform?: NodeJS.Platform
+  env?: NodeJS.ProcessEnv
+  spawnTaskkill?: WindowsTaskkillSpawn
+}
+
 export class ConversationService {
   private sessions = new Map<string, SessionProcess>()
   private teamStopOperations = new Map<string, Promise<void>>()
+  private teamRuntimeListeners = new Set<TeamRuntimeListener>()
   private deletedSessions = new Set<string>()
   private providerService = new ProviderService()
   private pendingPermissionModeChanges = new Map<string, Map<string, number>>()
+  private promptSuggestionClientSessions = new Set<string>()
+  private promptSuggestionsSettingEnabled = false
+  // Retired runtimes keep ownership until their actual process exits.
+  private promptSuggestionWorkOwners = new Set<SessionProcess>()
+  private readonly processDeps: ConversationServiceProcessDeps
+
+  constructor(processDeps: ConversationServiceProcessDeps = {}) {
+    this.processDeps = processDeps
+  }
 
   private clearAutoAnswerWait(request: TrackedPermissionRequest | undefined): void {
     if (request?.autoAnswerTimer) clearTimeout(request.autoAnswerTimer)
@@ -395,14 +437,37 @@ export class ConversationService {
   }
 
   cancelAutoQuestionAnswer(sessionId: string, requestId: string): void {
-    const request = this.sessions.get(sessionId)?.pendingPermissionRequests.get(requestId)
-    if (request?.toolName !== 'AskUserQuestion') return
+    // A team member's question reaches the desktop through its lead's session,
+    // so the user's activity arrives there too; it belongs to the member.
+    const child = [...this.sessions.entries()].find(([, entry]) => entry.teamWorker?.parentSessionId === sessionId && entry.pendingPermissionRequests.has(requestId))
+    if (child) return this.cancelAutoQuestionAnswer(child[0], requestId)
+    const session = this.sessions.get(sessionId)
+    const request = session?.pendingPermissionRequests.get(requestId)
+    if (request?.toolName !== 'AskUserQuestion' || request.autoAnswerCancelled) return
     this.clearAutoAnswerWait(request)
     request.autoAnswerTimer = undefined
     request.autoAnswerAbortController = undefined
     console.info(`[ConversationService] Automatic answer cancelled by user activity: session=${sessionId} request=${requestId}`)
     request.autoAnswerCancelled = true
     request.autoAnswerGeneration = (request.autoAnswerGeneration ?? 0) + 1
+    request.autoAnswerDeadline = null
+    if (session) this.publishAutoQuestionDeadline(sessionId, session, requestId, request)
+  }
+
+  private publishAutoQuestionDeadline(sessionId: string, session: SessionProcess, requestId: string, request: TrackedPermissionRequest): void {
+    const message = {
+      type: 'control_request', request_id: requestId,
+      request: {
+        subtype: 'can_use_tool', tool_name: request.toolName, tool_use_id: request.toolUseId,
+        input: request.input, description: request.description, display_name: request.displayName,
+        auto_answer_deadline: request.autoAnswerDeadline ?? null,
+      },
+    }
+    this.notifyOutputCallbacks(sessionId, session.outputCallbacks, message)
+    if (session.teamWorker) {
+      const parent = this.sessions.get(session.teamWorker.parentSessionId)
+      if (parent) this.notifyOutputCallbacks(session.teamWorker.parentSessionId, parent.outputCallbacks, message)
+    }
   }
 
   /** Apply setting changes to questions that are already waiting. */
@@ -431,12 +496,16 @@ export class ConversationService {
       const settings = normalizeAutoQuestionSettings(
         (await new SettingsService().getUserSettings()).autoQuestion,
       )
-      if (!settings.enabled || request.autoAnswerCancelled ||
+      if (request.autoAnswerCancelled ||
         (request.autoAnswerGeneration ?? 0) !== generation || this.sessions.get(sessionId) !== session ||
         session.pendingPermissionRequests.get(requestId) !== request) return
-
-      const remainingMs = Math.max(0, (request.autoAnswerCreatedAt ?? Date.now()) +
-        settings.timeoutMinutes * 60_000 - Date.now())
+      request.autoAnswerCreatedAt ??= Date.now()
+      request.autoAnswerDeadline = settings.enabled
+        ? request.autoAnswerCreatedAt + settings.timeoutMinutes * 60_000
+        : null
+      this.publishAutoQuestionDeadline(sessionId, session, requestId, request)
+      if (request.autoAnswerDeadline === null) return
+      const remainingMs = Math.max(0, request.autoAnswerDeadline - Date.now())
       console.info(`[ConversationService] Automatic answer scheduled: session=${sessionId} request=${requestId} remainingMs=${remainingMs}`)
       request.autoAnswerTimer = setTimeout(() => {
         request.autoAnswerTimer = undefined
@@ -558,6 +627,8 @@ export class ConversationService {
     shouldResume: boolean,
     options?: SessionStartOptions,
     repository?: PreparedSessionWorkspace['repository'],
+    agentProfile: 'standard' | 'lean' = 'standard',
+    additionalDirectories: readonly string[] = [],
   ): string[] {
     const side = getSideChat(sessionId)
     const dangerousMode = process.env.CLAUDE_DANGEROUS_MODE === '1'
@@ -573,6 +644,7 @@ export class ConversationService {
 
     return this.resolveCliArgs([
       '--print',
+      '--agent-profile', agentProfile,
       '--verbose',
       '--sdk-url',
       sdkUrl,
@@ -590,7 +662,9 @@ export class ConversationService {
         '--agent-name', options.teamWorker.name,
         '--team-name', options.teamWorker.teamName,
         '--parent-session-id', options.teamWorker.parentSessionId,
-        '--agents', JSON.stringify({ [options.teamWorker.name]: { ...options.teamWorker.agentDefinition, description: 'Approved team member', prompt: options.teamWorker.systemPrompt, model: options?.model, tools: options.teamWorker.tools } }),
+        // The member process already runs on its approved provider; a preset's
+        // pinned provider must not reroute the member's own model again.
+        '--agents', JSON.stringify({ [options.teamWorker.name]: { ...options.teamWorker.agentDefinition, description: 'Approved team member', prompt: options.teamWorker.systemPrompt, model: options?.model, provider: undefined, tools: options.teamWorker.tools } }),
         '--agent', options.teamWorker.name,
         ...(Array.isArray(options.teamWorker.agentDefinition?.disallowedTools) && options.teamWorker.agentDefinition.disallowedTools.length
           ? ['--disallowedTools', options.teamWorker.agentDefinition.disallowedTools.join(',')]
@@ -603,10 +677,11 @@ export class ConversationService {
           : []),
       ] : []),
       ...worktreeArgs,
+      ...additionalDirectories.flatMap(directory => ['--add-dir', directory]),
       '--replay-user-messages',
       ...this.getRuntimeArgs(options),
       ...this.getPermissionArgs(options?.permissionMode, dangerousMode),
-    ], options?.cliRuntimeId)
+    ])
   }
 
   async startSession(
@@ -615,6 +690,7 @@ export class ConversationService {
     sdkUrl: string,
     options?: SessionStartOptions,
   ): Promise<void> {
+    migrationMaintenance.assertAvailable()
     if (this.deletedSessions.has(sessionId)) {
       throw new ConversationStartupError(
         `Session was deleted before startup completed: ${sessionId}`,
@@ -622,13 +698,26 @@ export class ConversationService {
       )
     }
     if (this.sessions.has(sessionId)) return
+    // Re-read so an edit made outside the settings API applies to new CLIs.
+    this.promptSuggestionsSettingEnabled = await new SettingsService().getNextPromptSuggestionsEnabled()
 
     const side = getSideChat(sessionId)
     if (isSideChatId(sessionId) && (!side || side.closed || side.started)) {
       throw new ConversationStartupError('This temporary side chat has expired. Open a new side chat.', 'SESSION_DELETED')
     }
+    if (options?.teamWorker && (await sessionService.getSessionLaunchInfo(options.teamWorker.parentSessionId))?.agentProfile === 'lean') {
+      throw new ConversationStartupError('Agent teams are unavailable in lean sessions', 'LEAN_CAPABILITY_UNAVAILABLE')
+    }
     const launchInfo = options?.teamWorker ? null : await sessionService.getSessionLaunchInfo(sessionId)
-    const shouldResume = !!launchInfo && launchInfo.transcriptMessageCount > 0
+    const additionalDirectories = (options?.teamWorker
+      ? (await sessionService.getSessionLaunchInfo(options.teamWorker.parentSessionId))?.additionalDirectories
+      : launchInfo?.additionalDirectories) ?? []
+    if (launchInfo?.agentProfile === 'lean' && (options?.permissionMode ?? launchInfo.permissionMode) === 'plan') {
+      throw new ConversationStartupError('Plan mode is unavailable in lean sessions. Choose another permission mode before continuing.', 'LEAN_CAPABILITY_UNAVAILABLE')
+    }
+    const shouldResume = options?.teamWorker
+      ? options.teamWorker.resume === true && !!await sessionService.findSessionFile(sessionId)
+      : !!launchInfo && launchInfo.transcriptMessageCount > 0
     const shouldReplacePlaceholder =
       !side && !!launchInfo && launchInfo.transcriptMessageCount === 0
     const shouldCreateWorktree =
@@ -661,6 +750,17 @@ export class ConversationService {
         undefined,
         launchInfo.customTitle,
       )
+      // Replacing the empty placeholder must not erase the session's runtime
+      // choice before its first turn writes a real transcript.
+      if (launchInfo.runtimeModelId) {
+        await sessionService.appendSessionMetadata(sessionId, {
+          workDir,
+          runtimeProviderId: launchInfo.runtimeProviderId,
+          runtimeModelId: launchInfo.runtimeModelId,
+          ...(launchInfo.effortLevel ? { effortLevel: launchInfo.effortLevel } : {}),
+          ...(launchInfo.openAIFastMode !== undefined ? { openAIFastMode: launchInfo.openAIFastMode } : {}),
+        })
+      }
     }
 
     let launchWorkDir = workDir
@@ -694,16 +794,12 @@ export class ConversationService {
       )
     }
 
-    if (options?.providerId === null) {
-      try {
-        await assertDirectTransportAllowed()
-      } catch (error) {
-        throw new ConversationStartupError(
-          error instanceof Error ? error.message : 'Local redaction is enabled; direct OAuth transport is unavailable',
-          'LOCAL_REDACTION_REQUIRED',
-        )
-      }
-    }
+    // `--resume` finds the conversation only from the folder that holds it.
+    // After EnterWorktree that is not where the CLI works; the resumed CLI
+    // re-enters the worktree itself from the transcript's worktree state.
+    const cliCwd = shouldResume && !side && !options?.teamWorker
+      ? await sessionService.resolveResumeLaunchDir(sessionId, launchWorkDir)
+      : launchWorkDir
 
     const args = this.buildSessionCliArgs(
       sessionId,
@@ -711,10 +807,12 @@ export class ConversationService {
       shouldResume,
       options,
       launchRepository,
+      launchInfo?.agentProfile ?? 'standard',
+      additionalDirectories,
     )
 
     console.log(
-      `[ConversationService] Starting CLI for ${sessionId}, cwd: ${launchWorkDir} (process.cwd()=${process.cwd()}, CALLER_DIR will be pinned to workDir)`,
+      `[ConversationService] Starting CLI for ${sessionId}, cwd: ${cliCwd} (process.cwd()=${process.cwd()}, CALLER_DIR will be pinned to workDir)`,
     )
 
     // IMPORTANT (Bug#5): 必须覆盖子进程继承的 CALLER_DIR / PWD。
@@ -731,10 +829,11 @@ export class ConversationService {
     const networkRuntimeMetadata = {
       firstTokenTimeoutDerived: false,
       streamMaxDurationDerived: false,
+      toolInputDurationDerived: false,
     }
     const providerCapture: { fingerprint?: string } = {}
     const childEnv = await this.buildChildEnv(
-      launchWorkDir,
+      cliCwd,
       sdkUrl,
       options,
       networkSettings,
@@ -745,23 +844,44 @@ export class ConversationService {
       delete childEnv.CLAUDE_CODE_SUBAGENT_MODEL
       delete childEnv.CLAUDE_CODE_EFFORT_LEVEL
       delete childEnv.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
-      childEnv.ECHOFLOW_TEAM_WORKER = '1'
-      childEnv.ECHOFLOW_TEAM_WORKER_PRESET_TYPE = typeof options.teamWorker.agentDefinition?.agentType === 'string' ? options.teamWorker.agentDefinition.agentType : options.teamWorker.name
-      childEnv.ECHOFLOW_TEAM_WORKER_PRESET_SOURCE = typeof options.teamWorker.agentDefinition?.source === 'string' ? options.teamWorker.agentDefinition.source : 'flagSettings'
-      childEnv.ECHOFLOW_TEAM_WORKER_OMIT_CLAUDE_MD = options.teamWorker.agentDefinition?.omitClaudeMd === true ? '1' : '0'
-      childEnv.ECHOFLOW_TRANSCRIPT_ENTRYPOINT = 'claude-desktop-team-worker'
+      childEnv.CC_HAHA_TEAM_WORKER = '1'
+      childEnv.CC_HAHA_TEAM_WORKER_PRESET_TYPE = typeof options.teamWorker.agentDefinition?.agentType === 'string' ? options.teamWorker.agentDefinition.agentType : options.teamWorker.name
+      childEnv.CC_HAHA_TEAM_WORKER_PRESET_SOURCE = typeof options.teamWorker.agentDefinition?.source === 'string' ? options.teamWorker.agentDefinition.source : 'flagSettings'
+      childEnv.CC_HAHA_TEAM_WORKER_OMIT_CLAUDE_MD = options.teamWorker.agentDefinition?.omitClaudeMd === true ? '1' : '0'
+      childEnv.CC_HAHA_TRANSCRIPT_ENTRYPOINT = 'claude-desktop-team-worker'
     }
     if (side) {
       delete childEnv.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
-      delete childEnv.ECHOFLOW_TRACE_API_CALLS
+      delete childEnv.CC_HAHA_TRACE_API_CALLS
       delete childEnv.CLAUDE_CODE_DIAGNOSTICS_FILE
     }
     if (side?.closed) throw new ConversationStartupError('This temporary side chat has expired. Open a new side chat.', 'SESSION_DELETED')
+    // A delete can land during any await above (transcript reset, workspace,
+    // network settings, child env); spawning now would start a CLI for a
+    // session that no longer exists.
+    if (this.deletedSessions.has(sessionId)) {
+      throw new ConversationStartupError(
+        `Session was deleted before startup completed: ${sessionId}`,
+        'SESSION_DELETED',
+      )
+    }
     const usesOfficialOAuth = this.shouldMarkManagedOAuth(options?.providerId)
 
     let proc: ReturnType<typeof Bun.spawn>
+    migrationMaintenance.assertAvailable()
+    // Another start registered a CLI for this session while this one was
+    // awaiting. Overwriting the entry would leave that process running with
+    // no owner, so retire it the way a runtime restart does (approved team
+    // members keep running) and continue with this newer start.
+    const registered = this.sessions.get(sessionId)
+    if (registered) {
+      console.warn(
+        `[ConversationService] Replacing CLI pid ${registered.proc.pid} for ${sessionId}: a newer start reached spawn`,
+      )
+      this.stopSession(sessionId, { keepTeamWorkers: true })
+    }
     try {
-      proc = Bun.spawn(args, buildConversationCliSpawnOptions(launchWorkDir, childEnv))
+      proc = Bun.spawn(args, buildConversationCliSpawnOptions(cliCwd, childEnv))
       if (side) side.started = true
     } catch (spawnErr) {
       void diagnosticsService.recordEvent({
@@ -778,7 +898,7 @@ export class ConversationService {
         },
       })
       throw new ConversationStartupError(
-        `Failed to spawn CLI in ${launchWorkDir}: ${
+        `Failed to spawn CLI in ${cliCwd}: ${
           spawnErr instanceof Error ? spawnErr.message : String(spawnErr)
         }`,
         'CLI_SPAWN_FAILED',
@@ -796,10 +916,23 @@ export class ConversationService {
       workDir: launchWorkDir,
       permissionMode: options?.permissionMode || 'default',
       providerId: options?.providerId,
+      runtimeSelection: options?.model ? {
+        providerId: options.providerId ?? null, modelId: options.model,
+        ...(options.effort ? { effortLevel: options.effort } : {}),
+        ...(options.openAIFastMode !== undefined ? { openAIFastMode: options.openAIFastMode } : {}),
+      } : undefined,
       providerConfigFingerprint: providerCapture.fingerprint,
+      ...(typeof options?.providerId === 'string' && {
+        providerAuth: {
+          baseUrl: childEnv.ANTHROPIC_BASE_URL ?? '',
+          apiKey: childEnv.ANTHROPIC_API_KEY ?? '',
+          authToken: childEnv.ANTHROPIC_AUTH_TOKEN ?? '',
+        },
+      }),
       networkRoutingFingerprint: networkRoutingFingerprint(networkSettings, childEnv),
       networkDerivedFirstTokenTimeout: networkRuntimeMetadata.firstTokenTimeoutDerived,
       networkDerivedStreamMaxDuration: networkRuntimeMetadata.streamMaxDurationDerived,
+      networkDerivedToolInputDuration: networkRuntimeMetadata.toolInputDurationDerived,
       sdkToken: this.getSdkTokenFromUrl(sdkUrl),
       sdkSocket: null,
       seenSdkMessageUuids: new Set<string>(),
@@ -816,12 +949,12 @@ export class ConversationService {
       initMessage: null,
       usesOfficialOAuth,
       officialOAuthToken: childEnv.CLAUDE_CODE_OAUTH_TOKEN ?? null,
-      cliRuntimeId: resolveClaudeCodeRuntimeId(options?.cliRuntimeId) ?? 'bundled',
       pendingPermissionRequests: new Map(),
       autoResolvedRequestIds: new Set(),
       pendingControlRequests: new Map(),
     }
     this.sessions.set(sessionId, session)
+    this.syncPromptSuggestions(sessionId)
 
     session.outputDrain = Promise.all([
       this.readProcessOutputStream(sessionId, proc.stdout, 'stdout'),
@@ -842,6 +975,15 @@ export class ConversationService {
       ),
     ])
     if (startupGraceTimer) clearTimeout(startupGraceTimer)
+
+    const currentSession = this.sessions.get(sessionId)
+    if (currentSession && currentSession !== session) {
+      // A newer start retired this process while it was still starting and
+      // now owns the session. Its exit is not a startup failure: tearing down,
+      // retrying or writing metadata here would act on the newer CLI.
+      console.log(`[ConversationService] CLI startup for ${sessionId} was superseded by a newer start`)
+      return
+    }
 
     const startupExitCode = earlyExitCode ?? session.startupExitCode
     if (startupExitCode !== null) {
@@ -885,8 +1027,7 @@ export class ConversationService {
     const shouldPersistRuntimeMetadata =
       options?.providerId !== undefined ||
       !!options?.model ||
-      !!options?.effort ||
-      options?.persistCliRuntimeId === true
+      !!options?.effort
     if (!options?.teamWorker && (shouldReplacePlaceholder || !launchInfo || shouldPersistRuntimeMetadata)) {
       // system/init can move a newly-created session into its worktree while
       // startup is still awaiting the SDK. Once that authoritative cwd is
@@ -894,6 +1035,7 @@ export class ConversationService {
       const metadataWorkDir = this.getSessionWorkDir(sessionId) || launchWorkDir
       await sessionService.appendSessionMetadata(sessionId, {
         workDir: metadataWorkDir,
+        additionalDirectories,
         customTitle: launchInfo?.customTitle ?? null,
         repository: launchRepository,
         permissionMode: options?.permissionMode || launchInfo?.permissionMode,
@@ -902,13 +1044,30 @@ export class ConversationService {
           : {}),
         ...(options?.model ? { runtimeModelId: options.model } : {}),
         ...(options?.effort ? { effortLevel: options.effort } : {}),
-        ...(options?.persistCliRuntimeId && options.cliRuntimeId
-          ? { cliRuntimeId: options.cliRuntimeId }
-          : {}),
       })
+      // Startup resumes once the SDK socket attaches, usually before init, so
+      // init can move the session while this write is in flight. If it lands
+      // after init's own write, restore init's cwd and drop the placeholder.
+      const initWorkDir = this.getSessionWorkDir(sessionId)
+      if (initWorkDir && initWorkDir !== metadataWorkDir) {
+        await sessionService.appendSessionMetadata(sessionId, { workDir: initWorkDir })
+        await sessionService.deletePlaceholderSessionFiles(sessionId, initWorkDir)
+      }
     }
 
     console.log(`[ConversationService] CLI started successfully for ${sessionId}`)
+    for (const listener of this.teamRuntimeListeners) {
+      try {
+        listener.sessionStarted?.(sessionId, { isTeamWorker: Boolean(options?.teamWorker) })
+      } catch (error) {
+        console.error('[ConversationService] Team runtime start hook failed', error)
+      }
+    }
+  }
+
+  addTeamRuntimeListener(listener: TeamRuntimeListener): () => void {
+    this.teamRuntimeListeners.add(listener)
+    return () => this.teamRuntimeListeners.delete(listener)
   }
 
   onOutput(sessionId: string, callback: (msg: any) => void): void {
@@ -945,20 +1104,25 @@ export class ConversationService {
     attachments?: AttachmentRef[],
     options?: SendMessageOptions,
   ): Promise<boolean> {
+    if (migrationMaintenance.isActive) return false
     const userContent = await this.buildUserContent(content, sessionId, attachments)
     let session = this.sessions.get(sessionId)
     if (session && !await this.refreshNetworkEnvironmentBeforeTurn(sessionId, session)) {
       return false
     }
     session = this.sessions.get(sessionId)
+    if (session && !await this.refreshProviderCredentialsBeforeTurn(sessionId, session)) {
+      return false
+    }
+    session = this.sessions.get(sessionId)
     if (session) {
       await this.refreshOfficialOAuthTokenBeforeTurn(sessionId, session)
     }
-    // Building attachments, refreshing network settings, and refreshing OAuth
+    // Building attachments and refreshing network settings or credentials
     // can all suspend this call. Stop may revoke the owning desktop turn while
     // one of those awaits is pending, so check ownership at the last possible
     // point before writing the user message to the SDK socket.
-    if (options?.canSend && !options.canSend()) return false
+    if (migrationMaintenance.isActive || (options?.canSend && !options.canSend())) return false
     const sent = this.sendSdkMessage(sessionId, {
       type: 'user',
       ...(options?.messageUuid ? { uuid: options.messageUuid } : {}),
@@ -968,8 +1132,35 @@ export class ConversationService {
       },
       parent_tool_use_id: null,
       session_id: '',
+      ...(options?.synthetic ? { isSynthetic: true } : {}),
     })
     if (sent) options?.onCommitted?.()
+    return sent
+  }
+
+  private async refreshProviderCredentialsBeforeTurn(
+    sessionId: string,
+    session: SessionProcess,
+  ): Promise<boolean> {
+    if (!session.providerId || !session.providerAuth) return true
+    let env: Record<string, string>
+    try {
+      env = await this.providerService.getProviderRuntimeEnv(session.providerId)
+    } catch {
+      // A removed provider must not silently switch this session to another one.
+      return this.sessions.get(sessionId) === session
+    }
+    if (this.sessions.get(sessionId) !== session) return false
+    // A credential saved for a new address must never reach the old endpoint.
+    if ((env.ANTHROPIC_BASE_URL ?? '') !== session.providerAuth.baseUrl) return true
+    const apiKey = env.ANTHROPIC_API_KEY ?? ''
+    const authToken = env.ANTHROPIC_AUTH_TOKEN ?? ''
+    if (apiKey === session.providerAuth.apiKey && authToken === session.providerAuth.authToken) return true
+    const sent = this.sendSdkMessage(sessionId, {
+      type: 'update_environment_variables',
+      variables: { ANTHROPIC_API_KEY: apiKey, ANTHROPIC_AUTH_TOKEN: authToken },
+    })
+    if (sent) session.providerAuth = { ...session.providerAuth, apiKey, authToken }
     return sent
   }
 
@@ -977,7 +1168,15 @@ export class ConversationService {
     sessionId: string,
     session: SessionProcess,
   ): Promise<boolean> {
-    const settings = await loadNetworkSettings()
+    // The session may pin a provider whose proxy override diverges from the
+    // global network settings; the hot update must keep honoring it.
+    const sessionProvider = session.providerId
+      ? await this.providerService.getProvider(session.providerId).catch(() => null)
+      : null
+    const settings = resolveProviderNetworkSettings(
+      await loadNetworkSettings(),
+      sessionProvider?.proxy,
+    )
     const baseEnv = await getProcessEnvWithTerminalShellEnvironment()
     const networkEnv = buildNetworkEnvironment(settings, baseEnv)
     const fingerprint = networkRoutingFingerprint(settings, {
@@ -1010,6 +1209,12 @@ export class ConversationService {
       )
     }
 
+    if (session.networkDerivedToolInputDuration) {
+      variables.CLAUDE_STREAM_TOOL_INPUT_MAX_DURATION_MS = String(
+        resolveStreamToolInputDurationMs(networkEnv.API_TIMEOUT_MS),
+      )
+    }
+
     const sent = this.sendSdkMessage(sessionId, {
       type: 'update_environment_variables',
       variables,
@@ -1037,7 +1242,7 @@ export class ConversationService {
     const pendingRequest = session?.pendingPermissionRequests.get(requestId)
     this.clearAutoAnswerWait(pendingRequest)
     if (session) {
-      session.pendingPermissionRequests.delete(requestId)
+      if (session.pendingPermissionRequests.delete(requestId)) powerActivityClock.changed()
     }
 
     return this.sendSdkMessage(sessionId, {
@@ -1082,6 +1287,7 @@ export class ConversationService {
   }
 
   async setPermissionMode(sessionId: string, mode: string, timeoutMs = 10_000): Promise<boolean> {
+    if (mode === 'plan' && (await sessionService.getSessionLaunchInfo(sessionId))?.agentProfile === 'lean') throw new Error('Plan mode is unavailable in lean sessions. Choose another permission mode.')
     if (!this.sessions.has(sessionId)) return false
     this.trackPendingPermissionModeChange(sessionId, mode, 1)
 
@@ -1164,12 +1370,24 @@ export class ConversationService {
    * race-free (unlike sending it after the allow response).
    */
   async setModel(sessionId: string, model: string, timeoutMs = 10_000): Promise<boolean> {
-    if (!this.sessions.has(sessionId)) return false
+    const session = this.sessions.get(sessionId)
+    if (!session) return false
     await this.requestControl(sessionId, {
       subtype: 'set_model',
       model,
     }, timeoutMs)
-    return this.sessions.has(sessionId)
+    if (this.sessions.get(sessionId) !== session) return false
+    session.runtimeSelection = { ...session.runtimeSelection, providerId: session.providerId ?? null, modelId: model }
+    return true
+  }
+
+  /** The process's acknowledged runtime, unaffected by a queued next-turn selection. */
+  getSessionRuntimeSelection(sessionId: string): SessionRuntimeSelection | undefined {
+    const session = this.sessions.get(sessionId)
+    if (!session) return undefined
+    const modelId = session.runtimeSelection?.modelId ?? session.initMessage?.model
+    if (typeof modelId !== 'string' || !modelId) return undefined
+    return { ...session.runtimeSelection, providerId: session.providerId ?? null, modelId }
   }
 
   setMaxThinkingTokens(sessionId: string, maxThinkingTokens: number | null): boolean {
@@ -1180,6 +1398,40 @@ export class ConversationService {
         subtype: 'set_max_thinking_tokens',
         max_thinking_tokens: maxThinkingTokens,
       },
+    })
+  }
+
+  /**
+   * Next-prompt suggestions cost one extra model request per turn, so the CLI
+   * only generates them while the user setting is on and a client that can
+   * show them (the desktop composer) is watching the session. IM adapters,
+   * the phone app and team workers never trigger the extra request.
+   */
+  setPromptSuggestionClientPresent(sessionId: string, present: boolean): void {
+    if (present) this.promptSuggestionClientSessions.add(sessionId)
+    else this.promptSuggestionClientSessions.delete(sessionId)
+    this.syncPromptSuggestions(sessionId)
+  }
+
+  async refreshPromptSuggestionsSetting(): Promise<void> {
+    this.promptSuggestionsSettingEnabled = await new SettingsService().getNextPromptSuggestionsEnabled()
+    for (const sessionId of this.sessions.keys()) {
+      this.syncPromptSuggestions(sessionId)
+    }
+  }
+
+  private syncPromptSuggestions(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    const enabled = this.promptSuggestionsSettingEnabled &&
+      !session.teamWorker &&
+      this.promptSuggestionClientSessions.has(sessionId)
+    if ((session.promptSuggestionsEnabled ?? false) === enabled) return
+    session.promptSuggestionsEnabled = enabled
+    this.sendSdkMessage(sessionId, {
+      type: 'control_request',
+      request_id: crypto.randomUUID(),
+      request: { subtype: 'set_prompt_suggestions', enabled },
     })
   }
 
@@ -1194,22 +1446,37 @@ export class ConversationService {
   }
 
   sendInterrupt(sessionId: string): boolean {
+    // Stop ends all team activity immediately, but an approved team that is
+    // already working is paused rather than destroyed: the runtime marks its
+    // members as user-stopped before their processes die, and a later message
+    // from the lead or the user resumes each member from its own transcript.
+    let pausedTeam = false
+    for (const listener of this.teamRuntimeListeners) {
+      try {
+        if (listener.leadInterrupted?.(sessionId) === true) pausedTeam = true
+      } catch (error) {
+        console.error('[ConversationService] Team runtime interrupt hook failed', error)
+      }
+    }
     for (const [childId, child] of this.sessions) {
       if (child.teamWorker?.parentSessionId === sessionId) this.stopSession(childId)
     }
     const stop = (this.teamStopOperations.get(sessionId) ?? Promise.resolve()).then(async () => {
       const runtime = await import('./teamPlanRuntime.js')
-      await runtime.stopTeamPlanRuntimesForParent(sessionId)
+      await runtime.stopTeamPlanRuntimesForParent(sessionId, { pauseReleased: true })
     }).catch(error => {
       console.error('[ConversationService] Failed to revoke interrupted team launch', error)
     }).finally(() => {
       if (this.teamStopOperations.get(sessionId) === stop) this.teamStopOperations.delete(sessionId)
     })
     this.teamStopOperations.set(sessionId, stop)
+    // A paused team's lead also holds the mail its members sent before the
+    // Stop until the user speaks again; acting on it would start lead turns,
+    // and restart members, that the user just stopped.
     return this.sendSdkMessage(sessionId, {
       type: 'control_request',
       request_id: crypto.randomUUID(),
-      request: { subtype: 'interrupt' },
+      request: { subtype: pausedTeam ? 'team_plan_pause' : 'interrupt' },
     })
   }
 
@@ -1249,6 +1516,7 @@ export class ConversationService {
     timeoutMs = 10_000,
     signal?: AbortSignal,
     canSend?: () => boolean,
+    beforeSend?: () => Promise<boolean>,
   ): Promise<Record<string, unknown>> {
     if (signal?.aborted) {
       return Promise.reject(controlRequestAbortReason(signal))
@@ -1263,6 +1531,22 @@ export class ConversationService {
     if (!session) {
       throw new Error('CLI session is not running')
     }
+    if (request.subtype === 'enqueue_scheduled_task') {
+      // Scheduled work starts a user turn through the control channel. A live
+      // CLI must receive changed provider proxy/timeouts just like sendMessage.
+      // Refresh before the durable delivery receipt, and recheck ownership after
+      // the asynchronous settings read so cancellation cannot enqueue stale work.
+      if (signal?.aborted) throw controlRequestAbortReason(signal)
+      if (canSend && !canSend()) throw new Error('Scheduled delivery was cancelled')
+      if (!await this.refreshNetworkEnvironmentBeforeTurn(sessionId, session)) {
+        throw new Error('CLI session is not running')
+      }
+      if (signal?.aborted) throw controlRequestAbortReason(signal)
+      if (this.sessions.get(sessionId) !== session || (canSend && !canSend())) {
+        throw new Error('Scheduled delivery was cancelled')
+      }
+    }
+    if (beforeSend && !await beforeSend()) throw new Error('Scheduled task changed before delivery')
     const responseTimeoutMs = Math.max(1, timeoutMs - (Date.now() - startedAt))
     const requestId = crypto.randomUUID()
     return new Promise((resolve, reject) => {
@@ -1334,13 +1618,14 @@ export class ConversationService {
     return this.sessions.has(sessionId)
   }
 
+  /** Team workers report through their lead: their requests already count there. */
+  isTeamWorkerSession(sessionId: string): boolean {
+    return Boolean(this.sessions.get(sessionId)?.teamWorker)
+  }
+
   getSessionWorkDir(sessionId: string): string {
     const session = this.sessions.get(sessionId)
     return session?.workDir || ''
-  }
-
-  getSessionCliRuntimeId(sessionId: string): ClaudeCodeRuntimeId | undefined {
-    return this.sessions.get(sessionId)?.cliRuntimeId
   }
 
   updateSessionWorkDir(sessionId: string, workDir: string): void {
@@ -1366,6 +1651,7 @@ export class ConversationService {
       input: request.input,
       ...(request.description ? { description: request.description } : {}),
       ...(request.displayName ? { displayName: request.displayName } : {}),
+      ...(request.autoAnswerDeadline !== undefined ? { autoAnswerDeadline: request.autoAnswerDeadline } : {}),
     }))
   }
 
@@ -1452,6 +1738,13 @@ export class ConversationService {
       try {
         const msg = JSON.parse(line)
         if (this.isReplayedSdkMessage(session, msg)) continue
+        if (msg?.type === 'system' && msg.subtype === 'prompt_suggestion_activity') {
+          const activity = SDKPromptSuggestionActivityMessageSchema().safeParse(msg)
+          if (activity.success) {
+            this.trackPromptSuggestionActivity(session, activity.data.generation_id, activity.data.active)
+          }
+          continue
+        }
         if (
           msg?.type === 'system' &&
           msg.subtype === 'api_retry' &&
@@ -1476,11 +1769,23 @@ export class ConversationService {
         if (sdkError) {
           void diagnosticsService.recordEvent({
             type: sdkError.type,
-            severity: 'error',
+            // A retry the CLI is still attempting is a recoverable state, not an error; the
+            // exhausted request is recorded separately as an error.
+            severity: sdkError.type === 'sdk_api_retry' ? 'info' : 'error',
             sessionId,
             summary: sdkError.summary,
             details: sdkError.details,
           })
+          if (sdkError.type === 'sdk_api_retry') {
+            void traceCaptureService.recordEvent({
+              sessionId,
+              phase: 'api_retry',
+              severity: 'warning',
+              title: 'API request retry',
+              message: sdkError.summary,
+              metadata: sdkError.details,
+            }).catch(() => {})
+          }
         }
         if (msg?.type === 'system' && msg.subtype === 'init') {
           session.initMessage = msg
@@ -1522,6 +1827,7 @@ export class ConversationService {
           }
           this.clearAutoAnswerWait(session.pendingPermissionRequests.get(msg.request_id))
           session.pendingPermissionRequests.set(msg.request_id, request)
+          powerActivityClock.changed()
           void this.scheduleAutoQuestionAnswer(sessionId, session, msg.request_id, request)
         }
         if (
@@ -1529,14 +1835,14 @@ export class ConversationService {
           typeof msg.request_id === 'string'
         ) {
           this.clearAutoAnswerWait(session.pendingPermissionRequests.get(msg.request_id))
-          session.pendingPermissionRequests.delete(msg.request_id)
+          if (session.pendingPermissionRequests.delete(msg.request_id)) powerActivityClock.changed()
         }
         if (
           msg?.type === 'control_response' &&
           typeof msg.response?.request_id === 'string'
         ) {
           this.clearAutoAnswerWait(session.pendingPermissionRequests.get(msg.response.request_id))
-          session.pendingPermissionRequests.delete(msg.response.request_id)
+          if (session.pendingPermissionRequests.delete(msg.response.request_id)) powerActivityClock.changed()
         }
         if (session.teamWorker && msg?.type === 'control_request' && msg.request?.subtype === 'can_use_tool') {
           const parent = this.sessions.get(session.teamWorker.parentSessionId)
@@ -1551,6 +1857,33 @@ export class ConversationService {
         )
       }
     }
+  }
+
+  hasPromptSuggestionPowerActivity(): boolean {
+    return this.promptSuggestionWorkOwners.size > 0
+  }
+
+  private trackPromptSuggestionActivity(session: SessionProcess, generationId: string, active: boolean): void {
+    if (session.promptSuggestionExited || session.proc.exitCode != null) return
+    if (!session.promptSuggestionGenerations) {
+      if (!active) return
+      session.promptSuggestionGenerations = new Set()
+      void session.proc.exited.then(() => {
+        session.promptSuggestionExited = true
+        session.promptSuggestionGenerations?.clear()
+        if (this.promptSuggestionWorkOwners.delete(session)) powerActivityClock.changed()
+      }, () => {})
+    }
+    const generations = session.promptSuggestionGenerations
+    if (active) {
+      if (generations.has(generationId)) return
+      generations.add(generationId)
+      this.promptSuggestionWorkOwners.add(session)
+    } else {
+      if (!generations.delete(generationId)) return
+      if (generations.size === 0) this.promptSuggestionWorkOwners.delete(session)
+    }
+    powerActivityClock.changed()
   }
 
   private notifyOutputCallbacks(
@@ -1680,9 +2013,16 @@ export class ConversationService {
     pending.clear()
   }
 
-  stopSession(sessionId: string): void {
-    for (const [childId, child] of this.sessions) {
-      if (child.teamWorker?.parentSessionId === sessionId) this.stopSession(childId)
+  /**
+   * `keepTeamWorkers` is for restarting a lead's process (runtime or
+   * permission change): approved team members are independent processes and
+   * keep working while the lead's process is replaced.
+   */
+  stopSession(sessionId: string, options?: { keepTeamWorkers?: boolean }): void {
+    if (!options?.keepTeamWorkers) {
+      for (const [childId, child] of this.sessions) {
+        if (child.teamWorker?.parentSessionId === sessionId) this.stopSession(childId)
+      }
     }
     const session = this.sessions.get(sessionId)
     if (!session) return
@@ -1696,17 +2036,21 @@ export class ConversationService {
   async stopSessionAndWait(
     sessionId: string,
     timeoutMs = DESKTOP_CLI_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+    options?: { keepTeamWorkers?: boolean; requireExit?: boolean },
   ): Promise<void> {
-    for (const [childId, child] of this.sessions) {
-      if (child.teamWorker?.parentSessionId === sessionId) await this.stopSessionAndWait(childId, timeoutMs)
+    if (!options?.keepTeamWorkers) {
+      for (const [childId, child] of this.sessions) {
+        if (child.teamWorker?.parentSessionId === sessionId) await this.stopSessionAndWait(childId, timeoutMs, options)
+      }
     }
     const session = this.sessions.get(sessionId)
     if (!session) return
 
     this.cancelPendingControlRequests(session)
     this.clearSessionAutoAnswerWaits(session)
-    this.sessions.delete(sessionId)
-    await this.stopProcessAndWait(sessionId, session, timeoutMs)
+    if (!options?.requireExit) this.sessions.delete(sessionId)
+    await this.stopProcessAndWait(sessionId, session, timeoutMs, options?.requireExit)
+    if (this.sessions.get(sessionId) === session) this.sessions.delete(sessionId)
   }
 
   stopAllSessions(): void {
@@ -1736,24 +2080,53 @@ export class ConversationService {
     sessionId: string,
     session: SessionProcess,
     timeoutMs: number,
+    requireExit = false,
   ): Promise<void> {
     this.killProcess(sessionId, session, 'SIGTERM')
 
     const exited = await Promise.race([
-      session.proc.exited.then(() => true, () => true),
+      session.proc.exited.then(() => true, () => !requireExit),
       new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
     ])
     if (!exited) {
       this.killProcess(sessionId, session, 'SIGKILL')
-      await Promise.race([
-        session.proc.exited.catch(() => undefined),
-        new Promise<void>((resolve) => setTimeout(resolve, 500)),
+      const killed = await Promise.race([
+        session.proc.exited.then(() => true, () => !requireExit),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
       ])
+      if (requireExit && !killed) throw new Error(`CLI process did not confirm exit for session: ${sessionId}`)
     }
     await this.waitForProcessOutputDrain(session, timeoutMs)
   }
 
   private killProcess(
+    sessionId: string,
+    session: SessionProcess,
+    signal?: NodeJS.Signals,
+  ): void {
+    const platform = this.processDeps.platform ?? process.platform
+    const pid = session.proc.pid
+    if (platform === 'win32' && pid > 0 && session.proc.exitCode == null) {
+      // Windows has no signals: proc.kill() is TerminateProcess on the CLI
+      // alone. Its MCP servers (`cmd /c npx …` → node), shells and their
+      // children survive it and lose the parent link that `taskkill /T`
+      // follows, so the tree must be stopped while the CLI still anchors it.
+      void killWindowsProcessTree(pid, {
+        env: this.processDeps.env,
+        spawn: this.processDeps.spawnTaskkill,
+      }).then((stopped) => {
+        if (stopped) return
+        console.warn(
+          `[ConversationService] taskkill could not stop the CLI process tree for ${sessionId}; terminating the CLI only`,
+        )
+        this.signalProcess(sessionId, session, signal)
+      })
+      return
+    }
+    this.signalProcess(sessionId, session, signal)
+  }
+
+  private signalProcess(
     sessionId: string,
     session: SessionProcess,
     signal?: NodeJS.Signals,
@@ -1793,6 +2166,26 @@ export class ConversationService {
 
   getActiveSessions(): string[] {
     return Array.from(this.sessions.keys())
+  }
+
+  hasPendingTeamStops(): boolean { return this.teamStopOperations.size > 0 }
+
+  getProcessIds(): number[] {
+    return [...this.sessions.values()].map(session => session.proc.pid).filter(pid => pid > 0)
+  }
+
+  async stopForMigration(): Promise<void> {
+    const sessions = [...this.sessions.entries()]
+    await Promise.all(sessions.map(async ([sessionId, session]) => {
+      if (session.proc.exitCode == null) {
+        await this.requestControl(sessionId, { subtype: 'end_session', reason: 'data_migration' }, 10_000)
+      }
+      const exited = await waitForMigrationExit(session.proc.exited)
+      if (!exited) throw new Error(`CLI process did not exit: ${sessionId}`)
+      await session.outputDrain
+      this.sessions.delete(sessionId)
+    }))
+    await Promise.all([...this.teamStopOperations.values()])
   }
 
   private async readProcessOutputStream(
@@ -1878,19 +2271,27 @@ export class ConversationService {
 
     const activeSession = this.sessions.get(sessionId)
     if (activeSession?.proc === proc) {
-      for (const [childId, child] of this.sessions) {
-        if (child.teamWorker?.parentSessionId === sessionId) this.stopSession(childId)
-      }
-      this.cancelPendingControlRequests(
-        activeSession,
-        new Error('CLI session exited before the control request completed'),
-      )
+      // A lead process that dies on its own (crash, OOM, provider SDK fault)
+      // must not take its approved team with it: members are independent
+      // processes, their messages queue in the lead's mailbox, and the next
+      // lead start receives the team snapshot again. Explicit stops (close,
+      // delete, /clear) still stop workers through stopSession.
       if (activeSession.startupPending) {
+        this.cancelPendingControlRequests(
+          activeSession,
+          new Error('CLI session exited before the control request completed'),
+        )
         activeSession.startupExitCode = code
         return
       }
       await this.waitForProcessOutputDrain(activeSession)
       const exitError = this.buildRuntimeExitMessage(sessionId, code)
+      // A caller waiting on the process (a team member's startup) has to say
+      // why it is gone, not only that it is.
+      this.cancelPendingControlRequests(
+        activeSession,
+        new Error(`CLI session exited before the control request completed. ${exitError}`),
+      )
       void diagnosticsService.recordEvent({
         type: 'cli_runtime_exit',
         severity: cliExitSeverity(code),
@@ -1965,12 +2366,13 @@ export class ConversationService {
     networkRuntimeMetadata?: {
       firstTokenTimeoutDerived: boolean
       streamMaxDurationDerived: boolean
+      toolInputDurationDerived: boolean
     },
     providerCapture?: { fingerprint?: string },
   ): Promise<Record<string, string>> {
     // Provider isolation: when Desktop has its own provider config/index,
     // strip inherited provider env vars so the child CLI reads fresh values
-    // from EchoFlow-managed settings instead of stale process.env.
+    // from ~/.claude/cc-haha/settings.json instead of stale process.env.
     //
     // If the user never configured a Desktop provider and only launched the
     // app/server with ANTHROPIC_* env vars, keep those env vars so Windows
@@ -1991,16 +2393,20 @@ export class ConversationService {
       'ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES',
       'ANTHROPIC_DEFAULT_OPUS_MODEL',
       'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
-      ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+      'CC_HAHA_SEND_DISABLED_THINKING',
       'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
       'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
       'CLAUDE_CODE_ATTRIBUTION_HEADER',
       'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',
       OPENAI_OAUTH_PROVIDER_ENV_KEY,
-          OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
+      OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
       OPENAI_CODEX_REASONING_EFFORT_ENV_KEY,
+      'CC_HAHA_OPENAI_FAST_MODE',
       GROK_OAUTH_PROVIDER_ENV_KEY,
       GROK_OAUTH_FILE_ENV_KEY,
+      GROK_MODEL_CATALOG_ENV_KEY,
+      DEEPSEEK_OAUTH_PROVIDER_ENV_KEY,
+      DEEPSEEK_OAUTH_FILE_ENV_KEY,
       IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY,
       IMAGE_GENERATION_PROVIDER_ID_ENV_KEY,
       IMAGE_GENERATION_BASE_URL_ENV_KEY,
@@ -2014,22 +2420,20 @@ export class ConversationService {
         !cleanEnv.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS
       networkRuntimeMetadata.streamMaxDurationDerived =
         !cleanEnv.CLAUDE_STREAM_MAX_DURATION_MS
+      networkRuntimeMetadata.toolInputDurationDerived =
+        !cleanEnv.CLAUDE_STREAM_TOOL_INPUT_MAX_DURATION_MS
     }
-    delete cleanEnv.ECHOFLOW_SESSION_COLLABORATION_TOKEN
-    delete cleanEnv.ECHOFLOW_SESSION_ID
+    delete cleanEnv.CC_HAHA_SESSION_COLLABORATION_TOKEN
+    delete cleanEnv.CC_HAHA_SESSION_ID
     delete cleanEnv.CLAUDE_CODE_OAUTH_TOKEN
-    for (const key of DESKTOP_BRIDGE_ENV_KEYS) {
-      delete cleanEnv[key]
-    }
-    for (const key of CHILD_PROCESS_SECRET_ENV_KEYS) {
-      delete cleanEnv[key]
-    }
+    delete cleanEnv.CLAUDE_CODE_ACCOUNT_UUID
+    delete cleanEnv.CC_HAHA_OPENAI_FAST_MODE
     if (options?.resumeInterruptedTurn === false) {
       delete cleanEnv.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
     }
-    delete cleanEnv.ECHOFLOW_TRACE_PROVIDER_ID
-    delete cleanEnv.ECHOFLOW_TRACE_PROVIDER_NAME
-    delete cleanEnv.ECHOFLOW_TRACE_PROVIDER_FORMAT
+    delete cleanEnv.CC_HAHA_TRACE_PROVIDER_ID
+    delete cleanEnv.CC_HAHA_TRACE_PROVIDER_NAME
+    delete cleanEnv.CC_HAHA_TRACE_PROVIDER_FORMAT
     if (this.shouldStripInheritedProviderEnv(options?.providerId)) {
       for (const key of PROVIDER_ENV_KEYS) {
         delete cleanEnv[key]
@@ -2046,6 +2450,11 @@ export class ConversationService {
       }
     }
 
+    // A Magpie session runs any model in Magpie's catalog; write the catalog's
+    // current windows and reply limits back first so the env built below carries them.
+    await this.providerService.refreshMagpieProvider(
+      typeof options?.providerId === 'string' ? options.providerId : null,
+    )
     const explicitProvider =
       typeof options?.providerId === 'string'
         ? await this.providerService.getProvider(options.providerId)
@@ -2056,8 +2465,12 @@ export class ConversationService {
     const explicitProviderEnv = explicitProvider
       ? await this.providerService.getProviderRuntimeEnv(explicitProvider.id)
       : null
+    if (explicitProviderEnv) delete explicitProviderEnv.CC_HAHA_OPENAI_FAST_MODE
     const networkEnv = buildNetworkEnvironment(
-      networkSettingsOverride ?? await loadNetworkSettings(),
+      resolveProviderNetworkSettings(
+        networkSettingsOverride ?? await loadNetworkSettings(),
+        explicitProvider?.proxy,
+      ),
       cleanEnv,
     )
     // The overall-duration cap has to scale with the user's "请求超时" or raising
@@ -2092,9 +2505,9 @@ export class ConversationService {
       ...cleanEnv,
       CLAUDE_CODE_ENABLE_TASKS: '1',
       // Resolve the same preference shown in General before launching the CLI.
-      ECHOFLOW_AGENT_TEAMS_ENABLED: agentTeamsEnabled ? '1' : '0',
-      ECHOFLOW_TEAM_REVIEW_REQUIRED: sdkUrl ? '1' : cleanEnv.ECHOFLOW_TEAM_REVIEW_REQUIRED || '0',
-      ECHOFLOW_TEAM_LEADER_RUNTIME: JSON.stringify({ providerId: options?.providerId ?? 'claude-official', modelId: options?.model || explicitProviderEnv?.ANTHROPIC_MODEL || cleanEnv.ANTHROPIC_MODEL || 'default', ...(options?.effort ? { effortLevel: options.effort } : {}) }),
+      CC_HAHA_AGENT_TEAMS_ENABLED: agentTeamsEnabled ? '1' : '0',
+      CC_HAHA_TEAM_REVIEW_REQUIRED: sdkUrl ? '1' : cleanEnv.CC_HAHA_TEAM_REVIEW_REQUIRED || '0',
+      CC_HAHA_TEAM_LEADER_RUNTIME: JSON.stringify({ providerId: options?.providerId ?? 'claude-official', modelId: options?.model || explicitProviderEnv?.ANTHROPIC_MODEL || cleanEnv.ANTHROPIC_MODEL || 'default', ...(options?.effort ? { effortLevel: options.effort } : {}) }),
       CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1',
       // Desktop must fail stuck provider streams instead of leaving the UI running forever.
       CLAUDE_ENABLE_STREAM_WATCHDOG: cleanEnv.CLAUDE_ENABLE_STREAM_WATCHDOG || '1',
@@ -2117,9 +2530,13 @@ export class ConversationService {
         cleanEnv.CLAUDE_STREAM_MAX_DURATION_MS || String(streamMaxDurationMs),
       // Abort a local tool call when its JSON arguments stop making progress.
       // Healthy input_json_delta events reset this budget; the independent full
-      // response cap above still bounds a stream that trickles forever.
+      // response cap above still bounds a stream that trickles forever. The
+      // upstream emits tool JSON one complete key/value at a time, so writing a
+      // long `content` string is silent until that value is finished: the
+      // budget follows the user's "请求超时" instead of a fixed 120s (#1536).
       CLAUDE_STREAM_TOOL_INPUT_MAX_DURATION_MS:
-        cleanEnv.CLAUDE_STREAM_TOOL_INPUT_MAX_DURATION_MS || '120000',
+        cleanEnv.CLAUDE_STREAM_TOOL_INPUT_MAX_DURATION_MS ||
+        String(resolveStreamToolInputDurationMs(networkEnv.API_TIMEOUT_MS)),
       // Time-to-first-token budget: how long to wait for the FIRST streamed
       // chunk after response headers arrive. The idle timer above is the wrong
       // knob for slow prefill — it kills healthy local/3P models that take
@@ -2146,49 +2563,49 @@ export class ConversationService {
             // arrives. Flush the completed turn first so the replacement can
             // reliably choose --resume and load the context (#1033).
             CLAUDE_CODE_EAGER_FLUSH: cleanEnv.CLAUDE_CODE_EAGER_FLUSH || '1',
-            ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID: 'com.echoflow.code.desktop',
             // The CLI may keep processing internally after an SDK `result`
             // (for example, a completed background Agent can enqueue one last
             // model follow-up). Desktop cleanup must use the CLI's authoritative
             // running/idle boundary or a disconnected renderer can kill that
             // follow-up after the fixed idle grace period.
             CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1',
+            CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID: 'com.claude-code-haha.desktop',
           }
         : {}),
       ...(sdkUrl && traceCaptureEnabled
-        ? { ECHOFLOW_TRACE_API_CALLS: '1' }
+        ? { CC_HAHA_TRACE_API_CALLS: '1' }
         : {}),
       ...(sdkUrl && traceCaptureEnabled && explicitProvider
         ? {
-            ECHOFLOW_TRACE_PROVIDER_ID: explicitProvider.id,
-            ECHOFLOW_TRACE_PROVIDER_NAME: explicitProvider.name,
-            ECHOFLOW_TRACE_PROVIDER_FORMAT: explicitProvider.apiFormat ?? 'anthropic',
+            CC_HAHA_TRACE_PROVIDER_ID: explicitProvider.id,
+            CC_HAHA_TRACE_PROVIDER_NAME: explicitProvider.name,
+            CC_HAHA_TRACE_PROVIDER_FORMAT: explicitProvider.apiFormat ?? 'anthropic',
           }
         : {}),
       ...(desktopServerUrl
         ? {
-            ECHOFLOW_DESKTOP_SERVER_URL: desktopServerUrl,
-            ECHOFLOW_SESSION_COLLABORATION_TOKEN: new URL(sdkUrl!).searchParams.get('token') ?? '',
-            ECHOFLOW_SESSION_ID: new URL(sdkUrl!).pathname.split('/').pop() ?? '',
+            CC_HAHA_DESKTOP_SERVER_URL: desktopServerUrl,
+            CC_HAHA_SESSION_COLLABORATION_TOKEN: new URL(sdkUrl!).searchParams.get('token') ?? '',
+            CC_HAHA_SESSION_ID: new URL(sdkUrl!).pathname.split('/').pop() ?? '',
           }
         : {}),
       ...(sdkUrl
         ? {
-            ECHOFLOW_DESKTOP_AWAIT_MCP: '1',
-            ECHOFLOW_DESKTOP_AWAIT_MCP_TIMEOUT_MS: '5000',
+            CC_HAHA_DESKTOP_AWAIT_MCP: '1',
+            CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS: '5000',
           }
         : {}),
       // Tell the CLI entrypoint to skip project .env loading. Provider env
       // should come from Desktop-managed config or inherited launch env, not
       // be reintroduced from the repo's .env file.
-      ECHOFLOW_SKIP_DOTENV: '1',
+      CC_HAHA_SKIP_DOTENV: '1',
       // Keep the SDK runtime identity for auth and client behavior, but stamp
       // desktop-owned transcripts with an entrypoint visible to Claude /resume.
-      ECHOFLOW_TRANSCRIPT_ENTRYPOINT: 'claude-desktop',
+      CC_HAHA_TRANSCRIPT_ENTRYPOINT: 'claude-desktop',
       ...(explicitProviderEnv
         ? { CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1' }
         : {}),
-      // "官方" 模式 (EchoFlow settings.json 没 provider env) 下,把 CLI 标记为
+      // "官方" 模式 (cc-haha/settings.json 没 provider env) 下,把 CLI 标记为
       // managed-OAuth,让它忽略外部 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
       // 残留、只走用户 /login 的 OAuth token。自定义 provider 模式绝不能设,
       // 否则 CLI 会忽略 provider 的 AUTH_TOKEN、错误地走 OAuth 打到第三方
@@ -2200,6 +2617,8 @@ export class ConversationService {
           ? { [OPENAI_CODEX_REASONING_EFFORT_ENV_KEY]: options.effort }
           : {}
       ),
+      ...(isOpenAIOfficialProviderId(options?.providerId) && options?.openAIFastMode === true
+        ? { CC_HAHA_OPENAI_FAST_MODE: '1' } : {}),
       ...networkEnv,
       ...(this.shouldMarkManagedOAuth(options?.providerId)
         ? await this.buildOfficialOAuthEnv()
@@ -2214,7 +2633,7 @@ export class ConversationService {
       : workDir
     return (
       path.join(
-        getClaudeConfigHomeDir(),
+        getEchoFlowConfigDir(),
         'projects',
         sanitizePath(memoryProjectRoot),
         AUTO_MEMORY_DIRNAME,
@@ -2225,7 +2644,7 @@ export class ConversationService {
   /**
    * 官方模式下构造 CLI 子进程的 auth env:
    * - CLAUDE_CODE_ENTRYPOINT=claude-desktop 让 CLI 忽略外部残留 ANTHROPIC_* env
-   * - 如果 EchoFlow 自管的 oauth.json 里有可用 token,注入 CLAUDE_CODE_OAUTH_TOKEN
+   * - 如果 haha 自管的 oauth.json 里有可用 token,注入 CLAUDE_CODE_OAUTH_TOKEN
    *   让 CLI 直接拿 env 里的 token,不碰 Keychain,绕开 macOS ACL 静默拒绝
    *   (这是 DMG 安装 .app 后 403 "Request not allowed" 的唯一根治方案)
    */
@@ -2236,10 +2655,12 @@ export class ConversationService {
     try {
       // deferred import: avoids instantiating the OAuth singleton on every
       // ConversationService construction — only loaded when official mode hits.
-      const { echoFlowOAuthService } = await import('./echoFlowOAuthService.js')
-      const token = await echoFlowOAuthService.ensureFreshAccessToken()
+      const { hahaOAuthService } = await import('./hahaOAuthService.js')
+      const token = await hahaOAuthService.ensureFreshAccessToken()
       if (token) {
         env.CLAUDE_CODE_OAUTH_TOKEN = token
+        const accountUuid = await hahaOAuthService.getAccountUuid(token)
+        if (accountUuid) env.CLAUDE_CODE_ACCOUNT_UUID = accountUuid
       }
     } catch (err) {
       console.error(
@@ -2258,8 +2679,8 @@ export class ConversationService {
 
     let token: string | null = null
     try {
-      const { echoFlowOAuthService } = await import('./echoFlowOAuthService.js')
-      token = await echoFlowOAuthService.ensureFreshAccessToken()
+      const { hahaOAuthService } = await import('./hahaOAuthService.js')
+      token = await hahaOAuthService.ensureFreshAccessToken()
     } catch (err) {
       console.error(
         '[conversationService] refresh official OAuth token before turn failed:',
@@ -2287,8 +2708,8 @@ export class ConversationService {
     const rejectedToken = session.officialOAuthToken
     const recovery = (async () => {
       try {
-        const { echoFlowOAuthService } = await import('./echoFlowOAuthService.js')
-        const tokens = await echoFlowOAuthService.recoverFromUnauthorized(rejectedToken)
+        const { hahaOAuthService } = await import('./hahaOAuthService.js')
+        const tokens = await hahaOAuthService.recoverFromUnauthorized(rejectedToken)
         if (
           !tokens?.accessToken ||
           tokens.accessToken === rejectedToken ||
@@ -2311,7 +2732,7 @@ export class ConversationService {
       }
     })()
 
-    session.officialOAuthRefreshPromise = recovery
+    session.officialOAuthRefreshPromise = migrationMaintenance.track(recovery)
     void recovery.finally(() => {
       if (session.officialOAuthRefreshPromise === recovery) {
         session.officialOAuthRefreshPromise = undefined
@@ -2324,11 +2745,10 @@ export class ConversationService {
       return true
     }
 
-    const configDir =
-      getEchoFlowConfigDir()
-    const echoFlowDir = getEchoFlowInternalDir(configDir)
-    const providersIndexPath = path.join(echoFlowDir, 'providers.json')
-    const settingsPath = path.join(echoFlowDir, 'settings.json')
+    const configDir = getEchoFlowConfigDir()
+    const ccHahaDir = getEchoFlowInternalDir(configDir)
+    const providersIndexPath = path.join(ccHahaDir, 'providers.json')
+    const settingsPath = path.join(ccHahaDir, 'settings.json')
 
     if (fs.existsSync(providersIndexPath)) {
       return true
@@ -2354,14 +2774,17 @@ export class ConversationService {
         'ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES',
         'ANTHROPIC_DEFAULT_OPUS_MODEL',
         'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
-        ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+        'CC_HAHA_SEND_DISABLED_THINKING',
         'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
         'CLAUDE_CODE_ATTRIBUTION_HEADER',
         'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',
         OPENAI_OAUTH_PROVIDER_ENV_KEY,
-              OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
+        OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
         GROK_OAUTH_PROVIDER_ENV_KEY,
         GROK_OAUTH_FILE_ENV_KEY,
+        GROK_MODEL_CATALOG_ENV_KEY,
+        DEEPSEEK_OAUTH_PROVIDER_ENV_KEY,
+        DEEPSEEK_OAUTH_FILE_ENV_KEY,
         IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY,
         IMAGE_GENERATION_PROVIDER_ID_ENV_KEY,
         IMAGE_GENERATION_BASE_URL_ENV_KEY,
@@ -2379,7 +2802,7 @@ export class ConversationService {
    * 这种情况下 CLI 必须按 token 路径走第三方 endpoint,不能被 managed 规则
    * 强制切 OAuth。
    *
-   * 默认 (读不到 settings.json) 按"官方"处理 — 即使用户从未用过 EchoFlow
+   * 默认 (读不到 settings.json) 按"官方"处理 — 即使用户从未用过 cc-haha
    * provider 管理,也希望官方 OAuth 能正常工作。
    */
   private shouldMarkManagedOAuth(providerId?: string | null): boolean {
@@ -2390,7 +2813,8 @@ export class ConversationService {
       return false
     }
 
-    const settingsPath = path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'settings.json')
+    const configDir = getEchoFlowConfigDir()
+    const settingsPath = path.join(getEchoFlowInternalDir(configDir), 'settings.json')
     try {
       const raw = fs.readFileSync(settingsPath, 'utf-8')
       const parsed = JSON.parse(raw) as { env?: Record<string, string> }
@@ -2399,6 +2823,9 @@ export class ConversationService {
         return false
       }
       if (env[GROK_OAUTH_PROVIDER_ENV_KEY] === '1') {
+        return false
+      }
+      if (env[DEEPSEEK_OAUTH_PROVIDER_ENV_KEY] === '1') {
         return false
       }
       const hasProviderEnv = [
@@ -2415,16 +2842,9 @@ export class ConversationService {
     }
   }
 
-  private resolveCliArgs(
-    baseArgs: string[],
-    cliRuntimeId: ClaudeCodeRuntimeId | undefined = undefined,
-  ): string[] {
-    const effectiveRuntimeId = resolveClaudeCodeRuntimeId(cliRuntimeId)
-    const installedPath = resolveClaudeCodeRuntimePath(cliRuntimeId)
+  private resolveCliArgs(baseArgs: string[]): string[] {
     const launcher = resolveClaudeCliLauncher({
-      cliPath: effectiveRuntimeId === undefined
-        ? process.env.CLAUDE_CLI_PATH
-        : installedPath,
+      cliPath: process.env.CLAUDE_CLI_PATH,
       execPath: process.execPath,
     })
 
@@ -2438,17 +2858,14 @@ export class ConversationService {
           ...baseArgs,
         ]
       }
-      return [path.resolve(import.meta.dir, '../../../bin/echoflow-code'), ...baseArgs]
+      return [path.resolve(import.meta.dir, '../../../bin/claude-haha'), ...baseArgs]
     }
 
     return buildClaudeCliArgs(launcher, baseArgs, process.env.CLAUDE_APP_ROOT)
   }
 
   private clearStaleLock(sessionId: string): boolean {
-    const lockDir = path.join(
-      getEchoFlowConfigDir(),
-      '.lock',
-    )
+    const lockDir = path.join(getEchoFlowConfigDir(), '.lock')
     const lockFile = path.join(lockDir, sessionId)
     if (!fs.existsSync(lockFile)) {
       return false
@@ -2490,7 +2907,7 @@ export class ConversationService {
       )
     ) {
       return new ConversationStartupError(
-        'Desktop chat could not start because Claude CLI is not authenticated. Run `./bin/echoflow-code /login` or provide valid API credentials, then retry.',
+        'Desktop chat could not start because Claude CLI is not authenticated. Run `./bin/claude-haha /login` or provide valid API credentials, then retry.',
         'CLI_AUTH_REQUIRED',
       )
     }
@@ -2504,6 +2921,16 @@ export class ConversationService {
     }
 
     const normalizedDetail = detail.trim()
+    // A Bun crash report identifies a runtime failure, not its cause. Preserve
+    // the panic and report URL without inferring memory exhaustion from the
+    // platform, exit code, or process memory snapshot.
+    if (/Bun has crashed/i.test(normalizedDetail) && /\bWindows\b/.test(normalizedDetail)) {
+      return new ConversationStartupError(
+        `CLI runtime crashed during startup (code ${exitCode}). Include the crash output and diagnostics when reporting this problem. Crash output: ${normalizedDetail}`,
+        'CLI_START_FAILED',
+        true,
+      )
+    }
     return new ConversationStartupError(
       normalizedDetail
         ? `CLI exited during startup (code ${exitCode}): ${normalizedDetail}`
@@ -2609,6 +3036,23 @@ export class ConversationService {
     summary: string
     details: Record<string, unknown>
   } | null {
+    if (message?.type === 'system' && message.subtype === 'api_retry') {
+      const detail = typeof message.error_message === 'string' ? message.error_message : ''
+      return {
+        type: 'sdk_api_retry',
+        summary: sanitizeRetryDiagnosticText(detail || `API request retry: ${message.error ?? 'unknown'}`),
+        details: {
+          attempt: message.attempt,
+          maxRetries: message.max_retries,
+          retryDelayMs: message.retry_delay_ms,
+          errorStatus: message.error_status,
+          error: message.error,
+          requestId: typeof message.request_id === 'string' ? sanitizeRetryDiagnosticText(message.request_id) : undefined,
+          messageUuid: message.uuid,
+        },
+      }
+    }
+
     if (this.isAssistantApiErrorMessage(message)) {
       const summary = this.redactProcessOutput(
         this.extractAssistantApiErrorDetail(message) || 'Assistant API error',
@@ -2726,7 +3170,7 @@ export class ConversationService {
     }
 
     const uploadDir = path.join(
-      getEchoFlowConfigDir(),
+      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
       'uploads',
       sessionId,
     )
@@ -2734,7 +3178,10 @@ export class ConversationService {
     const savedPaths: string[] = []
     const imageBlocks: UserContentBlock[] = []
     const imageMetadataTexts: string[] = []
-    for (const attachment of attachments) {
+    for (const originalAttachment of attachments) {
+      const attachment = originalAttachment.path
+        ? { ...originalAttachment, path: resolveRelocatedAttachmentPath(originalAttachment.path) }
+        : originalAttachment
       if (this.shouldInlineImageAttachment(attachment)) {
         const image = await this.materializeImageAttachment(attachment, uploadDir)
         if (image) {

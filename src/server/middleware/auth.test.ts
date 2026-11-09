@@ -19,6 +19,55 @@ function requestWith(token: string): Request {
 }
 
 describe('validateAuth', () => {
+  it('compares UTF-8 bytes through the crypto boundary in an isolated process', async () => {
+    // Keep crypto instrumentation out of the shared Bun test module cache.
+    const child = Bun.spawn([process.execPath, '--eval', `
+      import assert from 'node:assert/strict'
+      import * as crypto from 'node:crypto'
+      import { mock } from 'bun:test'
+      const nativeEqual = crypto.timingSafeEqual
+      const calls = []
+      let rejectComparison = false
+      mock.module('node:crypto', () => ({
+        ...crypto,
+        timingSafeEqual(supplied, expected) {
+          assert(Buffer.isBuffer(supplied))
+          assert(Buffer.isBuffer(expected))
+          calls.push([supplied.toString('hex'), expected.toString('hex')])
+          return nativeEqual(supplied, expected) && !rejectComparison
+        },
+      }))
+      const { validateAuth } = await import(${JSON.stringify(new URL('./auth.ts', import.meta.url).href)})
+      const request = token => new Request('http://localhost/api/status', {
+        headers: { Authorization: 'Bearer ' + token },
+      })
+      for (const [expected, supplied, valid, compared] of [
+        ['fixture-key', 'fixture-key', true, true],
+        ['fixture-key', 'fixture-kez', false, true],
+        ['fixture-key', 'fixture', false, false],
+        ['fixture-key', 'fixture-key-extra', false, false],
+        ['éé', 'éé', true, true],
+        ['éé', 'èé', false, true],
+        ['éé', 'eé', false, false],
+        ['éé', 'aaaa', false, true],
+      ]) {
+        calls.length = 0
+        process.env.ANTHROPIC_API_KEY = expected
+        assert.deepEqual(validateAuth(request(supplied)), valid
+          ? { valid: true }
+          : { valid: false, error: 'Invalid API key' })
+        assert.deepEqual(calls, compared
+          ? [[Buffer.from(supplied).toString('hex'), Buffer.from(expected).toString('hex')]]
+          : [], 'crypto boundary for ' + JSON.stringify({ expected, supplied }))
+      }
+      rejectComparison = true
+      assert.deepEqual(validateAuth(request('éé')), { valid: false, error: 'Invalid API key' })
+    `], { stdout: 'pipe', stderr: 'pipe' })
+    const [exitCode, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()])
+    expect(stderr).toBe('')
+    expect(exitCode).toBe(0)
+  })
+
   it('accepts the configured API key', () => {
     process.env.ANTHROPIC_API_KEY = 'fixture-key'
     expect(validateAuth(requestWith('fixture-key'))).toEqual({ valid: true })

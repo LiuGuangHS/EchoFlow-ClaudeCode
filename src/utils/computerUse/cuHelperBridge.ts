@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { release } from 'node:os'
 import path from 'node:path'
 import { execFileNoThrow } from '../execFileNoThrow.js'
-import { ensureInstalledHelper, isNestedInHostApp } from './cuHelperInstall.js'
+import { prepareInstalledHelper, isNestedInHostApp, type CuHelperUnavailableReason } from './cuHelperInstall.js'
 import { getRuntimePaths } from './pythonBridge.js'
 
 /**
@@ -20,7 +20,7 @@ import { getRuntimePaths } from './pythonBridge.js'
  */
 
 /** Env override for the binary path (custom installs / tests). */
-const ENV_OVERRIDE = 'ECHOFLOW_CU_HELPER_PATH'
+const ENV_OVERRIDE = 'CC_HAHA_CU_HELPER_PATH'
 
 let cachedBinary: string | null | undefined
 
@@ -74,7 +74,7 @@ function resolveUncached(exists: (p: string) => boolean): string | null {
       : appRoot
     candidates.push(path.join(
       unpacked, 'src-tauri', 'binaries',
-      'echoflow-code-computer-use.app', 'Contents', 'MacOS', 'echoflow-code-computer-use',
+      'cc-haha-computer-use.app', 'Contents', 'MacOS', 'cc-haha-computer-use',
     ))
   }
 
@@ -102,15 +102,15 @@ export function resolveCuHelperDevelopmentBinary(
     swiftArch,
     `${swiftArch}-apple-macosx`,
     'release',
-    'echoflow-code-computer-use.app',
+    'cc-haha-computer-use.app',
     'Contents',
     'MacOS',
-    'echoflow-code-computer-use',
+    'cc-haha-computer-use',
   )
 }
 
 /**
- * Resolve the cu-helper `.app` BUNDLE directory (e.g. `…/echoflow-code-computer-use.app`),
+ * Resolve the cu-helper `.app` BUNDLE directory (e.g. `…/cc-haha-computer-use.app`),
  * derived from the resolved inner executable. This is the SOURCE bundle (dev build
  * or the one packaged inside the host app).
  *
@@ -124,7 +124,7 @@ export function resolveCuHelperDevelopmentBinary(
  * process its own TCC *responsible* process, but SR looks at the *subject*, not
  * the responsible process — that distinction is what earlier fixes got wrong.)
  *
- * Returns `null` when the resolved binary is not inside a `echoflow-code-computer-use.app`
+ * Returns `null` when the resolved binary is not inside a `cc-haha-computer-use.app`
  * (e.g. a bare-path test override) — callers then fall back to the CLI path.
  */
 export function resolveCuHelperAppBundle(
@@ -132,7 +132,7 @@ export function resolveCuHelperAppBundle(
 ): string | null {
   const inner = resolveCuHelperBinary(exists)
   if (!inner) return null
-  const appName = 'echoflow-code-computer-use.app'
+  const appName = 'cc-haha-computer-use.app'
   const marker = `${path.sep}${appName}${path.sep}`
   const idx = inner.indexOf(marker)
   if (idx < 0) return null
@@ -168,12 +168,25 @@ export function isCuHelperAvailable(): boolean {
 export function resolveLaunchableCuHelperBinary(
   runtimeSupported: boolean = isMacosComputerUseRuntimeSupported(),
 ): string | null {
-  if (!runtimeSupported) return null
-  const installed = ensureInstalledHelper()
-  if (installed?.binary) return installed.binary
+  return resolveCuHelperLaunchStatus(runtimeSupported).binary
+}
+
+export type CuHelperLaunchStatus =
+  | { binary: string; reason: null }
+  | { binary: null; reason: CuHelperUnavailableReason }
+
+export function resolveCuHelperLaunchStatus(
+  runtimeSupported: boolean = isMacosComputerUseRuntimeSupported(),
+): CuHelperLaunchStatus {
+  if (!runtimeSupported) return { binary: null, reason: 'helper_missing' }
+  const installed = prepareInstalledHelper()
+  if (installed.helper) return { binary: installed.helper.binary, reason: null }
   const sourceApp = resolveCuHelperAppBundle()
-  if (sourceApp && isNestedInHostApp(sourceApp)) return null
-  return resolveCuHelperBinary()
+  if (sourceApp && isNestedInHostApp(sourceApp)) {
+    return { binary: null, reason: installed.reason }
+  }
+  const binary = resolveCuHelperBinary()
+  return binary ? { binary, reason: null } : { binary: null, reason: installed.reason }
 }
 
 /**

@@ -174,7 +174,7 @@ describe('tokenCountWithEstimation', () => {
     })
     const encryptedReasoning = {
       type: 'redacted_thinking',
-      data: `echoflow-code:openai-reasoning:v1:${JSON.stringify({
+      data: `cc-haha:openai-reasoning:v1:${JSON.stringify({
         summary: [],
         encrypted_content: 'x'.repeat(400_000),
       })}`,

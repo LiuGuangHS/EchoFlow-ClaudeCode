@@ -75,6 +75,7 @@ export type {
 import type { SpinnerMode } from './components/Spinner.js'
 import type { QuerySource } from './constants/querySource.js'
 import type { SDKStatus } from './entrypoints/agentSdkTypes.js'
+import type { ApiAttemptBudget } from './services/api/withRetry.js'
 import type { AppState } from './state/AppState.js'
 import type {
   HookProgress,
@@ -155,6 +156,11 @@ export type CompactProgressEvent =
   | { type: 'compact_start' }
   | { type: 'compact_end' }
 
+/** Live progress attached to a 'compacting' SDK status. */
+export type SDKStatusDetail = {
+  compactProgress?: { outputChars: number }
+}
+
 export type ToolUseContext = {
   options: {
     commands: Command[]
@@ -180,6 +186,8 @@ export type ToolUseContext = {
     refreshTools?: () => Tools
   }
   abortController: AbortController
+  /** Root query that owns Computer Use, shared with that query's subagents. */
+  computerUseTurn?: symbol
   readFileState: FileStateCache
   getAppState(): AppState
   setAppState(f: (prev: AppState) => AppState): void
@@ -225,6 +233,10 @@ export type ToolUseContext = {
   dynamicSkillDirTriggers?: Set<string>
   /** Skill names surfaced via skill_discovery this session. Telemetry only (feeds was_discovered). */
   discoveredSkillNames?: Set<string>
+  /** Trusted human skill selections. Shared across query context copies so
+   * consuming a follow-up changes this run's authorization at that boundary.
+   * Runtime-only: delegated prompts and transcripts never grant access. */
+  skillSelectionState?: { messages: readonly Message[] }
   userModified?: boolean
   setInProgressToolUseIDs: (f: (prev: Set<string>) => Set<string>) => void
   /** Only wired in interactive (REPL) contexts; SDK/QueryEngine don't set this. */
@@ -235,7 +247,12 @@ export type ToolUseContext = {
   pushApiMetricsEntry?: (ttftMs: number) => void
   setStreamMode?: (mode: SpinnerMode) => void
   onCompactProgress?: (event: CompactProgressEvent) => void
-  setSDKStatus?: (status: SDKStatus) => void
+  /**
+   * API attempts this query may still make across all retry layers. Set only
+   * by callers that bound a whole operation (compaction); never inherited.
+   */
+  apiAttemptBudget?: ApiAttemptBudget
+  setSDKStatus?: (status: SDKStatus, detail?: SDKStatusDetail) => void
   openMessageSelector?: () => void
   updateFileHistoryState: (
     updater: (prev: FileHistoryState) => FileHistoryState,

@@ -1,4 +1,6 @@
 import { resolveTeammateModel } from '../../utils/swarm/resolveTeammateModel.js'
+import { resolvePresetProviderRuntime } from '../../utils/swarm/teamPlanPresetRuntime.js'
+import { getAgentModelSetting } from '../AgentTool/builtInAgentOverrides.js'
 export { resolveTeammateModel } from '../../utils/swarm/resolveTeammateModel.js'
 /**
  * Shared spawn module for teammate creation.
@@ -54,6 +56,7 @@ import { buildInheritedEnvVars } from '../../utils/swarm/spawnUtils.js'
 import {
   mutateTeamFileAsync,
   readTeamFileAsync,
+  removeMemberByAgentId,
   sanitizeAgentName,
   sanitizeName,
 } from '../../utils/swarm/teamHelpers.js'
@@ -290,7 +293,14 @@ export async function generateUniqueTeammateName(
     return baseName
   }
 
-  const existingNames = new Set(teamFile.members.map(m => m.name.toLowerCase()))
+  return pickUniqueTeammateName(baseName, teamFile.members)
+}
+
+function pickUniqueTeammateName(
+  baseName: string,
+  members: ReadonlyArray<{ name: string }>,
+): string {
+  const existingNames = new Set(members.map(m => m.name.toLowerCase()))
 
   // If the base name doesn't exist, use it as-is
   if (!existingNames.has(baseName.toLowerCase())) {
@@ -322,14 +332,15 @@ async function handleSpawnSplitPane(
   const { setAppState, getAppState } = context
   const { name, prompt, agent_type, cwd, plan_mode_required } = input
   const appState = getAppState()
+  const leaderModel = context.options.mainLoopModel ?? appState.mainLoopModel
   const selectedAgentDefinition =
     context.options.agentDefinitions.activeAgents.find(
       agent => agent.agentType === agent_type,
     )
   const model = resolveTeammateModel(
     input.model,
-    appState.mainLoopModel,
-    selectedAgentDefinition?.model,
+    leaderModel,
+    getAgentModelSetting(selectedAgentDefinition, leaderModel),
     selectedAgentDefinition !== undefined,
   )
 
@@ -567,14 +578,15 @@ async function handleSpawnSeparateWindow(
   const { setAppState, getAppState } = context
   const { name, prompt, agent_type, cwd, plan_mode_required } = input
   const appState = getAppState()
+  const leaderModel = context.options.mainLoopModel ?? appState.mainLoopModel
   const selectedAgentDefinition =
     context.options.agentDefinitions.activeAgents.find(
       agent => agent.agentType === agent_type,
     )
   const model = resolveTeammateModel(
     input.model,
-    appState.mainLoopModel,
-    selectedAgentDefinition?.model,
+    leaderModel,
+    getAgentModelSetting(selectedAgentDefinition, leaderModel),
     selectedAgentDefinition !== undefined,
   )
 
@@ -865,14 +877,15 @@ async function handleSpawnInProcess(
   const { setAppState, getAppState } = context
   const { name, prompt, agent_type, plan_mode_required } = input
   const appState = getAppState()
+  const leaderModel = context.options.mainLoopModel ?? appState.mainLoopModel
   const selectedAgentDefinition =
     context.options.agentDefinitions.activeAgents.find(
       agent => agent.agentType === agent_type,
     )
   const model = resolveTeammateModel(
     input.model,
-    appState.mainLoopModel,
-    selectedAgentDefinition?.model,
+    leaderModel,
+    getAgentModelSetting(selectedAgentDefinition, leaderModel),
     selectedAgentDefinition !== undefined,
   )
 
@@ -888,18 +901,6 @@ async function handleSpawnInProcess(
       'team_name is required for spawn operation. Either provide team_name in input or call spawnTeam first to establish team context.',
     )
   }
-
-  // Generate unique name if duplicate exists in team
-  const uniqueName = await generateUniqueTeammateName(name, teamName)
-
-  // Sanitize the name to prevent @ in agent IDs
-  const sanitizedName = sanitizeAgentName(uniqueName)
-
-  // Generate deterministic agent ID from name and team
-  const teammateId = formatAgentId(sanitizedName, teamName)
-
-  // Assign a unique color to this teammate
-  const teammateColor = assignTeammateColor(teammateId)
 
   // Look up custom agent definition if agent_type is provided
   let agentDefinition:
@@ -919,6 +920,36 @@ async function handleSpawnInProcess(
     )
   }
 
+  // Reserve a unique name and put the member on the roster under the
+  // team-file lock before the teammate starts: concurrent spawns can never
+  // pick the same name, and a running teammate is always on the roster.
+  // Sanitize first (no @ in agent IDs) so uniqueness covers the name used.
+  const baseName = sanitizeAgentName(name)
+  let sanitizedName = baseName
+  let teammateId = formatAgentId(baseName, teamName)
+  let teammateColor: ReturnType<typeof assignTeammateColor> | undefined
+  await mutateTeamFileAsync(teamName, (teamFile) => {
+    sanitizedName = pickUniqueTeammateName(baseName, teamFile.members)
+    // Generate deterministic agent ID from name and team
+    teammateId = formatAgentId(sanitizedName, teamName)
+    // Assign a unique color to this teammate
+    teammateColor = assignTeammateColor(teammateId)
+    teamFile.members.push({
+      agentId: teammateId,
+      name: sanitizedName,
+      agentType: agent_type,
+      model,
+      prompt,
+      color: teammateColor,
+      planModeRequired: plan_mode_required,
+      joinedAt: Date.now(),
+      tmuxPaneId: 'in-process',
+      cwd: getCwd(),
+      subscriptions: [],
+      backendType: 'in-process',
+    })
+  })
+
   // Spawn in-process teammate
   const config: InProcessSpawnConfig = {
     name: sanitizedName,
@@ -932,6 +963,12 @@ async function handleSpawnInProcess(
   const result = await spawnInProcessTeammate(config, context)
 
   if (!result.success) {
+    // Give the reserved name back
+    await removeMemberByAgentId(teamName, teammateId).catch(error =>
+      logForDebugging(
+        `[handleSpawnInProcess] could not release ${teammateId}: ${errorMessage(error)}`,
+      ),
+    )
     throw new Error(result.error ?? 'Failed to spawn in-process teammate')
   }
 
@@ -943,7 +980,7 @@ async function handleSpawnInProcess(
   // Start the agent execution loop (fire-and-forget)
   if (result.taskId && result.teammateContext && result.abortController) {
     startInProcessTeammate({
-      identity: {
+      identity: result.identity ?? {
         agentId: teammateId,
         agentName: sanitizedName,
         teamName,
@@ -1016,23 +1053,6 @@ async function handleSpawnInProcess(
         },
       },
     }
-  })
-
-  await mutateTeamFileAsync(teamName, (teamFile) => {
-    teamFile.members.push({
-      agentId: teammateId,
-      name: sanitizedName,
-      agentType: agent_type,
-      model,
-      prompt,
-      color: teammateColor,
-      planModeRequired: plan_mode_required,
-      joinedAt: Date.now(),
-      tmuxPaneId: 'in-process',
-      cwd: getCwd(),
-      subscriptions: [],
-      backendType: 'in-process',
-    })
   })
 
   // Note: Do NOT send the prompt via mailbox for in-process teammates.
@@ -1130,10 +1150,14 @@ export async function spawnTeammate(
     if (agentSnapshot.configurationError) throw new Error(agentSnapshot.configurationError)
     const leaderRuntime = existingPlan?.leaderRuntime ?? getTeamLeaderRuntime(context.getAppState().mainLoopModel ?? '')
     await ensureTeamDraft(teamName, getSessionId(), leaderRuntime, { workDir: getCwd(), agentCatalog })
-    const modelId = resolveTeammateModel(config.model, leaderRuntime.modelId, agentSnapshot.model, true)
-    const runtime = { ...leaderRuntime, modelId }
-    if (agentSnapshot.effortLevel !== undefined) runtime.effortLevel = agentSnapshot.effortLevel
-    else if (modelId !== leaderRuntime.modelId) delete runtime.effortLevel
+    const presetRuntime = resolvePresetProviderRuntime(agentSnapshot)
+    const modelId = presetRuntime?.modelId ?? resolveTeammateModel(config.model, leaderRuntime.modelId, agentSnapshot.model, true)
+    const runtime = presetRuntime ?? { ...leaderRuntime, modelId }
+    // A preset's own provider already carries the user's effort choice.
+    if (!presetRuntime) {
+      if (agentSnapshot.effortLevel !== undefined) runtime.effortLevel = agentSnapshot.effortLevel
+      else if (modelId !== leaderRuntime.modelId) delete runtime.effortLevel
+    }
     const draft = await stageMember(teamName, {
       id: config.name,
       name: config.name,

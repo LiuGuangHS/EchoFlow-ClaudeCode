@@ -9,12 +9,15 @@ import { spawn } from 'child_process'
 import { createReadStream } from 'fs'
 import * as fs from 'fs/promises'
 import * as path from 'path'
+import * as os from 'os'
 import { createInterface } from 'readline'
 import { StringDecoder } from 'string_decoder'
 import { ApiError } from '../middleware/errorHandler.js'
 import { ripgrepCommand } from '../../utils/ripgrep.js'
-import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
-import { sessionService, type IndexedSessionSearchMetadata } from './sessionService.js'
+import {
+  sessionService,
+  type IndexedSessionSearchMetadata,
+} from './sessionService.js'
 import {
   SEARCH_CONTENT_MAX_JSONL_LINE_BYTES,
   extractSearchableSegments,
@@ -60,7 +63,6 @@ export type SessionMatch = {
 
 export type SessionSearchResult = {
   sessionId: string
-  archived: boolean
   title: string
   projectPath: string
   workDir: string | null
@@ -78,7 +80,6 @@ export type SessionSearchOptions = {
   project?: string
   modifiedAfter?: string
   modifiedBefore?: string
-  includeArchived?: boolean
   signal?: AbortSignal
 }
 
@@ -350,7 +351,8 @@ export class SearchService {
     const matchesPerSession =
       options?.matchesPerSession ?? SESSION_SEARCH_DEFAULT_MATCHES_PER_SESSION
 
-    const configDir = getClaudeConfigHomeDir()
+    const configDir =
+      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
     const projectsDir = path.join(configDir, 'projects')
     if (options?.project !== undefined && !isDirectProjectName(options.project)) {
       throw ApiError.badRequest('Invalid project filter')
@@ -503,7 +505,6 @@ export class SearchService {
       }),
     )
     const filteredRanked = ranked.filter(item =>
-      (options?.includeArchived || !item.indexed?.archived) &&
       (!options?.project || path.basename(path.dirname(item.filePath)) === options.project) &&
       item.mtimeMs >= modifiedAfterMs &&
       item.mtimeMs <= modifiedBeforeMs,
@@ -578,7 +579,6 @@ export class SearchService {
 
       results.push({
         sessionId,
-        archived: indexed?.archived ?? false,
         title,
         projectPath,
         workDir,
@@ -800,7 +800,6 @@ export class SearchService {
       if (exactMatches.length === 0) continue
 
       const indexed = metadata?.get(path.resolve(session.ownerTranscriptPath))
-      if (indexed?.archived && !options.includeArchived) continue
       let title = session.ownerSessionId
       let projectPath = session.projectPath
       let workDir: string | null = null
@@ -816,7 +815,6 @@ export class SearchService {
 
       results.push({
         sessionId: session.ownerSessionId,
-        archived: indexed?.archived ?? false,
         title,
         projectPath,
         workDir,
@@ -1497,6 +1495,7 @@ export class SearchService {
       }
       const proc = spawn(cmd, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
         ...(spawnOptions?.argv0 ? { argv0: spawnOptions.argv0 } : {}),
       })
       const chunks: Buffer[] = []
@@ -1564,6 +1563,7 @@ export class SearchService {
 
       const proc = spawn(cmd, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
         ...(spawnOptions?.argv0 ? { argv0: spawnOptions.argv0 } : {}),
       })
       const decoder = new StringDecoder('utf8')
@@ -1659,7 +1659,7 @@ export class SearchService {
     if (cached) return cached
     const lookupPromise = new Promise<boolean>((resolve) => {
       const lookup = process.platform === 'win32' ? 'where' : 'which'
-      const proc = spawn(lookup, [cmd], { stdio: 'ignore' })
+      const proc = spawn(lookup, [cmd], { stdio: 'ignore', windowsHide: true })
       proc.on('close', (code) => resolve(code === 0))
       proc.on('error', () => resolve(false))
     })

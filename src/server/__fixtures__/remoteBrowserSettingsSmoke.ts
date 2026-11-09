@@ -3,9 +3,8 @@ import path from 'node:path'
 import { startServer, stopServerRuntimeForShutdown } from '../index.js'
 import { H5AccessService } from '../services/h5AccessService.js'
 import { ProviderService } from '../services/providerService.js'
-import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 
-const origin = 'https://fixture.ngrok-free.app'
+const origin = 'https://fixture.trycloudflare.com'
 const nativeFetch = globalThis.fetch
 globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
   const url = new URL(input instanceof Request ? input.url : String(input))
@@ -17,7 +16,7 @@ const settingsPath = path.join(process.env.CLAUDE_CONFIG_DIR!, 'settings.json')
 await writeFile(settingsPath, JSON.stringify({ env: { ANTHROPIC_API_KEY: 'fake-original-key' }, language: 'en', unknownFutureSetting: { keep: true } }))
 const server = startServer(0, '127.0.0.1')
 const local = `http://127.0.0.1:${server.port}`
-const control = (route: string, body: unknown) => fetch(`${local}/api/public-access/${route}`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN}` }, body: JSON.stringify(body) })
+const control = (route: string, body: unknown) => fetch(`${local}/api/public-access/${route}`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CC_HAHA_LOCAL_ACCESS_TOKEN}` }, body: JSON.stringify(body) })
 function check(value: unknown, message: string): asserts value { if (!value) throw new Error(message) }
 try {
   const enabled = await (await control('enable', { publicUrl: origin })).json()
@@ -43,17 +42,23 @@ try {
     check(created.status === 201 && createdBody.provider.hasApiKey && createdBody.provider.apiKey === '', `${transport}: provider creation/redaction failed`)
     const id = createdBody.provider.id
     // Seed desktop-owned extensions as an existing store fixture, not via the remote API.
-    const providersPath = path.join(getEchoFlowInternalDir(process.env.CLAUDE_CONFIG_DIR!), 'providers.json')
+    const providersPath = path.join(process.env.CLAUDE_CONFIG_DIR!, 'cc-haha', 'providers.json')
     const stored = JSON.parse(await readFile(providersPath, 'utf8'))
     const oldProvider = stored.providers.find((provider: { id: string }) => provider.id === id)
     check(!oldProvider.requestCompatibility.privateFutureKey, 'Remote creation injected a hidden compatibility field')
     oldProvider.requestCompatibility.privateFutureKey = 'fake-hidden-compatibility-key'
     oldProvider.futureCredential = 'fake-top-level-credential'
+    const savedProxyUrl = 'http://fake-proxy-user:fake-proxy-password@proxy.example.invalid:7890?token=fake-proxy-query'
+    oldProvider.proxy = { mode: 'manual', url: savedProxyUrl }
     await writeFile(providersPath, JSON.stringify(stored))
     check(createdBody.provider.imageGeneration.apiKey === '' && createdBody.provider.imageGeneration.hasApiKey, 'Image key leaked')
     for (const route of ['/api/providers', `/api/providers/${id}`]) {
       const text = await (await request(route)).text()
       check(!text.includes(input.apiKey) && !text.includes(input.imageGeneration.apiKey) && !text.includes('fake-hidden-compatibility-key') && !text.includes('fake-top-level-credential'), `${transport}: saved credentials leaked`)
+      const body = JSON.parse(text)
+      const projected = body.provider ?? body.providers.find((provider: { id: string }) => provider.id === id)
+      check(projected.proxy?.mode === 'manual' && projected.proxy.url === undefined, `${transport}: saved proxy mode was not safely projected`)
+      for (const secret of [savedProxyUrl, 'fake-proxy-user', 'fake-proxy-password', 'fake-proxy-query']) check(!text.includes(secret), `${transport}: saved proxy credentials leaked`)
     }
     const changed = await request(`/api/providers/${id}`, 'PUT', { name: 'Edited phone provider', apiKey: '', requestCompatibility: { maxOutputTokens: 4096 }, imageGeneration: { model: 'new-image-model', apiKey: '' } })
     check(changed.ok, `${transport}: provider edit failed`)
@@ -61,10 +66,20 @@ try {
     check(retained.requestCompatibility?.privateFutureKey === 'fake-hidden-compatibility-key', 'Unknown compatibility field lost during edit')
     check((retained as unknown as Record<string, unknown>).futureCredential === 'fake-top-level-credential', 'Unknown provider field lost during edit')
     check(retained.apiKey === input.apiKey && retained.imageGeneration?.apiKey === input.imageGeneration.apiKey, `${transport}: omitted credentials not preserved`)
+    check(retained.proxy?.mode === 'manual' && retained.proxy.url === savedProxyUrl, `${transport}: ordinary provider edit lost the saved proxy`)
+    const proxyDenied = await request(`/api/providers/${id}`, 'PUT', { proxy: { mode: 'direct' } })
+    check(proxyDenied.status === 400 && (await proxyDenied.json()).code === 'REMOTE_PROVIDER_CREDENTIAL_REQUIRED', `${transport}: new route reused a saved key`)
+    check((await providerService.getProvider(id)).proxy?.url === savedProxyUrl, `${transport}: rejected proxy change changed persistence`)
     check((await request(`/api/providers/${id}`, 'PUT', { imageGeneration: { model: 'omitted-key-model' } })).ok, 'Omitted image key edit failed')
     check((await providerService.getProvider(id)).imageGeneration?.apiKey === input.imageGeneration.apiKey, 'Omitted image key was lost')
     check((await request(`/api/providers/${id}`, 'PUT', { apiKey: 'fake-replacement-key' })).ok, 'Replacement failed')
     check((await providerService.getProvider(id)).apiKey === 'fake-replacement-key', 'Replacement not persisted')
+    const newProxyUrl = 'http://fake-new-user:fake-new-password@new-proxy.example.invalid:7890'
+    const proxyChanged = await request(`/api/providers/${id}`, 'PUT', { proxy: { mode: 'manual', url: newProxyUrl }, apiKey: 'fake-replacement-key', imageGeneration: { model: 'omitted-key-model', apiKey: 'fake-replacement-image-key' } })
+    check(proxyChanged.ok, `${transport}: explicit keys did not permit a new proxy route`)
+    const proxyChangedText = await proxyChanged.text()
+    check(JSON.parse(proxyChangedText).provider.proxy?.mode === 'manual' && !proxyChangedText.includes(newProxyUrl) && !proxyChangedText.includes('fake-new-password'), `${transport}: proxy mutation response leaked its credentials`)
+    check((await providerService.getProvider(id)).proxy?.url === newProxyUrl, `${transport}: explicit proxy change was not persisted`)
     check((await request(`/api/providers/${id}/activate`, 'POST', {})).ok, 'Activation failed')
     check((await providerService.listProviders()).activeId === id, 'Activation missing')
     check((await request('/api/settings/user', 'PUT', { language: 'zh-CN', chatSendBehavior: 'modifierEnter', alwaysThinkingEnabled: false, workflowKeywordTriggerEnabled: true })).ok, 'General edit failed')
@@ -83,6 +98,8 @@ try {
     check(deleted.ok, `Delete failed: ${deleted.status} ${await deleted.text()}`)
     check(!(await providerService.listProviders()).providers.some(p => p.id === id), 'Provider survived delete')
   }
+  // Persist the success marker before explicit exit: Bun can lose captured stdout.
+  await writeFile(path.join(process.env.CLAUDE_CONFIG_DIR!, 'REMOTE_SETTINGS_INTEGRATION_PASSED'), 'passed')
   console.log('REMOTE_SETTINGS_INTEGRATION_PASSED')
 } finally {
   await stopServerRuntimeForShutdown()

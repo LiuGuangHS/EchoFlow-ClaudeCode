@@ -19,20 +19,14 @@ if (!process.env.BTW_LOOPBACK_FIXTURE) {
           CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: '1',
         }), stdout: 'pipe', stderr: 'pipe',
       })
-      // The child boots a real CLI, so under a loaded machine 12s was not
-      // always enough and the kill turned a slow start into a failure.
-      const timeout = setTimeout(() => child.kill(), 45_000)
+      const timeout = setTimeout(() => child.kill(), 12_000)
       try {
         const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()])
         expect(code, stdout + stderr).toBe(0)
       } finally { clearTimeout(timeout) }
     } finally { await rm(root, { recursive: true, force: true }) }
-  }, 60_000)
+  }, 15_000)
 } else {
-  // Hang guard, not a performance budget: the inner body boots the real
-  // runtime and makes loopback round trips, which a loaded machine stretches
-  // past bun test's 5s default. Keep inner (30s) below the outer kill guard
-  // (45s) below the outer test timeout (60s).
   test('real fork tools/cache/current context', async () => {
     ;(globalThis as any).MACRO = { BUILD_TIME: '' }
     const { z } = await import('zod')
@@ -101,5 +95,5 @@ if (!process.env.BTW_LOOPBACK_FIXTURE) {
       expect(main.signal.aborted).toBe(false)
       expect(JSON.stringify(parentMessages)).toBe(before)
     } finally { server.stop(true) }
-  }, 30_000)
+  })
 }

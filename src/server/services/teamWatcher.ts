@@ -11,18 +11,23 @@
  */
 
 import { readTeamPlan } from '../../utils/swarm/teamPlanStore.js'
+import { readMemberFailure } from '../../utils/swarm/turnFailure.js'
 import * as fs from 'fs'
 import * as path from 'path'
+import * as os from 'os'
 import * as crypto from 'node:crypto'
 import { sendToSession, getActiveSessionIds } from '../ws/handler.js'
 import type { ServerMessage, TeamMemberStatus } from '../ws/events.js'
-import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
-import { teamIncarnationId, teamService, type TeamService } from './teamService.js'
+import {
+  teamIncarnationId,
+  teamService,
+  type TeamService,
+} from './teamService.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 function getTeamsDir(): string {
-  const configDir = getClaudeConfigHomeDir()
+  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
   return path.join(configDir, 'teams')
 }
 
@@ -72,6 +77,11 @@ export class TeamWatcher {
       clearInterval(this.intervalId)
       this.intervalId = null
     }
+  }
+
+  async stopAndWait(): Promise<void> {
+    this.stop()
+    await this.checkPromise
   }
 
   /** Visible for testing -- force a single poll cycle. */
@@ -369,17 +379,27 @@ export class TeamWatcher {
     if (!Array.isArray(members)) return []
 
     return members.map((m: Record<string, unknown>) => {
-      const status = this.deriveStatus(m.isActive as boolean | undefined)
+      const failure = readMemberFailure(m)
+      const status = failure.lastError && !failure.autoRetry
+        ? 'error'
+        : this.deriveStatus(m.isActive as boolean | undefined)
       return {
         agentId: (m.agentId as string) || '',
         role: (m.name as string) || (m.agentType as string) || 'member',
         status,
         // Only the runner's own turn markers are cheap enough to read on every
-        // poll. Without one, say nothing so the last full team read stands.
-        ...(typeof m.isActive === 'boolean'
-          ? { activity: (m.isActive ? 'active' : 'idle') as const }
-          : {}),
+        // poll. Without one, say nothing so the last full team read stands. A
+        // process member whose process is gone is stopped, not idle: messaging
+        // it restarts it from its saved conversation.
+        ...(m.terminated === true
+          ? { activity: 'stopped' as const }
+          : typeof m.isActive === 'boolean'
+            ? { activity: (m.isActive ? 'active' : 'idle') as const }
+            : {}),
         currentTask: (m.currentTask as string) || undefined,
+        // Always present so a recovered member clears what the last read set.
+        lastError: failure.lastError ?? null,
+        autoRetry: failure.autoRetry ?? null,
       }
     })
   }

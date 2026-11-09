@@ -42,7 +42,7 @@ type OutputStyleListItem = {
 
 const DEFAULT_OUTPUT_STYLE_LABEL = 'Default'
 const DEFAULT_OUTPUT_STYLE_DESCRIPTION =
-  'EchoFlow completes coding tasks efficiently and provides concise responses'
+  'Claude completes coding tasks efficiently and provides concise responses'
 
 export async function handleSettingsApi(
   req: Request,
@@ -101,9 +101,13 @@ export async function handleSettingsApi(
 
 async function handleUserSettings(req: Request): Promise<Response> {
   if (req.method === 'GET') {
+    const userSettings = await settingsService.getUserSettings()
     return Response.json({
-      ...await settingsService.getUserSettings(),
+      ...userSettings,
+      leanModeEnabled: await settingsService.getLeanModeEnabled(userSettings),
+      autoUpdateEnabled: await settingsService.getAutoUpdateEnabled(userSettings),
       agentTeamsEnabled: await settingsService.getAgentTeamsEnabled(),
+      maxConcurrentSubagents: await settingsService.getMaxConcurrentSubagents(userSettings),
     })
   }
 
@@ -113,6 +117,9 @@ async function handleUserSettings(req: Request): Promise<Response> {
     syncThinkingSettingToActiveSessions(body)
     if (Object.prototype.hasOwnProperty.call(body, 'autoQuestion')) {
       conversationService.refreshAutoQuestionSettings()
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'nextPromptSuggestionsEnabled')) {
+      await conversationService.refreshPromptSuggestionsSetting()
     }
     return Response.json({ ok: true })
   }

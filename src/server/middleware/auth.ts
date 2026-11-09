@@ -10,7 +10,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { H5AccessService } from '../services/h5AccessService.js'
 import { isLocalAccessAuthorized } from '../localAccessAuth.js'
 
-type AuthResult = { valid: boolean; error?: string }
+type AuthResult = { valid: boolean; error?: string; source?: 'local' | 'anthropic' | 'h5' }
 
 function apiKeysEqual(supplied: string, expected: string): boolean {
   const suppliedBytes = Buffer.from(supplied)
@@ -59,12 +59,12 @@ export async function validateRequestAuth(
   tokenOverride?: string | null,
 ): Promise<AuthResult> {
   if (isLocalAccessAuthorized(req, tokenOverride)) {
-    return { valid: true }
+    return { valid: true, source: 'local' }
   }
 
   const anthropicAuth = validateAuth(req)
   if (anthropicAuth.valid) {
-    return anthropicAuth
+    return { ...anthropicAuth, source: 'anthropic' }
   }
 
   const parsedAuth = parseBearerToken(req.headers.get('Authorization'))
@@ -72,7 +72,7 @@ export async function validateRequestAuth(
   if (h5Token) {
     const h5AccessService = new H5AccessService()
     if (await h5AccessService.validateToken(h5Token)) {
-      return { valid: true }
+      return { valid: true, source: 'h5' }
     }
     return { valid: false, error: 'Invalid H5 access token' }
   }
@@ -88,23 +88,17 @@ export async function requireAuth(req: Request, tokenOverride?: string | null): 
   return null
 }
 
-export async function requireH5Token(req: Request, tokenOverride?: string | null): Promise<Response | null> {
+export async function validateH5RequestAuth(req: Request, tokenOverride?: string | null): Promise<AuthResult> {
   const parsedAuth = parseBearerToken(req.headers.get('Authorization'))
   const h5Token = tokenOverride ?? parsedAuth.token
-  if (!h5Token) {
-    return Response.json(
-      { error: 'Unauthorized', message: 'Missing H5 access token' },
-      { status: 401 },
-    )
-  }
+  if (!h5Token) return { valid: false, error: 'Missing H5 access token' }
+  const service = new H5AccessService()
+  return await service.validateToken(h5Token)
+    ? { valid: true, source: 'h5' }
+    : { valid: false, error: 'Invalid H5 access token' }
+}
 
-  const h5AccessService = new H5AccessService()
-  if (!await h5AccessService.validateToken(h5Token)) {
-    return Response.json(
-      { error: 'Unauthorized', message: 'Invalid H5 access token' },
-      { status: 401 },
-    )
-  }
-
-  return null
+export async function requireH5Token(req: Request, tokenOverride?: string | null): Promise<Response | null> {
+  const { valid, error } = await validateH5RequestAuth(req, tokenOverride)
+  return valid ? null : Response.json({ error: 'Unauthorized', message: error }, { status: 401 })
 }

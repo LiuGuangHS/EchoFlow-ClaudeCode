@@ -46,6 +46,7 @@ import { dirname, parse, relative, resolve } from 'path'
 import { getCwd } from 'src/utils/cwd.js'
 import { getViewedTeammateTask } from '../state/selectors.js'
 import { logError } from './log.js'
+import { getAgentProfile } from './agentProfile.js'
 import { logAntError } from './debug.js'
 import { isENOENT, toError } from './errors.js'
 import type { DiagnosticFile } from '../services/diagnosticTracking.js'
@@ -131,7 +132,7 @@ import {
   applyTaskOffsetsAndEvictions,
 } from './task/framework.js'
 import { getTaskOutputPath } from './task/diskOutput.js'
-import { drainPendingMessages } from '../tasks/LocalAgentTask/LocalAgentTask.js'
+import { drainPendingAgentMessages } from '../tasks/LocalAgentTask/LocalAgentTask.js'
 import type { TaskType, TaskStatus } from '../Task.js'
 import {
   getOriginalCwd,
@@ -233,7 +234,7 @@ import { getAutoMemPath, isAutoMemoryEnabled } from '../memdir/paths.js'
 import { getAgentMemoryDir } from '../tools/AgentTool/agentMemory.js'
 import {
   readUnreadMessages,
-  markMessagesAsReadByPredicate,
+  claimMailboxMessages,
   isShutdownApproved,
   isStructuredProtocolMessage,
   isIdleNotification,
@@ -1030,7 +1031,33 @@ export async function getAttachments(
   ].filter(a => a !== undefined && a !== null)
 }
 
+// These producers advertise or access capabilities absent from the lean tool
+// pool. Skip before invoking loaders: filtering results afterwards can still
+// connect to MCP, discover skills, or consume teammate messages.
+const peripheralAttachmentProducers = new Set([
+  'plan_mode',
+  'plan_mode_exit',
+  'mcp_resources',
+  'agent_mentions',
+  'skill_discovery',
+  'deferred_tools_delta',
+  'agent_listing_delta',
+  'mcp_instructions_delta',
+  'companion_intro',
+  'workflow_keyword_request',
+  'ultra_effort_enter',
+  'workflow_size_guideline_change',
+  'dynamic_skill',
+  'skill_listing',
+  'todo_reminders',
+  'teammate_mailbox',
+  'team_context',
+])
+
 async function maybe<A>(label: string, f: () => Promise<A[]>): Promise<A[]> {
+  if (getAgentProfile() === 'lean' && peripheralAttachmentProducers.has(label)) {
+    return []
+  }
   const startTime = Date.now()
   try {
     const result = await f()
@@ -1115,14 +1142,20 @@ export function getAgentPendingMessageAttachments(
 ): Attachment[] {
   const agentId = toolUseContext.agentId
   if (!agentId) return []
-  const drained = drainPendingMessages(
+  const drained = drainPendingAgentMessages(
     agentId,
     toolUseContext.getAppState,
     toolUseContext.setAppStateForTasks ?? toolUseContext.setAppState,
   )
-  return drained.map(msg => ({
+  const latest = drained.at(-1)
+  if (getAgentProfile() === 'lean' && latest && toolUseContext.skillSelectionState) {
+    // These instructions become visible in this tool round. Apply the latest
+    // request's trusted selection only now, including an empty selection.
+    toolUseContext.skillSelectionState.messages = latest.skillSelectionMessages ?? []
+  }
+  return drained.map(({ message }) => ({
     type: 'queued_command' as const,
-    prompt: msg,
+    prompt: message,
     origin: { kind: 'coordinator' as const },
     isMeta: true,
   }))
@@ -1549,13 +1582,14 @@ function getWorkflowSizeGuidelineAttachment(
 }
 
 /**
- * Test seam for the two workflow attachment producers.
+ * Test seams for attachment producers and their profile-aware dispatcher.
  *
- * Both are pure given their inputs, but they sit behind `getAttachments()`,
+ * These sit behind `getAttachments()`,
  * which needs a full ToolUseContext and a live session. Exposing them keeps
  * the tests on the real functions instead of a re-implementation.
  */
 export const getAttachmentsForTesting = {
+  produce: maybe,
   atMentionedFiles: (input: string, toolUseContext: ToolUseContext) =>
     processAtMentionedFiles(input, toolUseContext),
   workflowKeyword: (input: string | null, opts: { suppressed: boolean }) =>
@@ -3663,8 +3697,13 @@ async function getAsyncHookResponseAttachments(): Promise<Attachment[]> {
  *
  * Messages from AppState.inbox are delivered mid-turn as attachments,
  * allowing teammates to receive messages without waiting for the turn to end.
+ *
+ * Like the official external CLI, external builds never deliver mail mid-turn:
+ * the lead receives teammate messages between turns (the print-mode poll or
+ * useInboxPoller) as ordinary prompts, which the desktop chat shows. A
+ * mid-turn attachment is only in the model context and the transcript.
  */
-async function getTeammateMailboxAttachments(
+export async function getTeammateMailboxAttachments(
   toolUseContext: ToolUseContext,
 ): Promise<Attachment[]> {
   if (!isAgentSwarmsEnabled()) {
@@ -3723,11 +3762,21 @@ async function getTeammateMailboxAttachments(
   // messages as read, and if attachments wins, protocol messages get bundled as raw
   // LLM context text instead of being routed to their UI handlers.
   const allUnreadMessages = await readUnreadMessages(agentName, teamName)
-  const unreadMessages = allUnreadMessages.filter(
+  const unreadCandidates = allUnreadMessages.filter(
     m => !isStructuredProtocolMessage(m.text),
   )
+  // Claim before attaching: only the messages this call marked read are
+  // attached, so the print-mode lead poll (or a concurrent attachment pass)
+  // can never deliver one of them a second time, and mail that arrives after
+  // the read stays unread. A failed claim attaches nothing; the messages
+  // remain unread for the next pass.
+  const unreadMessages =
+    unreadCandidates.length > 0
+      ? ((await claimMailboxMessages(agentName, teamName, unreadCandidates)) ??
+        [])
+      : []
   logForDebugging(
-    `[MailboxBridge] Found ${allUnreadMessages.length} unread message(s) for "${agentName}" (${allUnreadMessages.length - unreadMessages.length} structured protocol messages filtered out)`,
+    `[MailboxBridge] Found ${allUnreadMessages.length} unread message(s) for "${agentName}" (${allUnreadMessages.length - unreadCandidates.length} structured protocol messages filtered out, ${unreadMessages.length} claimed)`,
   )
 
   // Also check AppState.inbox for pending messages (queued mid-turn by useInboxPoller)
@@ -3810,25 +3859,14 @@ async function getTeammateMailboxAttachments(
 
   // Build the attachment BEFORE marking messages as processed
   // This prevents message loss if any operation below fails
+  // (mailbox messages were already claimed above; structured protocol
+  // messages stay unread for useInboxPoller to handle).
   const attachment: Attachment[] = [
     {
       type: 'teammate_mailbox',
       messages: allMessages,
     },
   ]
-
-  // Mark only non-structured mailbox messages as read after attachment is built.
-  // Structured protocol messages stay unread for useInboxPoller to handle.
-  if (unreadMessages.length > 0) {
-    await markMessagesAsReadByPredicate(
-      agentName,
-      m => !isStructuredProtocolMessage(m.text),
-      teamName,
-    )
-    logForDebugging(
-      `[MailboxBridge] marked ${unreadMessages.length} non-structured message(s) as read for agent="${agentName}" team="${teamName || 'default'}"`,
-    )
-  }
 
   // Process shutdown_approved messages - remove teammates from team file
   // This mirrors what useInboxPoller does in interactive mode (lines 546-606)

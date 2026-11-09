@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { conversationService } from './conversationService.js'
 import { sessionService } from './sessionService.js'
 import { observeSessionTurns } from './sessionTurnEvents.js'
 import * as turnEvents from './sessionTurnEvents.js'
 import { ApiError } from '../middleware/errorHandler.js'
 import { sessionMessageUuid } from '../../utils/sessionMessageInbox.js'
-import { __resetWebSocketHandlerStateForTests, getSessionTurnState, getSessionChatActivityState, handleWebSocket, stopSessionTurn, submitSessionTurn } from '../ws/handler.js'
+import { __resetWebSocketHandlerStateForTests, getSessionTurnState, getSessionChatActivityState, handleWebSocket, stopSessionTurn, stopScheduledTaskTurn, submitSessionTurn, submitScheduledTaskTurn, translateCliMessage } from '../ws/handler.js'
 
 describe('background session turn admission', () => {
   afterEach(() => { __resetWebSocketHandlerStateForTests(); mock.restore() })
@@ -20,6 +23,56 @@ describe('background session turn admission', () => {
     spyOn(conversationService, 'removeOutputCallback').mockImplementation((_id, cb) => { callbacks.delete(cb) })
     return callbacks
   }
+
+  it('admits scheduled work through the normal guard and sends independent trusted provenance', async () => {
+    fixture()
+    const release = mock(async () => {})
+    const admission = spyOn(turnEvents, 'admitSessionUserTurn').mockResolvedValue({ release })
+    const beforeSend = async () => true
+    const control = spyOn(conversationService, 'requestControl').mockResolvedValue({ status: 'queued' })
+    const scheduledTask = { taskId: 'task', runId: 'run', scheduledFor: '2026-10-26T01:00:00Z', taskName: 'Check' }
+    expect(await submitScheduledTaskTurn('scheduled-target', '/clear', { serverHost: '127.0.0.1', serverPort: 1234, messageId: 'occurrence', scheduledTask, beforeSend })).toEqual({ status: 'queued' })
+    expect(admission).toHaveBeenCalledTimes(1)
+    expect(control.mock.calls[0]?.[1]).toEqual({ subtype: 'enqueue_scheduled_task', message_id: 'occurrence', scheduled_task: scheduledTask, text: '/clear', start_if_idle: true })
+    expect(control.mock.calls[0]?.[5]).toBe(beforeSend)
+    expect(release).not.toHaveBeenCalled()
+    await expect(submitScheduledTaskTurn('scheduled-target', 'Again', { serverHost: '127.0.0.1', serverPort: 1234, messageId: 'another', scheduledTask })).rejects.toThrow('active turn')
+  })
+
+  it.each([false, true])('keeps authoritative scheduled completion provenance across consumed guides and callback order (error=%s)', async (isError) => {
+    const callbacks = fixture()
+    spyOn(conversationService, 'requestControl').mockResolvedValue({ status: 'queued' })
+    const sessionId = 'scheduled-completion'
+    const scheduledTask = { taskId: 'task', runId: 'run', scheduledFor: '2026-10-26T01:00:00Z', taskName: 'Check' }
+    await submitScheduledTaskTurn(sessionId, 'Check', { serverHost: '127.0.0.1', serverPort: 1234, messageId: 'occurrence', scheduledTask })
+    // A consumed human guide is part of this turn, even if it becomes the
+    // renderer's last user message after reconnecting and loading history.
+    for (const cb of [...callbacks]) cb({ type: 'user', isReplay: true, uuid: 'guide', message: { role: 'user', content: 'Also check tests' } })
+    const result = { type: 'result', result: 'Finished', is_error: isError }
+    const before = translateCliMessage(result, sessionId)
+    for (const cb of [...callbacks]) cb(result)
+    expect(getSessionTurnState(sessionId)).toBe('idle')
+    const after = translateCliMessage(result, sessionId)
+    for (const messages of [before, after]) {
+      expect(messages.find(message => message.type === 'message_complete')).toMatchObject({ scheduledTask })
+    }
+    // A subsequent ordinary result cannot inherit provenance or supply its own.
+    expect(translateCliMessage({ type: 'result', is_error: false, scheduledTask }, sessionId)
+      .find(message => message.type === 'message_complete')).not.toHaveProperty('scheduledTask')
+  })
+
+  it('cancels an acknowledged scheduled queue before consumption without stopping another turn', async () => {
+    fixture()
+    spyOn(conversationService, 'requestControl').mockResolvedValue({ status: 'queued' })
+    const interrupt = spyOn(conversationService, 'sendInterrupt').mockReturnValue(true)
+    spyOn(conversationService, 'stopSession').mockImplementation(() => {})
+    const scheduledTask = { taskId: 'task', runId: 'run', scheduledFor: '2026-10-26T01:00:00Z', taskName: 'Check' }
+    await submitScheduledTaskTurn('cancel-scheduled', 'Check', { serverHost: '127.0.0.1', serverPort: 1234, messageId: 'queued-occurrence', scheduledTask })
+    stopScheduledTaskTurn('cancel-scheduled', 'older-occurrence')
+    expect(interrupt).not.toHaveBeenCalled()
+    stopScheduledTaskTurn('cancel-scheduled', 'queued-occurrence')
+    expect(interrupt).toHaveBeenCalledTimes(1)
+  })
 
   it('uses the shared control turn without any renderer and observes completion', async () => {
     const callbacks = fixture()
@@ -151,6 +204,52 @@ describe('background session turn admission', () => {
     await expect(submitSessionTurn('worker', 'Inspect', { serverHost: '127.0.0.1', serverPort: 1234, messageId: 'gone', sourceSessionId: 'root', canSend: () => false })).rejects.toThrow('cancelled')
     expect(control).not.toHaveBeenCalled()
     expect(getSessionTurnState('worker')).toBe('idle')
+  })
+
+  it('moves a delegated title into the worktree transcript when no renderer is attached', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'session-turn-title-'))
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR
+    process.env.CLAUDE_CONFIG_DIR = configDir
+    const sessionId = '0b5e1c4a-2f6d-4c8e-9a1b-3d7f5e9c2a10'
+    const title = 'Review the auth boundary'
+    // Creation names the launch directory; the CLI then writes the
+    // conversation into its worktree and reports that cwd in system/init.
+    const placeholder = join(configDir, 'projects', '-tmp-collab-source', `${sessionId}.jsonl`)
+    const transcript = join(configDir, 'projects', '-tmp-collab-worktree', `${sessionId}.jsonl`)
+    const jsonl = (entries: unknown[]) => entries.map(entry => JSON.stringify(entry)).join('\n') + '\n'
+    try {
+      await mkdir(join(placeholder, '..'), { recursive: true })
+      await mkdir(join(transcript, '..'), { recursive: true })
+      await writeFile(placeholder, jsonl([
+        { type: 'session-meta', isMeta: true, workDir: '/tmp/collab-source', timestamp: '2026-01-01T00:00:00.000Z' },
+        { type: 'custom-title', customTitle: title, timestamp: '2026-01-01T00:00:00.000Z' },
+      ]))
+      await writeFile(transcript, jsonl([{
+        type: 'user', uuid: 'assignment-user', parentUuid: null, sessionId, cwd: '/tmp/collab-worktree',
+        timestamp: '2026-01-01T00:00:01.000Z', message: { role: 'user', content: 'Message from another session' },
+      }]))
+      const callbacks = new Set<(message: any) => void>()
+      spyOn(conversationService, 'hasSession').mockReturnValue(true)
+      spyOn(conversationService, 'getPendingPermissionRequests').mockReturnValue([])
+      spyOn(conversationService, 'onOutput').mockImplementation((_id, cb) => { callbacks.add(cb) })
+      spyOn(conversationService, 'removeOutputCallback').mockImplementation((_id, cb) => { callbacks.delete(cb) })
+      spyOn(conversationService, 'requestControl').mockResolvedValue({ status: 'queued' })
+
+      await submitSessionTurn(sessionId, title, { serverHost: '127.0.0.1', serverPort: 1234, messageId: 'assignment', sourceSessionId: 'root' })
+      for (const cb of [...callbacks]) cb({ type: 'system', subtype: 'init', cwd: '/tmp/collab-worktree', model: 'mock-opus', session_id: sessionId })
+
+      const deadline = Date.now() + 5_000
+      while (await access(placeholder).then(() => true, () => false)) {
+        if (Date.now() > deadline) throw new Error('placeholder transcript was never retired')
+        await Bun.sleep(10)
+      }
+      expect(await readFile(transcript, 'utf8')).toContain(`"customTitle":"${title}"`)
+      expect((await sessionService.listSessions()).sessions.find(session => session.id === sessionId)?.title).toBe(title)
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
+      else process.env.CLAUDE_CONFIG_DIR = previousConfigDir
+      await rm(configDir, { recursive: true, force: true })
+    }
   })
 
   it('returns explicit historical-consumption acknowledgments without inventing a fresh turn', async () => {

@@ -61,12 +61,6 @@ async function teardown() {
   await fs.rm(tmpDir, { recursive: true, force: true })
 }
 
-async function writeEchoFlowSettings(settings: Record<string, unknown>): Promise<void> {
-  const settingsPath = path.join(tmpDir, 'settings.json')
-  await fs.mkdir(path.dirname(settingsPath), { recursive: true })
-  await fs.writeFile(settingsPath, JSON.stringify(settings), 'utf-8')
-}
-
 describe('network settings', () => {
   beforeEach(setup)
   afterEach(teardown)
@@ -237,15 +231,19 @@ describe('network settings', () => {
   })
 
   it('loads persisted user network settings for provider requests', async () => {
-    await writeEchoFlowSettings({
-      network: {
-        aiRequestTimeoutMs: 180_000,
-        proxy: {
-          mode: 'manual',
-          url: ' http://127.0.0.1:7890 ',
+    await fs.writeFile(
+      path.join(tmpDir, 'settings.json'),
+      JSON.stringify({
+        network: {
+          aiRequestTimeoutMs: 180_000,
+          proxy: {
+            mode: 'manual',
+            url: ' http://127.0.0.1:7890 ',
+          },
         },
-      },
-    })
+      }),
+      'utf-8',
+    )
 
     const settings = await loadNetworkSettings()
 

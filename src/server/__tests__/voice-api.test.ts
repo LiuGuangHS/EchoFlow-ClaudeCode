@@ -5,7 +5,13 @@ import * as path from 'node:path'
 import { handleApiRequest } from '../router.js'
 import { handleVoiceApi } from '../api/voice.js'
 import { createVoiceService } from '../services/voice/defaultRegistry.js'
-import { VOICE_LIMITS, type VoiceCatalog, type VoiceProviderStatus, type VoiceTranscript } from '../services/voice/types.js'
+import {
+  DEFAULT_VOICE_PREFERENCES,
+  VOICE_LIMITS,
+  type VoiceCatalog,
+  type VoiceProviderStatus,
+  type VoiceTranscript,
+} from '../services/voice/types.js'
 import type { VoiceService } from '../services/voice/voiceService.js'
 import { FakeProvider, makeWav } from '../services/voice/__tests__/fakeProvider.js'
 
@@ -62,8 +68,10 @@ describe('GET /api/voice/catalog', () => {
           preparation: { phase: 'unprepared' },
         },
       ],
-      preferences: { enabled: false, providerId: 'sensevoice-local', language: 'auto', downloadSource: 'auto' },
+      preferences: DEFAULT_VOICE_PREFERENCES,
       limits: VOICE_LIMITS,
+      // No provider is configured in the redirected config dir.
+      correction: { defaultTarget: null, target: null },
     })
   })
 
@@ -73,7 +81,7 @@ describe('GET /api/voice/catalog', () => {
 
     expect(res.status).toBe(200)
     const catalog = await res.json() as VoiceCatalog
-    expect(Object.keys(catalog).sort()).toEqual(['limits', 'preferences', 'providers', 'supported'])
+    expect(Object.keys(catalog).sort()).toEqual(['correction', 'limits', 'preferences', 'providers', 'supported'])
   })
 
   test('rejects other methods', async () => {
@@ -83,25 +91,21 @@ describe('GET /api/voice/catalog', () => {
 
 describe('PUT /api/voice/preferences', () => {
   test('persists a partial update to desktop-ui.json and keeps other sections', async () => {
-    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'),
+      path.join(tmpDir, 'cc-haha', 'desktop-ui.json'),
       JSON.stringify({ schemaVersion: 6, futureField: { keep: true }, pet: { enabled: true } }),
     )
 
     const first = await call('PUT', '/api/voice/preferences', { enabled: true })
     expect(first.status).toBe(200)
-    expect(await first.json()).toEqual({
-      preferences: { enabled: true, providerId: 'sensevoice-local', language: 'auto', downloadSource: 'auto' },
-    })
+    expect(await first.json()).toEqual({ preferences: DEFAULT_VOICE_PREFERENCES })
 
     const second = await call('PUT', '/api/voice/preferences', { language: 'zh' })
-    expect(await second.json()).toEqual({
-      preferences: { enabled: true, providerId: 'sensevoice-local', language: 'zh', downloadSource: 'auto' },
-    })
+    expect(await second.json()).toEqual({ preferences: { ...DEFAULT_VOICE_PREFERENCES, language: 'zh' } })
 
-    const file = JSON.parse(await fs.readFile(path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'), 'utf-8'))
-    expect(file.voiceInput).toEqual({ enabled: true, providerId: 'sensevoice-local', language: 'zh', downloadSource: 'auto' })
+    const file = JSON.parse(await fs.readFile(path.join(tmpDir, 'cc-haha', 'desktop-ui.json'), 'utf-8'))
+    expect(file.voiceInput).toEqual({ ...DEFAULT_VOICE_PREFERENCES, language: 'zh' })
     expect(file.futureField).toEqual({ keep: true })
     expect(file.pet.enabled).toBe(true)
 
@@ -120,7 +124,7 @@ describe('PUT /api/voice/preferences', () => {
     expect((await call('PUT', '/api/voice/preferences', { downloadSource: 'npmmirror' })).status).toBe(400)
     expect((await call('PUT', '/api/voice/preferences', 'not json', 'application/json')).status).toBe(400)
 
-    await expect(fs.access(path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'))).rejects.toThrow()
+    await expect(fs.access(path.join(tmpDir, 'cc-haha', 'desktop-ui.json'))).rejects.toThrow()
   })
 })
 

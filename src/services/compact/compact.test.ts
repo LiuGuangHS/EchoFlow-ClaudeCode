@@ -1,6 +1,24 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 
-import { buildPostCompactMessages, stripImagesFromMessages, truncateHeadForPTLRetry, type CompactionResult } from './compact.js'
+import {
+  buildPostCompactMessages,
+  createCompactApiAttemptBudget,
+  createPostCompactDeltaAttachments,
+  getCompactForkMaxOutputTokens,
+  streamCompactSummary,
+  stripImagesFromMessages,
+  truncateHeadForPTLRetry,
+  type CompactionResult,
+} from './compact.js'
+import { setAgentProfile } from '../../utils/agentProfile.js'
+import * as attachments from '../../utils/attachments.js'
+import * as forkedAgent from '../../utils/forkedAgent.js'
+import {
+  COMPACT_MAX_OUTPUT_TOKENS,
+  rememberProviderContextLimit,
+  resetProviderReportedContextLimitsForTesting,
+} from '../../utils/context.js'
+import { createAssistantAPIErrorMessage, createAssistantMessage, createUserMessage } from '../../utils/messages.js'
 import { getCurrentUsage } from '../../utils/tokens.js'
 import type { AssistantMessage, Message } from '../../types/message.js'
 
@@ -178,6 +196,44 @@ describe('oversized compaction recovery (#1373)', () => {
     expect(result[0]?.type).toBe('user')
   })
 
+  function toolUseCount(messages: Message[]) {
+    return messages.flatMap(message => message.type === 'assistant'
+      ? message.message.content.filter(block => block.type === 'tool_use') : []).length
+  }
+
+  test('without counts in the error, sizes the cut from the counts the conversation knows', () => {
+    // MiniMax-style rejection, three times over the provider's real limit
+    // (e.g. after switching to a smaller model mid-session).
+    const messages = toolHistory(20)
+    const error = overflow('invalid params, context window exceeds limit (2013)')
+    const result = truncateHeadForPTLRetry(messages, error, { actualTokens: 300_000, limitTokens: 100_000 })!
+
+    // A fixed 20% cut keeps 16 of 20 rounds and is refused again three times
+    // over; following the known sizes keeps under a third.
+    expect(toolUseCount(result)).toBeLessThanOrEqual(6)
+    expect(toolUseCount(result)).toBeGreaterThan(0)
+    expect(result.at(-1)).toBe(messages.at(-1))
+    expect(result[0]?.type).toBe('user')
+  })
+
+  test('inferred counts never cut less than the plain fallback', () => {
+    const messages = toolHistory(20)
+    const error = overflow('invalid params, context window exceeds limit (2013)')
+    const plain = truncateHeadForPTLRetry(messages, error)!
+    const inferred = truncateHeadForPTLRetry(messages, error, { actualTokens: 101_000, limitTokens: 100_000 })!
+
+    expect(toolUseCount(inferred)).toBeLessThanOrEqual(toolUseCount(plain))
+  })
+
+  test('a limit the error states is combined with the known request size', () => {
+    // Qwen states only the limit.
+    const messages = toolHistory(20)
+    const error = overflow('Range of input length should be [1, 100000]')
+    const result = truncateHeadForPTLRetry(messages, error, { actualTokens: 300_000, limitTokens: 250_000 })!
+
+    expect(toolUseCount(result)).toBeLessThanOrEqual(6)
+  })
+
   test('unparseable overflow still makes progress across retries and keeps the newest round', () => {
     const messages = toolHistory(8)
     const error = overflow('Provider rejected the prompt without token counts')
@@ -238,5 +294,197 @@ describe('stripImagesFromMessages', () => {
 
     expect(result[0]).toBe(plain)
     expect(result[1]).toBe(assistant)
+  })
+})
+
+describe('compaction fork output allowance near the context window', () => {
+  const ENV_KEYS = ['CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS'] as const
+  const saved: Record<string, string | undefined> = {}
+  beforeEach(() => {
+    for (const key of ENV_KEYS) {
+      saved[key] = process.env[key]
+      delete process.env[key]
+    }
+  })
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key]
+      else process.env[key] = saved[key]
+    }
+  })
+
+  // claude-opus-4-8: 1M window, 64K default output allowance.
+  test('leaves the fork identical to the main thread while the default allowance fits', () => {
+    expect(getCompactForkMaxOutputTokens(900_000, 'claude-opus-4-8')).toBeUndefined()
+    // 930K + 5K overhead + 64K = exactly the window.
+    expect(getCompactForkMaxOutputTokens(931_000, 'claude-opus-4-8')).toBeUndefined()
+  })
+
+  test('caps the fork to the 20K summary reserve once the default allowance would not fit', () => {
+    // The auto-compact threshold for a 1M window is 967K.
+    expect(getCompactForkMaxOutputTokens(967_000, 'claude-opus-4-8')).toBe(COMPACT_MAX_OUTPUT_TOKENS)
+    expect(getCompactForkMaxOutputTokens(931_001, 'claude-opus-4-8')).toBe(COMPACT_MAX_OUTPUT_TOKENS)
+  })
+
+  test('follows the configured window, so a 200K model is capped at its own threshold', () => {
+    // claude-sonnet-4-6: 200K window, 32K default; its threshold is 167K.
+    expect(getCompactForkMaxOutputTokens(120_000, 'claude-sonnet-4-6')).toBeUndefined()
+    expect(getCompactForkMaxOutputTokens(167_000, 'claude-sonnet-4-6')).toBe(COMPACT_MAX_OUTPUT_TOKENS)
+    process.env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS = JSON.stringify({ 'claude-opus-4-8': 500_000 })
+    expect(getCompactForkMaxOutputTokens(450_000, 'claude-opus-4-8')).toBe(COMPACT_MAX_OUTPUT_TOKENS)
+  })
+
+  test('does not touch a fork whose allowance is already within the summary reserve', () => {
+    process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '8000'
+    expect(getCompactForkMaxOutputTokens(990_000, 'claude-opus-4-8')).toBeUndefined()
+  })
+
+  describe('as sent by the cache-sharing fork', () => {
+    let forkSpy: ReturnType<typeof spyOn>
+    let captured: forkedAgent.ForkedAgentParams | undefined
+    beforeEach(() => {
+      captured = undefined
+      forkSpy = spyOn(forkedAgent, 'runForkedAgent').mockImplementation(async params => {
+        captured = params
+        return {
+          messages: [createAssistantMessage({ content: '<summary>ok</summary>' })],
+          totalUsage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        } as never
+      })
+    })
+    afterEach(() => forkSpy.mockRestore())
+
+    async function summarize(preCompactTokenCount: number) {
+      const abortController = new AbortController()
+      const context = {
+        abortController,
+        options: { mainLoopModel: 'claude-opus-4-8' },
+        setResponseLength: () => {},
+        setSDKStatus: () => {},
+      }
+      return streamCompactSummary({
+        messages: [],
+        summaryRequest: createUserMessage({ content: 'summarize' }),
+        appState: {} as never,
+        context: context as never,
+        preCompactTokenCount,
+        cacheSafeParams: { systemPrompt: ['s'], userContext: {}, systemContext: {}, toolUseContext: context, forkContextMessages: [] } as never,
+        apiAttemptBudget: createCompactApiAttemptBudget(),
+      })
+    }
+
+    test('keeps the main thread allowance with room to spare, preserving the cache key', async () => {
+      await summarize(600_000)
+      expect(captured).toBeDefined()
+      expect(captured?.maxOutputTokens).toBeUndefined()
+      expect(captured?.querySource).toBe('compact')
+    })
+
+    test('requests only the summary reserve at the threshold instead of a size-rejected default', async () => {
+      await summarize(967_000)
+      expect(captured?.maxOutputTokens).toBe(COMPACT_MAX_OUTPUT_TOKENS)
+    })
+
+    test('hands a size rejection straight back instead of re-sending the same conversation uncached', async () => {
+      // A relay's 413: the uncached fallback carries the same history and is
+      // refused the same way; the caller trims the oldest rounds instead.
+      let calls = 0
+      forkSpy.mockImplementation(async () => {
+        calls++
+        return {
+          messages: [createAssistantAPIErrorMessage({
+            content: 'Request too large: your provider or relay rejected it (HTTP 413).',
+            error: 'invalid_request',
+            errorDetails: 'request_too_large: 413 Request Entity Too Large',
+            businessErrorCode: 'request_too_large',
+          })],
+          totalUsage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        } as never
+      })
+
+      const response = await summarize(600_000)
+
+      expect(calls).toBe(1)
+      expect(response.businessErrorCode).toBe('request_too_large')
+    })
+  })
+})
+
+describe('compaction against the window the provider actually allows', () => {
+  afterEach(() => {
+    resetProviderReportedContextLimitsForTesting()
+  })
+
+  test('caps the fork allowance below a limit the provider stated', () => {
+    // claude-opus-4-8 is registered at 1M; the provider behind it accepts 131K.
+    expect(getCompactForkMaxOutputTokens(100_000, 'claude-opus-4-8')).toBeUndefined()
+    rememberProviderContextLimit('claude-opus-4-8', 131_072)
+    expect(getCompactForkMaxOutputTokens(100_000, 'claude-opus-4-8')).toBe(COMPACT_MAX_OUTPUT_TOKENS)
+  })
+})
+
+describe('post-compact delta re-announcement', () => {
+  const savedDelta = process.env.CLAUDE_CODE_MCP_INSTR_DELTA
+  // A connected server whose handshake carried instructions, as print mode tracks it.
+  const instructedServer = {
+    type: 'connected', name: 'fixture-mcp', instructions: 'FIXTURE_MCP_INSTRUCTIONS',
+    capabilities: {}, client: {}, cleanup: async () => {},
+    config: { type: 'stdio', command: 'fixture', args: [], scope: 'user' },
+  }
+  const context = () => ({
+    options: { tools: [], mainLoopModel: 'mock-model', mcpClients: [instructedServer], agentDefinitions: { activeAgents: [], allAgents: [] } },
+  }) as never
+
+  beforeEach(() => {
+    process.env.CLAUDE_CODE_MCP_INSTR_DELTA = '1'
+  })
+  afterEach(() => {
+    if (savedDelta === undefined) delete process.env.CLAUDE_CODE_MCP_INSTR_DELTA
+    else process.env.CLAUDE_CODE_MCP_INSTR_DELTA = savedDelta
+    setAgentProfile('standard')
+  })
+
+  test('standard re-announces connected MCP instructions after full and partial compaction', () => {
+    const full = createPostCompactDeltaAttachments(context(), [], 'compact_full')
+    expect(full.map(message => message.attachment)).toEqual([expect.objectContaining({
+      type: 'mcp_instructions_delta', addedNames: ['fixture-mcp'],
+    })])
+    expect(createPostCompactDeltaAttachments(context(), [makePreservedUser()], 'compact_partial')).toHaveLength(1)
+  })
+
+  test('lean never gains MCP instructions through compaction, even with the delta gate on', () => {
+    setAgentProfile('lean')
+    expect(createPostCompactDeltaAttachments(context(), [], 'compact_full')).toEqual([])
+    expect(createPostCompactDeltaAttachments(context(), [makePreservedUser()], 'compact_partial')).toEqual([])
+  })
+
+  test('standard keeps the previous producer order and arguments', () => {
+    const kept = [makePreservedUser()]
+    const calls: unknown[] = []
+    const spies = [
+      spyOn(attachments, 'getDeferredToolsDeltaAttachment').mockImplementation((_tools, model, messages, scan) => {
+        calls.push(['deferred', model, messages === kept, scan?.callSite])
+        return [{ type: 'deferred_tools_delta', addedNames: ['Deferred'], addedLines: ['Deferred'], removedNames: [] }] as never
+      }),
+      spyOn(attachments, 'getAgentListingDeltaAttachment').mockImplementation((_context, messages) => {
+        calls.push(['agents', messages === kept])
+        return [{ type: 'agent_listing_delta', addedTypes: ['fixture'], addedLines: ['fixture'], removedTypes: [], isInitial: true, showConcurrencyNote: false }] as never
+      }),
+      spyOn(attachments, 'getMcpInstructionsDeltaAttachment').mockImplementation((clients, _tools, model, messages) => {
+        calls.push(['mcp', clients.length, model, messages === kept])
+        return [{ type: 'mcp_instructions_delta', addedNames: ['fixture-mcp'], addedBlocks: ['block'], removedNames: [] }] as never
+      }),
+    ]
+    try {
+      const result = createPostCompactDeltaAttachments(context(), kept, 'compact_partial')
+      expect(result.map(message => message.attachment.type)).toEqual(['deferred_tools_delta', 'agent_listing_delta', 'mcp_instructions_delta'])
+      expect(calls).toEqual([
+        ['deferred', 'mock-model', true, 'compact_partial'],
+        ['agents', true],
+        ['mcp', 1, 'mock-model', true],
+      ])
+    } finally {
+      for (const spy of spies) spy.mockRestore()
+    }
   })
 })

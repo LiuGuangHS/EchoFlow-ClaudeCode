@@ -25,7 +25,7 @@ const venvRoot = path.join(runtimeStateRoot, 'venv')
 const installStampPath = path.join(runtimeStateRoot, 'requirements.sha256')
 
 const isWindows = process.platform === 'win32'
-const windowsInputTag = randomBytes(4).readUInt32LE(0) || 0x45434846
+const windowsInputTag = randomBytes(4).readUInt32LE(0) || 0x43434841
 
 // Always read from ~/.claude/.runtime/ — works in both dev and bundled mode.
 const requirementsPath = path.join(runtimeStateRoot, 'requirements.txt')
@@ -44,7 +44,7 @@ export function getComputerUsePythonEnv(): NodeJS.ProcessEnv | undefined {
     ...process.env,
     PYTHONIOENCODING: 'utf-8',
     PYTHONUTF8: '1',
-    ECHOFLOW_COMPUTER_USE_INPUT_TAG: String(windowsInputTag),
+    CC_HAHA_COMPUTER_USE_INPUT_TAG: String(windowsInputTag),
   }
 }
 

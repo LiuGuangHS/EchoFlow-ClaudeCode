@@ -1,14 +1,15 @@
 import * as fs from 'node:fs/promises'
+import * as os from 'node:os'
 import * as path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { ApiError } from '../middleware/errorHandler.js'
 import { readRecoverableJsonFile } from './recoverableJsonFile.js'
-import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { ensurePersistentStorageUpgraded } from './persistentStorageMigrations.js'
 import { normalizeVoicePreferences } from './voice/preferences.js'
+import { normalizeProjectAdditionalDirectories, resolveProjectDirectories, validateProjectAdditionalDirectories, type ProjectAdditionalDirectories, type ProjectDirectories } from './projectDirectories.js'
 import { DEFAULT_VOICE_PREFERENCES, type VoicePreferences } from './voice/types.js'
 
-const CURRENT_DESKTOP_UI_PREFERENCES_SCHEMA_VERSION = 6
+const CURRENT_DESKTOP_UI_PREFERENCES_SCHEMA_VERSION = 7
 const MAX_PROJECT_PREFERENCE_ENTRIES = 2_000
 const MAX_PROJECT_DISPLAY_NAME_ENTRIES = 2_000
 const MAX_PROJECT_DISPLAY_NAME_KEY_LENGTH = 4_096
@@ -21,7 +22,7 @@ const MIN_PET_SIZE = 96
 const MAX_PET_SIZE = 192
 const DEFAULT_PET_SIZE = 144
 const MAX_PET_SESSION_ID_LENGTH = 200
-const DEFAULT_PROFILE_SUBTITLE = 'EchoFlow Code'
+const DEFAULT_PROFILE_SUBTITLE = 'github.com/NanmiCoder/cc-haha'
 const DEFAULT_PET_ID = 'dada-code'
 
 const AVATAR_CONTENT_TYPES = {
@@ -45,6 +46,13 @@ export type DesktopProfilePreferences = {
   avatarUpdatedAt: string | null
 }
 
+/** Read-only identity shared with connected phones; no local paths or unrelated preferences. */
+export type DesktopProfileSummary = {
+  displayName: string
+  subtitle: string
+  avatarDataUrl: string | null
+}
+
 export type DesktopPetPreferences = {
   enabled: boolean
   selectedPetId: string
@@ -66,6 +74,7 @@ export type DesktopUiPreferences = {
   pet: DesktopPetPreferences
   voiceInput: DesktopVoiceInputPreferences
   projectDisplayNames: ProjectDisplayNames
+  projectAdditionalDirectories: ProjectAdditionalDirectories
   [key: string]: unknown
 }
 
@@ -83,7 +92,7 @@ const DEFAULT_SIDEBAR_PROJECT_PREFERENCES: SidebarProjectPreferences = {
 }
 
 const DEFAULT_PROFILE_PREFERENCES: DesktopProfilePreferences = {
-  displayName: 'EchoFlow Code',
+  displayName: 'cc-haha',
   subtitle: DEFAULT_PROFILE_SUBTITLE,
   avatarFile: null,
   avatarUpdatedAt: null,
@@ -111,6 +120,7 @@ function defaultPreferences(): DesktopUiPreferences {
     pet: { ...DEFAULT_PET_PREFERENCES },
     voiceInput: { ...DEFAULT_VOICE_PREFERENCES },
     projectDisplayNames: createProjectDisplayNames(),
+    projectAdditionalDirectories: {},
   }
 }
 
@@ -350,6 +360,7 @@ function normalizeDesktopUiPreferences(value: unknown): DesktopUiPreferences | n
     pet: normalizeDesktopPetPreferences(record.pet),
     voiceInput: normalizeVoicePreferences(record.voiceInput),
     projectDisplayNames: normalizeProjectDisplayNames(record.projectDisplayNames),
+    projectAdditionalDirectories: normalizeProjectAdditionalDirectories(record.projectAdditionalDirectories),
   }
 }
 
@@ -363,19 +374,15 @@ export class DesktopUiPreferencesService {
   private static writeLocks = new Map<string, Promise<void>>()
 
   private getConfigDir(): string {
-    return getEchoFlowConfigDir()
-  }
-
-  private getEchoFlowDir(): string {
-    return getEchoFlowInternalDir(this.getConfigDir())
+    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
   }
 
   private getPreferencesPath(): string {
-    return path.join(this.getEchoFlowDir(), 'desktop-ui.json')
+    return path.join(this.getConfigDir(), 'cc-haha', 'desktop-ui.json')
   }
 
   private getProfileDir(): string {
-    return path.join(this.getEchoFlowDir(), 'profile')
+    return path.join(this.getConfigDir(), 'cc-haha', 'profile')
   }
 
   private getProfileAvatarPath(avatarFile: string): string {
@@ -383,7 +390,7 @@ export class DesktopUiPreferencesService {
     if (!normalized) {
       throw ApiError.badRequest('Invalid avatar file path')
     }
-    return path.join(this.getEchoFlowDir(), normalized)
+    return path.join(this.getConfigDir(), 'cc-haha', normalized)
   }
 
   private async fileExists(filePath: string): Promise<boolean> {
@@ -438,7 +445,7 @@ export class DesktopUiPreferencesService {
     const existedBeforeRead = await this.fileExists(filePath)
     const preferences = await readRecoverableJsonFile({
       filePath,
-      label: 'EchoFlow desktop UI preferences',
+      label: 'cc-haha desktop UI preferences',
       defaultValue: defaultPreferences(),
       normalize: normalizeDesktopUiPreferences,
     })
@@ -506,6 +513,29 @@ export class DesktopUiPreferencesService {
 
       await this.writePreferences(nextPreferences)
       return nextPreferences
+    })
+  }
+
+  async getProjectDirectories(workDir: unknown): Promise<ProjectDirectories> {
+    const project = await resolveProjectDirectories(workDir)
+    const { preferences } = await this.readPreferences()
+    const directories = preferences.projectAdditionalDirectories
+    return { ...project, additionalDirectories: [...(Object.hasOwn(directories, project.projectKey) ? directories[project.projectKey]! : [])] }
+  }
+
+  async updateProjectDirectories(value: unknown): Promise<ProjectDirectories> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw ApiError.badRequest('Project directories update must be an object')
+    const patch = value as Record<string, unknown>
+    const project = await resolveProjectDirectories(patch.workDir)
+    const additionalDirectories = await validateProjectAdditionalDirectories(project.mainDirectory, patch.additionalDirectories)
+    return this.withWriteLock(this.getPreferencesPath(), async () => {
+      const { preferences } = await this.readPreferences()
+      const projectAdditionalDirectories = {
+        ...preferences.projectAdditionalDirectories,
+        [project.projectKey]: additionalDirectories,
+      }
+      await this.writePreferences({ ...preferences, projectAdditionalDirectories })
+      return { ...project, additionalDirectories }
     })
   }
 
@@ -677,6 +707,20 @@ export class DesktopUiPreferencesService {
       await this.writePreferences(nextPreferences)
       return nextPreferences
     })
+  }
+
+  async readProfileSummary(): Promise<DesktopProfileSummary> {
+    const { preferences } = await this.readPreferences()
+    const avatar = await this.readProfileAvatar()
+    return {
+      displayName: preferences.profile.displayName,
+      subtitle: preferences.profile.subtitle,
+      // Inline bytes keep authenticated native image loads inside the existing API transport.
+      // Out-of-band files must not bypass the managed avatar upload size limit.
+      avatarDataUrl: avatar && avatar.bytes.byteLength <= MAX_PROFILE_AVATAR_BYTES
+        ? `data:${avatar.contentType};base64,${Buffer.from(avatar.bytes).toString('base64')}`
+        : null,
+    }
   }
 
   async readProfileAvatar(): Promise<{ bytes: Uint8Array; contentType: string } | null> {

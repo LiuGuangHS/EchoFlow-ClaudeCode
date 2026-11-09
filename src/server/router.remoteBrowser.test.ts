@@ -30,6 +30,7 @@ beforeEach(() => {
   spyOn(ProviderService.prototype, 'activateProvider').mockResolvedValue(undefined)
   spyOn(SettingsService.prototype, 'getUserSettings').mockResolvedValue({ language: 'en', alwaysThinkingEnabled: true, env: { API_KEY: 'fake-never-expose' }, hooks: { dangerous: true } })
   spyOn(SettingsService.prototype, 'updateUserSettings').mockResolvedValue(undefined)
+  spyOn(SettingsService.prototype, 'getAgentTeamsEnabled').mockResolvedValue(true)
   spyOn(conversationService, 'getActiveSessions').mockReturnValue([])
 })
 afterEach(() => mock.restore())
@@ -43,7 +44,7 @@ describe('remote browser API routing', () => {
       const result = data.provider ?? data.providers[0]
       expect(result.apiKey).toBe('')
       expect(result.hasApiKey).toBe(true)
-      expect(result.imageGeneration).toEqual({ model: 'fixture-image', apiKey: '', hasApiKey: true })
+      expect(result.imageGeneration).toEqual({ protocol: 'openai_images', model: 'fixture-image', apiKey: '', hasApiKey: true })
       expect(result.requestCompatibility).toEqual({ maxOutputTokens: 2048 })
       expect(JSON.stringify(data)).not.toContain('fake-existing-key')
       expect(JSON.stringify(data)).not.toContain('fake-top-level-secret')
@@ -103,11 +104,41 @@ describe('remote browser API routing', () => {
   })
 
   test('general reads exclude secrets and valid edits including language reset keep exact requested fields', async () => {
-    expect(await (await request('/api/settings/user')).json()).toEqual({ language: 'en', alwaysThinkingEnabled: true })
+    expect(await (await request('/api/settings/user')).json()).toEqual({ language: 'en', alwaysThinkingEnabled: true, agentTeamsEnabled: true })
     const patch = { language: '', chatSendBehavior: 'modifierEnter', workflowKeywordTriggerEnabled: true, alwaysThinkingEnabled: false, outputStyle: 'Learning' }
     const response = await request('/api/settings/user', 'PUT', patch)
     expect(response.status).toBe(200)
     expect(SettingsService.prototype.updateUserSettings).toHaveBeenCalledWith(patch)
+  })
+
+  test('exposes the same team capability as desktop but rejects remote changes before persistence', async () => {
+    for (const enabled of [false, true]) {
+      spyOn(SettingsService.prototype, 'getAgentTeamsEnabled').mockResolvedValue(enabled)
+      const remote = await (await request('/api/settings/user')).json()
+      const desktop = await (await request('/api/settings/user', 'GET', undefined, false)).json()
+      expect(remote.agentTeamsEnabled).toBe(enabled)
+      expect(remote.agentTeamsEnabled).toBe(desktop.agentTeamsEnabled)
+      expect(remote).not.toHaveProperty('env')
+      expect(remote).not.toHaveProperty('hooks')
+      const rejected = await request('/api/settings/user', 'PUT', { agentTeamsEnabled: !enabled })
+      expect(rejected.status).toBe(400)
+      expect(SettingsService.prototype.updateUserSettings).not.toHaveBeenCalled()
+    }
+    // A mixed patch must be rejected as a whole, not partially apply General
+    // preferences while silently ignoring the protected capability switch.
+    expect((await request('/api/settings/user', 'PUT', { language: 'zh-CN', agentTeamsEnabled: false })).status).toBe(400)
+    expect(SettingsService.prototype.updateUserSettings).not.toHaveBeenCalled()
+  })
+
+  test('lets a remote browser read but not change next-prompt suggestions', async () => {
+    for (const enabled of [false, true]) {
+      spyOn(SettingsService.prototype, 'getUserSettings').mockResolvedValue({ language: 'en', nextPromptSuggestionsEnabled: enabled })
+      const remote = await (await request('/api/settings/user')).json()
+      expect(remote.nextPromptSuggestionsEnabled).toBe(enabled)
+    }
+    const rejected = await request('/api/settings/user', 'PUT', { nextPromptSuggestionsEnabled: true })
+    expect(rejected.status).toBe(400)
+    expect(SettingsService.prototype.updateUserSettings).not.toHaveBeenCalled()
   })
 
   test('rechecks waiting questions after automatic answer settings are saved', async () => {
@@ -124,6 +155,7 @@ describe('remote browser API routing', () => {
       env: { API_KEY: 'fake-never-expose' },
     })
     expect(await (await request('/api/settings/user')).json()).toEqual({
+      agentTeamsEnabled: true,
       autoQuestion: { enabled: true, timeoutMinutes: 10 },
     })
   })
@@ -138,40 +170,6 @@ describe('remote browser API routing', () => {
     expect(SettingsService.prototype.updateUserSettings).not.toHaveBeenCalled()
     const url = new URL('https://fixture.invalid/api/settings/user')
     expect((await handleApiRequest(new Request(url, { method: 'PUT', body: '{broken' }), url, { remoteBrowser: true })).status).toBe(400)
-  })
-
-  test('denies public-access callers from setting an EchoFlow account credential', async () => {
-    const previousBridge = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
-    const previousFetch = globalThis.fetch
-    process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = 'electron-only-secret'
-    globalThis.fetch = mock(async () => new Response(JSON.stringify({
-      success: true,
-      data: { id: 1, username: 'must-not-load', quota: 500_000 },
-    }))) as typeof fetch
-    try {
-      const url = new URL('https://fixture.invalid/api/echoflow/account/credential')
-      const response = await handleApiRequest(new Request(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-echoflow-site-session-bridge': 'electron-only-secret' },
-        body: JSON.stringify({ endpoint: 'main', kind: 'session', cookie: 'session=private', userId: '1' }),
-      }), url, { remoteBrowser: true })
-      expect(response.status).toBe(403)
-    } finally {
-      globalThis.fetch = previousFetch
-      if (previousBridge === undefined) delete process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
-      else process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = previousBridge
-    }
-  })
-
-  // Regression: routeApiRequest reached `context` through the enclosing scope
-  // instead of a parameter, so every /api/echoflow request threw
-  // ReferenceError and returned 500 instead of routing.
-  test('routes nested API resources instead of throwing on the request context', async () => {
-    expect((await request('/api/echoflow/nonexistent')).status).toBe(404)
-  })
-
-  test('routes nested API resources for local desktop callers too', async () => {
-    expect((await request('/api/echoflow/nonexistent', 'GET', undefined, false)).status).toBe(404)
   })
 
   test('forwards safe mutation results and preserves downstream validation errors', async () => {

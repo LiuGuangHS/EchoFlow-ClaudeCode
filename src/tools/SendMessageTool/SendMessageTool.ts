@@ -11,7 +11,8 @@ import {
 } from '../../tasks/LocalAgentTask/LocalAgentTask.js'
 import { isMainSessionTask } from '../../tasks/LocalMainSessionTask.js'
 import { toAgentId } from '../../types/ids.js'
-import { generateRequestId } from '../../utils/agentId.js'
+import { formatAgentId, generateRequestId } from '../../utils/agentId.js'
+import { getAgentProfile } from '../../utils/agentProfile.js'
 import { isAgentSwarmsEnabled } from '../../utils/agentSwarmsEnabled.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { errorMessage } from '../../utils/errors.js'
@@ -23,12 +24,18 @@ import { semanticBoolean } from '../../utils/semanticBoolean.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import type { BackendType } from '../../utils/swarm/backends/types.js'
 import { TEAM_LEAD_NAME } from '../../utils/swarm/constants.js'
+import {
+  hasResumableInProcessTeammate,
+  resumeInProcessTeammate,
+} from '../../utils/swarm/inProcessRunner.js'
 import { readTeamFileAsync } from '../../utils/swarm/teamHelpers.js'
+import { readTeamPlan } from '../../utils/swarm/teamPlanStore.js'
 import {
   getAgentId,
   getAgentName,
   getTeammateColor,
   getTeamName,
+  isInProcessTeammate,
   isTeamLead,
   isTeammate,
 } from '../../utils/teammate.js'
@@ -41,6 +48,7 @@ import {
   writeToMailbox,
 } from '../../utils/teammateMailbox.js'
 import { resumeAgentBackground } from '../AgentTool/resumeAgent.js'
+import { getSkillSelectionMessages } from '../SkillTool/explicitSkillRequest.js'
 import { SEND_MESSAGE_TOOL_NAME } from './constants.js'
 import { DESCRIPTION, getPrompt } from './prompt.js'
 import { renderToolResultMessage, renderToolUseMessage } from './UI.js'
@@ -66,7 +74,7 @@ const StructuredMessage = lazySchema(() =>
   ]),
 )
 
-const inputSchema = lazySchema(() =>
+const standardInputSchema = lazySchema(() =>
   z.object({
     to: z
       .string()
@@ -87,9 +95,26 @@ const inputSchema = lazySchema(() =>
     ]),
   }),
 )
+const leanInputSchema = lazySchema(() => z.strictObject({
+  to: z.string().describe('ID or name of a subagent started in this session'),
+  message: z.string().describe('Follow-up instructions for the subagent'),
+  summary: z.string().optional().describe('Short preview of the message'),
+}))
+function inputSchema() {
+  return getAgentProfile() === 'lean' ? leanInputSchema() : standardInputSchema()
+}
 type InputSchema = ReturnType<typeof inputSchema>
 
 export type Input = z.infer<InputSchema>
+
+function getLeanMessageError(input: Input): string | undefined {
+  if (typeof input.message !== 'string' || isStructuredProtocolMessage(input.message)) {
+    return 'Lean mode supports plain text follow-ups to ordinary subagents only.'
+  }
+  if (!input.to.trim() || input.to === '*' || input.to.includes('@') || parseAddress(input.to).scheme !== 'other') {
+    return 'Lean mode requires a subagent ID or name from this session; team and cross-session messaging are unavailable.'
+  }
+}
 
 export type MessageRouting = {
   sender: string
@@ -160,7 +185,7 @@ async function handleMessage(
     getAgentName() || (isTeammate() ? 'teammate' : TEAM_LEAD_NAME)
   const senderColor = getTeammateColor()
 
-  await writeToMailbox(
+  const written = await writeToMailbox(
     recipientName,
     {
       from: senderName,
@@ -171,6 +196,14 @@ async function handleMessage(
     },
     teamName,
   )
+  if (!written) {
+    return {
+      data: {
+        success: false,
+        message: `Failed to write to ${recipientName}'s inbox — nothing was sent. Try again.`,
+      },
+    }
+  }
 
   const recipientColor = findTeammateColor(appState, recipientName)
 
@@ -187,6 +220,163 @@ async function handleMessage(
         content,
       },
     },
+  }
+}
+
+/**
+ * Delivers a plain message to one teammate by name.
+ *
+ * Mail for an in-process teammate whose runner is gone -- it failed,
+ * finished, was stopped or evicted -- would sit in an inbox nothing reads, so
+ * the teammate is resumed from its transcript with the message as its next
+ * prompt. A desktop process member needs only its inbox: the server restarts
+ * a stopped member when mail arrives. A name that is on neither the team's
+ * roster nor this process's teammates is an error, not an orphan inbox.
+ */
+async function handleTeammateMessage(
+  recipientName: string,
+  content: string,
+  summary: string | undefined,
+  context: ToolUseContext,
+): Promise<{ data: MessageOutput }> {
+  const appState = context.getAppState()
+  const teamName = getTeamName(appState.teamContext)
+  if (!teamName || recipientName === TEAM_LEAD_NAME) {
+    return handleMessage(recipientName, content, summary, context)
+  }
+
+  const task = findTeammateTaskByAgentId(
+    formatAgentId(recipientName, teamName),
+    appState.tasks,
+  )
+  if (task?.status === 'running') {
+    return handleMessage(recipientName, content, summary, context)
+  }
+
+  const teamFile = await readTeamFileAsync(teamName)
+  const member = teamFile?.members?.find(entry => entry.name === recipientName)
+  if (member?.backendType === 'process') {
+    const sent = await handleMessage(recipientName, content, summary, context)
+    if (!sent.data.success || member.terminated !== true) return sent
+    return {
+      data: {
+        ...sent.data,
+        message: `${recipientName} was stopped; it is restarting from its saved conversation to read your message.`,
+      },
+    }
+  }
+
+  // In-process teammates live in the lead's process: a pane teammate or a
+  // desktop worker cannot host one.
+  const hostsInProcessTeammates = !isTeammate() || isInProcessTeammate()
+  const isStoppedInProcessTeammate =
+    task !== undefined ||
+    member?.backendType === 'in-process' ||
+    hasResumableInProcessTeammate(recipientName, teamName, teamFile?.createdAt)
+  if (hostsInProcessTeammates && isStoppedInProcessTeammate) {
+    return resumeTeammateWithMessage(
+      recipientName,
+      teamName,
+      content,
+      summary,
+      context,
+    )
+  }
+
+  const onRoster =
+    member !== undefined ||
+    Object.values(appState.teamContext?.teammates ?? {}).some(
+      teammate => teammate.name === recipientName,
+    )
+  // Without a readable team file the name cannot be checked
+  if (onRoster || !teamFile) {
+    return handleMessage(recipientName, content, summary, context)
+  }
+  // A member of a desktop team plan awaiting the user's approval has no
+  // roster entry yet; the server delivers its inbox once the plan launches.
+  if (await isPendingTeamPlanMember(teamName, recipientName)) {
+    const queued = await handleMessage(recipientName, content, summary, context)
+    if (!queued.data.success) return queued
+    return {
+      data: {
+        ...queued.data,
+        message: `${recipientName} has not started yet; it reads your message once the user approves the team plan.`,
+      },
+    }
+  }
+  return {
+    data: {
+      success: false,
+      message: isTeammate()
+        ? `No teammate named '${recipientName}' is currently on team '${teamName}'. Message the lead to spawn one.`
+        : `No teammate named '${recipientName}' is currently on team '${teamName}'. Spawn one with the Agent tool (name: '${recipientName}') first.`,
+    },
+  }
+}
+
+const PENDING_TEAM_PLAN_STATES = new Set(['draft', 'review_pending', 'launching'])
+
+async function isPendingTeamPlanMember(
+  teamName: string,
+  name: string,
+): Promise<boolean> {
+  const plan = await readTeamPlan(teamName).catch(() => null)
+  return (
+    !!plan &&
+    PENDING_TEAM_PLAN_STATES.has(plan.state) &&
+    plan.members.some(member => member.name === name)
+  )
+}
+
+async function resumeTeammateWithMessage(
+  recipientName: string,
+  teamName: string,
+  content: string,
+  summary: string | undefined,
+  context: ToolUseContext,
+): Promise<{ data: MessageOutput }> {
+  const senderName =
+    getAgentName() || (isTeammate() ? 'teammate' : TEAM_LEAD_NAME)
+  try {
+    const outcome = await resumeInProcessTeammate({
+      agentName: recipientName,
+      teamName,
+      prompt: content,
+      from: senderName,
+      summary,
+      context,
+    })
+    if (outcome.kind === 'already_running') {
+      const queued = await handleMessage(
+        recipientName,
+        content,
+        summary,
+        context,
+      )
+      if (!queued.data.success) return queued
+      return {
+        data: {
+          ...queued.data,
+          message: `Teammate "${recipientName}" is already running; queued your message for its next turn.`,
+        },
+      }
+    }
+    return {
+      data: {
+        success: true,
+        message:
+          outcome.resumedMessageCount > 0
+            ? `Teammate "${recipientName}" was not running; resumed it as an in-process teammate with ${outcome.resumedMessageCount} prior messages and your message as its next prompt.`
+            : `Teammate "${recipientName}" was not running; resumed it as an in-process teammate (no prior transcript) with your message as its next prompt.`,
+      },
+    }
+  } catch (error) {
+    return {
+      data: {
+        success: false,
+        message: `Failed to resume teammate "${recipientName}" — nothing was sent: ${errorMessage(error)}`,
+      },
+    }
   }
 }
 
@@ -239,8 +429,9 @@ async function handleBroadcast(
     }
   }
 
+  const failedRecipients: string[] = []
   for (const recipientName of recipients) {
-    await writeToMailbox(
+    const written = await writeToMailbox(
       recipientName,
       {
         id: messageId,
@@ -252,6 +443,23 @@ async function handleBroadcast(
       },
       teamName,
     )
+    if (!written) failedRecipients.push(recipientName)
+  }
+
+  if (failedRecipients.length > 0) {
+    const delivered = recipients.filter(
+      name => !failedRecipients.includes(name),
+    )
+    return {
+      data: {
+        success: false,
+        message:
+          delivered.length === 0
+            ? `Failed to write to the inbox of ${failedRecipients.join(', ')} — nothing was sent. Try again.`
+            : `Message broadcast to ${delivered.length} of ${recipients.length} teammate(s): ${delivered.join(', ')}. Failed to write to the inbox of ${failedRecipients.join(', ')} — they did not receive it. Message them directly instead of broadcasting again.`,
+        recipients: delivered,
+      },
+    }
   }
 
   return {
@@ -278,6 +486,26 @@ async function handleShutdownRequest(
   const appState = context.getAppState()
   const teamName = getTeamName(appState.teamContext)
   const senderName = getAgentName() || TEAM_LEAD_NAME
+
+  // A desktop member the user stopped has already shut down: it no longer
+  // blocks TeamDelete. Mail would only make the server restart it, from its
+  // whole conversation, to approve, and TeamDelete would refuse meanwhile.
+  if (teamName) {
+    const member = (await readTeamFileAsync(teamName))?.members.find(
+      entry => entry.name === targetName,
+    )
+    if (member?.backendType === 'process' && member.terminated === true) {
+      return {
+        data: {
+          success: true,
+          message: `${targetName} is already stopped, so nothing was sent and no approval will come. It does not block TeamDelete.`,
+          request_id: '',
+          target: targetName,
+        },
+      }
+    }
+  }
+
   const requestId = generateRequestId('shutdown', targetName)
 
   const shutdownMessage = createShutdownRequestMessage({
@@ -286,7 +514,7 @@ async function handleShutdownRequest(
     reason,
   })
 
-  await writeToMailbox(
+  const written = await writeToMailbox(
     targetName,
     {
       from: senderName,
@@ -296,6 +524,16 @@ async function handleShutdownRequest(
     },
     teamName,
   )
+  if (!written) {
+    return {
+      data: {
+        success: false,
+        message: `Failed to write the shutdown request to ${targetName}'s inbox — nothing was sent. Try again.`,
+        request_id: requestId,
+        target: targetName,
+      },
+    }
+  }
 
   return {
     data: {
@@ -339,7 +577,7 @@ async function handleShutdownApproval(
     backendType: ownBackendType,
   })
 
-  await writeToMailbox(
+  const written = await writeToMailbox(
     TEAM_LEAD_NAME,
     {
       from: agentName,
@@ -349,6 +587,17 @@ async function handleShutdownApproval(
     },
     teamName,
   )
+  // Exiting without the approval reaching the lead would leave this member
+  // on its roster indefinitely; stay up so the approval can be sent again.
+  if (!written) {
+    return {
+      data: {
+        success: false,
+        message: `Failed to write the shutdown approval to ${TEAM_LEAD_NAME}'s inbox — nothing was sent and ${agentName} is still running. Try again.`,
+        request_id: requestId,
+      },
+    }
+  }
 
   if (ownBackendType === 'in-process') {
     logForDebugging(
@@ -416,7 +665,7 @@ async function handleShutdownRejection(
     reason,
   })
 
-  await writeToMailbox(
+  const written = await writeToMailbox(
     TEAM_LEAD_NAME,
     {
       from: agentName,
@@ -426,6 +675,15 @@ async function handleShutdownRejection(
     },
     teamName,
   )
+  if (!written) {
+    return {
+      data: {
+        success: false,
+        message: `Failed to write the shutdown rejection to ${TEAM_LEAD_NAME}'s inbox — nothing was sent. Try again.`,
+        request_id: requestId,
+      },
+    }
+  }
 
   return {
     data: {
@@ -461,7 +719,7 @@ async function handlePlanApproval(
     permissionMode: modeToInherit,
   }
 
-  await writeToMailbox(
+  const written = await writeToMailbox(
     recipientName,
     {
       from: TEAM_LEAD_NAME,
@@ -470,6 +728,15 @@ async function handlePlanApproval(
     },
     teamName,
   )
+  if (!written) {
+    return {
+      data: {
+        success: false,
+        message: `Failed to write the plan approval to ${recipientName}'s inbox — nothing was sent. Try again.`,
+        request_id: requestId,
+      },
+    }
+  }
 
   return {
     data: {
@@ -503,7 +770,7 @@ async function handlePlanRejection(
     timestamp: new Date().toISOString(),
   }
 
-  await writeToMailbox(
+  const written = await writeToMailbox(
     recipientName,
     {
       from: TEAM_LEAD_NAME,
@@ -512,6 +779,15 @@ async function handlePlanRejection(
     },
     teamName,
   )
+  if (!written) {
+    return {
+      data: {
+        success: false,
+        message: `Failed to write the plan rejection to ${recipientName}'s inbox — nothing was sent. Try again.`,
+        request_id: requestId,
+      },
+    }
+  }
 
   return {
     data: {
@@ -538,7 +814,7 @@ export const SendMessageTool: Tool<InputSchema, SendMessageToolOutput> =
     shouldDefer: true,
 
     isEnabled() {
-      return isAgentSwarmsEnabled()
+      return getAgentProfile() === 'lean' || isAgentSwarmsEnabled()
     },
 
     isReadOnly(input) {
@@ -607,6 +883,10 @@ export const SendMessageTool: Tool<InputSchema, SendMessageToolOutput> =
     },
 
     async validateInput(input, _context) {
+      if (getAgentProfile() === 'lean') {
+        const error = getLeanMessageError(input)
+        return error ? { result: false, message: error, errorCode: 9 } : { result: true }
+      }
       if (input.to.trim().length === 0) {
         return {
           result: false,
@@ -752,6 +1032,10 @@ export const SendMessageTool: Tool<InputSchema, SendMessageToolOutput> =
     },
 
     async call(input, context, canUseTool, assistantMessage) {
+      if (getAgentProfile() === 'lean') {
+        const error = getLeanMessageError(input)
+        if (error) return { data: { success: false, message: error } }
+      }
       if (feature('UDS_INBOX') && typeof input.message === 'string') {
         const addr = parseAddress(input.to)
         if (addr.scheme === 'bridge') {
@@ -824,6 +1108,7 @@ export const SendMessageTool: Tool<InputSchema, SendMessageToolOutput> =
                 agentId,
                 input.message,
                 context.setAppStateForTasks ?? context.setAppState,
+                getAgentProfile() === 'lean' ? getSkillSelectionMessages(context) : undefined,
               )
               return {
                 data: {
@@ -837,6 +1122,7 @@ export const SendMessageTool: Tool<InputSchema, SendMessageToolOutput> =
               const result = await resumeAgentBackground({
                 agentId,
                 prompt: input.message,
+                ...(getAgentProfile() === 'lean' && { promptOrigin: 'coordinator' as const }),
                 toolUseContext: context,
                 canUseTool,
                 invokingRequestId: assistantMessage?.requestId,
@@ -864,6 +1150,7 @@ export const SendMessageTool: Tool<InputSchema, SendMessageToolOutput> =
               const result = await resumeAgentBackground({
                 agentId,
                 prompt: input.message,
+                ...(getAgentProfile() === 'lean' && { promptOrigin: 'coordinator' as const }),
                 toolUseContext: context,
                 canUseTool,
                 invokingRequestId: assistantMessage?.requestId,
@@ -886,11 +1173,20 @@ export const SendMessageTool: Tool<InputSchema, SendMessageToolOutput> =
         }
       }
 
+      if (getAgentProfile() === 'lean') {
+        return { data: { success: false, message: `Subagent '${input.to}' was not found in this session.` } }
+      }
+
       if (typeof input.message === 'string') {
         if (input.to === '*') {
           return handleBroadcast(input.message, input.summary, context)
         }
-        return handleMessage(input.to, input.message, input.summary, context)
+        return handleTeammateMessage(
+          input.to,
+          input.message,
+          input.summary,
+          context,
+        )
       }
 
       if (input.to === '*') {
@@ -928,3 +1224,6 @@ export const SendMessageTool: Tool<InputSchema, SendMessageToolOutput> =
     renderToolUseMessage,
     renderToolResultMessage,
   } satisfies ToolDef<InputSchema, SendMessageToolOutput>)
+
+// buildTool spreads the definition; retain profile selection until schema use.
+Object.defineProperty(SendMessageTool, 'inputSchema', { get: inputSchema, enumerable: true, configurable: true })

@@ -5,8 +5,10 @@
  * import without pulling in auth.ts and its transitive dependency tree.
  */
 
+import { CLAUDE_CODE_COMPAT_VERSION } from '../constants/claudeCodeCompatibility.js'
+
 export function getClaudeCodeUserAgent(): string {
-  return `claude-code/${MACRO.VERSION}`
+  return `claude-code/${CLAUDE_CODE_COMPAT_VERSION}`
 }
 
 /**
@@ -17,7 +19,7 @@ export function getClaudeCodeUserAgent(): string {
  * guaranteed to exist when this module is evaluated outside those entry points
  * (tests, plain ts runners), so both are guarded rather than assumed.
  */
-export function getEchoFlowVersion(): string {
+export function getCcHahaVersion(): string {
   const fromEnv = process.env.APP_VERSION?.trim()
   if (fromEnv) return fromEnv
   return typeof MACRO !== 'undefined' && MACRO.VERSION ? MACRO.VERSION : 'dev'

@@ -7,12 +7,12 @@ describe('provider managed env compatibility', () => {
     const { env, changed } = normalizeLegacyDeepSeekManagedEnv({
       ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
       ANTHROPIC_MODEL: 'deepseek-v4-pro',
-      ECHOFLOW_SEND_DISABLED_THINKING: '1',
+      CC_HAHA_SEND_DISABLED_THINKING: '1',
       USER_CUSTOM_ENV: 'keep-me',
     })
 
     expect(changed).toBe(true)
-    expect(env.ECHOFLOW_SEND_DISABLED_THINKING).toBeUndefined()
+    expect(env.CC_HAHA_SEND_DISABLED_THINKING).toBeUndefined()
     expect(env.ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES).toBe(
       'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
     )
@@ -32,7 +32,7 @@ describe('provider managed env compatibility', () => {
     const input = {
       ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
       ANTHROPIC_MODEL: 'glm-5.1',
-      ECHOFLOW_SEND_DISABLED_THINKING: '1',
+      CC_HAHA_SEND_DISABLED_THINKING: '1',
     }
 
     const { env, changed } = normalizeLegacyDeepSeekManagedEnv(input)
@@ -41,8 +41,17 @@ describe('provider managed env compatibility', () => {
     expect(env).toBe(input)
   })
 
-  test('treats attribution header and legacy OpenAI OAuth routing as provider-managed env', () => {
+  test('treats attribution header routing as provider-managed env', () => {
     expect(isProviderManagedEnvVar('CLAUDE_CODE_ATTRIBUTION_HEADER')).toBe(true)
-    expect(isProviderManagedEnvVar('ECHOFLOW_OPENAI_OAUTH_PROVIDER')).toBe(true)
+  })
+
+  test('treats image protocol routing as provider-managed env', () => {
+    expect(isProviderManagedEnvVar('CC_HAHA_IMAGE_PROTOCOL')).toBe(true)
+    expect(isProviderManagedEnvVar('cc_haha_image_protocol')).toBe(true)
+  })
+
+  test('protects the host Grok catalog snapshot from settings env overrides', () => {
+    expect(isProviderManagedEnvVar('CC_HAHA_GROK_MODEL_CATALOG')).toBe(true)
+    expect(isProviderManagedEnvVar('cc_haha_grok_model_catalog')).toBe(true)
   })
 })

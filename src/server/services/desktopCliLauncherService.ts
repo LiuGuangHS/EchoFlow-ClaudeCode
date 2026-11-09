@@ -15,11 +15,10 @@ import { execFileNoThrow } from '../../utils/execFileNoThrow.js'
 import { getShellConfigPaths } from '../../utils/shellConfig.js'
 import { getUserBinDir } from '../../utils/xdg.js'
 
-const DESKTOP_CLI_NAME = 'echoflow-code'
-const PATH_BLOCK_START = '# >>> EchoFlow Code PATH >>>'
-const PATH_BLOCK_END = '# <<< EchoFlow Code PATH <<<'
-const LEGACY_PATH_BLOCK_START = '# >>> EchoFlow-ClaudeCode PATH >>>'
-const LEGACY_PATH_BLOCK_END = '# <<< EchoFlow-ClaudeCode PATH <<<'
+const DESKTOP_CLI_NAME = 'claude-haha'
+const DESKTOP_CLI_WINDOWS_LEGACY_EXE = `${DESKTOP_CLI_NAME}.exe`
+const PATH_BLOCK_START = '# >>> Claude Code Haha PATH >>>'
+const PATH_BLOCK_END = '# <<< Claude Code Haha PATH <<<'
 const WINDOWS_PATH_TARGET = 'Windows User PATH'
 const WINDOWS_USER_BIN_EXPR = '%USERPROFILE%\\.local\\bin'
 
@@ -85,12 +84,7 @@ export function upsertManagedPathBlock(
 ): string {
   const escapedStart = PATH_BLOCK_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const escapedEnd = PATH_BLOCK_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const escapedLegacyStart = LEGACY_PATH_BLOCK_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const escapedLegacyEnd = LEGACY_PATH_BLOCK_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const pattern = new RegExp(
-    `(?:${escapedStart}[\\s\\S]*?${escapedEnd}|${escapedLegacyStart}[\\s\\S]*?${escapedLegacyEnd})\\n?`,
-    'm',
-  )
+  const pattern = new RegExp(`${escapedStart}[\\s\\S]*?${escapedEnd}\\n?`, 'm')
   const nextBlock = `${block.trimEnd()}\n`
 
   if (pattern.test(existingContent)) {
@@ -249,9 +243,7 @@ async function syncLauncher(sourcePath: string, targetPath: string) {
   }
 
   await syncWindowsLauncherWrapper(sourcePath, targetPath)
-  const binDir = dirname(targetPath)
-  await syncLegacyWindowsLauncherWrapper(sourcePath, binDir)
-  await removeLegacyWindowsBinaryLauncher(binDir)
+  await removeLegacyWindowsBinaryLauncher(targetPath)
 }
 
 async function syncUnixLauncherWrapper(sourcePath: string, targetPath: string) {
@@ -290,7 +282,7 @@ APP_ROOT=${quotedAppRoot}
 ${configExport}
 
 if [[ ! -x "$SIDECAR" ]]; then
-  echo "echoflow-code launcher could not find bundled sidecar: $SIDECAR" >&2
+  echo "claude-haha launcher could not find bundled sidecar: $SIDECAR" >&2
   exit 127
 fi
 
@@ -338,7 +330,7 @@ export function buildWindowsLauncherWrapper(sourcePath: string) {
     `set "APP_ROOT=${appRoot}"`,
     configLine.trimEnd(),
     'if not exist "%SIDECAR%" (',
-    '  echo echoflow-code launcher could not find bundled sidecar: %SIDECAR% 1>&2',
+    '  echo claude-haha launcher could not find bundled sidecar: %SIDECAR% 1>&2',
     '  exit /b 127',
     ')',
     '"%SIDECAR%" cli --app-root "%APP_ROOT%" %*',
@@ -376,36 +368,34 @@ async function replaceFile(tempPath: string, targetPath: string) {
   await unlink(backupPath).catch(() => undefined)
 }
 
-async function syncLegacyWindowsLauncherWrapper(sourcePath: string, binDir: string) {
-  await syncWindowsLauncherWrapper(sourcePath, join(binDir, 'echoflow-code.cmd'))
-}
+async function removeLegacyWindowsBinaryLauncher(targetPath: string) {
+  const legacyPath = join(dirname(targetPath), DESKTOP_CLI_WINDOWS_LEGACY_EXE)
+  if (legacyPath === targetPath) return
 
-export async function removeLegacyWindowsBinaryLauncher(binDir: string) {
-  const legacyPath = join(binDir, 'echoflow-code.exe')
   try {
     const legacyStats = await stat(legacyPath)
     if (!legacyStats.isFile()) return
-  } catch (error) {
-    if (isErrnoException(error) && error.code === 'ENOENT') return
-    throw new Error(
-      `failed to inspect legacy Windows launcher ${legacyPath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    )
+  } catch {
+    return
   }
 
   try {
     await unlink(legacyPath)
+    return
   } catch {
-    // The stale executable may still be in use. Rename it away so PATHEXT will
-    // resolve the regenerated echoflow-code.cmd compatibility wrapper instead.
-    const backupPath = `${legacyPath}.old.${Date.now()}`
-    await rename(legacyPath, backupPath)
+    // Retry below by renaming the stale executable out of PATHEXT lookup.
   }
-}
 
-function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
-  return !!error && typeof error === 'object' && 'code' in error
+  const backupPath = `${legacyPath}.old.${Date.now()}`
+  try {
+    await rename(legacyPath, backupPath)
+  } catch (error) {
+    throw new Error(
+      `failed to remove legacy Windows launcher ${legacyPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+  }
 }
 
 async function isUsableLauncher(filePath: string) {

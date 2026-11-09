@@ -16,24 +16,18 @@ import type {
 export type IndexedSessionRow = {
   transcriptPath: string
   id: string
-  archived?: boolean
   title: string
   createdAt: string
   modifiedAt: string
   messageCount: number
   projectPath: string
   workDir: string | null
+  agentProfile?: 'standard' | 'lean'
   permissionMode?: string
   runtimeProviderId?: string | null
   runtimeModelId?: string
   effortLevel?: string
-  modelConfigId?: string
-  modelConfig?: {
-    providerId: string | null
-    modelId: string
-    effortLevel?: string
-  }
-  runtimeInstanceId?: string
+  openAIFastMode?: boolean
   repository?: PersistedRepositorySession
   worktreeSession?: PersistedWorktreeSession | null
 }
@@ -149,14 +143,13 @@ type SessionRow = {
   modified_at_ms: number
   message_count: number
   work_dir: string | null
+  agent_profile?: 'standard' | 'lean'
   permission_mode: string | null
   runtime_provider_id: string | null
   runtime_provider_present: number
   runtime_model_id: string | null
   effort_level: string | null
-  model_config_id: string | null
-  model_config_json: string | null
-  runtime_instance_id: string | null
+  openai_fast_mode: number | null
   repository_json: string | null
   worktree_session_json: string | null
 }
@@ -247,9 +240,6 @@ function sessionFromRow(row: SessionRow): IndexedSessionRow {
   const worktreeSession = row.worktree_session_json === 'null'
     ? null
     : parseStoredJson<PersistedWorktreeSession>(row.worktree_session_json)
-  const modelConfig = parseStoredJson<NonNullable<IndexedSessionRow['modelConfig']>>(
-    row.model_config_json,
-  )
   return {
     transcriptPath: row.transcript_path,
     id: row.session_id,
@@ -259,15 +249,14 @@ function sessionFromRow(row: SessionRow): IndexedSessionRow {
     messageCount: row.message_count,
     projectPath: row.project_path,
     workDir: row.work_dir,
+    agentProfile: row.agent_profile ?? 'standard',
     ...(row.permission_mode ? { permissionMode: row.permission_mode } : {}),
     ...(row.runtime_provider_present === 1
       ? { runtimeProviderId: row.runtime_provider_id }
       : {}),
     ...(row.runtime_model_id ? { runtimeModelId: row.runtime_model_id } : {}),
     ...(row.effort_level ? { effortLevel: row.effort_level } : {}),
-    ...(row.model_config_id ? { modelConfigId: row.model_config_id } : {}),
-    ...(modelConfig ? { modelConfig } : {}),
-    ...(row.runtime_instance_id ? { runtimeInstanceId: row.runtime_instance_id } : {}),
+    ...(row.openai_fast_mode != null ? { openAIFastMode: row.openai_fast_mode === 1 } : {}),
     ...(repository ? { repository } : {}),
     ...(row.worktree_session_json !== null ? { worktreeSession } : {}),
   }
@@ -343,10 +332,9 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
         const rows = project === undefined
           ? operation.all<SessionRow>(`
               SELECT transcript_path, session_id, project_path, title, created_at,
-                modified_at, message_count, work_dir, permission_mode,
+                modified_at, message_count, work_dir, permission_mode, agent_profile,
                 runtime_provider_id, runtime_provider_present,
-                runtime_model_id, effort_level,
-                model_config_id, model_config_json, runtime_instance_id,
+                runtime_model_id, effort_level, openai_fast_mode,
                 repository_json, worktree_session_json
               FROM sessions
               WHERE is_team_worker = 0
@@ -355,10 +343,9 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
             `, limit, offset)
           : operation.all<SessionRow>(`
               SELECT transcript_path, session_id, project_path, title, created_at,
-                modified_at, message_count, work_dir, permission_mode,
+                modified_at, message_count, work_dir, permission_mode, agent_profile,
                 runtime_provider_id, runtime_provider_present,
-                runtime_model_id, effort_level,
-                model_config_id, model_config_json, runtime_instance_id,
+                runtime_model_id, effort_level, openai_fast_mode,
                 repository_json, worktree_session_json
               FROM sessions
               WHERE is_team_worker = 0 AND project_path = ?
@@ -375,9 +362,9 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
       if (!ids.length) return []
       return database.read(operation => operation.all<SessionRow>(`
         SELECT transcript_path, session_id, project_path, title, created_at,
-          modified_at, message_count, work_dir, permission_mode,
+          modified_at, message_count, work_dir, permission_mode, agent_profile,
           runtime_provider_id, runtime_provider_present, runtime_model_id,
-          effort_level, repository_json, worktree_session_json
+          effort_level, openai_fast_mode, repository_json, worktree_session_json
         FROM sessions WHERE session_id IN (${ids.map(() => '?').join(',')})
         ORDER BY modified_at_ms DESC, session_id ASC, transcript_path ASC
         LIMIT 100
@@ -404,9 +391,9 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
         const total = operation.get<{ total: number }>(`SELECT COUNT(*) AS total FROM sessions WHERE ${where}`, needle, needle, needle, needle)?.total ?? 0
         const rows = operation.all<SessionRow>(`
           SELECT transcript_path, session_id, project_path, title, created_at,
-            modified_at, message_count, work_dir, permission_mode,
+            modified_at, message_count, work_dir, permission_mode, agent_profile,
             runtime_provider_id, runtime_provider_present, runtime_model_id,
-            effort_level, repository_json, worktree_session_json
+            effort_level, openai_fast_mode, repository_json, worktree_session_json
           FROM sessions WHERE ${where}
           ORDER BY CASE
             WHEN ? = '' THEN 0
@@ -441,10 +428,9 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
       return database.read(operation => {
         const row = operation.get<SessionRow>(`
           SELECT transcript_path, session_id, project_path, title, created_at,
-            modified_at, message_count, work_dir, permission_mode,
+            modified_at, message_count, work_dir, permission_mode, agent_profile,
             runtime_provider_id, runtime_provider_present,
-            runtime_model_id, effort_level,
-            model_config_id, model_config_json, runtime_instance_id,
+            runtime_model_id, effort_level, openai_fast_mode,
             repository_json, worktree_session_json
           FROM sessions
           WHERE session_id = ?
@@ -541,11 +527,9 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
             sessions.project_path, sessions.title, sessions.created_at,
             sessions.modified_at, sessions.modified_at_ms,
             sessions.message_count, sessions.work_dir,
-            sessions.permission_mode, sessions.runtime_provider_id,
+            sessions.permission_mode, sessions.agent_profile, sessions.runtime_provider_id,
             sessions.runtime_provider_present,
-            sessions.runtime_model_id, sessions.effort_level,
-            sessions.model_config_id, sessions.model_config_json,
-            sessions.runtime_instance_id,
+            sessions.runtime_model_id, sessions.effort_level, sessions.openai_fast_mode,
             sessions.repository_json, sessions.worktree_session_json,
             source_files.indexed_bytes, source_files.size_bytes
           FROM sessions
@@ -561,9 +545,6 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
           : parseStoredJson<NonNullable<TranscriptProjection['summary']['worktreeSession']>>(
             row.worktree_session_json,
           )
-        const modelConfig = parseStoredJson<NonNullable<TranscriptProjection['summary']['modelConfig']>>(
-          row.model_config_json,
-        )
         return {
           summary: {
             title: row.title,
@@ -571,17 +552,14 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
             modifiedAt: row.modified_at,
             messageCount: row.message_count,
             workDir: row.work_dir,
+            agentProfile: row.agent_profile ?? 'standard',
             ...(row.permission_mode ? { permissionMode: row.permission_mode } : {}),
             ...(row.runtime_provider_present === 1
               ? { runtimeProviderId: row.runtime_provider_id }
               : {}),
             ...(row.runtime_model_id ? { runtimeModelId: row.runtime_model_id } : {}),
             ...(row.effort_level ? { effortLevel: row.effort_level } : {}),
-            ...(row.model_config_id ? { modelConfigId: row.model_config_id } : {}),
-            ...(modelConfig ? { modelConfig } : {}),
-            ...(row.runtime_instance_id
-              ? { runtimeInstanceId: row.runtime_instance_id }
-              : {}),
+            ...(row.openai_fast_mode != null ? { openAIFastMode: row.openai_fast_mode === 1 } : {}),
             ...(repository ? { repository } : {}),
             ...(row.worktree_session_json !== null
               ? { worktreeSession }

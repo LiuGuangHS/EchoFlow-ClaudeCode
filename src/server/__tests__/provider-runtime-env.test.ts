@@ -5,6 +5,7 @@ import * as path from 'path'
 
 import {
   activeProviderNeedsProxy,
+  getManagedEnvKeys,
   mergeActiveProviderManagedEnv,
   readActiveProviderManagedEnv,
 } from '../services/providerRuntimeEnv.js'
@@ -35,22 +36,6 @@ describe('providerRuntimeEnv', () => {
     if (originalHome !== undefined) process.env.HOME = originalHome
     else delete process.env.HOME
     await fs.rm(tmpDir, { recursive: true, force: true })
-  })
-
-  test('fails closed to proxy routing when local redaction settings are malformed', async () => {
-    await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
-      activeId: 'provider-native-anthropic',
-      providers: [{
-        id: 'provider-native-anthropic', presetId: 'custom', name: 'Native', apiKey: 'key',
-        baseUrl: 'https://provider.example.test', apiFormat: 'anthropic',
-        models: { main: 'model', haiku: 'model', sonnet: 'model', opus: 'model' },
-        supportsNestedToolResultMedia: true,
-      }],
-    })
-    await fs.writeFile(path.join(tmpDir, 'settings.json'), '{invalid json', 'utf-8')
-
-    expect(activeProviderNeedsProxy(tmpDir)).toBe(true)
-    expect(readActiveProviderManagedEnv(tmpDir)?.ANTHROPIC_BASE_URL).toContain('/proxy')
   })
 
   test('routes Anthropic providers without nested tool media through the proxy', async () => {
@@ -87,30 +72,6 @@ describe('providerRuntimeEnv', () => {
     expect(activeProviderNeedsProxy(tmpDir)).toBe(false)
   })
 
-  test('fails closed through the proxy when local redaction is enabled for official OAuth providers', async () => {
-    await writeJson(path.join(tmpDir, 'settings.json'), {
-      localRedaction: { enabled: true, personalInfo: false, customWords: [] },
-    })
-
-    for (const activeId of ['openai-official', 'grok-official'] as const) {
-      await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
-        activeId,
-        providers: [],
-      })
-
-      const env = readActiveProviderManagedEnv(tmpDir, { serverPort: 4567 })
-      expect(env).toMatchObject({
-        ANTHROPIC_BASE_URL: 'http://127.0.0.1:4567/proxy',
-        ANTHROPIC_API_KEY: 'proxy-managed',
-      })
-      expect(env?.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
-      expect(env?.OPENAI_CODEX_OAUTH_FILE).toBeUndefined()
-      expect(env?.ECHOFLOW_GROK_OAUTH_PROVIDER).toBeUndefined()
-      expect(env?.GROK_OAUTH_FILE).toBeUndefined()
-      expect(activeProviderNeedsProxy(tmpDir)).toBe(true)
-    }
-  })
-
   test('normalizes and preserves Grok Official as the active runtime provider', async () => {
     await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
       activeId: 'grok-official',
@@ -120,30 +81,72 @@ describe('providerRuntimeEnv', () => {
 
     const env = mergeActiveProviderManagedEnv(
       {
-        ECHOFLOW_OPENAI_OAUTH_PROVIDER: '1',
+        CC_HAHA_OPENAI_OAUTH_PROVIDER: '1',
         OPENAI_CODEX_OAUTH_FILE: path.join(tmpDir, 'stale-openai-oauth.json'),
         ANTHROPIC_MODEL: 'stale-openai-model',
+        CC_HAHA_IMAGE_PROTOCOL: 'gemini_native',
         DISABLE_AUTOUPDATER: '1',
       },
       tmpDir,
     )
 
     expect(env).toMatchObject({
-      ECHOFLOW_GROK_OAUTH_PROVIDER: '1',
-      GROK_OAUTH_FILE: path.join(tmpDir, 'echoflow-code', 'grok-oauth.json'),
-      ECHOFLOW_IMAGE_PROVIDER_KIND: 'grok_oauth',
-      ECHOFLOW_IMAGE_PROVIDER_ID: 'grok-official',
-      ECHOFLOW_IMAGE_MODEL: 'grok-imagine-image-quality',
+      CC_HAHA_GROK_OAUTH_PROVIDER: '1',
+      GROK_OAUTH_FILE: path.join(tmpDir, 'cc-haha', 'grok-oauth.json'),
+      CC_HAHA_IMAGE_PROVIDER_KIND: 'grok_oauth',
+      CC_HAHA_IMAGE_PROVIDER_ID: 'grok-official',
+      CC_HAHA_IMAGE_MODEL: 'grok-imagine-image-quality',
       ANTHROPIC_MODEL: 'grok-4.7',
       ANTHROPIC_DEFAULT_HAIKU_MODEL: 'grok-4.7',
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'grok-4.7',
       ANTHROPIC_DEFAULT_OPUS_MODEL: 'grok-4.7',
       DISABLE_AUTOUPDATER: '1',
     })
-    expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
+    expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBeUndefined()
     expect(env.OPENAI_CODEX_OAUTH_FILE).toBeUndefined()
     expect(env.ANTHROPIC_API_KEY).toBeUndefined()
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+    expect(env.CC_HAHA_IMAGE_PROTOCOL).toBeUndefined()
+  })
+
+  test('exports DeepSeek Account as a credential-only variant of the DeepSeek API runtime', async () => {
+    await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
+      activeId: 'deepseek-account',
+      providers: [],
+      providerOrder: ['claude-official', 'openai-official', 'grok-official'],
+    })
+
+    const env = mergeActiveProviderManagedEnv(
+      {
+        ANTHROPIC_AUTH_TOKEN: 'stale-token',
+        CC_HAHA_GROK_OAUTH_PROVIDER: '1',
+        GROK_OAUTH_FILE: path.join(tmpDir, 'stale-grok-oauth.json'),
+        CC_HAHA_GROK_MODEL_CATALOG: 'stale-grok-catalog',
+        DISABLE_AUTOUPDATER: '1',
+      },
+      tmpDir,
+    )
+
+    expect(env).toMatchObject({
+      CC_HAHA_DEEPSEEK_OAUTH_PROVIDER: '1',
+      DEEPSEEK_OAUTH_FILE: path.join(tmpDir, 'cc-haha', 'deepseek-oauth.json'),
+      ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
+      ANTHROPIC_API_KEY: 'deepseek-oauth-dummy-key',
+      ANTHROPIC_MODEL: 'deepseek-flash[1m]',
+      ANTHROPIC_DEFAULT_FABLE_MODEL: 'deepseek-flash[1m]',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-flash[1m]',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-flash[1m]',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'deepseek-flash[1m]',
+      DISABLE_AUTOUPDATER: '1',
+    })
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+    expect(env.CC_HAHA_GROK_OAUTH_PROVIDER).toBeUndefined()
+    expect(env.GROK_OAUTH_FILE).toBeUndefined()
+    expect(env.CC_HAHA_GROK_MODEL_CATALOG).toBeUndefined()
+    expect(JSON.parse(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS!)).toMatchObject({
+      'deepseek-flash': 1000000,
+    })
+    expect(activeProviderNeedsProxy(tmpDir)).toBe(false)
   })
 
   test('routes custom image generation through its own optional credentials', async () => {
@@ -172,11 +175,30 @@ describe('providerRuntimeEnv', () => {
 
     const env = readActiveProviderManagedEnv(tmpDir)
     expect(env).toMatchObject({
-      ECHOFLOW_IMAGE_PROVIDER_KIND: 'openai_images',
-      ECHOFLOW_IMAGE_PROVIDER_ID: 'provider-images',
-      ECHOFLOW_IMAGE_BASE_URL: 'https://images.example.test/v1',
-      ECHOFLOW_IMAGE_API_KEY: 'image-secret',
-      ECHOFLOW_IMAGE_MODEL: 'upstream-image-model',
+      CC_HAHA_IMAGE_PROVIDER_KIND: 'openai_images',
+      CC_HAHA_IMAGE_PROVIDER_ID: 'provider-images',
+      CC_HAHA_IMAGE_BASE_URL: 'https://images.example.test/v1',
+      CC_HAHA_IMAGE_API_KEY: 'image-secret',
+      CC_HAHA_IMAGE_MODEL: 'upstream-image-model',
+      CC_HAHA_IMAGE_PROTOCOL: 'openai_images',
+    })
+  })
+
+  test.each(['gemini_native', 'xai_images'])('routes the saved image protocol %s independently of chat format', async protocol => {
+    await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
+      activeId: 'provider-images',
+      providers: [{
+        id: 'provider-images', presetId: 'custom', name: 'Images',
+        apiKey: 'fixture-key', baseUrl: 'https://images.example.test', apiFormat: 'anthropic',
+        models: { main: 'chat-model', haiku: '', sonnet: '', opus: '' },
+        imageGeneration: { protocol, model: 'image-model' },
+      }],
+    })
+    expect(readActiveProviderManagedEnv(tmpDir)).toMatchObject({
+      CC_HAHA_IMAGE_PROVIDER_KIND: 'openai_images',
+      CC_HAHA_IMAGE_PROTOCOL: protocol,
+      CC_HAHA_IMAGE_BASE_URL: 'https://images.example.test',
+      CC_HAHA_IMAGE_API_KEY: 'fixture-key',
     })
   })
 
@@ -200,18 +222,20 @@ describe('providerRuntimeEnv', () => {
     })
 
     const env = mergeActiveProviderManagedEnv({
-      ECHOFLOW_IMAGE_PROVIDER_KIND: 'openai_images',
-      ECHOFLOW_IMAGE_PROVIDER_ID: 'stale-provider',
-      ECHOFLOW_IMAGE_BASE_URL: 'https://stale.example.test/v1',
-      ECHOFLOW_IMAGE_API_KEY: 'stale-secret',
-      ECHOFLOW_IMAGE_MODEL: 'stale-model',
+      CC_HAHA_IMAGE_PROVIDER_KIND: 'openai_images',
+      CC_HAHA_IMAGE_PROVIDER_ID: 'stale-provider',
+      CC_HAHA_IMAGE_BASE_URL: 'https://stale.example.test/v1',
+      CC_HAHA_IMAGE_API_KEY: 'stale-secret',
+      CC_HAHA_IMAGE_MODEL: 'stale-model',
+      CC_HAHA_IMAGE_PROTOCOL: 'gemini_native',
     }, tmpDir)
 
-    expect(env.ECHOFLOW_IMAGE_PROVIDER_KIND).toBeUndefined()
-    expect(env.ECHOFLOW_IMAGE_PROVIDER_ID).toBeUndefined()
-    expect(env.ECHOFLOW_IMAGE_BASE_URL).toBeUndefined()
-    expect(env.ECHOFLOW_IMAGE_API_KEY).toBeUndefined()
-    expect(env.ECHOFLOW_IMAGE_MODEL).toBeUndefined()
+    expect(env.CC_HAHA_IMAGE_PROVIDER_KIND).toBeUndefined()
+    expect(env.CC_HAHA_IMAGE_PROVIDER_ID).toBeUndefined()
+    expect(env.CC_HAHA_IMAGE_BASE_URL).toBeUndefined()
+    expect(env.CC_HAHA_IMAGE_API_KEY).toBeUndefined()
+    expect(env.CC_HAHA_IMAGE_MODEL).toBeUndefined()
+    expect(env.CC_HAHA_IMAGE_PROTOCOL).toBeUndefined()
   })
 
   test('keeps Claude Code effort capabilities for an unlisted custom model', async () => {
@@ -651,6 +675,85 @@ describe('providerRuntimeEnv', () => {
     })
   })
 
+  // getManagedEnvKeys() is the erase list used to strip stale provider env out of
+  // cc-haha/settings.json. It is built by unioning every preset's defaultEnv keys, so
+  // deleting a preset outright would drop keys only that preset declares — they would
+  // then never be cleaned and would leak into every provider activated afterwards.
+  test('retired saved-provider defaults are cleaned on switch without restoring catalog entries', async () => {
+    const { PROVIDER_PRESETS } = await import('../config/providerPresets.js')
+    for (const id of ['xuanshuapi', 'fennoai', 'qiniuai', 'shengsuanyun']) {
+      expect(PROVIDER_PRESETS.some(preset => preset.id === id)).toBe(false)
+    }
+    await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
+      activeId: 'custom-fixture', providers: [{
+        id: 'custom-fixture', presetId: 'custom', name: 'Custom', apiKey: 'fake-custom',
+        baseUrl: 'http://127.0.0.1:9', models: { main: 'model', haiku: 'model', sonnet: 'model', opus: 'model' },
+      }],
+    })
+    const env = mergeActiveProviderManagedEnv({
+      API_TIMEOUT_MS: '3000000', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5', UNKNOWN_ENV: 'keep',
+    }, tmpDir)
+    expect(env.API_TIMEOUT_MS).toBeUndefined()
+    expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined()
+    expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined()
+    expect(env.UNKNOWN_ENV).toBe('keep')
+  })
+
+  test('keeps the settings.json erase list covering retired presets env keys', () => {
+    const keys = getManagedEnvKeys()
+
+    // Declared only by the retired 胜算云 preset; a stale 50-minute API_TIMEOUT_MS
+    // leaking into other providers is exactly what this guards.
+    expect(keys).toContain('API_TIMEOUT_MS')
+    expect(keys).toContain('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
+    expect(keys).toContain('CLAUDE_CODE_SUBAGENT_MODEL')
+  })
+
+  // Retiring a preset must not touch providers already saved against it. defaultEnv is
+  // never persisted per provider — it is resolved from the preset on every run, so
+  // deleting the entry would silently drop it. Older records may also lack
+  // authStrategy / modelContextWindows and fall back to the preset for those too.
+  test('keeps resolving preset runtime env for providers saved against a retired preset', async () => {
+    await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
+      activeId: 'provider-shengsuanyun',
+      providers: [
+        {
+          id: 'provider-shengsuanyun',
+          presetId: 'shengsuanyun',
+          name: '胜算云',
+          apiKey: 'sk-shengsuanyun',
+          baseUrl: 'https://router.shengsuanyun.com/api',
+          apiFormat: 'anthropic',
+          models: {
+            main: 'anthropic/claude-sonnet-4.6',
+            haiku: 'anthropic/claude-haiku-4.5:thinking',
+            sonnet: 'anthropic/claude-sonnet-4.6',
+            opus: 'anthropic/claude-opus-4.7',
+          },
+        },
+      ],
+    })
+
+    const env = readActiveProviderManagedEnv(tmpDir)
+
+    expect(env).toMatchObject({
+      ANTHROPIC_BASE_URL: 'https://router.shengsuanyun.com/api',
+      ANTHROPIC_MODEL: 'anthropic/claude-sonnet-4.6',
+      // preset defaultEnv survives the retirement
+      API_TIMEOUT_MS: '3000000',
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+    })
+    // preset authStrategy (auth_token) survives: bearer token, blanked api key
+    expect(env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-shengsuanyun')
+    expect(env?.ANTHROPIC_API_KEY).toBe('')
+    expect(JSON.parse(env!.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toMatchObject({
+      'anthropic/claude-sonnet-4.6': 1000000,
+      'anthropic/claude-opus-4.7': 1000000,
+    })
+  })
 })
 
 function clearCapabilityCache() {

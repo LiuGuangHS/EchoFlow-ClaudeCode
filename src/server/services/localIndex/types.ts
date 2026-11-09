@@ -37,24 +37,18 @@ export type PersistedWorktreeSession = {
 }
 
 export type SessionListSummary = {
-  archived?: boolean
   isTeamWorker?: boolean
   title: string
   createdAt: string
   modifiedAt: string
   messageCount: number
   workDir: string | null
+  agentProfile?: 'standard' | 'lean'
   permissionMode?: string
   runtimeProviderId?: string | null
   runtimeModelId?: string
   effortLevel?: string
-  modelConfigId?: string
-  modelConfig?: {
-    providerId: string | null
-    modelId: string
-    effortLevel?: string
-  }
-  runtimeInstanceId?: string
+  openAIFastMode?: boolean
   repository?: PersistedRepositorySession
   worktreeSession?: PersistedWorktreeSession | null
 }

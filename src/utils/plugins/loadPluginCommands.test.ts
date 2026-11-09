@@ -21,7 +21,7 @@ afterEach(async () => {
 
 describe('plugin skill display names', () => {
   test('keeps the plugin prefix when frontmatter overrides the skill name', async () => {
-    pluginDir = await mkdtemp(join(tmpdir(), 'echoflow-code-plugin-skill-'))
+    pluginDir = await mkdtemp(join(tmpdir(), 'cc-haha-plugin-skill-'))
     await mkdir(join(pluginDir, '.claude-plugin'), { recursive: true })
     await mkdir(join(pluginDir, 'skills', 'review'), { recursive: true })
     await writeFile(
@@ -56,7 +56,7 @@ describe('plugin skill display names', () => {
   })
 
   test('keeps the complete prefix when the plugin name contains a colon', async () => {
-    pluginDir = await mkdtemp(join(tmpdir(), 'echoflow-code-plugin-skill-'))
+    pluginDir = await mkdtemp(join(tmpdir(), 'cc-haha-plugin-skill-'))
     await mkdir(join(pluginDir, '.claude-plugin'), { recursive: true })
     await mkdir(join(pluginDir, 'skills', 'review'), { recursive: true })
     await writeFile(
@@ -88,4 +88,39 @@ describe('plugin skill display names', () => {
     expect(skill).toBeDefined()
     expect(getCommandName(skill!)).toBe('foo:bar:custom-review')
   })
+})
+
+test('lean plugin skills cannot grant shell interpolation permissions', async () => {
+  const { spyOn } = await import('bun:test')
+  const shell = await import('../promptShellExecution.js')
+  const { setAgentProfile } = await import('../agentProfile.js')
+  const { getEmptyToolPermissionContext } = await import('../../Tool.js')
+  const captured: unknown[] = []
+  const execute = spyOn(shell, 'executeShellCommandsInPrompt').mockImplementation(async (text, context) => {
+    captured.push(context.getAppState().toolPermissionContext.alwaysAllowRules.command)
+    return text
+  })
+  try {
+    pluginDir = await mkdtemp(join(tmpdir(), 'lean-plugin-skill-'))
+    await mkdir(join(pluginDir, '.claude-plugin'), { recursive: true })
+    await mkdir(join(pluginDir, 'skills', 'fixture'), { recursive: true })
+    await writeFile(join(pluginDir, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'lean-fixture', version: '1.0.0' }))
+    await writeFile(join(pluginDir, 'skills', 'fixture', 'SKILL.md'), '---\ndescription: fixture\nallowed-tools: Bash(*)\n---\n!`fixture`')
+    setInlinePlugins([pluginDir])
+    clearPluginCache('lean-permission-fixture')
+    getPluginSkills.cache?.clear?.()
+    const skill = (await getPluginSkills()).find(command => command.name === 'lean-fixture:fixture')
+    if (skill?.type !== 'prompt') throw new Error('missing fixture skill')
+    const permissions = getEmptyToolPermissionContext()
+    permissions.alwaysAllowRules.command = ['Read']
+    const context = { getAppState: () => ({ toolPermissionContext: permissions }) } as import('../../Tool.js').ToolUseContext
+    setAgentProfile('lean')
+    await skill.getPromptForCommand('', context)
+    setAgentProfile('standard')
+    await skill.getPromptForCommand('', context)
+    expect(captured).toEqual([['Read'], ['Bash(*)']])
+  } finally {
+    setAgentProfile('standard')
+    execute.mockRestore()
+  }
 })

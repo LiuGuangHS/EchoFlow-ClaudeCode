@@ -9,6 +9,7 @@ import {
   resolvePersistedAgentType,
   runAgent,
   selectInitialTranscriptMessages,
+  selectUnrecordedTranscriptMessages,
   resolveSubagentEffortValue,
   resolveSubagentThinkingConfig,
 } from './runAgent.js'
@@ -40,6 +41,41 @@ describe('subagent runtime configuration', () => {
       undefined,
     )).toEqual({
       messages: [persisted, continuation],
+      startingParentUuid: undefined,
+    })
+  })
+
+  test('appends only what follows the last recorded message of a long-lived transcript', () => {
+    const recorded = createUserMessage({ content: 'old prompt' })
+    const recordedAnswer = createUserMessage({ content: 'old tool result' })
+    const notRecorded = createUserMessage({ content: 'kept in memory only' })
+    const next = createUserMessage({ content: 'new prompt' })
+
+    expect(selectUnrecordedTranscriptMessages(
+      [recorded, notRecorded, recordedAnswer, next],
+      new Set([recorded.uuid, recordedAnswer.uuid]),
+    )).toEqual({
+      messages: [next],
+      startingParentUuid: recordedAnswer.uuid,
+    })
+    // Progress entries are recorded but never chained to
+    const recordedProgress = {
+      type: 'progress',
+      uuid: '00000000-0000-4000-8000-000000000001',
+    } as unknown as Parameters<typeof selectUnrecordedTranscriptMessages>[0][number]
+    expect(selectUnrecordedTranscriptMessages(
+      [recorded, recordedProgress, next],
+      new Set([recorded.uuid, recordedProgress.uuid]),
+    )).toEqual({
+      messages: [next],
+      startingParentUuid: recorded.uuid,
+    })
+    // Nothing recorded yet: a new teammate, or history replaced by compaction
+    expect(selectUnrecordedTranscriptMessages(
+      [notRecorded, next],
+      new Set(),
+    )).toEqual({
+      messages: [notRecorded, next],
       startingParentUuid: undefined,
     })
   })
@@ -128,6 +164,64 @@ describe('subagent runtime configuration', () => {
     expect(capturedContext?.options.mainLoopModel).toBe('gpt-5.6-luna')
     expect(capturedContext?.options.thinkingConfig).toBe(thinkingConfig)
     expect(capturedContext?.getAppState().effortValue).toBe('low')
+  })
+
+  test.each([undefined, 'bubble'] as const)('switches a transferred worker to background interaction boundaries (%s) without rebuilding its context', async permissionMode => {
+    let backgrounded = false
+    let updates = 0
+    let taskUpdates = 0
+    const agentDefinition = {
+      agentType: 'transfer-reviewer', whenToUse: 'Review transfer',
+      getSystemPrompt: () => 'Review.', source: 'built-in', permissionMode,
+    } as Parameters<typeof runAgent>[0]['agentDefinition']
+    const parentState = { ...getDefaultAppState(), denialTracking: { consecutiveDenials: 0, totalDenials: 0 } }
+    const parentContext = {
+      options: {
+        mainLoopModel: 'sonnet', tools: [], mcpClients: [], mcpResources: {},
+        agentDefinitions: { activeAgents: [agentDefinition], allAgents: [agentDefinition] },
+        isNonInteractiveSession: false,
+      },
+      abortController: new AbortController(), readFileState: createFileStateCacheWithSizeLimit(),
+      getAppState: () => parentState,
+      setAppState: () => { updates += 1 },
+      setAppStateForTasks: () => { taskUpdates += 1 },
+      setResponseLength: () => {}, messages: [],
+    } as unknown as ToolUseContext
+    let captured!: ToolUseContext
+    const stop = new Error('context captured')
+    const generator = runAgent({
+      agentDefinition, promptMessages: [], toolUseContext: parentContext,
+      canUseTool: (async () => ({ behavior: 'allow' })) as never,
+      isAsync: false, isBackgrounded: () => backgrounded, querySource: 'agent:builtin',
+      override: { userContext: {}, systemContext: {}, systemPrompt: asSystemPrompt([]) },
+      availableTools: [{ name: 'Read' }, { name: 'TaskCreate' }] as never,
+      onCacheSafeParams: params => { captured = params.toolUseContext; throw stop },
+    })
+    await expect(generator.next()).rejects.toBe(stop)
+    expect(captured.options.tools.map(tool => tool.name)).toEqual(['Read', 'TaskCreate'])
+    expect(captured.options.isNonInteractiveSession).toBe(false)
+    expect(captured.getAppState().toolPermissionContext.shouldAvoidPermissionPrompts).not.toBe(true)
+    captured.setAppState(state => state)
+    expect(updates).toBe(1)
+    // query 会复制上下文；拒绝计数必须跟随同一对象，不能靠 getter 在复制后切换。
+    const queryContext = { ...captured }
+    expect(queryContext.localDenialTracking).toEqual({ consecutiveDenials: 0, totalDenials: 0 })
+    Object.assign(queryContext.localDenialTracking!, { consecutiveDenials: 1, totalDenials: 1 })
+    backgrounded = true
+    expect(captured.options.tools.map(tool => tool.name)).toEqual(['Read'])
+    expect(captured.options.isNonInteractiveSession).toBe(true)
+    const permissions = captured.getAppState().toolPermissionContext
+    if (permissionMode === 'bubble') expect(permissions.awaitAutomatedChecksBeforeDialog).toBe(true)
+    else expect(permissions.shouldAvoidPermissionPrompts).toBe(true)
+    captured.setAppState(state => state)
+    captured.setAppStateForTasks!(state => state)
+    expect(updates).toBe(1)
+    expect(taskUpdates).toBe(1)
+    expect(captured.localDenialTracking).toBe(queryContext.localDenialTracking)
+    expect(captured.localDenialTracking).toEqual({ consecutiveDenials: 1, totalDenials: 1 })
+    Object.assign(queryContext.localDenialTracking!, { consecutiveDenials: 2, totalDenials: 3 })
+    expect(captured.localDenialTracking?.totalDenials).toBe(3)
+    expect(parentState.denialTracking.totalDenials).toBe(0)
   })
 
   test('prevents repository agents from elevating a default parent to bypassPermissions', async () => {

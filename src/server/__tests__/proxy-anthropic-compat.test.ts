@@ -45,106 +45,6 @@ describe('proxy anthropic-compatible path', () => {
   beforeEach(setup)
   afterEach(teardown)
 
-  test('fails closed when an upstream ignores identity encoding during local redaction', async () => {
-    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
-    await fs.writeFile(path.join(tmpDir, 'settings.json'), JSON.stringify({ localRedaction: { enabled: true, personalInfo: false, customWords: [] } }))
-    const receivedHeaders: Headers[] = []
-    const upstream = Bun.serve({
-      hostname: '127.0.0.1', port: 0,
-      fetch(request) {
-        receivedHeaders.push(request.headers)
-        return new Response('compressed', { headers: { 'content-encoding': 'gzip' } })
-      },
-    })
-    try {
-      const provider = await new ProviderService().addProvider({
-        presetId: 'custom', name: 'Compressed Anthropic', baseUrl: upstream.url.origin, apiKey: 'upstream-key',
-        apiFormat: 'anthropic', models: { main: 'fixture-model', haiku: '', sonnet: '', opus: '' },
-      })
-      const request = new Request(`http://localhost/proxy/providers/${provider.id}/v1/messages`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'fixture-model', max_tokens: 16, messages: [{ role: 'user', content: 'sk-test-secretvalue' }] }),
-      })
-      const response = await handleProxyRequest(request, new URL(request.url))
-      expect(receivedHeaders[0]?.get('accept-encoding')).toBe('identity')
-      expect(response.status).toBe(502)
-    } finally {
-      upstream.stop(true)
-    }
-  })
-
-  test('preserves short signed media URLs when local redaction is enabled', async () => {
-    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
-    await fs.writeFile(path.join(tmpDir, 'settings.json'), JSON.stringify({ localRedaction: { enabled: true, personalInfo: false, customWords: [] } }))
-    let receivedBody: unknown
-    const upstream = Bun.serve({
-      hostname: '127.0.0.1', port: 0,
-      async fetch(request) {
-        receivedBody = await request.json()
-        return Response.json({ type: 'message', content: [{ type: 'text', text: 'ok' }] })
-      },
-    })
-    try {
-      const provider = await new ProviderService().addProvider({
-        presetId: 'custom', name: 'Media URL Anthropic', baseUrl: upstream.url.origin, apiKey: 'upstream-key',
-        apiFormat: 'anthropic', models: { main: 'fixture-model', haiku: '', sonnet: '', opus: '' },
-      })
-      const url = 'https://cdn.example/image.png?token=short-secret'
-      const request = new Request(`http://localhost/proxy/providers/${provider.id}/v1/messages`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: 'fixture-model',
-          max_tokens: 16,
-          messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url } }] }],
-        }),
-      })
-      const response = await handleProxyRequest(request, new URL(request.url))
-      expect(response.status).toBe(200)
-      expect((receivedBody as { messages: Array<{ content: Array<{ image_url: { url: string } }> }> }).messages[0]!.content[0]!.image_url.url).toBe(url)
-    } finally {
-      upstream.stop(true)
-    }
-  })
-
-  test('restores a placeholder that straddles the stream hold-back boundary', async () => {
-    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
-    await fs.writeFile(path.join(tmpDir, 'settings.json'), JSON.stringify({ localRedaction: { enabled: true, personalInfo: false, customWords: [] } }))
-    const secret = 'sk-test-secretvalue'
-    let placeholder = ''
-    const upstream = Bun.serve({
-      hostname: '127.0.0.1', port: 0,
-      async fetch(request) {
-        const body = await request.json() as { messages: Array<{ content: string }> }
-        placeholder = body.messages[0]?.content.trim() ?? ''
-        const encoder = new TextEncoder()
-        const stream = new ReadableStream<Uint8Array>({
-          start(controller) {
-            // The 40-char hold-back lands inside the placeholder on the second chunk.
-            controller.enqueue(encoder.encode(`${'x'.repeat(40)}${placeholder.slice(0, 5)}`))
-            controller.enqueue(encoder.encode(`${placeholder.slice(5)}${'y'.repeat(25)}`))
-            controller.close()
-          },
-        })
-        return new Response(stream, { headers: { 'content-type': 'text/event-stream' } })
-      },
-    })
-    try {
-      const provider = await new ProviderService().addProvider({
-        presetId: 'custom', name: 'Streaming Anthropic', baseUrl: upstream.url.origin, apiKey: 'upstream-key',
-        apiFormat: 'anthropic', models: { main: 'fixture-model', haiku: '', sonnet: '', opus: '' },
-      })
-      const request = new Request(`http://localhost/proxy/providers/${provider.id}/v1/messages`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'fixture-model', max_tokens: 16, stream: true, messages: [{ role: 'user', content: secret }] }),
-      })
-      const response = await handleProxyRequest(request, new URL(request.url))
-
-      expect(await response.text()).toBe(`${'x'.repeat(40)}${secret}${'y'.repeat(25)}`)
-    } finally {
-      upstream.stop(true)
-    }
-  })
-
   test.each([false, true])('forwards real HTTP requests to the upstream host (stream=%s)', async stream => {
     const received: Array<{ url: string; headers: Headers; body: unknown }> = []
     const responseBody = stream
@@ -450,7 +350,7 @@ describe('proxy anthropic-compatible path', () => {
       expect(captured[0]?.get('anthropic-relay-credential')).toBe('opaque-value-43')
 
       await drainTraceCaptureForTests()
-      const tracePath = path.join(tmpDir, 'echoflow-code', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
       const traceRaw = await fs.readFile(tracePath, 'utf-8')
       expect(traceRaw).toContain('x-relay-credential')
       expect(traceRaw).toContain('anthropic-relay-credential')
@@ -873,7 +773,7 @@ describe('proxy anthropic-compatible path', () => {
       // decompressed for storage instead of being UTF-8-decoded as garbage.
       // (The body is JSON-stringified inside the trace record, so the marker
       // appears unescaped only in decompressed plain text.)
-      const tracePath = path.join(tmpDir, 'echoflow-code', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -960,7 +860,7 @@ describe('proxy anthropic-compatible path', () => {
       const forwarded = new Uint8Array(await res.arrayBuffer())
       expect(forwarded).toEqual(new Uint8Array(gzipBody))
 
-      const tracePath = path.join(tmpDir, 'echoflow-code', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -1050,7 +950,7 @@ describe('proxy anthropic-compatible path', () => {
       const forwarded = new Uint8Array(await res.arrayBuffer())
       expect(forwarded).toEqual(new Uint8Array(gzipBody))
 
-      const tracePath = path.join(tmpDir, 'echoflow-code', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -1183,7 +1083,7 @@ describe('proxy anthropic-compatible path', () => {
       }
       expect(upstreamBody?.locked).toBe(false)
 
-      const tracePath = path.join(tmpDir, 'echoflow-code', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       let lastSize = 0
       for (let attempt = 0; attempt < 200; attempt++) {
@@ -1275,7 +1175,7 @@ describe('proxy anthropic-compatible path', () => {
       const forwarded = new Uint8Array(await res.arrayBuffer())
       expect(forwarded).toEqual(new Uint8Array(doubleEncoded))
 
-      const tracePath = path.join(tmpDir, 'echoflow-code', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -1361,7 +1261,7 @@ describe('proxy anthropic-compatible path', () => {
       const res = await handleProxyRequest(req, new URL(req.url))
       expect(res.status).toBe(200)
 
-      const tracePath = path.join(tmpDir, 'echoflow-code', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -1436,7 +1336,7 @@ describe('proxy anthropic-compatible path', () => {
       const forwarded = new Uint8Array(await res.arrayBuffer())
       expect(forwarded).toEqual(corruptGzip)
 
-      const tracePath = path.join(tmpDir, 'echoflow-code', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -1512,7 +1412,7 @@ describe('proxy anthropic-compatible path', () => {
       const forwarded = new Uint8Array(await res.arrayBuffer())
       expect(forwarded).toEqual(corruptGzip)
 
-      const tracePath = path.join(tmpDir, 'echoflow-code', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -1702,7 +1602,7 @@ describe('proxy anthropic-compatible path', () => {
       // Wait for the background trace write to land, then read the raw jsonl:
       // the call opened as `pending` must be closed with the same id as an
       // error, and no second call with a different id may appear.
-      const tracePath = path.join(tmpDir, 'echoflow-code', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
       let lines: string[] = []
       let lastSize = -1
       let stableReads = 0
@@ -1772,7 +1672,7 @@ describe('proxy anthropic-compatible path', () => {
       expect(upstreamFetch).toHaveBeenCalledTimes(1)
 
       await drainTraceCaptureForTests()
-      const raw = await fs.readFile(path.join(tmpDir, 'echoflow-code', 'traces', `${sessionId}.jsonl`), 'utf8')
+      const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`), 'utf8')
       const calls = raw.trim().split('\n')
         .map(line => JSON.parse(line) as { type: string; record: TraceCallRecord })
         .filter(entry => entry.type === 'call')
@@ -1827,7 +1727,7 @@ describe('proxy anthropic-compatible path', () => {
       expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array(compressedBody))
 
       await drainTraceCaptureForTests()
-      const raw = await fs.readFile(path.join(tmpDir, 'echoflow-code', 'traces', `${sessionId}.jsonl`), 'utf8')
+      const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`), 'utf8')
       const calls = raw.trim().split('\n')
         .map(line => JSON.parse(line) as { type: string; record: TraceCallRecord })
         .filter(entry => entry.type === 'call')

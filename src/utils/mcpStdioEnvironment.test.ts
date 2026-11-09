@@ -13,7 +13,7 @@ let originalEnv: {
   PATH?: string
   SHELL?: string
   ZDOTDIR?: string
-  ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV?: string
+  CC_HAHA_DISABLE_TERMINAL_SHELL_ENV?: string
 }
 
 async function writeExecutable(filePath: string, content: string) {
@@ -51,10 +51,10 @@ describe('MCP stdio environment', () => {
       PATH: process.env.PATH,
       SHELL: process.env.SHELL,
       ZDOTDIR: process.env.ZDOTDIR,
-      ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV:
-        process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV,
+      CC_HAHA_DISABLE_TERMINAL_SHELL_ENV:
+        process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV,
     }
-    delete process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
+    delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
     resetMcpStdioEnvironmentCacheForTests()
   })
 
@@ -108,9 +108,7 @@ describe('MCP stdio environment', () => {
 
     process.env.HOME = tmpDir
     process.env.SHELL = shellPath
-    if (process.platform !== 'win32') {
-      process.env.PATH = '/usr/bin:/bin'
-    }
+    process.env.PATH = '/usr/bin:/bin'
 
     const env = await getMcpStdioEnvironment({ PATH: '/custom/bin' })
 

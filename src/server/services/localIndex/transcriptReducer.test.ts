@@ -57,6 +57,17 @@ function assistant(timestamp: string, extra: Record<string, unknown> = {}) {
 }
 
 describe('reduceTranscript', () => {
+  it('preserves Fast mode across old partial metadata and applies explicit false incrementally', () => {
+    const old = { type: 'session-meta', runtimeProviderId: 'openai-official', runtimeModelId: 'future-model' }
+    const enabled = { type: 'session-meta', openAIFastMode: true }
+    const disabled = { type: 'session-meta', openAIFastMode: false }
+    const first = reduceTranscript(completeChunks([old, enabled]), initialProjection())
+    expect(first.summary.openAIFastMode).toBe(true)
+    const next = reduceTranscript(completeChunks([disabled], first.indexedBytes), first)
+    expect(next.summary.openAIFastMode).toBe(false)
+    expect(reduceTranscript(completeChunks([old, enabled, disabled]), initialProjection()).summary.openAIFastMode).toBe(false)
+  })
+
   it('clears inherited effort on full runtime replacements in complete and incremental projections', () => {
     const oldSelection = { type: 'session-meta', runtimeProviderId: 'old-provider', runtimeModelId: 'old-model', effortLevel: 'high' }
     const replacement = { type: 'session-meta', runtimeProviderId: 'new-provider', runtimeModelId: 'new-model' }
@@ -101,14 +112,6 @@ describe('reduceTranscript', () => {
         runtimeProviderId: 'provider-a',
         runtimeModelId: 'model-a',
         effortLevel: 'high',
-        modelConfigId: 'mc_config-a',
-        modelConfig: {
-          providerId: 'provider-a',
-          modelId: 'model-a',
-          effortLevel: 'high',
-        },
-        runtimeInstanceId: 'runtime_same-id',
-        cliRuntimeId: 'installed',
         timestamp: '2026-01-01T00:00:00.000Z',
       },
       user('First user title', '2026-01-01T00:01:00.000Z', {
@@ -142,7 +145,7 @@ describe('reduceTranscript', () => {
     const result = reduceTranscript(chunks, initialProjection())
 
     expect(result.summary).toEqual({
-      archived: false,
+      agentProfile: 'standard',
       title: 'Pinned title',
       createdAt: '2026-01-01T00:00:00.000Z',
       modifiedAt: '2026-01-01T00:02:00.000Z',
@@ -152,13 +155,6 @@ describe('reduceTranscript', () => {
       runtimeProviderId: 'provider-a',
       runtimeModelId: 'model-a',
       effortLevel: 'high',
-      modelConfigId: 'mc_config-a',
-      modelConfig: {
-        providerId: 'provider-a',
-        modelId: 'model-a',
-        effortLevel: 'high',
-      },
-      runtimeInstanceId: 'runtime_same-id',
       repository,
       worktreeSession,
     })
@@ -168,43 +164,6 @@ describe('reduceTranscript', () => {
     ))
     expect(result.pendingTailBytes).toBe(0)
     expect(result.malformedLineCount).toBe(0)
-  })
-
-  it('ignores invalid legacy effort levels while preserving valid model metadata', () => {
-    const result = reduceTranscript(
-      completeChunks([{
-        type: 'session-meta',
-        runtimeProviderId: 'provider-a',
-        runtimeModelId: 'model-a',
-        effortLevel: 'unsupported',
-        modelConfigId: 'mc_config-a',
-        modelConfig: {
-          providerId: 'provider-a',
-          modelId: 'model-a',
-          effortLevel: 'high',
-        },
-        runtimeInstanceId: 'runtime-a',
-      }]),
-      initialProjection(),
-    )
-
-    expect(result.summary).toEqual({
-      archived: false,
-      title: 'Untitled Session',
-      createdAt: birthtime,
-      modifiedAt: mtime,
-      messageCount: 0,
-      workDir: '/fallback/project',
-      runtimeProviderId: 'provider-a',
-      runtimeModelId: 'model-a',
-      modelConfigId: 'mc_config-a',
-      modelConfig: {
-        providerId: 'provider-a',
-        modelId: 'model-a',
-        effortLevel: 'high',
-      },
-      runtimeInstanceId: 'runtime-a',
-    })
   })
 
   it.each([
@@ -451,7 +410,7 @@ describe('reduceTranscript', () => {
     const result = reduceTranscript(chunks, initialProjection())
 
     expect(result.summary).toEqual({
-      archived: false,
+      agentProfile: 'standard',
       title: 'Untitled Session',
       createdAt: birthtime,
       modifiedAt: mtime,
@@ -537,6 +496,69 @@ describe('reduceTranscript activity usage', () => {
     // The tool calls themselves are real and must still all be counted — only usage deduplicates.
     expect(result.activity?.daily[0]?.toolCallCount).toBe(10)
     expect(result.activity?.daily[0]?.messageCount).toBe(12)
+  })
+
+  it('counts the final usage of a reply whose first content-block line was written with zero output', () => {
+    // Real transcripts hold replies whose first line carries a zero/partial usage and whose last
+    // line carries the final numbers. "First line wins" recorded such replies as ~0 output tokens.
+    const lines = assistantBlockLines({
+      messageId: 'msg_zero_first',
+      requestId: 'req_zero_first',
+      timestamp: '2026-01-01T10:00:00.000Z',
+      usage: STANDARD_USAGE,
+      blocks: [
+        { type: 'thinking', thinking: 'planning' },
+        { type: 'text', text: 'here goes' },
+        { type: 'tool_use', id: 'toolu_a', name: 'Bash', input: {} },
+      ],
+    })
+    const partial = [
+      { input_tokens: 1000, output_tokens: 0, cache_read_input_tokens: 50_000, cache_creation_input_tokens: 0 },
+      { input_tokens: 1000, output_tokens: 3, cache_read_input_tokens: 50_000, cache_creation_input_tokens: 300 },
+      STANDARD_USAGE,
+    ]
+    lines.forEach((line, index) => { line.message.usage = partial[index]! })
+
+    const result = reduceTranscript(completeChunks(lines), initialProjection())
+    const expected = reduceTranscript(completeChunks(assistantBlockLines({
+      messageId: 'msg_zero_first',
+      requestId: 'req_zero_first',
+      timestamp: '2026-01-01T10:00:00.000Z',
+      usage: STANDARD_USAGE,
+      blocks: [{ type: 'text', text: 'one line' }],
+    })), initialProjection())
+
+    expect(modelTotals(result)).toEqual([{
+      model: 'claude-opus-5',
+      inputTokens: 1000,
+      outputTokens: 200,
+      cacheReadInputTokens: 50_000,
+      cacheCreationInputTokens: 300,
+    }])
+    // Dollars follow the reply's final figure, not the sum of its fragments' tiers.
+    expect(result.activity?.models[0]?.costUSD).toBeCloseTo(expected.activity!.models[0]!.costUSD, 10)
+  })
+
+  it('keeps the ledger across an incremental read of a reply split over two chunks', () => {
+    const lines = assistantBlockLines({
+      messageId: 'msg_split',
+      requestId: 'req_split',
+      timestamp: '2026-01-01T10:00:00.000Z',
+      usage: STANDARD_USAGE,
+      blocks: [{ type: 'text', text: 'first block' }, { type: 'text', text: 'last block' }],
+    })
+    lines[0]!.message.usage = { ...STANDARD_USAGE, output_tokens: 0 }
+
+    const first = reduceTranscript(completeChunks([lines[0]!]), initialProjection())
+    const second = reduceTranscript(completeChunks([lines[1]!], first.indexedBytes), first)
+
+    expect(modelTotals(second)).toEqual([{
+      model: 'claude-opus-5',
+      inputTokens: 1000,
+      outputTokens: 200,
+      cacheReadInputTokens: 50_000,
+      cacheCreationInputTokens: 300,
+    }])
   })
 
   it('counts a genuinely new reply separately', () => {

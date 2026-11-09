@@ -2,6 +2,7 @@ import {
   COST_FABLE_51,
   COST_HAIKU_35,
   COST_HAIKU_45,
+  COST_HAIKU_55,
   COST_OPUS_55,
   COST_OPUS_55_FAST,
   COST_TIER_2_10,
@@ -10,6 +11,7 @@ import {
   COST_TIER_10_50,
   COST_TIER_15_75,
   COST_TIER_30_150,
+  getPromptLengthCosts,
   type ModelCosts,
 } from './modelCost.js'
 
@@ -25,7 +27,7 @@ import {
  *
  * Deliberately does NOT reuse `calculateUSDCost()` from the CLI: that helper falls back to the
  * default model's rates for anything it doesn't recognize and fires an analytics event per call.
- * echoflow-code is a multi-provider client, so a third-party model (glm, k3, deepseek, grok, gpt, ...)
+ * cc-haha is a multi-provider client, so a third-party model (glm, k3, deepseek, grok, gpt, ...)
  * priced at Claude rates would report wildly wrong dollars, and indexing runs this tens of
  * thousands of times per rebuild. Here an unknown model returns `null` instead — callers keep its
  * tokens in the activity totals but leave it out of the cost total, matching how ccusage and
@@ -65,6 +67,7 @@ const MODEL_TIERS: ReadonlyArray<readonly [prefix: string, costs: ModelCosts]> =
   ['claude-sonnet-4', COST_TIER_3_15],
   ['claude-3-7-sonnet', COST_TIER_3_15],
   ['claude-3-5-sonnet', COST_TIER_3_15],
+  ['claude-haiku-5-5', COST_HAIKU_55],
   ['claude-haiku-4-5', COST_HAIKU_45],
   ['claude-3-5-haiku', COST_HAIKU_35],
   ['claude-3-haiku', COST_HAIKU_35],
@@ -147,7 +150,7 @@ function isSemverPrefix(value: string): boolean {
 /**
  * Whether a line's `usage` should be counted at all. Mirrors ccusage's validity rules: a `version`
  * that isn't semver-ish means a foreign log format, and an id that is present but empty means a
- * malformed line. Deliberately does not reject an empty `model` the way ccusage does — echoflow-code
+ * malformed line. Deliberately does not reject an empty `model` the way ccusage does — cc-haha
  * files those under `unknown` and still shows their tokens.
  *
  * Only gates token accounting; the entry still counts toward messages and tool calls, which are
@@ -198,6 +201,74 @@ export function usageRecordKey(
 }
 
 /**
+ * What one reply's content-block lines add to a ledger of already-counted usage.
+ *
+ * The lines of one reply do not necessarily agree: the first block can be written with an
+ * all-zero or partial `usage` (output_tokens still 0) and a later line carries the final numbers.
+ * Keeping "the first line wins" therefore recorded some replies as ~0 output tokens. Instead each
+ * field keeps the largest value any line reported, and a line only contributes what exceeds what
+ * was already counted. Identical repeats add nothing; a late-arriving final line adds the rest.
+ *
+ * `previous` is what had been counted before this line (null for a first sighting) and `total` is
+ * the reply's running figure, so tiered pricing can be applied to the whole reply and billed as
+ * `cost(total) - cost(previous)` instead of pricing each fragment as a tiny prompt.
+ */
+export type UsageIncrement = {
+  previous: Required<PricedTokens> | null
+  total: Required<PricedTokens>
+  delta: Required<PricedTokens>
+  isEmpty: boolean
+}
+
+export type UsageLedger = Map<string, Required<PricedTokens>>
+
+function withWebSearch(tokens: PricedTokens): Required<PricedTokens> {
+  return { ...tokens, webSearchRequests: tokens.webSearchRequests ?? 0 }
+}
+
+export function claimUsageIncrement(
+  ledger: UsageLedger,
+  key: string | null,
+  current: PricedTokens,
+): UsageIncrement {
+  const next = withWebSearch(current)
+  const previous = key === null ? undefined : ledger.get(key)
+  const total: Required<PricedTokens> = previous
+    ? {
+        inputTokens: Math.max(previous.inputTokens, next.inputTokens),
+        outputTokens: Math.max(previous.outputTokens, next.outputTokens),
+        cacheReadInputTokens: Math.max(previous.cacheReadInputTokens, next.cacheReadInputTokens),
+        cacheCreationInputTokens: Math.max(
+          previous.cacheCreationInputTokens,
+          next.cacheCreationInputTokens,
+        ),
+        webSearchRequests: Math.max(previous.webSearchRequests, next.webSearchRequests),
+      }
+    : next
+  if (key !== null) ledger.set(key, total)
+  const base = previous ?? withWebSearch({
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheCreationInputTokens: 0,
+  })
+  const delta: Required<PricedTokens> = {
+    inputTokens: total.inputTokens - base.inputTokens,
+    outputTokens: total.outputTokens - base.outputTokens,
+    cacheReadInputTokens: total.cacheReadInputTokens - base.cacheReadInputTokens,
+    cacheCreationInputTokens: total.cacheCreationInputTokens - base.cacheCreationInputTokens,
+    webSearchRequests: total.webSearchRequests - base.webSearchRequests,
+  }
+  const isEmpty =
+    delta.inputTokens === 0 &&
+    delta.outputTokens === 0 &&
+    delta.cacheReadInputTokens === 0 &&
+    delta.cacheCreationInputTokens === 0 &&
+    delta.webSearchRequests === 0
+  return { previous: previous ?? null, total, delta, isEmpty }
+}
+
+/**
  * Time actually worked between two consecutive messages, or 0 when the gap is a break rather than
  * a stretch of work. Non-positive gaps (out-of-order timestamps) contribute nothing.
  */
@@ -217,8 +288,12 @@ export function estimateCostUSD(
   tokens: PricedTokens,
   speed?: string,
 ): number | null {
-  const costs = resolveModelCosts(model, speed)
-  if (!costs) return null
+  const tierCosts = resolveModelCosts(model, speed)
+  if (!tierCosts) return null
+  const costs = getPromptLengthCosts(
+    tierCosts,
+    tokens.inputTokens + tokens.cacheReadInputTokens + tokens.cacheCreationInputTokens,
+  )
   return (
     (tokens.inputTokens / 1_000_000) * costs.inputTokens +
     (tokens.outputTokens / 1_000_000) * costs.outputTokens +

@@ -41,7 +41,7 @@ function dependencies(
     platform: 'win32' as const,
     bootstrap: async () => {},
     command: () => ({ python: 'python.exe', script: 'cursor.py' }),
-    environment: () => ({ ECHOFLOW_COMPUTER_USE_INPUT_TAG: '1234' }),
+    environment: () => ({ CC_HAHA_COMPUTER_USE_INPUT_TAG: '1234' }),
     spawnChild: spawnChild as typeof import('node:child_process').spawn,
   }
 }
@@ -85,7 +85,7 @@ describe('Windows virtual cursor process lifecycle', () => {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
         detached: false,
-        env: { ECHOFLOW_COMPUTER_USE_INPUT_TAG: '1234' },
+        env: { CC_HAHA_COMPUTER_USE_INPUT_TAG: '1234' },
       },
     })
     expect(JSON.parse(harness.writes[0])).toEqual({

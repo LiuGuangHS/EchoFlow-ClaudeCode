@@ -14,6 +14,7 @@ import {
   prepareSessionWorkspace,
 } from '../services/repositoryLaunchService.js'
 import { conversationService } from '../services/conversationService.js'
+import * as boundedSessionHistory from '../services/boundedSessionHistory.js'
 import { clearCommandsCache } from '../../commands.js'
 import { parseJSONL } from '../../utils/json.js'
 import { formatSessionCollaborationPrompt } from '../../utils/sessionCollaborationEnvelope.js'
@@ -42,36 +43,17 @@ import type {
 // ============================================================================
 
 let tmpDir: string
-let tmpHomeDir: string
 let service: SessionService
-let originalHomeEnv: string | undefined
-let originalUserProfileEnv: string | undefined
 
 /** Create a temporary config dir and configure the service to use it. */
 async function setupTmpConfigDir(): Promise<string> {
   tmpDir = path.join(os.tmpdir(), `claude-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
   await fs.mkdir(path.join(tmpDir, 'projects'), { recursive: true })
-  tmpHomeDir = path.join(tmpDir, 'home')
-  await fs.mkdir(tmpHomeDir, { recursive: true })
-  originalHomeEnv = process.env.HOME
-  originalUserProfileEnv = process.env.USERPROFILE
-  process.env.HOME = tmpHomeDir
-  process.env.USERPROFILE = tmpHomeDir
   process.env.CLAUDE_CONFIG_DIR = tmpDir
   return tmpDir
 }
 
 async function cleanupTmpDir(): Promise<void> {
-  if (originalHomeEnv === undefined) {
-    delete process.env.HOME
-  } else {
-    process.env.HOME = originalHomeEnv
-  }
-  if (originalUserProfileEnv === undefined) {
-    delete process.env.USERPROFILE
-  } else {
-    process.env.USERPROFILE = originalUserProfileEnv
-  }
   if (tmpDir) {
     await fs.rm(tmpDir, { recursive: true, force: true })
   }
@@ -595,6 +577,39 @@ describe('SessionService', () => {
     await expect(fs.access(collaborationTranscript)).resolves.toBeNull()
   })
 
+  it('keeps the live transcript when another project directory name reaches the same file', async () => {
+    // At system/init the CLI has not flushed the turn yet, so its own file is
+    // still metadata-only. Reaching it through a second directory name must not
+    // make it look like a stray placeholder.
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const transcript = await writeSessionFile('-tmp-worktree', sessionId, [
+      makeSnapshotEntry(),
+      { type: 'session-meta', isMeta: true, workDir: '/tmp/worktree', timestamp: '2026-01-01T00:00:00.000Z' },
+    ])
+    const aliasDir = path.join(tmpDir, 'projects', '-tmp-alias')
+    await fs.mkdir(aliasDir, { recursive: true })
+    await fs.link(transcript, path.join(aliasDir, `${sessionId}.jsonl`))
+
+    expect(await service.deletePlaceholderSessionFiles(sessionId, '/tmp/worktree')).toBe(0)
+    await expect(fs.access(transcript)).resolves.toBeNull()
+  })
+
+  it('keeps the live transcript when the project directory differs only by case on a case-insensitive file system', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    // Windows and default macOS volumes resolve both spellings to one folder;
+    // readdir reports the spelling it was created with.
+    const transcript = await writeSessionFile('-tmp-Worktree', sessionId, [
+      makeSnapshotEntry(),
+      { type: 'session-meta', isMeta: true, workDir: '/tmp/Worktree', timestamp: '2026-01-01T00:00:00.000Z' },
+    ])
+    const caseInsensitive = await fs.access(path.join(tmpDir, 'projects', '-tmp-worktree', `${sessionId}.jsonl`))
+      .then(() => true, () => false)
+    if (!caseInsensitive) return
+
+    expect(await service.deletePlaceholderSessionFiles(sessionId, '/tmp/worktree')).toBe(0)
+    await expect(fs.access(transcript)).resolves.toBeNull()
+  })
+
   it('prefers a transcript with an oversized turn over a newer metadata-only placeholder', async () => {
     const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
     const transcript = await writeSessionFile('-tmp-large-transcript', sessionId, [
@@ -603,6 +618,64 @@ describe('SessionService', () => {
     await writeSessionFile('-tmp-large-placeholder', sessionId, [makeSnapshotEntry()])
 
     expect((await service.findSessionFile(sessionId))?.filePath).toBe(transcript)
+  })
+
+  // Every session route resolves its file first. Reading the whole transcript
+  // here made each history page of a long session cost a full parse, so a
+  // 2,500-message session reopened in quadratic time.
+  describe('session file lookup cost', () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+
+    function countDeliveredRecords() {
+      const delivered = new Map<string, number>()
+      const original = boundedSessionHistory.streamBoundedHistory
+      const spy = spyOn(boundedSessionHistory, 'streamBoundedHistory').mockImplementation(
+        (filePath, onEntry, signal, options) => original(filePath, (...args) => {
+          delivered.set(filePath, (delivered.get(filePath) ?? 0) + 1)
+          onEntry(...args)
+        }, signal, options),
+      )
+      return { delivered, spy }
+    }
+
+    it('resolves a lone transcript without reading its records', async () => {
+      const transcript = await writeSessionFile('-tmp-lone', sessionId, [
+        makeSnapshotEntry(),
+        ...Array.from({ length: 50 }, (_, n) => makeUserEntry(`turn ${n}`)),
+      ])
+      const { delivered, spy } = countDeliveredRecords()
+      try {
+        expect((await service.findSessionFile(sessionId))?.filePath).toBe(transcript)
+        expect(delivered.size).toBe(0)
+      } finally { spy.mockRestore() }
+    })
+
+    it('stops reading a candidate at its first conversation record', async () => {
+      const transcript = await writeSessionFile('-tmp-long-worktree', sessionId, [
+        makeSnapshotEntry(),
+        makeUserEntry('first turn'),
+        ...Array.from({ length: 200 }, (_, n) => makeAssistantEntry(`reply ${n}`)),
+      ])
+      const placeholder = await writeSessionFile('-tmp-newer-placeholder', sessionId, [makeSnapshotEntry()])
+      const later = new Date(Date.now() + 60_000)
+      await fs.utimes(placeholder, later, later)
+      const { delivered, spy } = countDeliveredRecords()
+      try {
+        expect((await service.findSessionFile(sessionId))?.filePath).toBe(transcript)
+        expect(delivered.get(transcript)).toBe(2)
+        expect(delivered.get(placeholder)).toBe(1)
+      } finally { spy.mockRestore() }
+    })
+
+    it('still recognizes a conversation on a final line without a newline', async () => {
+      const transcript = await writeSessionFile('-tmp-unterminated', sessionId, [makeSnapshotEntry()])
+      await fs.appendFile(transcript, JSON.stringify(makeUserEntry('last turn')))
+      const placeholder = await writeSessionFile('-tmp-unterminated-placeholder', sessionId, [makeSnapshotEntry()])
+      const later = new Date(Date.now() + 60_000)
+      await fs.utimes(placeholder, later, later)
+
+      expect((await service.findSessionFile(sessionId))?.filePath).toBe(transcript)
+    })
   })
 
   it('should return empty list when no sessions exist', async () => {
@@ -935,7 +1008,6 @@ describe('SessionService', () => {
     const seed: TranscriptProjection = {
       summary: {
         title: 'Untitled Session',
-        archived: false,
         createdAt: stat.birthtime.toISOString(),
         modifiedAt: stat.mtime.toISOString(),
         messageCount: 0,
@@ -949,8 +1021,8 @@ describe('SessionService', () => {
 
     expect(scanned).toEqual(reduced.summary)
     expect(scanned).toEqual({
+      agentProfile: 'standard',
       title: 'Canonical parity title',
-      archived: false,
       createdAt: '2026-07-01T01:00:00.000Z',
       modifiedAt: '2026-07-01T02:05:00.000Z',
       messageCount: 3,
@@ -1029,7 +1101,6 @@ describe('SessionService', () => {
     const seed: TranscriptProjection = {
       summary: {
         title: 'Untitled Session',
-        archived: false,
         createdAt: stat.birthtime.toISOString(),
         modifiedAt: stat.mtime.toISOString(),
         messageCount: 0,
@@ -1268,7 +1339,7 @@ describe('SessionService', () => {
     ))).toBe(true)
   })
 
-  it('should not coalesce in-flight session list scans across config scopes', async () => {
+  it.each([false, true])('should not coalesce in-flight session list scans across config scopes (archived=%s)', async (archived) => {
     const scopeRoot = path.join(tmpDir, 'session-list-request-scopes')
     const firstConfigDir = path.join(scopeRoot, 'first')
     const secondConfigDir = path.join(scopeRoot, 'second')
@@ -1291,6 +1362,17 @@ describe('SessionService', () => {
       '24300001-bbbb-cccc-dddd-eeeeeeeeeeee',
       'Second in-flight scope',
     )
+    if (archived) {
+      for (const [configDir, id] of [
+        [firstConfigDir, '24300000-bbbb-cccc-dddd-eeeeeeeeeeee'],
+        [secondConfigDir, '24300001-bbbb-cccc-dddd-eeeeeeeeeeee'],
+      ] as const) {
+        await fs.mkdir(path.join(configDir, 'cc-haha'), { recursive: true })
+        await fs.writeFile(path.join(configDir, 'cc-haha', 'session-archives.json'), JSON.stringify({
+          schemaVersion: 1, sessions: { [id]: { archived: true } },
+        }))
+      }
+    }
 
     const serviceWithSpy = service as unknown as {
       scanSessionListSummary: (...args: unknown[]) => Promise<unknown>
@@ -1313,10 +1395,10 @@ describe('SessionService', () => {
     }
 
     process.env.CLAUDE_CONFIG_DIR = firstConfigDir
-    const firstScopeRequest = service.listSessions({ limit: 10, offset: 0 })
+    const firstScopeRequest = service.listSessions({ limit: 10, offset: 0, archived })
     await firstScanStarted
     process.env.CLAUDE_CONFIG_DIR = secondConfigDir
-    const secondScopeRequest = service.listSessions({ limit: 10, offset: 0 })
+    const secondScopeRequest = service.listSessions({ limit: 10, offset: 0, archived })
     await new Promise(resolve => setTimeout(resolve, 10))
     releaseFirstScan()
 
@@ -1413,11 +1495,7 @@ describe('SessionService', () => {
     await service.renameSession(sessionId, 'Renamed while scanning')
 
     const freshRequest = service.listSessions({ limit: 10, offset: 0 })
-    // Starting the invalidated fresh scan is async work; poll for it instead of
-    // racing a fixed delay, which flakes red when the runner is under load.
-    for (let attempt = 0; attempt < 500 && scanCount < 2; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10))
-    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
     expect(scanCount).toBe(2)
 
     const freshResult = await freshRequest
@@ -2249,7 +2327,7 @@ describe('SessionService', () => {
     ])
   })
 
-  it('should hide the task-notification turn itself but keep everything the assistant does after it', async () => {
+  it('should project the task-notification turn as a status and keep everything the assistant does after it', async () => {
     const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
     const firstUserId = crypto.randomUUID()
     const firstAssistantId = crypto.randomUUID()
@@ -2324,6 +2402,7 @@ describe('SessionService', () => {
     expect(messages.map((message) => message.id)).toEqual([
       firstUserId,
       firstAssistantId,
+      taskNotificationId,
       taskAssistantId,
       taskToolUseMessageId,
       taskToolResultId,
@@ -2331,6 +2410,15 @@ describe('SessionService', () => {
       realFollowUpId,
       realAssistantId,
     ])
+    expect(messages[2]).toEqual({
+      id: taskNotificationId,
+      type: 'system',
+      content: {
+        subtype: 'background_continue',
+        notifications: [{ taskId: 'bg-1', status: 'completed', summary: 'Background command completed' }],
+      },
+      timestamp: '2026-01-01T00:01:00.000Z',
+    })
     expect(JSON.stringify(messages)).not.toContain('<task-notification>')
     expect(JSON.stringify(messages)).toContain('后台命令跑完了，我来重启服务')
     expect(JSON.stringify(messages)).toContain('server restarted')
@@ -2372,7 +2460,7 @@ describe('SessionService', () => {
       { ...makeUserEntry('start two background commands', userId), parentUuid: null },
       { ...makeAssistantEntry('dispatched', userId), uuid: dispatchedId },
       {
-        type: 'echoflow-code-task-notification',
+        type: 'cc-haha-task-notification',
         isMeta: true,
         taskNotification: {
           taskId: 'alpha',
@@ -2415,6 +2503,55 @@ describe('SessionService', () => {
     expect((await service.getSessionTaskNotifications(sessionId)).map((item) => item.taskId)).toEqual(
       expect.arrayContaining(['alpha', 'bravo']),
     )
+  })
+
+  it('projects the isMeta batch of settled agents as one status listing every agent', async () => {
+    // print.ts joins settled local_agent notifications into one isMeta prompt.
+    const sessionId = 'cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const userId = crypto.randomUUID()
+    const dispatchedId = crypto.randomUUID()
+    const batchId = crypto.randomUUID()
+    const replyId = crypto.randomUUID()
+    const notification = (taskId: string, status: string, summary: string) => [
+      '<task-notification>',
+      `<task-id>${taskId}</task-id>`,
+      `<tool-use-id>call_${taskId}</tool-use-id>`,
+      '<task-type>local_agent</task-type>',
+      `<status>${status}</status>`,
+      `<summary>${summary}</summary>`,
+      '<result>long agent report</result>',
+      '</task-notification>',
+    ].join('\n')
+
+    await writeSessionFile('-tmp-agent-batch', sessionId, [
+      makeSnapshotEntry(),
+      { ...makeUserEntry('review in parallel', userId), parentUuid: null },
+      { ...makeAssistantEntry('two agents started', userId), uuid: dispatchedId },
+      {
+        ...makeUserEntry([
+          notification('agent-a', 'completed', 'Agent "Review API" completed'),
+          notification('agent-b', 'killed', 'Agent "Review UI" was stopped'),
+        ].join('\n'), batchId),
+        isMeta: true,
+        parentUuid: dispatchedId,
+      },
+      { ...makeAssistantEntry('both reviews are in', batchId), uuid: replyId },
+    ])
+
+    const messages = await service.getSessionMessages(sessionId)
+
+    expect(messages.map((message) => message.id)).toEqual([userId, dispatchedId, batchId, replyId])
+    expect(messages[2]).toMatchObject({
+      type: 'system',
+      content: {
+        subtype: 'background_continue',
+        notifications: [
+          { taskId: 'agent-a', status: 'completed', summary: 'Agent "Review API" completed' },
+          { taskId: 'agent-b', status: 'stopped', summary: 'Agent "Review UI" was stopped' },
+        ],
+      },
+    })
+    expect(JSON.stringify(messages)).not.toContain('long agent report')
   })
 
   it('uses bounded locators for snapshots and task notifications with safe fallback', async () => {
@@ -2517,7 +2654,10 @@ describe('SessionService', () => {
       serveWrongEmptyFingerprint = false
 
       const callsBeforeFullHistory = locatorCalls
-      expect(await indexedService.getSessionMessages(sessionId)).toHaveLength(1)
+      expect((await indexedService.getSessionMessages(sessionId)).map(message => message.id)).toEqual([
+        'task-notification-locator',
+        expect.any(String),
+      ])
       expect(locatorCalls).toBe(callsBeforeFullHistory)
 
       mode = 'shadow'
@@ -2807,6 +2947,63 @@ describe('SessionService', () => {
     expect((await service.getSessionLaunchInfo(sessionId))?.permissionMode).toBe('auto')
   })
 
+  it('keeps exactly the effective runtime selection across clear, so effort reset to auto stays auto', async () => {
+    type RuntimeMetadata = Parameters<SessionService['appendSessionMetadata']>[1]
+    const histories: Array<{ name: string, appends: Array<Omit<RuntimeMetadata, 'workDir'>> }> = [
+      // Choosing auto writes a complete selection without an effort override.
+      { name: 'high then auto', appends: [
+        { runtimeProviderId: 'provider-a', runtimeModelId: 'model-a', effortLevel: 'high', openAIFastMode: false },
+        { runtimeProviderId: 'provider-a', runtimeModelId: 'model-a', openAIFastMode: false },
+      ] },
+      { name: 'auto then max', appends: [
+        { runtimeProviderId: 'provider-a', runtimeModelId: 'model-a', openAIFastMode: false },
+        { runtimeProviderId: 'provider-a', runtimeModelId: 'model-a', effortLevel: 'max', openAIFastMode: false },
+      ] },
+      { name: 'Fast on, then another provider', appends: [
+        { runtimeProviderId: 'openai-official', runtimeModelId: 'gpt-fixture', effortLevel: 'xhigh', openAIFastMode: true },
+        { runtimeProviderId: null, runtimeModelId: 'claude-fixture', openAIFastMode: false },
+      ] },
+      { name: 'partial patches keep earlier values', appends: [
+        { runtimeProviderId: 'provider-a', runtimeModelId: 'model-a', effortLevel: 'low', openAIFastMode: false },
+        { permissionMode: 'acceptEdits' },
+        { runtimeModelId: 'model-b' },
+      ] },
+    ]
+    const runtimeOf = (info: Awaited<ReturnType<SessionService['getSessionLaunchInfo']>> | SessionListSummary | null | undefined) => ({
+      runtimeProviderId: info?.runtimeProviderId,
+      runtimeModelId: info?.runtimeModelId,
+      effortLevel: info?.effortLevel,
+      openAIFastMode: info?.openAIFastMode,
+    })
+
+    for (const history of histories) {
+      const requestedWorkDir = path.join(tmpDir, `clear-runtime-${history.name.replace(/\W+/g, '-')}`)
+      await fs.mkdir(requestedWorkDir, { recursive: true })
+      const { sessionId, workDir } = await service.createSession(requestedWorkDir, undefined, 'default')
+      for (const metadata of history.appends) await service.appendSessionMetadata(sessionId, { workDir, ...metadata })
+      const info = await service.getSessionLaunchInfo(sessionId)
+      await fs.appendFile(info!.filePath, JSON.stringify({ type: 'session-meta', futureExtension: { keep: history.name } }) + '\n')
+      const before = runtimeOf(await new SessionService().getSessionLaunchInfo(sessionId))
+
+      await service.clearSessionTranscript(sessionId, workDir, 'default')
+
+      const after = await new SessionService().getSessionLaunchInfo(sessionId)
+      expect({ history: history.name, runtime: runtimeOf(after) }).toEqual({ history: history.name, runtime: before })
+      const lines = (await fs.readFile(after!.filePath, 'utf8')).trim().split('\n')
+      const metas = lines.map(line => JSON.parse(line)).filter(entry => entry.type === 'session-meta')
+      expect(metas).toHaveLength(1)
+      expect(metas[0]).toMatchObject({ agentProfile: 'standard', futureExtension: { keep: history.name } })
+      // The local index reducer behind the session list reads the same selection.
+      let byteStart = 0
+      const reduced = reduceTranscript(lines.map((line) => {
+        const chunk = { text: `${line}\n`, byteStart, completeLine: true }
+        byteStart += Buffer.byteLength(chunk.text)
+        return chunk
+      }))
+      expect({ history: history.name, runtime: runtimeOf(reduced.summary) }).toEqual({ history: history.name, runtime: before })
+    }
+  })
+
   it('should expose the latest runtime selection in the session list', async () => {
     const workDir = '/tmp/runtime-list-metadata'
     const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -2828,34 +3025,6 @@ describe('SessionService', () => {
       runtimeModelId: 'anthropic/claude-opus-4.7',
       effortLevel: 'max',
     })
-  })
-
-  it('should preserve CLI runtime metadata for launch recovery without exposing it in session lists', async () => {
-    const workDir = '/tmp/cli-runtime-metadata'
-    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
-    const filePath = await writeSessionFile(sanitizePath(workDir), sessionId, [
-      makeSnapshotEntry(),
-      {
-        ...makeSessionMetaEntry(workDir),
-        cliRuntimeId: 'invalid',
-      },
-      makeUserEntry('CLI runtime metadata'),
-    ])
-
-    await service.appendSessionMetadata(sessionId, {
-      workDir,
-      cliRuntimeId: 'installed',
-    })
-
-    expect((await service.getSessionLaunchInfo(sessionId))?.cliRuntimeId).toBe('installed')
-    const listed = (await service.listSessions()).sessions.find(session => session.id === sessionId)
-    expect(Object.hasOwn(listed!, 'cliRuntimeId')).toBe(false)
-    const persisted = await fs.readFile(filePath, 'utf-8')
-    await service.appendSessionMetadata(sessionId, { workDir, cliRuntimeId: 'installed' })
-    expect(await fs.readFile(filePath, 'utf-8')).toBe(persisted)
-
-    await service.clearSessionTranscript(sessionId, workDir)
-    expect((await service.getSessionLaunchInfo(sessionId))?.cliRuntimeId).toBe('installed')
   })
 
   it('should not append duplicate runtime metadata when it already matches', async () => {
@@ -3441,7 +3610,7 @@ describe('SessionService', () => {
   })
 
   it('should throw when workDir does not exist', async () => {
-    expect(service.createSession('/tmp/definitely-missing-echoflow-code')).rejects.toThrow(
+    expect(service.createSession('/tmp/definitely-missing-claude-code-haha')).rejects.toThrow(
       'Working directory does not exist'
     )
   })
@@ -3868,6 +4037,78 @@ describe('SessionService', () => {
         totalOutputTokens: 5,
       })
   })
+
+  it('shows the provider fallback window as the context window of a session without a running CLI', async () => {
+    // deepseek-v4-flash is 1M in the built-in table. Capping the provider's
+    // fallback window lowers compaction, and the window shown has to follow.
+    const sessionId = crypto.randomUUID()
+    const workDir = path.join(tmpDir, 'context-window-cap')
+    const userId = crypto.randomUUID()
+    const assistant = makeAssistantEntry('reply', userId, { input_tokens: 1200, output_tokens: 80 })
+    ;(assistant.message as { model: string }).model = 'deepseek-v4-flash'
+    await writeSessionFile(sanitizePath(workDir), sessionId, [
+      { ...makeUserEntry('hello', userId), sessionId },
+      { ...assistant, sessionId },
+    ])
+
+    const providerService = (service as unknown as {
+      providerService: {
+        listProviders: () => Promise<unknown>
+        getProviderRuntimeEnv: (id: string) => Promise<Record<string, string> | null>
+      }
+    }).providerService
+    // The snapshot cache is keyed on the saved providers, so the capped state
+    // has to be visible there as it is when the user saves the setting.
+    let autoCompactWindow: number | undefined
+    spyOn(providerService, 'listProviders').mockImplementation(async () => ({
+      activeId: 'cap-provider',
+      providers: [{ id: 'cap-provider', models: {}, autoCompactWindow }],
+    }))
+    spyOn(providerService, 'getProviderRuntimeEnv').mockImplementation(async () => (
+      autoCompactWindow === undefined
+        ? {}
+        : { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(autoCompactWindow) }
+    ))
+
+    const uncapped = await service.getInspectionTranscriptSnapshot(sessionId)
+    expect(uncapped?.contextEstimate?.rawMaxTokens).toBe(1_000_000)
+
+    autoCompactWindow = 200_000
+    const capped = await service.getInspectionTranscriptSnapshot(sessionId)
+    expect(capped?.contextEstimate?.rawMaxTokens).toBe(200_000)
+  })
+
+  it('caps a session whose recorded provider was deleted with the provider it now runs on', async () => {
+    // A resumed session is relaunched on the active provider when the recorded
+    // one is gone, so the window shown must use the active provider's cap.
+    const sessionId = crypto.randomUUID()
+    const workDir = path.join(tmpDir, 'context-window-deleted-provider')
+    const userId = crypto.randomUUID()
+    const assistant = makeAssistantEntry('reply', userId, { input_tokens: 1200, output_tokens: 80 })
+    ;(assistant.message as { model: string }).model = 'deepseek-v4-flash'
+    await writeSessionFile(sanitizePath(workDir), sessionId, [
+      { ...makeSessionMetaEntry(workDir), sessionId, runtimeProviderId: 'deleted-provider' },
+      { ...makeUserEntry('hello', userId), sessionId },
+      { ...assistant, sessionId },
+    ])
+
+    const providerService = (service as unknown as {
+      providerService: {
+        listProviders: () => Promise<unknown>
+        getProviderRuntimeEnv: (id: string) => Promise<Record<string, string> | null>
+      }
+    }).providerService
+    spyOn(providerService, 'listProviders').mockImplementation(async () => ({
+      activeId: 'active-provider',
+      providers: [{ id: 'active-provider', models: {}, autoCompactWindow: 200_000 }],
+    }))
+    spyOn(providerService, 'getProviderRuntimeEnv').mockImplementation(async (id: string) => (
+      id === 'active-provider' ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000' } : null
+    ))
+
+    const snapshot = await service.getInspectionTranscriptSnapshot(sessionId)
+    expect(snapshot?.contextEstimate?.rawMaxTokens).toBe(200_000)
+  })
 })
 
 // ============================================================================
@@ -3905,10 +4146,6 @@ describe('Sessions API', () => {
         return new Response('Not Found', { status: 404 })
       },
     })
-    // A started test server must report the concrete port the kernel assigned:
-    // if startup misreports the bind, every later request would fail against a
-    // phantom endpoint instead of naming the real problem.
-    expect(Number.isInteger(server.port) && server.port > 0).toBe(true)
     baseUrl = `http://127.0.0.1:${server.port}`
   })
 
@@ -4139,6 +4376,54 @@ describe('Sessions API', () => {
       blockLine(),
       blockLine(),
       blockLine(),
+    ])
+
+    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/inspection?includeContext=0`)
+    expect(res.status).toBe(200)
+    const body = await res.json() as {
+      usage?: {
+        totalInputTokens: number
+        totalOutputTokens: number
+        totalCacheReadInputTokens: number
+        totalCacheCreationInputTokens: number
+      }
+    }
+
+    expect(body.usage?.totalInputTokens).toBe(100)
+    expect(body.usage?.totalOutputTokens).toBe(250)
+    expect(body.usage?.totalCacheReadInputTokens).toBe(1_000)
+    expect(body.usage?.totalCacheCreationInputTokens).toBe(20)
+  })
+
+  it('counts the final usage of a reply whose first content-block line carried zero output', async () => {
+    const workDir = await fs.mkdtemp(path.join(tmpDir, 'api-session-usage-zero-first-'))
+    const sessionId = '33333333-4444-5555-6666-777777777777'
+    const projectDir = '-tmp-api-session-usage-zero-first'
+    // The first line of a reply can be written before the final usage is known; only a later
+    // line carries the real output tokens. Keeping the first line recorded such replies as ~0.
+    const blockLine = (usage: Record<string, number>) => ({
+      parentUuid: null,
+      isSidechain: false,
+      type: 'assistant',
+      message: {
+        model: 'claude-opus-4-7',
+        id: 'msg_zero_first_reply',
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'block' }],
+        usage,
+      },
+      uuid: crypto.randomUUID(),
+      timestamp: '2026-01-01T00:02:00.000Z',
+      sessionId,
+      cwd: workDir,
+    })
+    await writeSessionFile(projectDir, sessionId, [
+      makeSessionMetaEntry(workDir),
+      makeUserEntry('go', crypto.randomUUID()),
+      blockLine({ input_tokens: 100, output_tokens: 0, cache_read_input_tokens: 1_000 }),
+      blockLine({ input_tokens: 100, output_tokens: 5, cache_read_input_tokens: 1_000 }),
+      blockLine({ input_tokens: 100, output_tokens: 250, cache_read_input_tokens: 1_000, cache_creation_input_tokens: 20 }),
     ])
 
     const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/inspection?includeContext=0`)
@@ -4447,12 +4732,19 @@ describe('Sessions API', () => {
       messages: unknown[]
       taskNotifications: unknown[]
     }
-    expect(body.messages).toHaveLength(3)
+    expect(body.messages).toHaveLength(4)
     expect(body.messages[1]).toMatchObject({
       type: 'assistant',
       usage: { input_tokens: 1234, output_tokens: 56 },
     })
     expect(body.messages[2]).toMatchObject({
+      type: 'system',
+      content: {
+        subtype: 'background_continue',
+        notifications: [{ taskId: 'bg-1', status: 'failed', summary: 'Background command failed & stopped' }],
+      },
+    })
+    expect(body.messages[3]).toMatchObject({
       type: 'assistant',
       content: [{ type: 'text', text: 'the background command failed, investigating' }],
     })
@@ -4475,7 +4767,7 @@ describe('Sessions API', () => {
     await writeSessionFile('-tmp-api-owned-terminal', sessionId, [
       makeSnapshotEntry(),
       {
-        type: 'echoflow-code-task-notification',
+        type: 'cc-haha-task-notification',
         isMeta: true,
         taskNotification: {
           taskId: 'nested-workflow-task',
@@ -4567,7 +4859,14 @@ describe('Sessions API', () => {
       prompt: 'Read session routes',
       source: 'subagent-jsonl',
     })
-    expect(body.messages).toHaveLength(3)
+    expect(body.messages).toHaveLength(4)
+    expect(body.messages[2]).toMatchObject({
+      type: 'system',
+      content: {
+        subtype: 'background_continue',
+        notifications: [{ taskId: 'child-shell-task', status: 'stopped', summary: 'Child shell stopped' }],
+      },
+    })
     expect(JSON.stringify(body.messages)).not.toContain('<task-notification>')
     expect(JSON.stringify(body.messages)).toContain('Child shell stopped, continuing the review')
     expect(body.taskNotifications).toEqual([{
@@ -5001,8 +5300,8 @@ describe('Sessions API', () => {
     git(workDir, 'config', 'core.fsmonitor', fsmonitorPath)
 
     const { sessionId } = await sessionService.createSession(workDir)
-    const oldTimeout = process.env.ECHOFLOW_GIT_INFO_TIMEOUT_MS
-    process.env.ECHOFLOW_GIT_INFO_TIMEOUT_MS = '80'
+    const oldTimeout = process.env.CC_HAHA_GIT_INFO_TIMEOUT_MS
+    process.env.CC_HAHA_GIT_INFO_TIMEOUT_MS = '80'
 
     try {
       const startedAt = Date.now()
@@ -5025,9 +5324,9 @@ describe('Sessions API', () => {
       expect(body.changedFiles).toBe(0)
     } finally {
       if (oldTimeout === undefined) {
-        delete process.env.ECHOFLOW_GIT_INFO_TIMEOUT_MS
+        delete process.env.CC_HAHA_GIT_INFO_TIMEOUT_MS
       } else {
-        process.env.ECHOFLOW_GIT_INFO_TIMEOUT_MS = oldTimeout
+        process.env.CC_HAHA_GIT_INFO_TIMEOUT_MS = oldTimeout
       }
     }
   })
@@ -5690,6 +5989,22 @@ describe('Sessions API', () => {
       content: 'export const answer = 2\n',
     })
 
+    const statQuery = new URLSearchParams()
+    for (const statPath of ['src/app.ts', 'out/missing.docx', '../escape.docx']) statQuery.append('path', statPath)
+    const statRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/workspace/stat?${statQuery}`)
+    expect(statRes.status).toBe(200)
+    expect(await statRes.json()).toEqual({
+      files: [
+        { path: 'src/app.ts', state: 'file', mtimeMs: expect.any(Number) },
+        { path: 'out/missing.docx', state: 'missing' },
+        { path: '../escape.docx', state: 'unavailable' },
+      ],
+    })
+    expect((await fetch(`${baseUrl}/api/sessions/${sessionId}/workspace/stat`)).status).toBe(400)
+    const tooMany = new URLSearchParams()
+    for (let index = 0; index < 21; index += 1) tooMany.append('path', `out/${index}.docx`)
+    expect((await fetch(`${baseUrl}/api/sessions/${sessionId}/workspace/stat?${tooMany}`)).status).toBe(400)
+
     const imageRes = await fetch(
       `${baseUrl}/api/sessions/${sessionId}/workspace/file?path=${encodeURIComponent('assets/pixel.png')}`,
     )
@@ -6194,6 +6509,58 @@ describe('Sessions API', () => {
     expect(launchInfo!.transcriptMessageCount).toBe(0)
   })
 
+  it('POST /api/sessions/:id/rewind keeps hidden entries the remaining conversation is chained through', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-111111111111'
+    const ids = Array.from({ length: 9 }, () => crypto.randomUUID())
+    const [firstUser, skillPrompt, firstReply, interrupted, sentinel, resumed, resumedReply, target, targetReply] = ids
+    const chained = (entry: Record<string, unknown>, uuid: string, parentUuid: string | null) => ({
+      ...entry,
+      uuid,
+      parentUuid,
+      sessionId,
+    })
+    const filePath = await writeSessionFile('-tmp-api-rewind-hidden-chain', sessionId, [
+      makeSnapshotEntry(),
+      chained(makeUserEntry('first prompt'), firstUser, null),
+      // Hidden from history: a skill body and the sentinel a resumed CLI writes
+      // after an interrupted turn. Later messages are chained through both.
+      chained({ ...makeUserEntry('Base directory for this skill: /skills/demo'), isMeta: true }, skillPrompt, firstUser),
+      chained(makeAssistantEntry('first reply'), firstReply, skillPrompt),
+      chained(makeUserEntry('second prompt'), interrupted, firstReply),
+      chained({
+        ...makeAssistantEntry('No response requested.'),
+        message: { model: '<synthetic>', id: 'msg_synthetic', type: 'message', role: 'assistant', content: [{ type: 'text', text: 'No response requested.' }] },
+      }, sentinel, interrupted),
+      chained(makeUserEntry('continue'), resumed, sentinel),
+      chained(makeAssistantEntry('continued reply'), resumedReply, resumed),
+      chained(makeUserEntry('prompt to edit and resend'), target, resumedReply),
+      chained(makeAssistantEntry('reply being rewound'), targetReply, target),
+    ])
+
+    const executeRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/rewind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userMessageIndex: 3,
+        targetUserMessageId: target,
+        expectedContent: 'prompt to edit and resend',
+      }),
+    })
+    expect(executeRes.status).toBe(200)
+    const executeBody = await executeRes.json() as {
+      conversation: { removedMessageIds: string[] }
+    }
+    expect(executeBody.conversation.removedMessageIds).toEqual([target, targetReply])
+
+    // What --resume rebuilds from the rewritten file must still reach the start.
+    const { loadTranscriptFile, buildConversationChain } = await import('../../utils/sessionStorage.js')
+    const loaded = await loadTranscriptFile(filePath)
+    const chain = buildConversationChain(loaded.messages, loaded.messages.get(resumedReply as never)!)
+    expect(chain.map((message) => message.uuid)).toEqual(ids.slice(0, 7))
+    expect(loaded.messages.has(target as never)).toBe(false)
+    expect(loaded.messages.has(targetReply as never)).toBe(false)
+  })
+
   it('POST /api/sessions/:id/rewind should target the selected message id instead of a shifted visible index', async () => {
     const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-ffffffffffff'
     const firstUserId = crypto.randomUUID()
@@ -6288,9 +6655,9 @@ describe('Sessions API', () => {
     ])
   })
 
-  it('POST /api/sessions/:id/rewind should restore a single edited file', async () => {
-    const sessionId = 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee'
-    const workDir = path.join(tmpDir, 'single-file-fixture')
+  it.each(['both', 'code'] as const)('POST /api/sessions/:id/rewind restores a single file in %s mode', async (mode) => {
+    const sessionId = crypto.randomUUID()
+    const workDir = path.join(tmpDir, `single-file-fixture-${mode}`)
     const targetFile = path.join(workDir, 'src', 'app.js')
     const userId = crypto.randomUUID()
     const assistantId = crypto.randomUUID()
@@ -6343,7 +6710,7 @@ describe('Sessions API', () => {
     const executeRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/rewind`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userMessageIndex: 0 }),
+      body: JSON.stringify({ userMessageIndex: 0, mode }),
     })
     expect(executeRes.status).toBe(200)
     expect(await fs.readFile(targetFile, 'utf-8')).toBe(
@@ -6351,7 +6718,10 @@ describe('Sessions API', () => {
     )
 
     const remainingMessages = await service.getSessionMessages(sessionId)
-    expect(remainingMessages).toHaveLength(0)
+    expect(remainingMessages.map(message => message.id)).toEqual(mode === 'code' ? [userId, assistantId] : [])
+    const result = await executeRes.json() as { conversation: { messagesRemoved: number }; mode: string }
+    expect(result.mode).toBe(mode)
+    expect(result.conversation.messagesRemoved).toBe(mode === 'code' ? 0 : 2)
   })
 
   it('POST /api/sessions/:id/rewind should reject unsafe tracked paths before any partial restore', async () => {
@@ -6872,6 +7242,8 @@ describe('Sessions API', () => {
     }
 
     expect(body.checkpoints).toHaveLength(3)
+    // When each prompt was recorded: the client asks the disk for files written since.
+    const PROMPT_RECORDED_AT = Date.parse('2026-01-01T00:01:00.000Z')
     expect(body.checkpoints).toEqual([
       {
         target: {
@@ -6889,6 +7261,7 @@ describe('Sessions API', () => {
         workDir: fixture.workDir,
         restoreAvailable: true,
         unverifiedChangeSources: [],
+        startedAt: PROMPT_RECORDED_AT,
       },
       {
         target: {
@@ -6906,6 +7279,7 @@ describe('Sessions API', () => {
         workDir: fixture.workDir,
         restoreAvailable: true,
         unverifiedChangeSources: [],
+        startedAt: PROMPT_RECORDED_AT,
       },
       {
         target: {
@@ -6923,6 +7297,7 @@ describe('Sessions API', () => {
         workDir: fixture.workDir,
         restoreAvailable: true,
         unverifiedChangeSources: [],
+        startedAt: PROMPT_RECORDED_AT,
       },
     ])
   })
@@ -9305,7 +9680,7 @@ describe('Sessions API', () => {
 
     const badRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/rewind`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetUserMessageId: userId, mode: 'code' }),
+      body: JSON.stringify({ targetUserMessageId: userId, mode: 'unknown' }),
     })
     expect(badRes.status).toBe(400)
 

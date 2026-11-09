@@ -104,18 +104,6 @@ describe('resolveManagedProviderProxyAccessToken', () => {
 })
 
 describe('shouldUseOpenAICodexTransport', () => {
-  test('detects current and legacy ChatGPT Official provider markers', async () => {
-    const { shouldForceOpenAICodexProvider } = await import('./client.js')
-
-    expect(shouldForceOpenAICodexProvider({
-      ECHOFLOW_OPENAI_OAUTH_PROVIDER: '1',
-    })).toBe(true)
-    expect(shouldForceOpenAICodexProvider({
-      ECHOFLOW_OPENAI_OAUTH_PROVIDER: '1',
-    })).toBe(true)
-    expect(shouldForceOpenAICodexProvider({})).toBe(false)
-  })
-
   test('lets ChatGPT Official marker override a saved Claude subscriber login', async () => {
     const { shouldUseOpenAICodexTransport } = await import('./client.js')
 
@@ -146,6 +134,67 @@ describe('shouldUseOpenAICodexTransport', () => {
 })
 
 describe('getAnthropicClient', () => {
+  test.each(['api_key', 'auth_token'] as const)('uploads large DeepSeek images through the SDK using %s authentication', async authStrategy => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'deepseek-client-media-'))
+    const previousEnv = { ...process.env }
+    const key = `fake-deepseek-client-media-${authStrategy}`
+    const testEnv = createSandboxedTestEnvironment(tempDir, {
+      ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
+      [authStrategy === 'api_key' ? 'ANTHROPIC_API_KEY' : 'ANTHROPIC_AUTH_TOKEN']: key,
+      CLAUDE_CODE_SIMPLE: '1',
+      OPENAI_CODEX_OAUTH_FILE: path.join(tempDir, 'missing-openai-oauth.json'),
+    })
+    for (const name of Object.keys(process.env)) delete process.env[name]
+    Object.assign(process.env, testEnv)
+    const image = {
+      type: 'image' as const,
+      source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'A'.repeat(41 * 1024 * 1024) },
+    }
+    const calls: string[] = []
+    try {
+      const { getAnthropicClient } = await import('./client.js')
+      const client = await getAnthropicClient({
+        maxRetries: 0,
+        model: 'deepseek-flash',
+        fetchOverride: async (input, init) => {
+          const url = new URL(input instanceof Request ? input.url : String(input))
+          const headers = new Headers(init?.headers)
+          calls.push(url.pathname)
+          if (url.pathname === '/files') {
+            expect(headers.get('authorization')).toBe(`Bearer ${key}`)
+            expect(headers.has('x-dsh-auth-token')).toBe(false)
+            expect(init?.body instanceof FormData).toBe(true)
+            expect((init?.body as FormData).get('purpose')).toBe('user_data')
+            expect(((init?.body as FormData).get('file') as Blob).size).toBe(image.source.data.length * 3 / 4)
+            expect(init?.signal).toBeDefined()
+            return Response.json({ id: 'file-client-media' })
+          }
+          expect(url.pathname).toBe('/anthropic/v1/messages')
+          expect(headers.get(authStrategy === 'api_key' ? 'x-api-key' : 'authorization')).toBe(authStrategy === 'api_key' ? key : `Bearer ${key}`)
+          expect(headers.get('anthropic-beta')).toContain('files-api-2025-04-14')
+          const request = JSON.parse(String(init?.body))
+          expect(request.messages[0].content).toEqual([{ type: 'image', source: { type: 'file', file_id: 'file-client-media' } }])
+          return Response.json({
+            id: 'msg-client-media', type: 'message', role: 'assistant', model: 'deepseek-flash',
+            content: [{ type: 'text', text: 'Image received' }], stop_reason: 'end_turn', stop_sequence: null,
+            usage: { input_tokens: 3, output_tokens: 1 },
+          })
+        },
+      })
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const response = await client.messages.create({ model: 'deepseek-flash', max_tokens: 16, messages: [{ role: 'user', content: [image] }] })
+        expect(response.content).toEqual([{ type: 'text', text: 'Image received' }])
+      }
+      expect(calls).toEqual(['/files', '/anthropic/v1/messages', '/anthropic/v1/messages'])
+      expect(image.source.type).toBe('base64')
+      expect(image.source.data.length).toBe(41 * 1024 * 1024)
+    } finally {
+      for (const name of Object.keys(process.env)) delete process.env[name]
+      Object.assign(process.env, previousEnv)
+      await fs.rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
   test('uses one API version in direct message and token-count requests while preserving path prefixes', async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anthropic-client-base-url-'))
     const previousEnv = { ...process.env }
@@ -224,29 +273,104 @@ describe('getAnthropicClient', () => {
       expiresAt: Date.now() + 3600_000,
     }))
     const previous = {
-      marker: process.env.ECHOFLOW_GROK_OAUTH_PROVIDER,
+      marker: process.env.CC_HAHA_GROK_OAUTH_PROVIDER,
       tokenFile: process.env.GROK_OAUTH_FILE,
       configDir: process.env.CLAUDE_CONFIG_DIR,
-      authToken: process.env.ANTHROPIC_AUTH_TOKEN,
     }
-    process.env.ECHOFLOW_GROK_OAUTH_PROVIDER = '1'
+    process.env.CC_HAHA_GROK_OAUTH_PROVIDER = '1'
     process.env.GROK_OAUTH_FILE = tokenFile
     process.env.CLAUDE_CONFIG_DIR = tempDir
-    delete process.env.ANTHROPIC_AUTH_TOKEN
     try {
       const client = await getAnthropicClient({ maxRetries: 0, model: 'grok-4.5' })
       expect(client.apiKey).toBe(GROK_OAUTH_DUMMY_KEY)
       expect(client.authToken).toBeNull()
       expect(client._options.fetch).toBeFunction()
     } finally {
-      if (previous.marker === undefined) delete process.env.ECHOFLOW_GROK_OAUTH_PROVIDER
-      else process.env.ECHOFLOW_GROK_OAUTH_PROVIDER = previous.marker
+      if (previous.marker === undefined) delete process.env.CC_HAHA_GROK_OAUTH_PROVIDER
+      else process.env.CC_HAHA_GROK_OAUTH_PROVIDER = previous.marker
       if (previous.tokenFile === undefined) delete process.env.GROK_OAUTH_FILE
       else process.env.GROK_OAUTH_FILE = previous.tokenFile
       if (previous.configDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
       else process.env.CLAUDE_CONFIG_DIR = previous.configDir
-      if (previous.authToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN
-      else process.env.ANTHROPIC_AUTH_TOKEN = previous.authToken
+      await fs.rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  test('sends DeepSeek account requests with only the account token header', async () => {
+    const { getAnthropicClient } = await import('./client.js')
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'deepseek-client-test-'))
+    const tokenFile = path.join(tempDir, 'deepseek-oauth.json')
+    await fs.writeFile(tokenFile, JSON.stringify({
+      token: 'dsh_test_account_token',
+      issuer: 'https://platform.deepseek.com',
+      deviceId: 'device-1',
+    }))
+    const keys = [
+      'CC_HAHA_DEEPSEEK_OAUTH_PROVIDER',
+      'DEEPSEEK_OAUTH_FILE',
+      'ANTHROPIC_BASE_URL',
+      'ANTHROPIC_API_KEY',
+      'ANTHROPIC_AUTH_TOKEN',
+      'CLAUDE_CONFIG_DIR',
+    ] as const
+    const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]))
+    process.env.CC_HAHA_DEEPSEEK_OAUTH_PROVIDER = '1'
+    process.env.DEEPSEEK_OAUTH_FILE = tokenFile
+    process.env.ANTHROPIC_BASE_URL = 'https://api.deepseek.com/anthropic'
+    process.env.ANTHROPIC_API_KEY = 'deepseek-oauth-dummy-key'
+    delete process.env.ANTHROPIC_AUTH_TOKEN
+    process.env.CLAUDE_CONFIG_DIR = tempDir
+    try {
+      const received: Array<{ url: string; headers: Headers }> = []
+      const client = await getAnthropicClient({
+        maxRetries: 0,
+        model: 'deepseek-v4-pro',
+        fetchOverride: async (input, init) => {
+          received.push({
+            url: new URL(input instanceof Request ? input.url : String(input)).href,
+            headers: new Headers(init?.headers),
+          })
+          return Response.json({
+            id: 'msg-deepseek-account',
+            type: 'message',
+            role: 'assistant',
+            model: 'deepseek-v4-pro',
+            content: [{ type: 'text', text: 'ok' }],
+            stop_reason: 'end_turn',
+            stop_sequence: null,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          })
+        },
+      })
+      const request = {
+        model: 'deepseek-v4-pro',
+        max_tokens: 16,
+        messages: [{ role: 'user' as const, content: 'hi' }],
+      }
+
+      await client.messages.create(request)
+      expect(received).toHaveLength(1)
+      expect(received[0]!.url).toBe('https://api.deepseek.com/anthropic/v1/messages')
+      expect(received[0]!.headers.get('x-dsh-auth-token')).toBe('dsh_test_account_token')
+      expect(received[0]!.headers.get('x-api-key')).toBeNull()
+      expect(received[0]!.headers.get('authorization')).toBeNull()
+
+      // Signing out takes effect on the running client: no stale token is
+      // replayed and no request leaves the machine.
+      await fs.rm(tokenFile)
+      let signedOutError: unknown
+      try {
+        await client.messages.create(request)
+      } catch (error) {
+        signedOutError = error
+      }
+      expect(String(signedOutError)).toContain('not signed in')
+      expect(received).toHaveLength(1)
+    } finally {
+      for (const key of keys) {
+        if (previous[key] === undefined) delete process.env[key]
+        else process.env[key] = previous[key]
+      }
       await fs.rm(tempDir, { recursive: true, force: true })
     }
   })
@@ -290,7 +414,7 @@ describe('getAnthropicClient', () => {
       authToken: process.env.ANTHROPIC_AUTH_TOKEN,
       apiKey: process.env.ANTHROPIC_API_KEY,
       baseUrl: process.env.ANTHROPIC_BASE_URL,
-      localAccessToken: process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN,
+      localAccessToken: process.env.CC_HAHA_LOCAL_ACCESS_TOKEN,
       providerManagedByHost: process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST,
       simple: process.env.CLAUDE_CODE_SIMPLE,
     }
@@ -298,7 +422,7 @@ describe('getAnthropicClient', () => {
     process.env.ANTHROPIC_AUTH_TOKEN = 'stale-provider-token'
     process.env.ANTHROPIC_API_KEY = 'proxy-managed'
     process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:3456/proxy/providers/provider-1'
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
     process.env.CLAUDE_CODE_SIMPLE = '1'
 
@@ -334,7 +458,7 @@ describe('getAnthropicClient', () => {
         ['ANTHROPIC_AUTH_TOKEN', previous.authToken],
         ['ANTHROPIC_API_KEY', previous.apiKey],
         ['ANTHROPIC_BASE_URL', previous.baseUrl],
-        ['ECHOFLOW_LOCAL_ACCESS_TOKEN', previous.localAccessToken],
+        ['CC_HAHA_LOCAL_ACCESS_TOKEN', previous.localAccessToken],
         ['CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST', previous.providerManagedByHost],
         ['CLAUDE_CODE_SIMPLE', previous.simple],
       ] as const) {
@@ -405,6 +529,123 @@ describe('getAnthropicClient', () => {
 
       if (originalSimple === undefined) delete process.env.CLAUDE_CODE_SIMPLE
       else process.env.CLAUDE_CODE_SIMPLE = originalSimple
+    }
+  })
+  test('sends an Agent model to its routed provider while the session keeps its own endpoint', async () => {
+    const { getAnthropicClient } = await import('./client.js')
+    const { withAgentProviderRoute } = await import('../../utils/model/providerEnvScope.js')
+    const keys = [
+      'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS',
+      'CC_HAHA_LOCAL_ACCESS_TOKEN', 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST', 'CLAUDE_CODE_SIMPLE',
+    ] as const
+    const previous = keys.map(key => process.env[key])
+    Object.assign(process.env, {
+      ANTHROPIC_API_KEY: 'fake-session-key',
+      ANTHROPIC_BASE_URL: 'https://session.example/anthropic',
+      ANTHROPIC_CUSTOM_HEADERS: 'X-Session-Only: session',
+      CC_HAHA_LOCAL_ACCESS_TOKEN: 'desktop-local-secret',
+      CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1',
+      CLAUDE_CODE_SIMPLE: '1',
+    })
+    process.env.ANTHROPIC_AUTH_TOKEN = 'fake-session-token'
+    const requests: Array<{ url: string; headers: Headers }> = []
+    const fetchOverride = async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: input instanceof Request ? input.url : String(input), headers: new Headers(init?.headers) })
+      return Response.json({
+        id: 'msg-route', type: 'message', role: 'assistant', model: 'm',
+        content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      })
+    }
+    const send = async (model: string) => {
+      const client = await getAnthropicClient({ maxRetries: 0, model, fetchOverride })
+      await client.messages.create({ model, max_tokens: 8, messages: [{ role: 'user', content: 'hi' }] })
+    }
+    const routes = [
+      {
+        providerId: 'deepseek-direct', providerName: 'DeepSeek', model: 'deepseek-v4-pro',
+        env: { ANTHROPIC_BASE_URL: 'https://api.deepseek.example/anthropic', ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: 'fake-deepseek-token' },
+      },
+      {
+        providerId: 'chat-gateway', providerName: 'Gateway', model: 'gpt-gateway',
+        env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:41234/proxy/providers/chat-gateway', ANTHROPIC_API_KEY: 'proxy-managed' },
+      },
+      {
+        providerId: 'key-provider', providerName: 'Key Provider', model: 'key-model',
+        env: { ANTHROPIC_BASE_URL: 'https://keys.example/anthropic', ANTHROPIC_API_KEY: 'fake-route-key' },
+      },
+    ]
+
+    try {
+      for (const route of routes) {
+        for await (const _ of withAgentProviderRoute(route, (async function* () {
+          await send(route.model)
+          await send('session-haiku')
+          yield undefined
+        })())) { /* drain */ }
+      }
+      await send('deepseek-v4-pro')
+
+      const [deepSeek, deepSeekSide, proxied, proxiedSide, keyed, keyedSide, session] = requests
+      expect(deepSeek!.url).toBe('https://api.deepseek.example/anthropic/v1/messages')
+      expect(deepSeek!.headers.get('authorization')).toBe('Bearer fake-deepseek-token')
+      expect(deepSeek!.headers.has('x-api-key')).toBe(false)
+      expect(proxied!.url).toBe('http://127.0.0.1:41234/proxy/providers/chat-gateway/v1/messages')
+      expect(proxied!.headers.get('x-api-key')).toBe('proxy-managed')
+      expect(proxied!.headers.get('authorization')).toBe('Bearer desktop-local-secret')
+      expect(keyed!.url).toBe('https://keys.example/anthropic/v1/messages')
+      expect(keyed!.headers.get('x-api-key')).toBe('fake-route-key')
+      expect(keyed!.headers.has('authorization')).toBe(false)
+      for (const routed of [deepSeek, proxied, keyed]) {
+        expect(routed!.headers.has('x-session-only')).toBe(false)
+      }
+      for (const side of [deepSeekSide, proxiedSide, keyedSide, session]) {
+        expect(side!.url).toBe('https://session.example/anthropic/v1/messages')
+        expect(side!.headers.get('x-api-key')).toBe('fake-session-key')
+        expect(side!.headers.get('authorization')).toBe('Bearer fake-session-token')
+        expect(side!.headers.get('x-session-only')).toBe('session')
+      }
+    } finally {
+      keys.forEach((key, index) => {
+        const value = previous[index]
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      })
+    }
+  })
+
+  test('sends a routed Agent through its provider\'s own network proxy', async () => {
+    const { getAnthropicClient } = await import('./client.js')
+    const { withAgentProviderRoute } = await import('../../utils/model/providerEnvScope.js')
+    const keys = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'NO_PROXY', 'no_proxy', 'CLAUDE_CODE_SIMPLE'] as const
+    const previous = keys.map(key => process.env[key])
+    for (const key of keys) delete process.env[key]
+    Object.assign(process.env, { HTTPS_PROXY: 'http://session-proxy.example:1', CLAUDE_CODE_SIMPLE: '1' })
+    const base = {
+      providerId: 'deepseek-direct', providerName: 'DeepSeek', model: 'deepseek-v4-pro',
+      env: { ANTHROPIC_BASE_URL: 'https://api.deepseek.example/anthropic', ANTHROPIC_API_KEY: 'fake-route-key' },
+    }
+    const proxyFor = async (route: typeof base & { proxyUrl?: string | null }) => {
+      let proxy: unknown
+      for await (const _ of withAgentProviderRoute(route, (async function* () {
+        const client = await getAnthropicClient({ maxRetries: 0, model: route.model })
+        proxy = (client as unknown as { _options: { fetchOptions?: { proxy?: string } } })._options.fetchOptions?.proxy
+        yield undefined
+      })())) { /* drain */ }
+      return proxy
+    }
+
+    try {
+      expect(await proxyFor({ ...base, proxyUrl: 'http://agent-proxy.example:8080' })).toBe('http://agent-proxy.example:8080')
+      expect(await proxyFor({ ...base, proxyUrl: null })).toBeUndefined()
+      // Without its own setting the route keeps the session's process proxy.
+      expect(await proxyFor(base)).toBe('http://session-proxy.example:1')
+    } finally {
+      keys.forEach((key, index) => {
+        const value = previous[index]
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      })
     }
   })
 })

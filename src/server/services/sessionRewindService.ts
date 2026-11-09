@@ -12,7 +12,7 @@ import {
 } from '../../utils/fileHistory.js'
 import { conversationService } from './conversationService.js'
 import { canonicalizeFilesystemAccessPath } from './filesystemAccessRoots.js'
-import { hasMalformedFileHistoryBefore, sessionService, type MessageEntry } from './sessionService.js'
+import { createTranscriptReadBudget, hasMalformedFileHistoryBefore, sessionService, type MessageEntry, type TranscriptReadBudget } from './sessionService.js'
 import {
   collectErroredToolUseIds,
   collectSuccessfulToolUseIds,
@@ -86,12 +86,12 @@ type MergedTurnCodePreview = {
  * whose files cannot be restored — losing the ability to undo the code should
  * not also cost the user the ability to back out of the prompt.
  */
-export type SessionRewindMode = 'both' | 'conversation'
+export type SessionRewindMode = 'both' | 'conversation' | 'code'
 
 export function parseSessionRewindMode(value: unknown): SessionRewindMode {
   if (value === undefined || value === null) return 'both'
-  if (value === 'both' || value === 'conversation') return value
-  throw ApiError.badRequest(`Invalid rewind mode: expected 'both' or 'conversation'.`)
+  if (value === 'both' || value === 'conversation' || value === 'code') return value
+  throw ApiError.badRequest(`Invalid rewind mode: expected 'both', 'conversation' or 'code'.`)
 }
 
 export type RewindTargetSelector = {
@@ -130,6 +130,13 @@ export type SessionRewindExecuteResult = SessionRewindPreview & {
 export type SessionTurnCheckpointPreview = SessionRewindPreview & {
   workDir: string
   restoreAvailable: boolean
+  /**
+   * When the turn's prompt was recorded, in epoch ms on the server's clock.
+   * A file the checkpoint cannot see (a shell command wrote it) counts as this
+   * turn's output only if its mtime is not older; comparing two server times
+   * keeps a remote client's clock out of the decision.
+   */
+  startedAt?: number
 }
 
 export type SessionTurnCheckpointDiffResult = {
@@ -196,11 +203,38 @@ function assertExpectedPromptMatches(
   }
 }
 
+/**
+ * Checkpoints keep every turn's tool calls in memory but never read tool
+ * output, so the transcript is parsed without it. Measured on synthetic
+ * sessions: a 266 MB output-heavy source takes ~1.3 s and ~600 MB transient
+ * RSS; retained calls cost roughly 10x their bytes at peak. File-history
+ * snapshots are kept alongside and repeat every tracked file per turn, so they
+ * share the retained budget. It stays below HISTORY_FULL_BYTES, so history
+ * outlives a rejected preview.
+ */
+const CHECKPOINT_SOURCE_TRANSCRIPT_BYTES = 256 * 1024 * 1024
+const CHECKPOINT_RETAINED_TRANSCRIPT_BYTES = 24 * 1024 * 1024
+
+/** One per checkpoint request, shared by its message and snapshot reads. */
+function createCheckpointReadBudget(signal?: AbortSignal): TranscriptReadBudget {
+  return createTranscriptReadBudget({
+    maxSourceBytes: CHECKPOINT_SOURCE_TRANSCRIPT_BYTES,
+    maxRetainedBytes: CHECKPOINT_RETAINED_TRANSCRIPT_BYTES,
+    overBudgetError: new ApiError(
+      413,
+      'This transcript exceeds the full checkpoint preview budget. Chat history remains available in pages.',
+      'HISTORY_CHECKPOINT_PREVIEW_LIMIT',
+    ),
+    signal,
+  })
+}
+
 async function resolveRewindTarget(
   sessionId: string,
   selector: RewindTargetSelector,
+  loadedMessages?: MessageEntry[],
 ): Promise<RewindTarget> {
-  const activeMessages = await sessionService.getSessionMessages(sessionId)
+  const activeMessages = loadedMessages ?? await sessionService.getSessionMessages(sessionId)
   const userMessages = activeMessages.filter((message) => message.type === 'user')
 
   if (userMessages.length === 0) {
@@ -262,8 +296,9 @@ async function resolveRewindTarget(
 
 async function loadFileHistorySnapshots(
   sessionId: string,
+  budget?: TranscriptReadBudget,
 ): Promise<FileHistorySnapshot[] | null> {
-  const snapshots = await sessionService.getSessionFileHistorySnapshots(sessionId)
+  const snapshots = await sessionService.getSessionFileHistorySnapshots(sessionId, { budget })
   if (snapshots.length === 0) {
     return null
   }
@@ -1205,6 +1240,84 @@ function findTranscriptTurnDiff(
   ) ?? null
 }
 
+/** Memo for one checkpoint listing, where every turn revisits carried-forward paths. */
+type TurnScanCache = {
+  identityPath: Map<string, string>
+  backupReadable: Map<string, Promise<boolean>>
+  safeTrackedPath: Map<string, Promise<boolean>>
+}
+
+function createTurnScanCache(): TurnScanCache {
+  return { identityPath: new Map(), backupReadable: new Map(), safeTrackedPath: new Map() }
+}
+
+/** Each identity costs a realpath call; a listing resolves the same paths every turn. */
+function toScannedFileIdentityPath(
+  filePath: string,
+  frozen: boolean,
+  cache: TurnScanCache | undefined,
+): string {
+  const key = `${frozen}\0${filePath}`
+  const cached = cache?.identityPath.get(key)
+  if (cached !== undefined) return cached
+  const identityPath = toFileIdentityPath(filePath, frozen)
+  cache?.identityPath.set(key, identityPath)
+  return identityPath
+}
+
+type BackupNamesByIdentity = Map<string, Array<string | null | undefined>>
+
+/** Scanning the whole next snapshot for every tracked file is O(files²) per turn. */
+function indexSnapshotBackupsByIdentity(
+  snapshot: FileHistorySnapshot,
+  checkpointBaseDir: string,
+  frozen: boolean,
+  cache?: TurnScanCache,
+): BackupNamesByIdentity {
+  const index: BackupNamesByIdentity = new Map()
+  for (const [trackingPath, backup] of Object.entries(snapshot.trackedFileBackups)) {
+    const identityPath = toScannedFileIdentityPath(expandTrackingPath(checkpointBaseDir, trackingPath), frozen, cache)
+    const names = index.get(identityPath)
+    if (names) names.push(backup?.backupFileName)
+    else index.set(identityPath, [backup?.backupFileName])
+  }
+  return index
+}
+
+/** Aliases that disagree leave the next boundary unknown. */
+function resolveIndexedBackupFileName(
+  index: BackupNamesByIdentity,
+  identityPath: string,
+): string | null | undefined {
+  const names = index.get(identityPath) ?? []
+  return new Set(names).size === 1 ? names[0] : undefined
+}
+
+function isBackupReadable(
+  sessionId: string,
+  backupFileName: string,
+  cache: TurnScanCache | undefined,
+): Promise<boolean> {
+  const cached = cache?.backupReadable.get(backupFileName)
+  if (cached) return cached
+  const readable = readBackupBytes(sessionId, backupFileName).then((bytes) => bytes !== undefined)
+  cache?.backupReadable.set(backupFileName, readable)
+  return readable
+}
+
+function isSafeTrackedPathCached(
+  checkpointBaseDir: string,
+  trackingPath: string,
+  cache: TurnScanCache | undefined,
+): Promise<boolean> {
+  const key = `${checkpointBaseDir}\0${trackingPath}`
+  const cached = cache?.safeTrackedPath.get(key)
+  if (cached) return cached
+  const safe = isSafeTrackedPath(checkpointBaseDir, trackingPath)
+  cache?.safeTrackedPath.set(key, safe)
+  return safe
+}
+
 async function getTurnBoundaryContents(
   sessionId: string,
   checkpointBaseDir: string,
@@ -1212,6 +1325,7 @@ async function getTurnBoundaryContents(
   targetSnapshot: FileHistorySnapshot,
   nextSnapshot: FileHistorySnapshot | null,
   frozen = false,
+  nextBackupsByIdentity?: BackupNamesByIdentity,
 ): Promise<{
   beforeContent: string | null
   afterContent: string | null
@@ -1230,23 +1344,21 @@ async function getTurnBoundaryContents(
   } else if (!nextSnapshot) {
     if (!frozen) afterBytes = await readCurrentFileBytes(absolutePath)
   } else {
-    const identityPath = toFileIdentityPath(absolutePath, frozen)
-    const matchingNextBackups = Object.entries(nextSnapshot.trackedFileBackups)
-      .filter(([nextTrackingPath]) =>
-        toFileIdentityPath(expandTrackingPath(checkpointBaseDir, nextTrackingPath), frozen) === identityPath
-      )
-      .map(([, backup]) => backup?.backupFileName)
-    const distinctNextBackups = new Set(matchingNextBackups)
-    const nextBackupFileName = distinctNextBackups.size === 1
-      ? matchingNextBackups[0]
-      : undefined
+    const nextBackupFileName = resolveIndexedBackupFileName(
+      nextBackupsByIdentity ?? indexSnapshotBackupsByIdentity(nextSnapshot, checkpointBaseDir, frozen),
+      toFileIdentityPath(absolutePath, frozen),
+    )
     afterBytes = await readBackupBytes(sessionId, nextBackupFileName)
   }
 
   const afterContent = checkpointText(afterBytes, frozen)
   const restorePointAvailable = beforeContent !== undefined &&
     (frozen || nextSnapshot !== null || afterBytes !== undefined)
-  const afterBoundaryAvailable = afterContent !== undefined && (!frozen || restorePointAvailable)
+  // An unreadable before backup (for example one removed by retention cleanup)
+  // is unknown, not absent: comparing it as a missing file would report every
+  // readable after state as created. Leave the path to transcript evidence.
+  const afterBoundaryAvailable = beforeContent !== undefined && afterContent !== undefined &&
+    (!frozen || restorePointAvailable)
   const effectiveAfterBytes = afterBoundaryAvailable ? afterBytes : beforeBytes
   return {
     beforeContent: beforeContent ?? null,
@@ -1255,7 +1367,7 @@ async function getTurnBoundaryContents(
     restorePointAvailable,
     // Text is presentation only: distinct invalid UTF-8 bytes can decode to
     // the same replacement character, while absence differs from an empty file.
-    changed: (!frozen && !nextSnapshot && afterBytes === undefined) ||
+    changed: (!frozen && !nextSnapshot && afterBytes === undefined && beforeBytes !== undefined) ||
       !checkpointBytesMatch(beforeBytes ?? null, effectiveAfterBytes ?? null),
     textComparable: checkpointText(beforeBytes, true) !== undefined &&
       checkpointText(effectiveAfterBytes, true) !== undefined,
@@ -1269,13 +1381,14 @@ async function getFrozenTurnBoundaryContents(
   trackingPath: string,
   targetSnapshot: FileHistorySnapshot,
   nextSnapshot: FileHistorySnapshot | null,
+  nextBackupsByIdentity?: BackupNamesByIdentity,
 ): Promise<Awaited<ReturnType<typeof getTurnBoundaryContents>>> {
   const identity = toFileIdentityPath(expandTrackingPath(checkpointBaseDir, trackingPath), true)
   const aliases = [...new Set([...Object.keys(targetSnapshot.trackedFileBackups), ...Object.keys(targetSnapshot.completedFileBackups ?? {})])].filter(candidate =>
     toFileIdentityPath(expandTrackingPath(checkpointBaseDir, candidate), true) === identity)
   let result: Awaited<ReturnType<typeof getTurnBoundaryContents>> | undefined
   for (const alias of aliases) {
-    const boundary = await getTurnBoundaryContents(sessionId, checkpointBaseDir, alias, targetSnapshot, nextSnapshot, true)
+    const boundary = await getTurnBoundaryContents(sessionId, checkpointBaseDir, alias, targetSnapshot, nextSnapshot, true, nextBackupsByIdentity)
     if (!boundary.afterBoundaryAvailable) return boundary
     if (result && (result.beforeContent !== boundary.beforeContent || result.afterContent !== boundary.afterContent)) {
       return { ...result, afterBoundaryAvailable: false }
@@ -1292,8 +1405,12 @@ async function buildTurnCodePreview(
   nextSnapshot: FileHistorySnapshot | null,
   signal?: AbortSignal,
   frozen = false,
+  scanCache?: TurnScanCache,
 ): Promise<SnapshotTurnCodePreview> {
   const trackedPaths = Object.keys(targetSnapshot.trackedFileBackups)
+  const nextBackupsByIdentity = nextSnapshot
+    ? indexSnapshotBackupsByIdentity(nextSnapshot, checkpointBaseDir, frozen, scanCache)
+    : undefined
   const coveredPathIdentities = new Set<string>()
   const restorablePathIdentities = new Set<string>()
   const unrestorablePathIdentities = new Set<string>()
@@ -1307,9 +1424,10 @@ async function buildTurnCodePreview(
 
   for (const trackingPath of trackedPaths) {
     signal?.throwIfAborted()
-    const identityPath = toFileIdentityPath(
+    const identityPath = toScannedFileIdentityPath(
       expandTrackingPath(checkpointBaseDir, trackingPath),
       frozen,
+      scanCache,
     )
     const targetBackupFileName = targetSnapshot.trackedFileBackups[trackingPath]
       ?.backupFileName
@@ -1329,6 +1447,28 @@ async function buildTurnCodePreview(
     if (processedPathIdentities.has(identityPath)) continue
     processedPathIdentities.add(identityPath)
 
+    // Snapshots carry every file tracked so far, so most entries point both
+    // boundaries at the same backup. Reading that one file twice can only find
+    // it unchanged; what remains to decide is whether it is readable and safe.
+    if (
+      !frozen &&
+      nextBackupsByIdentity &&
+      resolveIndexedBackupFileName(nextBackupsByIdentity, identityPath) === targetBackupFileName
+    ) {
+      const backupReadable = targetBackupFileName === null ||
+        await isBackupReadable(sessionId, targetBackupFileName, scanCache)
+      const safeTrackedPath = await isSafeTrackedPathCached(checkpointBaseDir, trackingPath, scanCache)
+      signal?.throwIfAborted()
+      if (backupReadable) coveredPathIdentities.add(identityPath)
+      if (backupReadable && safeTrackedPath) {
+        restorablePathIdentities.add(identityPath)
+      } else {
+        unrestorablePathIdentities.add(identityPath)
+        restoreAvailable = false
+      }
+      continue
+    }
+
     const {
       beforeContent,
       afterContent,
@@ -1336,15 +1476,25 @@ async function buildTurnCodePreview(
       restorePointAvailable,
       changed,
       textComparable,
-    } =
-      await (frozen ? getFrozenTurnBoundaryContents : getTurnBoundaryContents)(
+    } = frozen
+      ? await getFrozenTurnBoundaryContents(
         sessionId,
         checkpointBaseDir,
         trackingPath,
         targetSnapshot,
         nextSnapshot,
+        nextBackupsByIdentity,
       )
-    const safeTrackedPath = await isSafeTrackedPath(checkpointBaseDir, trackingPath)
+      : await getTurnBoundaryContents(
+        sessionId,
+        checkpointBaseDir,
+        trackingPath,
+        targetSnapshot,
+        nextSnapshot,
+        false,
+        nextBackupsByIdentity,
+      )
+    const safeTrackedPath = await isSafeTrackedPathCached(checkpointBaseDir, trackingPath, scanCache)
     signal?.throwIfAborted()
     if (restorePointAvailable && safeTrackedPath) {
       restorablePathIdentities.add(identityPath)
@@ -1885,6 +2035,7 @@ async function buildTurnCheckpointStateFromContext(
   turnMessages: MessageEntry[],
   signal?: AbortSignal,
   frozen = false,
+  scanCache?: TurnScanCache,
 ): Promise<SessionTurnCheckpointPreview> {
   signal?.throwIfAborted()
   const snapshotPreview = targetSnapshot
@@ -1895,6 +2046,7 @@ async function buildTurnCheckpointStateFromContext(
       nextSnapshot,
       signal,
       frozen,
+      scanCache,
     )
     : null
   signal?.throwIfAborted()
@@ -1910,25 +2062,39 @@ async function buildTurnCheckpointStateFromContext(
     frozen,
   )
 
-  // Completion can safely capture some paths and refuse others. Compare every
-  // expected path, rather than treating one successful copy as a complete turn.
+  // Snapshots accumulate paths from earlier turns. With intact, fully attributed
+  // mutation evidence, use the same turn scope as the file list: an expired
+  // backup for an unrelated carried path must not hide this turn's recorded
+  // diffs. Pending mutations remain in scope; unknown writes and snapshot-only
+  // evidence still require every recorded path. Restore validation separately
+  // checks the original, unscoped before map.
+  const attributedPathIdentities = transcriptEvidenceComplete &&
+    transcriptEvidence.confirmedChanges.length > 0 &&
+    transcriptEvidence.unverifiedChangeSources.length === 0
+    ? new Set([...transcriptEvidence.confirmedChanges, ...transcriptEvidence.uncertainChanges].map(change => change.identityPath))
+    : null
   // Only an explicit recorded diff for the same path can cover a missing pair.
   const transcriptDiffPaths = new Set(transcriptEvidence.confirmedChanges.filter(change => change.diff).map(change => change.identityPath))
   const beforeMapMalformed = frozen && targetSnapshot !== null && hasMalformedFileHistoryBefore(targetSnapshot)
-  const unavailablePaths = frozen && targetSnapshot
+  const recordedUnavailablePaths = frozen && targetSnapshot
     ? [...new Set([...Object.keys(targetSnapshot.trackedFileBackups), ...Object.keys(targetSnapshot.completedFileBackups ?? {})])].filter(trackingPath => {
       const identityPath = toFileIdentityPath(expandTrackingPath(checkpointBaseDir, trackingPath), true)
       return !snapshotPreview?.coveredPathIdentities.has(identityPath) && !transcriptDiffPaths.has(identityPath)
-    }).map(trackingPath => toCheckpointResponsePath(trackingPath, checkpointBaseDir))
+    })
     : []
+  const unavailablePaths = recordedUnavailablePaths.filter(trackingPath =>
+    !attributedPathIdentities || attributedPathIdentities.has(toFileIdentityPath(expandTrackingPath(checkpointBaseDir, trackingPath), true))
+  ).map(trackingPath => toCheckpointResponsePath(trackingPath, checkpointBaseDir))
   const boundaryUnavailable = beforeMapMalformed || unavailablePaths.length > 0
   const missingEvidence = [...unavailablePaths, ...(beforeMapMalformed ? ['invalid before-file map'] : [])]
+  const restoreBoundaryUnavailable = beforeMapMalformed || recordedUnavailablePaths.length > 0
+  const restoreMissingEvidence = [...recordedUnavailablePaths.map(trackingPath => toCheckpointResponsePath(trackingPath, checkpointBaseDir)), ...(beforeMapMalformed ? ['invalid before-file map'] : [])]
   return buildTurnPreview(
     target,
     boundaryUnavailable ? { ...preview, available: false, reason: `Recorded file history is incomplete for: ${missingEvidence.join(', ')}` } : preview,
     checkpointBaseDir,
-    boundaryUnavailable ? false : restoreAvailable,
-    boundaryUnavailable ? normalizeUnverifiedChangeSources([...unverifiedChangeSources, ...missingEvidence.map(filePath => `file-history:${filePath}`)]) : unverifiedChangeSources,
+    restoreBoundaryUnavailable ? false : restoreAvailable,
+    restoreBoundaryUnavailable ? normalizeUnverifiedChangeSources([...unverifiedChangeSources, ...restoreMissingEvidence.map(filePath => `file-history:${filePath}`)]) : unverifiedChangeSources,
   )
 }
 
@@ -2174,10 +2340,11 @@ export async function listSessionTurnCheckpoints(
   signal?: AbortSignal,
   frozen = false,
 ): Promise<SessionTurnCheckpointPreview[]> {
+  const budget = createCheckpointReadBudget(signal)
   const {
     messages: activeMessages,
     transcriptEvidenceComplete,
-  } = await sessionService.getSessionMessagesWithEvidence(sessionId, { signal })
+  } = await sessionService.getSessionMessagesWithEvidence(sessionId, { omitToolOutputs: budget })
   signal?.throwIfAborted()
   const turns = buildTranscriptTurnContexts(activeMessages)
   if (turns.length === 0) {
@@ -2186,7 +2353,7 @@ export async function listSessionTurnCheckpoints(
 
   const workDir = await resolveSessionWorkDir(sessionId)
   const snapshots = await scopeCarriedForwardSnapshots(
-    sessionId, await loadFileHistorySnapshots(sessionId), activeMessages, transcriptEvidenceComplete, workDir, frozen,
+    sessionId, await loadFileHistorySnapshots(sessionId, budget), activeMessages, transcriptEvidenceComplete, workDir, frozen,
   )
   signal?.throwIfAborted()
   const snapshotByMessageId = new Map<string, FileHistorySnapshot>()
@@ -2194,6 +2361,7 @@ export async function listSessionTurnCheckpoints(
     snapshotByMessageId.set(snapshot.messageId, snapshot)
   }
   const checkpoints: SessionTurnCheckpointPreview[] = []
+  const scanCache = createTurnScanCache()
 
   for (const turn of turns) {
     signal?.throwIfAborted()
@@ -2218,9 +2386,11 @@ export async function listSessionTurnCheckpoints(
       turn.messages,
       signal,
       frozen,
+      scanCache,
     )
 
-    checkpoints.push(checkpoint)
+    const startedAt = Date.parse(turn.userMessage.timestamp)
+    checkpoints.push(Number.isFinite(startedAt) ? { ...checkpoint, startedAt } : checkpoint)
   }
 
   return checkpoints
@@ -2232,7 +2402,10 @@ export async function getSessionTurnCheckpointDiff(
   requestedPath: string,
   frozen = false,
 ): Promise<SessionTurnCheckpointDiffResult> {
-  const target = await resolveRewindTarget(sessionId, selector)
+  const budget = createCheckpointReadBudget()
+  const { messages: activeMessages, transcriptEvidenceComplete } =
+    await sessionService.getSessionMessagesWithEvidence(sessionId, { omitToolOutputs: budget })
+  const target = await resolveRewindTarget(sessionId, selector, activeMessages)
   if (frozen && ((selector.targetUserMessageId && selector.targetUserMessageId !== target.targetUserMessageId) || (selector.userMessageIndex !== undefined && selector.userMessageIndex !== target.userMessageIndex))) {
     throw ApiError.badRequest('The recorded checkpoint identity no longer matches this turn')
   }
@@ -2242,10 +2415,8 @@ export async function getSessionTurnCheckpointDiff(
     target.targetUserMessageId,
     workDir,
   )
-  const { messages: activeMessages, transcriptEvidenceComplete } =
-    await sessionService.getSessionMessagesWithEvidence(sessionId)
   const snapshots = await scopeCarriedForwardSnapshots(
-    sessionId, await loadFileHistorySnapshots(sessionId), activeMessages, transcriptEvidenceComplete, workDir, frozen,
+    sessionId, await loadFileHistorySnapshots(sessionId, budget), activeMessages, transcriptEvidenceComplete, workDir, frozen,
   )
   const missingResult = {
     target: buildTurnPreview(
@@ -2369,7 +2540,7 @@ export async function executeSessionRewind(
   selector: RewindTargetSelector,
   mode: SessionRewindMode = 'both',
 ): Promise<SessionRewindExecuteResult> {
-  const restoreFiles = mode === 'both'
+  const restoreFiles = mode !== 'conversation'
   const selectedTarget = await resolveRewindTarget(sessionId, selector)
 
   // Stop and drain the runtime before the final completeness check. Otherwise
@@ -2440,12 +2611,14 @@ export async function executeSessionRewind(
     await applyRestorePlan(checkpointBaseDir, appliedRestorePlan)
   }
 
-  let trimResult: Awaited<ReturnType<typeof sessionService.trimSessionMessagesFrom>>
+  let trimResult: Pick<Awaited<ReturnType<typeof sessionService.trimSessionMessagesFrom>>, 'removedCount' | 'removedMessageIds'> = { removedCount: 0, removedMessageIds: [] }
   try {
-    trimResult = await sessionService.trimSessionMessagesFrom(
-      sessionId,
-      target.targetUserMessageId,
-    )
+    if (mode !== 'code') {
+      trimResult = await sessionService.trimSessionMessagesFrom(
+        sessionId,
+        target.targetUserMessageId,
+      )
+    }
   } catch (error) {
     const rollbackErrors = await rollbackRestorePlan(
       checkpointBaseDir,

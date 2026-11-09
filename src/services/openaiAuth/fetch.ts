@@ -25,7 +25,6 @@ import { openaiResponsesStreamToAnthropicResponse } from '../../server/proxy/str
 import type { AnthropicRequest } from '../../server/proxy/transform/types.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { OPENAI_CODEX_STREAM_MARKER_HEADER } from './streamPolicy.js'
-import { assertDirectTransportAllowed } from '../localRedactionGuard.js'
 
 export const OPENAI_OAUTH_DUMMY_KEY = 'openai-oauth-dummy-key'
 
@@ -49,7 +48,6 @@ export function buildOpenAICodexFetch(
       return inner(input, init)
     }
 
-    await assertDirectTransportAllowed()
     const originalBody = await readAnthropicBody(input, init)
     const mappedModel = resolveOpenAICodexModel(originalBody.model)
     const sessionId = readSessionId(input, init)
@@ -87,6 +85,7 @@ export function buildOpenAICodexFetch(
       },
       include: ['reasoning.encrypted_content'],
       stream: true,
+      ...(process.env.CC_HAHA_OPENAI_FAST_MODE === '1' ? { service_tier: 'priority' as const } : {}),
     }
 
     const tokens = await ensureFreshOpenAITokens()

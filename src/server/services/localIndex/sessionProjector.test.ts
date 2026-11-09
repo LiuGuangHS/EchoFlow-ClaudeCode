@@ -29,7 +29,7 @@ const tempDirs: string[] = []
 const exactFileTime = new Date(1_700_000_000_000)
 
 async function createTempDir(label: string): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), `echoflow-code-${label}-`))
+  const directory = await mkdtemp(join(tmpdir(), `cc-haha-${label}-`))
   tempDirs.push(directory)
   return directory
 }
@@ -113,6 +113,28 @@ describe('session projector', () => {
       expect(index.listSessions().sessions[0]).toMatchObject({ runtimeProviderId: 'new-provider', runtimeModelId: 'new-model' })
       expect(index.listSessions().sessions[0]?.effortLevel).toBeUndefined()
       expect(await readFile(candidate.path, 'utf8')).toBe(original)
+    } finally {
+      database.close()
+    }
+  })
+
+  it('stores explicit Fast false in the index after previously enabled OAuth metadata', async () => {
+    const root = await createTempDir('projector-fast-mode')
+    const database = openLocalIndexDatabase({ path: join(root, 'index.sqlite') })
+    const index = createSessionIndex(database)
+    const candidate = await createCandidate({
+      root, projectPath: '-repo', sessionId: 'fast-mode',
+      content: [
+        { type: 'session-meta', runtimeProviderId: 'openai-official', runtimeModelId: 'unknown-model', openAIFastMode: true },
+        user('Existing conversation', '2026-01-01T00:00:00Z'),
+        { type: 'session-meta', openAIFastMode: false },
+      ].map(line).join(''),
+    })
+    try {
+      await createSessionProjector({ database, index, scope: root }).projectSource(candidate)
+      expect(index.getSession(candidate.sessionId)?.openAIFastMode).toBe(false)
+      expect(index.listSessions().sessions[0]?.openAIFastMode).toBe(false)
+      expect(index.getProjectionSeed(candidate.path)?.summary.openAIFastMode).toBe(false)
     } finally {
       database.close()
     }
@@ -457,19 +479,6 @@ describe('session projector', () => {
       projectPath: '-repo-a',
       sessionId: 'same-id',
       content: [
-        line({
-          type: 'session-meta',
-          modelConfigId: 'mc_projector',
-          modelConfig: {
-            providerId: 'provider-a',
-            modelId: 'model-a',
-            effortLevel: 'high',
-          },
-          runtimeInstanceId: 'runtime-projector',
-          runtimeProviderId: 'provider-a',
-          runtimeModelId: 'model-a',
-          effortLevel: 'high',
-        }),
         line(user('First title', '2026-01-01T00:00:00.000Z')),
         line('{malformed}'),
         line(assistant('2026-01-01T00:01:00.000Z')),
@@ -499,13 +508,6 @@ describe('session projector', () => {
             title: 'First title',
             messageCount: 2,
             modifiedAt: '2026-01-01T00:01:00.000Z',
-            modelConfigId: 'mc_projector',
-            modelConfig: {
-              providerId: 'provider-a',
-              modelId: 'model-a',
-              effortLevel: 'high',
-            },
-            runtimeInstanceId: 'runtime-projector',
           },
           malformedLineCount: 1,
         },
@@ -519,23 +521,7 @@ describe('session projector', () => {
           title: 'First title',
           messageCount: 2,
           transcriptPath: candidate.path,
-          modelConfigId: 'mc_projector',
-          modelConfig: {
-            providerId: 'provider-a',
-            modelId: 'model-a',
-            effortLevel: 'high',
-          },
-          runtimeInstanceId: 'runtime-projector',
         }],
-      })
-      expect(index.getProjectionSeed(candidate.path)?.summary).toMatchObject({
-        modelConfigId: 'mc_projector',
-        modelConfig: {
-          providerId: 'provider-a',
-          modelId: 'model-a',
-          effortLevel: 'high',
-        },
-        runtimeInstanceId: 'runtime-projector',
       })
       expect(index.getSource(candidate.path)).toMatchObject({
         path: candidate.path,
@@ -854,7 +840,6 @@ describe('session projector', () => {
         content: line({
           type: 'session-meta',
           runtimeProviderId: 'provider-a',
-          cliRuntimeId: 'installed',
           timestamp: '2026-01-01T00:02:00.000Z',
         }),
       }),
@@ -868,7 +853,6 @@ describe('session projector', () => {
       expect(Object.hasOwn(byId.get('explicit-null')!, 'runtimeProviderId')).toBe(true)
       expect(byId.get('explicit-null')!.runtimeProviderId).toBeNull()
       expect(byId.get('string')!.runtimeProviderId).toBe('provider-a')
-      expect(Object.hasOwn(byId.get('string')!, 'cliRuntimeId')).toBe(false)
     } finally {
       database.close()
     }
@@ -1350,5 +1334,30 @@ it('excludes desktop team workers from sidebar pages while retaining indexed tra
     expect(index.listSessions().total).toBe(2)
     expect(index.findSessionFiles('worker-session')).toHaveLength(1)
     expect(index.getSession?.('worker-session')?.id).toBe('worker-session')
+  } finally { database.close() }
+})
+
+it('persists lean profile through index reopen and incremental metadata, and rebuilds legacy projections', async () => {
+  const root = await createTempDir('agent-profile-index')
+  const databasePath = join(root, 'index.sqlite')
+  let database = openLocalIndexDatabase({ path: databasePath })
+  const candidate = await createCandidate({ root, projectPath: '-repo', sessionId: 'lean-session', content:
+    line({ type: 'session-meta', agentProfile: 'lean', futureExtension: true }) + line(user('lean task', '2026-01-01T00:00:00Z')) })
+  try {
+    let index = createSessionIndex(database)
+    await createSessionProjector({ database, index, scope: root, parserVersion: 11 }).projectSource(candidate)
+    database.close()
+    database = openLocalIndexDatabase({ path: databasePath })
+    index = createSessionIndex(database)
+    const projector = createSessionProjector({ database, index, scope: root })
+    expect(await projector.projectSource(candidate)).toMatchObject({ kind: 'indexed', action: 'rebuild' })
+    await appendFile(candidate.path, line({ type: 'session-meta', permissionMode: 'default' }))
+    await projector.projectSource(candidate)
+    expect(index.getSession?.('lean-session')?.agentProfile).toBe('lean')
+    expect(index.listSessions().sessions[0]?.agentProfile).toBe('lean')
+    expect(index.listSessions({ project: '-repo' }).sessions[0]?.agentProfile).toBe('lean')
+    const legacy = await createCandidate({ root, projectPath: '-repo', sessionId: 'old-session', content: line(user('old task', '2026-01-02T00:00:00Z')) })
+    await projector.projectSource(legacy)
+    expect(index.getSession?.('old-session')?.agentProfile).toBe('standard')
   } finally { database.close() }
 })

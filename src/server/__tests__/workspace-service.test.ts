@@ -83,6 +83,15 @@ afterEach(async () => {
 })
 
 describe('WorkspaceService outside-workspace preview', () => {
+  // Cleared going in as well as coming out. The registry is one module-level Set that
+  // every test file in the process shares, and these tests open by asserting a path is
+  // *not* reachable — a precondition they cannot assume, only establish. In a full run
+  // they inherited the entire macOS temp root: title-service.test.ts:463 and
+  // sessions.test.ts:2860 both create a session on the bare os.tmpdir(), and
+  // registering a session's workDir is exactly what sessionService is supposed to do.
+  // So every path under /var/folders/.../T was already allowed by the time this file
+  // ran, and the "outside workspace" assertion failed. Matches the pairing that
+  // filesystemAccessRoots.test.ts and h5-access-auth.test.ts already use.
   beforeEach(() => {
     clearFilesystemAccessRootsForTests()
   })
@@ -136,6 +145,59 @@ describe('WorkspaceService outside-workspace preview', () => {
   })
 })
 
+describe('WorkspaceService.statFiles', () => {
+  beforeEach(() => {
+    clearFilesystemAccessRootsForTests()
+  })
+
+  afterEach(() => {
+    clearFilesystemAccessRootsForTests()
+  })
+
+  it('reports each path as a written file, missing, or out of bounds, in request order', async () => {
+    const workDir = await makeTempDir('workspace-service-stat-')
+    const outsideDir = await makeTempDir('workspace-service-stat-outside-')
+    await fs.mkdir(path.join(workDir, 'out'))
+    await fs.writeFile(path.join(workDir, 'out', '报告.docx'), 'docx')
+    const writtenAt = new Date('2026-10-04T08:00:05Z')
+    await fs.utimes(path.join(workDir, 'out', '报告.docx'), writtenAt, writtenAt)
+    await fs.writeFile(path.join(outsideDir, 'secret.docx'), 'nope')
+    const service = new WorkspaceService(async (sessionId) => sessionId === 'session-1' ? workDir : null)
+
+    const stats = await service.statFiles('session-1', [
+      'out/报告.docx',
+      'out/missing.docx',
+      'out',
+      path.join(outsideDir, 'secret.docx'),
+      '../escape.docx',
+    ])
+
+    expect(stats).toEqual([
+      { path: 'out/报告.docx', state: 'file', mtimeMs: writtenAt.getTime() },
+      { path: 'out/missing.docx', state: 'missing' },
+      // A directory is not an output file.
+      { path: 'out', state: 'missing' },
+      // The file route would refuse these too, so their existence is not told.
+      { path: path.join(outsideDir, 'secret.docx'), state: 'unavailable' },
+      { path: '../escape.docx', state: 'unavailable' },
+    ])
+  })
+
+  it('stats a file outside the workdir once it is a registered access root', async () => {
+    const workDir = await makeTempDir('workspace-service-stat-')
+    const outsideDir = await makeTempDir('workspace-service-stat-outside-')
+    const outsideFile = path.join(outsideDir, 'report.pdf')
+    await fs.writeFile(outsideFile, 'pdf')
+    registerFilesystemAccessRoot(outsideDir)
+    const service = new WorkspaceService(async () => workDir)
+
+    const [stat] = await service.statFiles('session-1', [outsideFile])
+
+    expect(stat).toMatchObject({ path: outsideFile, state: 'file' })
+    expect(typeof stat?.mtimeMs).toBe('number')
+  })
+})
+
 describe('WorkspaceService', () => {
   it('surfaces bounded transcript failures instead of reporting a clean workspace', async () => {
     const workDir = await makeTempDir('workspace-history-budget-')
@@ -144,6 +206,22 @@ describe('WorkspaceService', () => {
     const snapshots = new WorkspaceService(async () => workDir, async () => [], async () => { throw failure })
     await expect(messages.getStatus('session')).rejects.toBe(failure)
     await expect(snapshots.getStatus('session')).rejects.toBe(failure)
+  })
+
+  it('keeps authoritative git status when bounded session evidence exceeds its budget', async () => {
+    const repoDir = await createGitWorkspace()
+    const failure = new ApiError(413, 'History viewing budget exceeded', 'HISTORY_WORKSPACE_LIMIT')
+    const services = [
+      new WorkspaceService(async () => repoDir, async () => { throw failure }),
+      new WorkspaceService(async () => repoDir, async () => [], async () => { throw failure }),
+    ]
+    for (const service of services) {
+      const result = await service.getStatus('session')
+      expect(result.state).toBe('ok')
+      expect(result.changedFiles.map((file) => file.path).sort()).toEqual(
+        ['deleted.txt', 'new.txt', 'tracked.txt', 'untracked.txt'],
+      )
+    }
   })
 
   it('returns git status for modified, added, deleted, and untracked files', async () => {
@@ -699,6 +777,8 @@ describe('WorkspaceService document previews', () => {
     ['data.xlsx', 'xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
     ['macro.xlsm', 'xlsx', 'application/vnd.ms-excel.sheet.macroEnabled.12'],
     ['legacy.XLS', 'xlsx', 'application/vnd.ms-excel'],
+    ['results.csv', 'xlsx', 'text/csv'],
+    ['results.TSV', 'xlsx', 'text/tab-separated-values'],
   ])('classifies %s as a %s document and does not ship its bytes', async (name, previewType, mimeType) => {
     const workDir = await makeTempDir('workspace-service-docs-')
     const service = new WorkspaceService(async () => workDir)
@@ -885,6 +965,24 @@ describe('WorkspaceService document previews', () => {
 
       await expect(service.resolveRawFile('session-1', 'missing.pdf')).rejects.toMatchObject({ statusCode: 404 })
       await expect(service.resolveRawFile('session-1', 'folder.pdf')).rejects.toMatchObject({ statusCode: 404 })
+    })
+
+    it('serves delimited text as a table document, and refuses it above its own, lower limit', async () => {
+      const workDir = await makeTempDir('workspace-service-raw-')
+      const service = new WorkspaceService(async () => workDir)
+      await fs.writeFile(path.join(workDir, 'results.csv'), 'a,b\n1,2\n')
+
+      const raw = await service.resolveRawFile('session-1', 'results.csv')
+      expect(raw.format).toMatchObject({ previewType: 'xlsx', mimeType: 'text/csv' })
+
+      const limit = WORKSPACE_DOCUMENT_FORMATS.csv!.maxBytes
+      expect(limit).toBeLessThan(WORKSPACE_DOCUMENT_FORMATS.xlsx!.maxBytes)
+      const target = path.join(workDir, 'huge.csv')
+      await fs.writeFile(target, '')
+      await fs.truncate(target, limit + 1)
+
+      await expect(service.resolveRawFile('session-1', 'huge.csv')).rejects.toMatchObject({ statusCode: 413 })
+      await expect(service.readFile('session-1', 'huge.csv')).resolves.toMatchObject({ state: 'too_large' })
     })
 
     it('answers 413 above the format limit', async () => {

@@ -31,10 +31,8 @@ test('publishes real shell terminals while the model is still working, without r
   const modelBlocked = new Promise<void>(resolve => { releaseModel = resolve })
   let waitingForModel = false
   let requestCount = 0
-  let liveness = 0
   let sawModelNotification = false
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
-    liveness++
     if (request.method !== 'POST') return new Response('ok')
     const body = await request.json() as { messages: unknown[] }
     if (new URL(request.url).pathname.includes('count_tokens')) return Response.json({ input_tokens: 1 })
@@ -52,12 +50,12 @@ test('publishes real shell terminals while the model is still working, without r
     if (JSON.stringify(body.messages).includes('<task-notification>')) sawModelNotification = true
     return response([{ type: 'text', text: 'Finished developing.' }], 'end_turn')
   } })
-  const child = Bun.spawn(['bash', resolve('bin/echoflow-code'),
+  const child = Bun.spawn([process.execPath, '--no-env-file', resolve('bin/claude-haha'),
     '--bare', '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json',
     '--dangerously-skip-permissions'], {
     cwd: home,
     env: createSandboxedTestEnvironment(home, {
-      NODE_ENV: 'production', CI: '1', ECHOFLOW_SKIP_DOTENV: '1',
+      NODE_ENV: 'production', CI: '1', CC_HAHA_SKIP_DOTENV: '1',
       CALLER_DIR: home, ANTHROPIC_API_KEY: 'loopback-fixture-key',
       ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.port}`,
       ANTHROPIC_MODEL: 'claude-sonnet-4-5',
@@ -69,7 +67,6 @@ test('publishes real shell terminals while the model is still working, without r
   const stdout = (async () => {
     let pending = ''
     for await (const chunk of child.stdout) {
-      liveness++
       pending += new TextDecoder().decode(chunk)
       const lines = pending.split('\n')
       pending = lines.pop()!
@@ -80,23 +77,8 @@ test('publishes real shell terminals while the model is still working, without r
   const terminals = () => events.filter(event => event.subtype === 'task_notification')
   try {
     child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'Run the checks and continue developing.' } })}\n`)
-    // Liveness-based hang guard, not a performance budget: the child must
-    // cold-boot the real CLI before its first output, so a fixed deadline
-    // turns a slow machine into a failure. The stall window extends on every
-    // sign of progress (fixture hits, stdout chunks); the absolute cap still
-    // bounds the silent boot phase, so a genuinely stuck child still fails.
-    const hardStop = Date.now() + 45_000
-    let stallDeadline = hardStop
-    let seenLiveness = liveness
-    while ((!waitingForModel || terminals().length < 2) && Date.now() < hardStop) {
-      if (liveness !== seenLiveness) {
-        seenLiveness = liveness
-        stallDeadline = Math.min(Date.now() + 15_000, hardStop)
-      } else if (Date.now() >= stallDeadline) {
-        break
-      }
-      await Bun.sleep(20)
-    }
+    const deadline = Date.now() + 15_000
+    while ((!waitingForModel || terminals().length < 2) && Date.now() < deadline) await Bun.sleep(20)
     expect(waitingForModel).toBe(true)
     expect(events.filter(event => event.subtype === 'task_started')).toHaveLength(2)
     // The upstream is intentionally still pending: no model turn has ended,
@@ -125,6 +107,4 @@ test('publishes real shell terminals while the model is still working, without r
     server.stop(true)
     await rm(home, { recursive: true, force: true })
   }
-  // Hang guard: wide enough for the 45s liveness cap plus the post-release
-  // tail, never a budget the assertions depend on.
-}, 60_000)
+}, 30_000)

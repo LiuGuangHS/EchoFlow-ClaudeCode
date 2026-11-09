@@ -12,8 +12,12 @@ import { handleSettingsApi } from '../api/settings.js'
 import { handleModelsApi } from '../api/models.js'
 import { handleStatusApi, resetUsage, addUsage } from '../api/status.js'
 import { ProviderService } from '../services/providerService.js'
-import { echoFlowOAuthService } from '../services/echoFlowOAuthService.js'
-import { echoFlowOpenAIOAuthService } from '../services/echoFlowOpenAIOAuthService.js'
+import { clearDeepSeekAccountModelCatalogCache } from '../../services/deepseekAuth/modelCatalog.js'
+import { hahaOAuthService } from '../services/hahaOAuthService.js'
+import * as claudeModelCatalog from '../services/claudeModelCatalog.js'
+import { hahaOpenAIOAuthService } from '../services/hahaOpenAIOAuthService.js'
+import { OPENAI_CODEX_CLIENT_VERSION } from '../../services/openaiAuth/client.js'
+import { OPENAI_CODEX_RELEASE_SOURCES } from '../../services/openaiAuth/clientVersion.js'
 import {
   clearOpenAICodexModelCatalogCache,
 } from '../../services/openaiAuth/modelCatalog.js'
@@ -89,6 +93,7 @@ async function setup() {
   process.env.HOME = tmpDir
   process.env.USERPROFILE = tmpDir
   process.env.SHELL = '/bin/zsh'
+  process.env.PATH = ''
   delete process.env.ANTHROPIC_API_KEY
   delete process.env.ANTHROPIC_BASE_URL
   delete process.env.ANTHROPIC_MODEL
@@ -209,20 +214,6 @@ function saveTestOpenAIOAuthTokens(tokens: OpenAIOAuthTokens) {
   clearOpenAIOAuthTokenCache()
 }
 
-function echoFlowSettingsPath(configDir = tmpDir): string {
-  return path.join(configDir, 'settings.json')
-}
-
-async function writeEchoFlowSettings(settings: Record<string, unknown> | string): Promise<void> {
-  const filePath = echoFlowSettingsPath()
-  await fs.mkdir(path.dirname(filePath), { recursive: true })
-  await fs.writeFile(
-    filePath,
-    typeof settings === 'string' ? settings : JSON.stringify(settings),
-    'utf-8',
-  )
-}
-
 /** 创建一个模拟 Request */
 function makeRequest(
   method: string,
@@ -268,7 +259,7 @@ describe('SettingsService', () => {
   })
 
   it('should recover from malformed user settings after an upgrade', async () => {
-    await writeEchoFlowSettings('{not json')
+    await fs.writeFile(path.join(tmpDir, 'settings.json'), '{not json', 'utf-8')
 
     const svc = new SettingsService()
     const settings = await svc.getUserSettings()
@@ -306,9 +297,8 @@ describe('SettingsService', () => {
   })
 
   it('should preserve unknown desktop terminal fields from older or future settings', async () => {
-    await fs.mkdir(tmpDir, { recursive: true })
     await fs.writeFile(
-      echoFlowSettingsPath(),
+      path.join(tmpDir, 'settings.json'),
       JSON.stringify({
         desktopTerminal: {
           startupShell: 'system',
@@ -324,6 +314,7 @@ describe('SettingsService', () => {
     )
 
     const svc = new SettingsService()
+    await svc.updateUserSettings({ desktopTerminal: { fontFamily: 'MesloLGS NF', fontSize: 18 } })
     await svc.updateUserSettings({
       desktopTerminal: {
         startupShell: 'pwsh',
@@ -336,26 +327,19 @@ describe('SettingsService', () => {
         startupShell: 'pwsh',
         customShellPath: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
         legacyEncoding: 'utf-8',
+        fontFamily: 'MesloLGS NF',
+        fontSize: 18,
         futureProfile: {
           id: 'work',
           inheritEnvironment: false,
         },
       },
     })
+    expect(JSON.parse(await fs.readFile(path.join(tmpDir, 'settings.json'), 'utf-8')).desktopTerminal)
+      .toMatchObject({ fontFamily: 'MesloLGS NF', fontSize: 18, startupShell: 'pwsh', legacyEncoding: 'utf-8' })
   })
 
   it('should not let cached CLI settings overwrite desktop settings updates', async () => {
-    await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
-      JSON.stringify({
-        enabledPlugins: {
-          'demo@test-market': true,
-        },
-      }),
-      'utf-8',
-    )
-    resetSettingsCache()
-
     const svc = new SettingsService()
     await svc.updateUserSettings({
       enabledPlugins: {
@@ -437,7 +421,11 @@ describe('SettingsService', () => {
   })
 
   it('should ignore stale invalid permission modes from older installs', async () => {
-    await writeEchoFlowSettings({ defaultMode: 'legacy-yolo' })
+    await fs.writeFile(
+      path.join(tmpDir, 'settings.json'),
+      JSON.stringify({ defaultMode: 'legacy-yolo' }),
+      'utf-8',
+    )
 
     const svc = new SettingsService()
     const mode = await svc.getPermissionMode()
@@ -506,7 +494,8 @@ describe('Settings API', () => {
 
   it('GET /api/settings should return merged settings', async () => {
     // Seed some user settings
-    await writeEchoFlowSettings({ theme: 'dark' })
+    const settingsPath = path.join(tmpDir, 'settings.json')
+    await fs.writeFile(settingsPath, JSON.stringify({ theme: 'dark' }))
 
     const { req, url, segments } = makeRequest('GET', '/api/settings')
     const res = await handleSettingsApi(req, url, segments)
@@ -522,7 +511,83 @@ describe('Settings API', () => {
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body).toEqual({ agentTeamsEnabled: true })
+    expect(body).toEqual({ agentTeamsEnabled: true, leanModeEnabled: false, autoUpdateEnabled: true, maxConcurrentSubagents: null })
+  })
+
+  it('读取旧设置为不限，并通过 API 保存数量和恢复不限', async () => {
+    const settingsPath = path.join(tmpDir, 'settings.json')
+    const legacy = { env: { KEEP_ME: 'unchanged' }, futureSetting: { keep: true } }
+    const original = JSON.stringify(legacy)
+    await fs.writeFile(settingsPath, original)
+    const initial = makeRequest('GET', '/api/settings/user')
+    const response = await handleSettingsApi(initial.req, initial.url, initial.segments)
+    expect(await response.json()).toMatchObject({ maxConcurrentSubagents: null, ...legacy })
+    expect(await fs.readFile(settingsPath, 'utf-8')).toBe(original)
+
+    for (const limit of [4, 1, null]) {
+      const put = makeRequest('PUT', '/api/settings/user', { maxConcurrentSubagents: limit })
+      expect((await handleSettingsApi(put.req, put.url, put.segments)).status).toBe(200)
+      const get = makeRequest('GET', '/api/settings/user')
+      const saved = await handleSettingsApi(get.req, get.url, get.segments)
+      expect(await saved.json()).toMatchObject({ maxConcurrentSubagents: limit, ...legacy })
+      expect(JSON.parse(await fs.readFile(settingsPath, 'utf-8'))).toEqual({ ...legacy, maxConcurrentSubagents: limit })
+    }
+  })
+
+  it.each([0, -1, 1.5, '3', false, {}, Number.MAX_SAFE_INTEGER + 1])('API 拒绝非法并发上限 %j 且不改写设置', async value => {
+    const put = makeRequest('PUT', '/api/settings/user', { maxConcurrentSubagents: value })
+    expect((await handleSettingsApi(put.req, put.url, put.segments)).status).toBe(400)
+    expect(await new SettingsService().getUserSettings()).toEqual({})
+  })
+
+  it('persists lean mode through the user settings API and preserves unrelated fields', async () => {
+    const settingsPath = path.join(tmpDir, 'settings.json')
+    const original = JSON.stringify({ futureSetting: { keep: true } })
+    await fs.writeFile(settingsPath, original)
+    const initial = makeRequest('GET', '/api/settings/user')
+    const oldSettings = await handleSettingsApi(initial.req, initial.url, initial.segments)
+    expect(await oldSettings.json()).toMatchObject({ leanModeEnabled: false, futureSetting: { keep: true } })
+    expect(await fs.readFile(settingsPath, 'utf-8')).toBe(original)
+
+    for (const enabled of [true, false]) {
+      const put = makeRequest('PUT', '/api/settings/user', { leanModeEnabled: enabled })
+      expect((await handleSettingsApi(put.req, put.url, put.segments)).status).toBe(200)
+      const get = makeRequest('GET', '/api/settings/user')
+      const response = await handleSettingsApi(get.req, get.url, get.segments)
+      expect(await response.json()).toMatchObject({ leanModeEnabled: enabled, futureSetting: { keep: true } })
+      expect(JSON.parse(await fs.readFile(settingsPath, 'utf-8'))).toEqual({ futureSetting: { keep: true }, leanModeEnabled: enabled })
+    }
+  })
+
+  it.each(['false', null, 1])('rejects invalid lean mode preference %j without changing settings', async value => {
+    const put = makeRequest('PUT', '/api/settings/user', { leanModeEnabled: value })
+    expect((await handleSettingsApi(put.req, put.url, put.segments)).status).toBe(400)
+    expect(await new SettingsService().getUserSettings()).toEqual({})
+  })
+
+  it('persists automatic updates through the user settings API and preserves unrelated fields', async () => {
+    const settingsPath = path.join(tmpDir, 'settings.json')
+    const original = JSON.stringify({ futureSetting: { keep: true } })
+    await fs.writeFile(settingsPath, original)
+    const initial = makeRequest('GET', '/api/settings/user')
+    const oldSettings = await handleSettingsApi(initial.req, initial.url, initial.segments)
+    expect(await oldSettings.json()).toMatchObject({ autoUpdateEnabled: true, futureSetting: { keep: true } })
+    expect(await fs.readFile(settingsPath, 'utf-8')).toBe(original)
+
+    for (const enabled of [false, true]) {
+      const put = makeRequest('PUT', '/api/settings/user', { autoUpdateEnabled: enabled })
+      expect((await handleSettingsApi(put.req, put.url, put.segments)).status).toBe(200)
+      const get = makeRequest('GET', '/api/settings/user')
+      const response = await handleSettingsApi(get.req, get.url, get.segments)
+      expect(await response.json()).toMatchObject({ autoUpdateEnabled: enabled, futureSetting: { keep: true } })
+      expect(JSON.parse(await fs.readFile(settingsPath, 'utf-8'))).toEqual({ futureSetting: { keep: true }, autoUpdateEnabled: enabled })
+    }
+  })
+
+  it.each(['false', null, 1])('rejects invalid automatic update preference %j without changing settings', async value => {
+    const put = makeRequest('PUT', '/api/settings/user', { autoUpdateEnabled: value })
+    expect((await handleSettingsApi(put.req, put.url, put.segments)).status).toBe(400)
+    expect(await new SettingsService().getUserSettings()).toEqual({})
   })
 
   it('persists the General team preference across reads and overrides legacy env', async () => {
@@ -703,7 +768,7 @@ describe('Settings API', () => {
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.command).toBe('echoflow-code')
+    expect(body.command).toBe('claude-haha')
     expect(body.installed).toBe(true)
     expect(body.availableInNewTerminals).toBe(true)
   })
@@ -942,6 +1007,14 @@ describe('POST /api/settings/session-cleanup', () => {
 describe('Models API', () => {
   beforeEach(setup)
   afterEach(teardown)
+  let claudeCatalogSpy: ReturnType<typeof spyOn<typeof claudeModelCatalog, 'getDesktopClaudeModelCatalog'>>
+  beforeEach(() => {
+    // These cases exercise settings/defaults. Real catalog wiring is covered by
+    // models.catalog.test.ts; fake OAuth tokens must never reach a public host.
+    claudeCatalogSpy = spyOn(claudeModelCatalog, 'getDesktopClaudeModelCatalog')
+      .mockResolvedValue(claudeModelCatalog.CLAUDE_MODEL_CATALOG)
+  })
+  afterEach(() => claudeCatalogSpy.mockRestore())
 
   it('GET /api/models should return available models', async () => {
     const { req, url, segments } = makeRequest('GET', '/api/models')
@@ -1002,6 +1075,14 @@ describe('Models API', () => {
         description: 'Best combination of speed and intelligence',
         context: '1m',
         defaultReasoningEffort: 'high',
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      },
+      {
+        id: 'claude-haiku-5-5',
+        name: 'Haiku 5.5',
+        description: 'Fastest for high-volume, latency-sensitive tasks',
+        context: '1m',
+        defaultReasoningEffort: 'medium',
         supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       },
       {
@@ -1210,7 +1291,7 @@ describe('Models API', () => {
   })
 
   it('GET /api/models/current should replace the legacy opus[1m] default with the Claude OAuth Pro default', async () => {
-    await echoFlowOAuthService.saveTokens({
+    await hahaOAuthService.saveTokens({
       accessToken: 'claude-pro-access',
       refreshToken: 'claude-pro-refresh',
       expiresAt: Date.now() + 60 * 60_000,
@@ -1249,12 +1330,13 @@ describe('Models API', () => {
       'claude-opus-4-8',
       'claude-sonnet-5-5',
       'claude-sonnet-5',
+      'claude-haiku-5-5',
       'claude-haiku-4-5',
     ])
   })
 
   it('GET /api/models/current should use Opus for a Claude OAuth Max account without a full model selection', async () => {
-    await echoFlowOAuthService.saveTokens({
+    await hahaOAuthService.saveTokens({
       accessToken: 'claude-max-access',
       refreshToken: 'claude-max-refresh',
       expiresAt: Date.now() + 60 * 60_000,
@@ -1275,7 +1357,7 @@ describe('Models API', () => {
   })
 
   it('GET /api/models/current should preserve an explicit full Claude model selection across subscription defaults', async () => {
-    await echoFlowOAuthService.saveTokens({
+    await hahaOAuthService.saveTokens({
       accessToken: 'claude-pro-explicit-access',
       refreshToken: 'claude-pro-explicit-refresh',
       expiresAt: Date.now() + 60 * 60_000,
@@ -1329,8 +1411,8 @@ describe('Models API', () => {
     expect(res.status).toBe(400)
   })
 
-  it('GET /api/models/current should prefer the active provider model in EchoFlow settings', async () => {
-    await echoFlowOAuthService.saveTokens({
+  it('GET /api/models/current should prefer cc-haha managed model over global user model when provider is active', async () => {
+    await hahaOAuthService.saveTokens({
       accessToken: 'unrelated-claude-access',
       refreshToken: 'unrelated-claude-refresh',
       expiresAt: Date.now() + 60 * 60_000,
@@ -1365,7 +1447,8 @@ describe('Models API', () => {
     expect(body.model.id).toBe('glm-5-turbo')
   })
 
-  it('PUT /api/models/current should persist to EchoFlow settings when provider is active', async () => {
+  it('PUT /api/models/current should persist to cc-haha managed settings when provider is active', async () => {
+    const settingsSvc = new SettingsService()
     const providerSvc = new ProviderService()
     const provider = await providerSvc.addProvider({
       presetId: 'zhipuglm',
@@ -1392,7 +1475,8 @@ describe('Models API', () => {
     expect(managedSettings.model).toBe('glm-5-turbo')
     expect((managedSettings.env as Record<string, string>).CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
 
-    await expect(fs.readFile(path.join(tmpDir, 'settings.json'), 'utf-8')).rejects.toThrow()
+    const globalSettings = await settingsSvc.getUserSettings()
+    expect(globalSettings.model).toBeUndefined()
   })
 
   it('GET /api/models should return the OpenAI model catalog when ChatGPT Official is active', async () => {
@@ -1416,6 +1500,7 @@ describe('Models API', () => {
       'gpt-6-sol',
       'gpt-6-luna',
       'gpt-6.1-sol',
+      'gpt-6.1-terra',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
@@ -1445,7 +1530,7 @@ describe('Models API', () => {
   it('GET /api/models discovers models using the desktop ChatGPT account', async () => {
     const providerSvc = new ProviderService()
     await providerSvc.activateProvider('openai-official')
-    await echoFlowOpenAIOAuthService.saveTokens({
+    await hahaOpenAIOAuthService.saveTokens({
       accessToken: 'desktop-catalog-token',
       refreshToken: null,
       expiresAt: null,
@@ -1455,7 +1540,10 @@ describe('Models API', () => {
     const originalFetch = globalThis.fetch
     const requests: Headers[] = []
     clearOpenAICodexModelCatalogCache()
-    globalThis.fetch = (async (_input, init) => {
+    globalThis.fetch = (async (input, init) => {
+      if ((OPENAI_CODEX_RELEASE_SOURCES as readonly string[]).includes(String(input))) {
+        return Response.json({ version: OPENAI_CODEX_CLIENT_VERSION })
+      }
       requests.push(new Headers(init?.headers))
       return Response.json({ models: [{
         slug: 'gpt-desktop-account-only',
@@ -1491,7 +1579,7 @@ describe('Models API', () => {
     }
   })
 
-  it('PUT /api/models/current should persist GPT model to EchoFlow settings when ChatGPT Official is active', async () => {
+  it('PUT /api/models/current should persist GPT model to managed settings when ChatGPT Official is active', async () => {
     const settingsSvc = new SettingsService()
     const providerSvc = new ProviderService()
     await settingsSvc.updateUserSettings({ model: 'claude-haiku-4-5' })
@@ -1506,8 +1594,8 @@ describe('Models API', () => {
     const managedSettings = await providerSvc.getManagedSettings()
     expect(managedSettings.model).toBe('gpt-5.5')
 
-    const echoFlowSettings = await settingsSvc.getUserSettings()
-    expect(echoFlowSettings.model).toBe('claude-haiku-4-5')
+    const globalSettings = await settingsSvc.getUserSettings()
+    expect(globalSettings.model).toBe('claude-haiku-4-5')
   })
 
   it('GET /api/models/current should read current GPT model from managed settings when ChatGPT Official is active', async () => {
@@ -1560,13 +1648,125 @@ describe('Models API', () => {
     expect(body.model).toMatchObject({ id: 'grok-4.5', name: 'Grok 4.5' })
   })
 
+  it('GET /api/models deduplicates the default Flash aliases and retains the account catalog', async () => {
+    const providerSvc = new ProviderService()
+    await providerSvc.activateProvider('deepseek-account')
+
+    const { req, url, segments } = makeRequest('GET', '/api/models')
+    const res = await handleModelsApi(req, url, segments)
+    const body = await res.json() as {
+      models: Array<{ id: string; name: string; description: string; supportedReasoningEfforts?: string[] }>
+      provider: { id: string; name: string }
+    }
+    expect(body.provider).toEqual({ id: 'deepseek-account', name: 'DeepSeek Account' })
+    // All five default slots collapse to one Flash row with its 1M marker;
+    // Pro remains available as an explicit choice from the account catalog.
+    expect(body.models.map((model) => [model.id, model.name])).toEqual([
+      ['deepseek-flash[1m]', 'DeepSeek-V4.1-Flash'],
+      ['deepseek-v4-pro', 'DeepSeek-V4-Pro'],
+    ])
+    expect(body.models[0]?.description).toBe('Main model')
+    expect(body.models[1]?.supportedReasoningEfforts).toEqual(
+      body.models[0]?.supportedReasoningEfforts,
+    )
+  })
+
+  it.each(['deepseek-flash', 'deepseek-flash[1m]', 'deepseek-v4-pro[1m]'])('preserves the DeepSeek Account selection and catalog metadata for %s', async (modelId) => {
+    const providerSvc = new ProviderService()
+    await providerSvc.activateProvider('deepseek-account')
+    const put = makeRequest('PUT', '/api/models/current', { modelId })
+    expect((await handleModelsApi(put.req, put.url, put.segments)).status).toBe(200)
+
+    const get = makeRequest('GET', '/api/models/current')
+    const body = await (await handleModelsApi(get.req, get.url, get.segments)).json()
+    expect(body.model).toMatchObject({
+      id: modelId,
+      name: modelId.startsWith('deepseek-flash') ? 'DeepSeek-V4.1-Flash' : 'DeepSeek-V4-Pro',
+      context: '1000000',
+    })
+  })
+
+  describe('GET /api/models/catalog', () => {
+    afterEach(() => {
+      clearDeepSeekAccountModelCatalogCache()
+    })
+
+    it('reads the signed-in DeepSeek account listing even while another provider is active', async () => {
+      const providerSvc = new ProviderService()
+      await providerSvc.activateProvider('grok-official')
+      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+      await fs.writeFile(
+        path.join(tmpDir, 'cc-haha', 'deepseek-oauth.json'),
+        JSON.stringify({ token: 'fake-account-token', issuer: 'https://platform.deepseek.com', deviceId: 'fake-device' }),
+      )
+      await fs.writeFile(
+        path.join(tmpDir, 'settings.json'),
+        JSON.stringify({ network: { proxy: { mode: 'manual', url: 'http://127.0.0.1:7890' } } }),
+      )
+      const seen: Array<{ url: string; token: string | null; proxy?: string }> = []
+      const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation((async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => {
+        seen.push({
+          url: String(input),
+          token: new Headers(init?.headers).get('x-dsh-auth-token'),
+          proxy: (init as RequestInit & { proxy?: string } | undefined)?.proxy,
+        })
+        return Response.json({
+          data: [
+            {
+              id: 'deepseek-flash',
+              name: 'DeepSeek-V4.1-Flash',
+              context_window: 1048576,
+              api_capabilities: { anthropic_messages: {} },
+            },
+            { id: 'deepseek-v5-preview', name: 'DeepSeek-V5-Preview', api_capabilities: { anthropic_messages: {} } },
+          ],
+        })
+      }) as typeof fetch)
+
+      try {
+        const { req, url, segments } = makeRequest('GET', '/api/models/catalog?provider=deepseek-account')
+        const res = await handleModelsApi(req, url, segments)
+        expect(res.status).toBe(200)
+        const body = await res.json() as { models: Array<{ id: string; name: string; context: string }> }
+        expect(body.models.map((model) => [model.id, model.name, model.context])).toEqual([
+          ['deepseek-flash', 'DeepSeek-V4.1-Flash', '1048576'],
+          ['deepseek-v5-preview', 'DeepSeek-V5-Preview', ''],
+        ])
+        // Through the manual proxy from Network settings, like the sign-in requests.
+        expect(seen).toEqual([{
+          url: 'https://api.deepseek.com/models',
+          token: 'fake-account-token',
+          proxy: 'http://127.0.0.1:7890',
+        }])
+      } finally {
+        fetchSpy.mockRestore()
+      }
+    })
+
+    it('lists the Claude models for the Claude card and rejects unknown providers', async () => {
+      const claude = makeRequest('GET', '/api/models/catalog?provider=claude-official')
+      const claudeBody = await (await handleModelsApi(claude.req, claude.url, claude.segments)).json() as {
+        models: Array<{ id: string }>
+      }
+      expect(claudeBody.models.map((model) => model.id)).toContain('claude-opus-5-5')
+
+      for (const target of ['/api/models/catalog?provider=saved-provider', '/api/models/catalog']) {
+        const request = makeRequest('GET', target)
+        expect((await handleModelsApi(request.req, request.url, request.segments)).status).toBe(404)
+      }
+    })
+  })
+
   it('GET /api/effort should return default effort level', async () => {
     const { req, url, segments } = makeRequest('GET', '/api/effort')
     const res = await handleModelsApi(req, url, segments)
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.level).toBe('medium')
+    expect(body.level).toBe('low')
     expect(body.available).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   })
 
@@ -1579,7 +1779,7 @@ describe('Models API', () => {
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.level).toBe('medium')
+    expect(body.level).toBe('low')
     expect(body.available).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   })
 

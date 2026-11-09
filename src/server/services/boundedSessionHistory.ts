@@ -23,10 +23,23 @@ export const HISTORY_FULL_BYTES = 32 * 1024 * 1024
  * six-figure-entry array. */
 export const HISTORY_FULL_ROWS = 250_000
 
-type Cursor = { version: 1; dev: string; ino: string; size: number; mtime: string; offset: number; skipping: boolean; direction?: 'older' | 'newer'; fingerprints?: { prefix: string; tail: string; boundary: string } }
+/**
+ * `follow` (only with `direction: 'newer'`): read past the cursor's snapshot
+ * size to what is on disk now, through complete lines only. A reconnecting
+ * client uses it to fetch just what was appended since its last page.
+ */
+type Cursor = { version: 1; dev: string; ino: string; size: number; mtime: string; offset: number; skipping: boolean; direction?: 'older' | 'newer'; follow?: true; fingerprints?: { prefix: string; tail: string; boundary: string } }
 export type HistoryPageInfo = {
   previousCursor?: string | null
   nextCursor: string | null
+  /**
+   * A follow cursor at the end of the last complete line this page covers (or
+   * inside an oversized record it is skipping). Present on the newest page and
+   * on every follow page.
+   */
+  tailCursor?: string
+  /** False when a follow read stopped at its page or scan budget before the tail. */
+  tailComplete?: boolean
   hasMore: boolean
   contentTruncated?: boolean
   historyComplete: boolean
@@ -87,6 +100,7 @@ function decodeCursor(value: string): Cursor {
     if (cursor.version !== 1 || typeof cursor.dev !== 'string' || typeof cursor.ino !== 'string' || typeof cursor.mtime !== 'string' ||
       !Number.isSafeInteger(cursor.size) || cursor.size < 0 || !Number.isSafeInteger(cursor.offset) || cursor.offset < 0 || cursor.offset > cursor.size || typeof cursor.skipping !== 'boolean' || (cursor.direction !== undefined && cursor.direction !== 'older' && cursor.direction !== 'newer')) throw new Error('invalid cursor')
     if (cursor.fingerprints && !['prefix', 'tail', 'boundary'].every(key => /^[a-f0-9]{64}$/.test((cursor.fingerprints as Record<string, string>)[key] ?? ''))) throw new Error('invalid cursor fingerprints')
+    if (cursor.follow !== undefined && (cursor.follow !== true || cursor.direction !== 'newer' || !cursor.fingerprints)) throw new Error('invalid follow cursor')
     return cursor
   } catch { throw ApiError.badRequest('Invalid history cursor') }
 }
@@ -124,7 +138,41 @@ export function displayPreview(entry: Record<string, unknown>): Record<string, u
   return truncated ? { ...result, bodyTruncated: true } : result
 }
 
-export async function readBoundedHistoryPage(filePath: string, options: { cursor?: string; limit?: number; signal?: AbortSignal; full?: boolean } = {}): Promise<{ entries: BoundedHistoryEntry[]; page: HistoryPageInfo }> {
+/** Ceilings for a caller-supplied page budget (e.g. the trajectory ledger,
+ * whose rows are far more compact than chat messages). */
+export const HISTORY_PAGE_BUDGET_MAX = { records: 1000, bytes: 2 * 1024 * 1024, rows: 2000 } as const
+export type HistoryPageBudget = { records?: number; bytes?: number; rows?: number }
+
+function clampBudget(value: number | undefined, fallback: number, max: number): number {
+  return value !== undefined && Number.isFinite(value) && value >= 1 ? Math.min(max, Math.floor(value)) : fallback
+}
+
+/** Bytes of an oversized record's line head reported by `captureOversized`. */
+export const HISTORY_OVERSIZED_HEAD_BYTES = 64 * 1024
+/** An oversized record that was skipped (and still counted as omitted): its
+ * exact line range and the first `HISTORY_OVERSIZED_HEAD_BYTES` of the line,
+ * which may end mid-character or mid-token. */
+export type OversizedHistoryRecord = { byteStart: number; byteEnd: number; head: string }
+
+function firstBytes(parts: Buffer[], limit: number): Buffer {
+  const picked: Buffer[] = []
+  let length = 0
+  for (const part of parts) {
+    if (length >= limit) break
+    const slice = part.subarray(0, limit - length)
+    picked.push(slice)
+    length += slice.length
+  }
+  return Buffer.concat(picked, length)
+}
+
+export async function readBoundedHistoryPage(filePath: string, options: {
+  cursor?: string; limit?: number; signal?: AbortSignal; full?: boolean; budget?: HistoryPageBudget
+  /** Report complete oversized records (with a bounded line head) in `oversized`. */
+  captureOversized?: boolean
+  /** Page-path byte cost of one parsed record; defaults to its serialized length. */
+  measure?: (entry: Record<string, unknown>) => number
+} = {}): Promise<{ entries: BoundedHistoryEntry[]; page: HistoryPageInfo; oversized?: OversizedHistoryRecord[] }> {
   if (options.limit !== undefined && (!Number.isFinite(options.limit) || options.limit < 1)) throw new ApiError(400, 'History limit must be a positive finite number', 'INVALID_HISTORY_LIMIT')
   const full = options.full === true
   return withHistoryReadBudget(options.signal, async () => {
@@ -139,8 +187,10 @@ export async function readBoundedHistoryPage(filePath: string, options: { cursor
       // Hash fixed-size anchors, never the whole transcript. Anchors include the
       // original EOF and the requested boundary so truncate/regrow cannot be
       // silently accepted merely because inode is unchanged and size increased.
-      const fingerprint = async (start: number): Promise<string> => {
-        const bytes = Buffer.alloc(Math.min(4096, cursor.size - start))
+      // `counted: false` is for the outgoing tail cursor only: it is not part of
+      // reading this page, so `scannedBytes` stays what the page itself cost.
+      const fingerprintAt = async (start: number, size: number, counted = true): Promise<string> => {
+        const bytes = Buffer.alloc(Math.min(4096, size - start))
         let read = 0
         while (read < bytes.length) {
           aborted(options.signal)
@@ -148,16 +198,25 @@ export async function readBoundedHistoryPage(filePath: string, options: { cursor
           if (!part.bytesRead) throw new ApiError(409, 'Session history changed during validation', 'HISTORY_CHANGED')
           read += part.bytesRead
         }
-        scannedBytes += read
+        if (counted) scannedBytes += read
         return createHash('sha256').update(bytes).digest('hex')
       }
+      const fingerprint = (start: number) => fingerprintAt(start, cursor.size)
       const sourceFingerprints = async () => ({ prefix: await fingerprint(0), tail: await fingerprint(Math.max(0, cursor.size - 4096)) })
       const boundaryFingerprint = (offset: number) => fingerprint(Math.max(0, Math.min(offset - 2048, cursor.size - 4096)))
       if (!cursor.fingerprints && options.cursor && current.size > cursor.size) throw new ApiError(409, 'Legacy history cursor cannot validate append; reload the newest page', 'HISTORY_CHANGED')
       const sourceAnchors = await sourceFingerprints()
       if (cursor.fingerprints && (cursor.fingerprints.prefix !== sourceAnchors.prefix || cursor.fingerprints.tail !== sourceAnchors.tail || cursor.fingerprints.boundary !== await boundaryFingerprint(cursor.offset))) throw new ApiError(409, 'Session history was rewritten; reload the newest page', 'HISTORY_CHANGED')
       const newer = cursor.direction === 'newer'
-      const sourceVersion = `${cursor.dev}:${cursor.ino}:${cursor.size}:${cursor.mtime}`
+      const follow = cursor.follow === true
+      // A follow read continues to the bytes on disk at the start of this request.
+      const readLimit = follow ? current.size : cursor.size
+      let stoppedAtPartialLine = false
+      // A follow page's records lie past the cursor's snapshot; its version names
+      // the snapshot it actually read so context projection indexes that far.
+      const sourceVersion = follow
+        ? `${cursor.dev}:${cursor.ino}:${current.size}:${current.mtime}`
+        : `${cursor.dev}:${cursor.ino}:${cursor.size}:${cursor.mtime}`
       let position = cursor.offset
       let buffer = Buffer.alloc(0)
       let bufferStart = -1
@@ -167,13 +226,19 @@ export async function readBoundedHistoryPage(filePath: string, options: { cursor
       let outputBytes = 0
       let renderedRows = 0
       const entries: BoundedHistoryEntry[] = []
+      const oversizedRecords: OversizedHistoryRecord[] = []
+      const capture = options.captureOversized === true
       // The page path stops at the first UI screenful; the full path keeps
       // walking to the head of the file, bounded by record/byte/row budgets
       // instead of a page boundary. Rows default high because the byte budget
       // is the real bound for ordinary transcripts.
-      const recordLimit = Math.max(1, Math.min(options.full ? Number.MAX_SAFE_INTEGER : HISTORY_PAGE_RECORDS, Math.floor(options.limit ?? (options.full ? HISTORY_FULL_ROWS : HISTORY_PAGE_RECORDS))))
-      const byteBudget = options.full ? HISTORY_FULL_BYTES : HISTORY_PAGE_BYTES
-      const rowBudget = options.full ? HISTORY_FULL_ROWS : HISTORY_PAGE_ROWS
+      // A page budget override only widens the ordinary page path, clamped to
+      // HISTORY_PAGE_BUDGET_MAX; it never applies to the full-history path.
+      const budget = options.full ? undefined : options.budget
+      const pageRecords = clampBudget(budget?.records, HISTORY_PAGE_RECORDS, HISTORY_PAGE_BUDGET_MAX.records)
+      const recordLimit = Math.max(1, Math.min(options.full ? Number.MAX_SAFE_INTEGER : pageRecords, Math.floor(options.limit ?? (options.full ? HISTORY_FULL_ROWS : pageRecords))))
+      const byteBudget = options.full ? HISTORY_FULL_BYTES : clampBudget(budget?.bytes, HISTORY_PAGE_BYTES, HISTORY_PAGE_BUDGET_MAX.bytes)
+      const rowBudget = options.full ? HISTORY_FULL_ROWS : clampBudget(budget?.rows, HISTORY_PAGE_ROWS, HISTORY_PAGE_BUDGET_MAX.rows)
       const scanBudget = options.full ? HISTORY_FULL_SCAN_BYTES : HISTORY_SCAN_BYTES
       const load = async (): Promise<boolean> => {
         // Reserve enough I/O for post-read source anchors and both outgoing
@@ -181,7 +246,7 @@ export async function readBoundedHistoryPage(filePath: string, options: { cursor
         const capacity = Math.min(64 * 1024, scanBudget - 64 * 1024 - scannedBytes)
         if (capacity <= 0) return false
         const start = newer ? position : Math.max(0, position - capacity)
-        const end = newer ? Math.min(cursor.size, position + capacity) : position
+        const end = newer ? Math.min(readLimit, position + capacity) : position
         if (end <= start) return false
         buffer = Buffer.allocUnsafe(end - start)
         let read = 0
@@ -195,7 +260,7 @@ export async function readBoundedHistoryPage(filePath: string, options: { cursor
         bufferStart = start; bufferEnd = end
         return true
       }
-      while ((newer ? position < cursor.size : position > 0) && entries.length < recordLimit) {
+      while ((newer ? position < readLimit : position > 0) && entries.length < recordLimit) {
         aborted(options.signal)
         const boundary = position
         let parts: Buffer[] = []
@@ -205,6 +270,10 @@ export async function readBoundedHistoryPage(filePath: string, options: { cursor
         let end = position
         let start = position
         let first = true
+        // Oversized line head: forward keeps the first bytes once; backward
+        // keeps the two most recent (earliest-in-file) parts.
+        let head: Buffer | undefined
+        let headParts: Buffer[] = []
         while (!complete) {
           if ((!buffer.length || (newer ? position >= bufferEnd : position <= bufferStart)) && !await load()) break
           if (newer) {
@@ -214,10 +283,15 @@ export async function readBoundedHistoryPage(filePath: string, options: { cursor
             const part = buffer.subarray(local, stop)
             bytes += part.length
             if (!oversized && bytes <= HISTORY_SEMANTIC_RECORD_BYTES) parts.push(part)
-            else if (!oversized) { oversized = true; parts = [] }
+            else if (!oversized) {
+              if (capture && !skipping) head = firstBytes([...parts, part], HISTORY_OVERSIZED_HEAD_BYTES)
+              oversized = true; parts = []
+            }
             position = bufferStart + stop + (newline < 0 ? 0 : 1)
             end = bufferStart + stop
-            complete = newline >= 0 || position === cursor.size
+            // A snapshot read treats its EOF as a line end. A follow read never
+            // consumes a line the writer has not finished: it would be lost.
+            complete = newline >= 0 || (!follow && position === cursor.size)
           } else {
             let local = position - bufferStart
             if (first && local > 0 && buffer[local - 1] === 10) { local--; position--; end-- }
@@ -226,7 +300,12 @@ export async function readBoundedHistoryPage(filePath: string, options: { cursor
             const part = buffer.subarray(stop, local)
             bytes += part.length
             if (!oversized && bytes <= HISTORY_SEMANTIC_RECORD_BYTES) parts.push(part)
-            else if (!oversized) { oversized = true; parts = [] }
+            else if (!oversized) {
+              // The part read last is the earliest in the line so far.
+              if (capture && !skipping) headParts = parts.slice(-1)
+              oversized = true; parts = []
+            }
+            if (capture && oversized && !skipping) headParts = [part, ...headParts.slice(0, 1)]
             position = bufferStart + stop
             start = position
             complete = newline >= 0 || position === 0
@@ -234,11 +313,28 @@ export async function readBoundedHistoryPage(filePath: string, options: { cursor
           first = false
         }
         if (!complete) {
+          // An oversized line is counted once and skipped, across requests when
+          // the scan budget runs out inside it (`skipping` in the cursor).
           if (oversized) { if (!skipping) omitted++; skipping = true }
-          else position = boundary
+          else {
+            // Only a follow read that reached what is on disk stopped at the
+            // writer's unfinished line; one out of scan budget has not reached the tail.
+            stoppedAtPartialLine = follow && position >= readLimit
+            position = boundary
+          }
           break
         }
-        if (oversized) { if (!skipping) omitted++; skipping = false; continue }
+        if (oversized) {
+          if (!skipping) {
+            omitted++
+            if (capture) {
+              const lineHead = newer ? head : firstBytes(headParts, HISTORY_OVERSIZED_HEAD_BYTES)
+              oversizedRecords.push({ byteStart: newer ? boundary : start, byteEnd: end, head: lineHead?.toString('utf8') ?? '' })
+            }
+          }
+          skipping = false
+          continue
+        }
         if (!bytes) continue
         const raw = parts.length === 1 ? parts[0]! : Buffer.concat(newer ? parts : parts.reverse(), bytes)
         let entry: Record<string, unknown>
@@ -248,7 +344,7 @@ export async function readBoundedHistoryPage(filePath: string, options: { cursor
         // tool inputs and trailing reference envelopes must remain parseable.
         // A record above the ordinary page budget owns its page; the reader's
         // semantic record and scan limits still bound memory and I/O.
-        const entryBytes = Buffer.byteLength(JSON.stringify(entry))
+        const entryBytes = options.measure && !options.full ? options.measure(entry) : Buffer.byteLength(JSON.stringify(entry))
         const content = (entry.message as { content?: unknown } | undefined)?.content
         // Each assistant block/tool result may become a separate UI row. Stop
         // before the complete record instead of clipping rows behind a cursor.
@@ -265,18 +361,54 @@ export async function readBoundedHistoryPage(filePath: string, options: { cursor
       const upper = newer ? position : cursor.offset
       const afterAnchors = await sourceFingerprints()
       if (sourceAnchors.prefix !== afterAnchors.prefix || sourceAnchors.tail !== afterAnchors.tail) throw new ApiError(409, 'Session history was rewritten during read', 'HISTORY_CHANGED')
-      const encode = async (offset: number, direction: 'older' | 'newer', continuation = false) => Buffer.from(JSON.stringify({ ...cursor, offset, direction, skipping: continuation, fingerprints: { ...sourceAnchors, boundary: await boundaryFingerprint(offset) } })).toString('base64url')
+      const encode = async (offset: number, direction: 'older' | 'newer', continuation = false) => Buffer.from(JSON.stringify({ ...cursor, follow: undefined, offset, direction, skipping: continuation, fingerprints: { ...sourceAnchors, boundary: await boundaryFingerprint(offset) } })).toString('base64url')
       const nextCursor = lower > 0 ? await encode(lower, 'older', !newer && skipping) : null
       const previousCursor = upper < cursor.size ? await encode(upper, 'newer', newer && skipping) : null
+      // A follow cursor is its own snapshot: its size is the end of the last
+      // complete line, so the next read validates exactly the bytes seen here.
+      // Inside an oversized line it carries `skipping`, so the next read continues past it.
+      const encodeTail = async (offset: number, continuation = false) => Buffer.from(JSON.stringify({
+        version: 1, dev: cursor.dev, ino: cursor.ino, size: offset, mtime: current.mtime, offset,
+        skipping: continuation, direction: 'newer', follow: true,
+        fingerprints: {
+          prefix: await fingerprintAt(0, offset, false),
+          tail: await fingerprintAt(Math.max(0, offset - 4096), offset, false),
+          boundary: await fingerprintAt(Math.max(0, offset - 4096), offset, false),
+        },
+      })).toString('base64url')
+      let tail: { tailCursor: string; tailComplete: boolean } | undefined
+      if (follow) {
+        tail = { tailCursor: await encodeTail(position, skipping), tailComplete: stoppedAtPartialLine || position >= readLimit }
+      } else if (!full && upper === cursor.size) {
+        const end = await lastLineEnd(handle, cursor.size, options.signal)
+        if (end !== undefined) tail = { tailCursor: await encodeTail(end), tailComplete: true }
+      }
       const contentTruncated = entries.some(item => item.entry.bodyTruncated === true)
       return { entries: newer ? entries : entries.reverse(), page: {
         nextCursor, previousCursor,
+        ...(tail ?? {}),
         hasMore: lower > 0, historyComplete: lower === 0 && upper === cursor.size && omitted === 0 && !contentTruncated,
         ...(contentTruncated ? { contentTruncated: true } : {}),
         sourceVersion, scannedBytes, omittedOversizedEntries: omitted,
-      } }
+      }, ...(capture ? { oversized: newer ? oversizedRecords : oversizedRecords.reverse() } : {}) }
     } finally { await handle.close() }
   })
+}
+
+/** End of the last complete line at or before `size`, looking back at most 64 KiB. */
+async function lastLineEnd(handle: Awaited<ReturnType<typeof open>>, size: number, signal?: AbortSignal): Promise<number | undefined> {
+  if (size === 0) return 0
+  const start = Math.max(0, size - 64 * 1024)
+  const bytes = Buffer.allocUnsafe(size - start)
+  let read = 0
+  while (read < bytes.length) {
+    aborted(signal)
+    const part = await handle.read(bytes, read, bytes.length - read, start + read)
+    if (!part.bytesRead) throw new ApiError(409, 'History changed during read', 'HISTORY_CHANGED')
+    read += part.bytesRead
+  }
+  const newline = bytes.lastIndexOf(10)
+  return newline >= 0 ? start + newline + 1 : start === 0 ? 0 : undefined
 }
 
 /** Forward reducer source: never retain an unbounded JSONL line or source file. */

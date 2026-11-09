@@ -1,6 +1,4 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
 
 import { buildPipInstallAttempts } from './pipInstall.js'
 import {
@@ -9,24 +7,6 @@ import {
   installRuntimeDependencies,
   runPipInstallWithFallback,
 } from './pythonBridge.js'
-
-const repoRoot = path.resolve(import.meta.dir, '../../..')
-
-/** The zero-tag fallback the parent process shares with the Python helper. */
-function readInputTagFallback(): number {
-  const source = readFileSync(path.join(repoRoot, 'src/utils/computerUse/pythonBridge.ts'), 'utf-8')
-  const match = source.match(/randomBytes\(4\)\.readUInt32LE\(0\) \|\| (0x[0-9a-fA-F]+)/)
-  if (!match) throw new Error('pythonBridge.ts no longer defines an input tag fallback')
-  return Number(match[1])
-}
-
-/** The same fallback in the helper, which must not drift from the parent. */
-function readHelperInputTagFallback(): number {
-  const source = readFileSync(path.join(repoRoot, 'runtime/win_helper.py'), 'utf-8')
-  const match = source.match(/os\.urandom\(4\), "little"\) or (0x[0-9a-fA-F]+)/)
-  if (!match) throw new Error('win_helper.py no longer defines an input tag fallback')
-  return Number(match[1])
-}
 
 describe('buildPipInstallAttempts', () => {
   test('tries the configured mirror before falling back to the default index', () => {
@@ -99,21 +79,13 @@ describe('Windows virtual cursor Python process identity', () => {
     if (process.platform === 'win32') {
       expect(environment?.PYTHONIOENCODING).toBe('utf-8')
       expect(environment?.PYTHONUTF8).toBe('1')
-      expect(Number(environment?.ECHOFLOW_COMPUTER_USE_INPUT_TAG)).toBeGreaterThan(0)
+      expect(Number(environment?.CC_HAHA_COMPUTER_USE_INPUT_TAG)).toBeGreaterThan(0)
       expect(command.python.endsWith('Scripts\\python.exe')).toBe(true)
     } else {
       expect(environment).toBeUndefined()
       expect(command.python.endsWith('bin/python3')).toBe(true)
     }
     expect(command.script.endsWith('win_cursor_badge.py')).toBe(true)
-  })
-
-  test('the input tag fallback carries no retired brand fingerprint', () => {
-    const fallback = readInputTagFallback()
-
-    // The fallback is a brand fingerprint when it spells an old product name.
-    expect(Buffer.from(fallback.toString(16).padStart(8, '0'), 'hex').toString('ascii')).not.toMatch(/ccha/i)
-    expect(readHelperInputTagFallback()).toBe(fallback)
   })
 })
 

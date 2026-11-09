@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { getClaudeOfficialDefaultModelId, resolveClaudeOfficialRuntimeModel } from './claudeOfficialRuntime.js'
-import { echoFlowOAuthService } from './echoFlowOAuthService.js'
+import { hahaOAuthService } from './hahaOAuthService.js'
 
 describe('Claude official runtime model selection', () => {
-  let tokenSpy: ReturnType<typeof spyOn<typeof echoFlowOAuthService, 'ensureFreshTokens'>>
+  let tokenSpy: ReturnType<typeof spyOn<typeof hahaOAuthService, 'ensureFreshTokens'>>
 
   beforeEach(() => {
-    tokenSpy = spyOn(echoFlowOAuthService, 'ensureFreshTokens')
+    tokenSpy = spyOn(hahaOAuthService, 'ensureFreshTokens')
   })
 
   afterEach(() => {

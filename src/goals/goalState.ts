@@ -27,7 +27,7 @@ export type ParsedGoalCommand =
   | { type: 'clear' }
   | { type: 'set'; objective: string }
 
-const GOAL_HOOK_MARKER = '<echoflow-code-goal-hook>'
+const GOAL_HOOK_MARKER = '<cc-haha-goal-hook>'
 const GOAL_HOOK_TIMEOUT_SECONDS = 45
 const RESERVED_GOAL_ARGS = new Set(['status', 'pause', 'resume', 'complete'])
 const goalsByThread = new Map<string, ThreadGoal>()
@@ -230,6 +230,7 @@ function looksLikeGoalStatusOutput(output: string): boolean {
   return (
     trimmed.startsWith('Goal set:') ||
     trimmed.startsWith('Goal continuing:') ||
+    trimmed.startsWith('Goal waiting for teammates:') ||
     trimmed.startsWith('Goal cleared:') ||
     trimmed === 'Goal cleared.' ||
     trimmed === 'Goal marked complete.' ||

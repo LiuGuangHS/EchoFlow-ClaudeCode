@@ -36,14 +36,20 @@ import {
   GROK_OAUTH_DUMMY_KEY,
   shouldUseGrokAuth,
 } from '../grokAuth/fetch.js'
+import { DEEPSEEK_OAUTH_DUMMY_KEY } from '../deepseekAuth/client.js'
+import { buildDeepSeekFetch } from '../deepseekAuth/fetch.js'
+import { buildProviderMediaFetch } from './providerMedia/fetch.js'
+import {
+  getProviderRouteForModel,
+  getRequestProviderRoute,
+  type ProviderRoute,
+} from '../../utils/model/providerEnvScope.js'
 import { isDebugToStdErr, logForDebugging } from '../../utils/debug.js'
 import {
   getAWSRegion,
   getVertexRegionForModel,
   isEnvTruthy,
 } from '../../utils/envUtils.js'
-
-export const ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'ECHOFLOW_OPENAI_OAUTH_PROVIDER'
 
 /**
  * Environment variables for different client types:
@@ -123,7 +129,7 @@ export function resolveManagedProviderProxyAccessToken({
   providerManagedByHost = process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST,
   apiKey = process.env.ANTHROPIC_API_KEY,
   baseUrl = process.env.ANTHROPIC_BASE_URL,
-  localAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN,
+  localAccessToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN,
   requestUrl = baseUrl,
 }: {
   providerManagedByHost?: string
@@ -201,12 +207,6 @@ export function shouldUseOpenAICodexTransport({
   )
 }
 
-export function shouldForceOpenAICodexProvider(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return isEnvTruthy(env[ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY])
-}
-
 export async function getAnthropicClient({
   apiKey,
   maxRetries,
@@ -227,7 +227,14 @@ export async function getAnthropicClient({
   const containerId = process.env.CLAUDE_CODE_CONTAINER_ID
   const remoteSessionId = process.env.CLAUDE_CODE_REMOTE_SESSION_ID
   const clientApp = process.env.CLAUDE_AGENT_SDK_CLIENT_APP
-  const customHeaders = getCustomHeaders()
+  // An Agent pinned to another saved provider sends its own model there; the
+  // session's endpoint, credential and headers never mix into that request.
+  const providerRoute = getRequestProviderRoute() ?? getProviderRouteForModel(model)
+  const customHeaders = getCustomHeaders(
+    providerRoute
+      ? providerRoute.env.ANTHROPIC_CUSTOM_HEADERS
+      : process.env.ANTHROPIC_CUSTOM_HEADERS,
+  )
   const defaultHeaders: { [key: string]: string } = {
     'x-app': 'cli',
     'User-Agent': getUserAgent(),
@@ -254,22 +261,34 @@ export async function getAnthropicClient({
     defaultHeaders['x-anthropic-additional-protection'] = 'true'
   }
 
+  if (providerRoute) {
+    return createProviderRouteClient(providerRoute, {
+      defaultHeaders,
+      maxRetries,
+      fetchOverride,
+      source,
+    })
+  }
+
   logForDebugging('[API:auth] OAuth token check starting')
   await checkAndRefreshOAuthTokenIfNeeded()
   logForDebugging('[API:auth] OAuth token check complete')
 
   const isOpenAIModel = model ? isOpenAIResponsesModel(model) : false
-  const forceOpenAICodex = shouldForceOpenAICodexProvider(process.env)
-    || isEnvTruthy(process.env.ECHOFLOW_OPENAI_OAUTH_PROVIDER)
-  const forceGrok = isEnvTruthy(process.env.ECHOFLOW_GROK_OAUTH_PROVIDER)
-  const isClaudeSubscriber = forceGrok ? false : isClaudeAISubscriber()
+  const forceOpenAICodex = isEnvTruthy(process.env.CC_HAHA_OPENAI_OAUTH_PROVIDER)
+  const forceGrok = isEnvTruthy(process.env.CC_HAHA_GROK_OAUTH_PROVIDER)
+  // Selected account mode stays selected while signed out: the fetch wrapper
+  // answers with a sign-in-required error instead of this request falling
+  // through to a different credential.
+  const usingDeepSeek = isEnvTruthy(process.env.CC_HAHA_DEEPSEEK_OAUTH_PROVIDER)
+  const isClaudeSubscriber = forceGrok || usingDeepSeek ? false : isClaudeAISubscriber()
   const hasOpenAIAuth = shouldUseOpenAICodexAuth()
   const usingGrok = forceGrok && shouldUseGrokAuth()
   const hasFallbackApiKey = hasOpenAIAuth &&
     !process.env.ANTHROPIC_AUTH_TOKEN &&
     !apiKey &&
     !!getAnthropicApiKey()
-  const usingOpenAICodex = shouldUseOpenAICodexTransport({
+  const usingOpenAICodex = !usingDeepSeek && shouldUseOpenAICodexTransport({
     hasOpenAIAuth,
     isClaudeSubscriber,
     forceOpenAICodex,
@@ -279,11 +298,13 @@ export async function getAnthropicClient({
     hasFallbackApiKey,
   })
 
-  if (!isClaudeSubscriber && !usingOpenAICodex && !usingGrok) {
+  if (!isClaudeSubscriber && !usingOpenAICodex && !usingGrok && !usingDeepSeek) {
     await configureApiKeyHeaders(defaultHeaders, getIsNonInteractiveSession())
   }
 
-  const resolvedFetch = usingGrok
+  const resolvedFetch = usingDeepSeek
+    ? buildDeepSeekFetch(fetchOverride)
+    : usingGrok
     ? buildGrokFetch(fetchOverride, source)
     : usingOpenAICodex
       ? buildOpenAICodexFetch(fetchOverride, source, openAITurnState, agentId)
@@ -460,10 +481,12 @@ export async function getAnthropicClient({
       ? OPENAI_OAUTH_DUMMY_KEY
       : usingGrok
         ? GROK_OAUTH_DUMMY_KEY
+      : usingDeepSeek
+        ? DEEPSEEK_OAUTH_DUMMY_KEY
       : isClaudeSubscriber
         ? null
         : resolveAnthropicClientApiKey({ explicitApiKey: apiKey }),
-    authToken: isClaudeSubscriber && !usingOpenAICodex && !usingGrok
+    authToken: isClaudeSubscriber && !usingOpenAICodex && !usingGrok && !usingDeepSeek
       ? getClaudeAIOAuthTokens()?.accessToken
       : undefined,
     // The SDK appends /v1 to every API path, including messages and token counts.
@@ -473,6 +496,53 @@ export async function getAnthropicClient({
   }
 
   return new Anthropic(clientConfig)
+}
+
+function createProviderRouteClient(
+  route: ProviderRoute,
+  {
+    defaultHeaders,
+    maxRetries,
+    fetchOverride,
+    source,
+  }: {
+    defaultHeaders: Record<string, string>
+    maxRetries: number
+    fetchOverride?: ClientOptions['fetch']
+    source?: string
+  },
+): Anthropic {
+  const { ANTHROPIC_AUTH_TOKEN: authToken, ANTHROPIC_API_KEY: apiKey, ANTHROPIC_BASE_URL: baseURL } = route.env
+  // The SDK falls back to process.env for omitted credentials and always folds
+  // in process.env.ANTHROPIC_CUSTOM_HEADERS. Both belong to the session's
+  // provider, so pass the route's credentials explicitly and unset the
+  // session-only headers (a null header is a removal).
+  const routeHeaderNames = new Set(Object.keys(defaultHeaders).map(name => name.toLowerCase()))
+  const sessionOnlyHeaders = Object.fromEntries(
+    Object.keys(getCustomHeaders(process.env.ANTHROPIC_CUSTOM_HEADERS))
+      .filter(name => !routeHeaderNames.has(name.toLowerCase()))
+      .map(name => [name, null]),
+  )
+  return new Anthropic({
+    apiKey: resolveAnthropicClientApiKey({
+      envAuthToken: authToken,
+      envApiKey: apiKey,
+      getFallbackApiKey: () => apiKey || null,
+    }),
+    authToken: authToken || null,
+    ...(baseURL ? { baseURL: normalizeAnthropicBaseUrl(baseURL) } : {}),
+    defaultHeaders: { ...sessionOnlyHeaders, ...defaultHeaders },
+    maxRetries,
+    timeout: parseInt(process.env.API_TIMEOUT_MS || String(600 * 1000), 10),
+    dangerouslyAllowBrowser: true,
+    fetchOptions: getProxyFetchOptions({
+      forAnthropicAPI: true,
+      targetUrl: baseURL,
+      ...(route.proxyUrl !== undefined ? { proxyUrl: route.proxyUrl } : {}),
+    }) as ClientOptions['fetchOptions'],
+    fetch: buildFetch(fetchOverride, source, route),
+    ...(isDebugToStdErr() && { logger: createStderrLogger() }),
+  })
 }
 
 async function configureApiKeyHeaders(
@@ -487,9 +557,8 @@ async function configureApiKeyHeaders(
   }
 }
 
-function getCustomHeaders(): Record<string, string> {
+function getCustomHeaders(customHeadersEnv: string | undefined): Record<string, string> {
   const customHeaders: Record<string, string> = {}
-  const customHeadersEnv = process.env.ANTHROPIC_CUSTOM_HEADERS
 
   if (!customHeadersEnv) return customHeaders
 
@@ -518,12 +587,14 @@ export const CLIENT_REQUEST_ID_HEADER = 'x-client-request-id'
 function buildFetch(
   fetchOverride: ClientOptions['fetch'],
   source: string | undefined,
+  route?: ProviderRoute,
 ): ClientOptions['fetch'] {
   // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
-  const inner = fetchOverride ?? globalThis.fetch
+  const inner = buildProviderMediaFetch(fetchOverride ?? globalThis.fetch)
   // Only send to the first-party API — Bedrock/Vertex/Foundry don't log it
   // and unknown headers risk rejection by strict proxies (inc-4029 class).
-  const injectClientRequestId =
+  // Agent routes only reach saved third-party providers.
+  const injectClientRequestId = !route &&
     getAPIProvider() === 'firstParty' && isFirstPartyAnthropicBaseUrl()
   return (input, init) => {
     // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
@@ -533,7 +604,13 @@ function buildFetch(
     // the desktop credential and prevents that credential from reaching the
     // real provider; the server adds the upstream provider key itself.
     const requestUrl = input instanceof Request ? input.url : String(input)
-    const localProxyToken = resolveManagedProviderProxyAccessToken({ requestUrl })
+    const localProxyToken = resolveManagedProviderProxyAccessToken({
+      requestUrl,
+      ...(route && {
+        apiKey: route.env.ANTHROPIC_API_KEY,
+        baseUrl: route.env.ANTHROPIC_BASE_URL,
+      }),
+    })
     if (localProxyToken) {
       headers.set('Authorization', `Bearer ${localProxyToken}`)
     }

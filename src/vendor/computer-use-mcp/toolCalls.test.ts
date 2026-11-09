@@ -18,9 +18,7 @@ import {
   resetMouseButtonHeld,
 } from './toolCalls.js'
 import { bindSessionContext } from './mcpServer.js'
-import type { ComputerUseSessionContext } from './types.js'
 import { buildComputerUseTools } from './tools.js'
-import { bindSessionContext } from './mcpServer.js'
 import { COMPUTER_USE_INSTRUCTIONS } from './instructions.js'
 import { isSystemKeyCombo } from './keyBlocklist.js'
 import type {
@@ -1005,8 +1003,8 @@ describe('handleToolCall — gates', () => {
 
   test.each([
     ['com.google.Chrome', 'Google Chrome'],
-    ['com.echoflow.code.desktop', 'EchoFlow Code'],
-    ['dev.echoflow.cu-helper', 'Computer Use Helper'],
+    ['com.claude-code-haha.desktop', 'Claude Code Haha'],
+    ['dev.cchaha.cu-helper', 'Computer Use Helper'],
     ['com.test.host', 'Custom Host'],
     ['com.googlecode.iterm2', 'iTerm2'],
     ['com.microsoft.VSCode', 'Visual Studio Code'],
@@ -1803,8 +1801,8 @@ describe('same-app sequence', () => {
   const steps = [{ tool: 'press_key', key: 's x 1 period 3 5 Return' }, { tool: 'click', x: 12, y: 24 }]
   test.each([
     'com.google.Chrome',
-    'com.echoflow.code.desktop',
-    'dev.echoflow.cu-helper',
+    'com.claude-code-haha.desktop',
+    'dev.cchaha.cu-helper',
     'com.test.host',
   ])('global consent also covers sequences targeting %s', async bundleId => {
     const { engine, calls } = makeEngine({

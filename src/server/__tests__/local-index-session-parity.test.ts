@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { SessionService } from '../services/sessionService.js'
+import * as boundedSessionHistory from '../services/boundedSessionHistory.js'
 import type {
   IndexedSessionRow,
   LocalIndexGateway,
@@ -174,7 +175,6 @@ describe('SessionService local-index routing parity', () => {
     projectPath: string,
     id: string,
     title: string,
-    archived = false,
   ): IndexedSessionRow {
     return {
       transcriptPath: filePath,
@@ -185,7 +185,6 @@ describe('SessionService local-index routing parity', () => {
       messageCount: 1,
       projectPath,
       workDir: configDir,
-      archived,
     }
   }
 
@@ -212,32 +211,6 @@ describe('SessionService local-index routing parity', () => {
     const indexed = await service.listSessions()
     expect(indexed.sessions[0]?.title).toBe('Indexed title')
     expect(gateway.listCalls).toBe(1)
-  })
-
-  it('filters archived rows on the index path without falling back to files', async () => {
-    const projectDir = '-tmp-project'
-    const livePath = await writeSession(projectDir, SESSION_A, 'Live title', '2026-07-15T00:00:00.000Z')
-    const archivedPath = await writeSession(projectDir, SESSION_B, 'Archived title', '2026-07-15T00:02:00.000Z')
-    const gateway = new FakeLocalIndexGateway()
-    const service = new SessionService(gateway)
-
-    gateway.setReady()
-    gateway.page = {
-      sessions: [
-        indexedRow(archivedPath, projectDir, SESSION_B, 'Archived title', true),
-        indexedRow(livePath, projectDir, SESSION_A, 'Live title'),
-      ],
-      total: 2,
-    }
-
-    const hidden = await service.listSessions()
-    expect(hidden.sessions.map(session => session.title)).toEqual(['Live title'])
-    expect(hidden.total).toBe(1)
-    expect(gateway.listCalls).toBe(1)
-
-    const shown = await service.listSessions({ includeArchived: true })
-    expect(shown.sessions.map(session => session.title)).toEqual(['Archived title', 'Live title'])
-    expect(shown.total).toBe(2)
   })
 
   it('falls back the entire page when indexed hydration cannot preserve row count', async () => {
@@ -303,6 +276,20 @@ describe('SessionService local-index routing parity', () => {
       { filePath: newPath, projectDir: '-tmp-new' },
       { filePath: oldPath, projectDir: '-tmp-old' },
     ])
+  })
+
+  it('resolves a single indexed match from its stat without reading records', async () => {
+    const filePath = await writeSession('-tmp-only', SESSION_A, 'Only', '2026-07-15T00:01:00.000Z')
+    const gateway = new FakeLocalIndexGateway()
+    gateway.setReady()
+    gateway.matches = [{ filePath, projectDir: '-tmp-only' }]
+    const service = new SessionService(gateway)
+    const reads = spyOn(boundedSessionHistory, 'streamBoundedHistory')
+    try {
+      expect((await service.findSessionFile(SESSION_A))?.filePath).toBe(filePath)
+      expect(gateway.findCalls).toBe(1)
+      expect(reads).not.toHaveBeenCalled()
+    } finally { reads.mockRestore() }
   })
 
   it('falls back after an indexed read failure and suppresses retries during cooldown', async () => {

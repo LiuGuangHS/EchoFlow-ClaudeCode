@@ -4,28 +4,51 @@ import {
   estimateFallbackFixedContextTokens,
   getAutoCompactThreshold,
   getEffectiveContextWindowSize,
+  getPostCompactPromptTokens,
+  getRapidRefillDecision,
   shouldAutoCompact,
 } from './autoCompact.js'
-import { getContextWindowForModel } from '../../utils/context.js'
-import { MODEL_CONTEXT_WINDOWS_ENV_KEY } from '../../utils/model/modelContextWindows.js'
+import { getContextWindowForModel, getEffectiveModelContextWindow } from '../../utils/context.js'
+import {
+  MODEL_CONTEXT_WINDOWS_ENV_KEY,
+  MODEL_MAX_OUTPUT_TOKENS_ENV_KEY,
+} from '../../utils/model/modelContextWindows.js'
+import { getModelMaxOutputTokens } from '../../utils/context.js'
+import { jsonStringify } from '../../utils/slowOperations.js'
+import {
+  clearToolSchemaCache,
+  getToolSchemaCache,
+} from '../../utils/toolSchemaCache.js'
+import { zodToJsonSchema } from '../../utils/zodToJsonSchema.js'
+import { z } from 'zod/v4'
 
 let originalAutoCompactWindow: string | undefined
 let originalContextWindows: string | undefined
+let originalMaxOutputTokens: string | undefined
 let originalDisableCompact: string | undefined
 let originalDisableAutoCompact: string | undefined
+let originalToolSchemaCache = [...getToolSchemaCache()]
 
 beforeEach(() => {
+  originalToolSchemaCache = [...getToolSchemaCache()]
+  clearToolSchemaCache()
   originalAutoCompactWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
   originalContextWindows = process.env[MODEL_CONTEXT_WINDOWS_ENV_KEY]
+  originalMaxOutputTokens = process.env[MODEL_MAX_OUTPUT_TOKENS_ENV_KEY]
   originalDisableCompact = process.env.DISABLE_COMPACT
   originalDisableAutoCompact = process.env.DISABLE_AUTO_COMPACT
   delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
   delete process.env[MODEL_CONTEXT_WINDOWS_ENV_KEY]
+  delete process.env[MODEL_MAX_OUTPUT_TOKENS_ENV_KEY]
   delete process.env.DISABLE_COMPACT
   delete process.env.DISABLE_AUTO_COMPACT
 })
 
 afterEach(() => {
+  clearToolSchemaCache()
+  for (const [key, schema] of originalToolSchemaCache) {
+    getToolSchemaCache().set(key, schema)
+  }
   if (originalAutoCompactWindow === undefined) {
     delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
   } else {
@@ -35,6 +58,11 @@ afterEach(() => {
     delete process.env[MODEL_CONTEXT_WINDOWS_ENV_KEY]
   } else {
     process.env[MODEL_CONTEXT_WINDOWS_ENV_KEY] = originalContextWindows
+  }
+  if (originalMaxOutputTokens === undefined) {
+    delete process.env[MODEL_MAX_OUTPUT_TOKENS_ENV_KEY]
+  } else {
+    process.env[MODEL_MAX_OUTPUT_TOKENS_ENV_KEY] = originalMaxOutputTokens
   }
   if (originalDisableCompact === undefined) {
     delete process.env.DISABLE_COMPACT
@@ -75,6 +103,35 @@ describe('model context window resolution', () => {
 
     expect(getContextWindowForModel('deepseek-v4-pro')).toBe(500_000)
     expect(getContextWindowForModel('provider/custom-model')).toBe(300_000)
+  })
+
+  test('a gateway catalog sizes every model it serves, not only the mapped slots', () => {
+    // Magpie-style ids: provider/model. Without the maps both fall back to
+    // 200K and the default 32K reply, compacting the 1M model far too early
+    // and asking the 8K-reply model for more than it may write.
+    process.env[MODEL_CONTEXT_WINDOWS_ENV_KEY] = JSON.stringify({
+      'deepseek/deepseek-v4-pro': 1_000_000,
+      'ollama/qwen3.6:27b': 32_768,
+    })
+    process.env[MODEL_MAX_OUTPUT_TOKENS_ENV_KEY] = JSON.stringify({
+      'deepseek/deepseek-v4-pro': 384_000,
+      'ollama/qwen3.6:27b': 8_192,
+    })
+
+    expect(getModelMaxOutputTokens('ollama/qwen3.6:27b')).toEqual({ default: 8_192, upperLimit: 8_192 })
+    // A larger limit only raises the ceiling; the default reply stays the usual one.
+    expect(getModelMaxOutputTokens('deepseek/deepseek-v4-pro')).toEqual({ default: 32_000, upperLimit: 384_000 })
+    expect(getEffectiveContextWindowSize('deepseek/deepseek-v4-pro')).toBe(1_000_000 - 20_000)
+    // The summary reserve follows the small model's real reply limit.
+    expect(getEffectiveContextWindowSize('ollama/qwen3.6:27b')).toBe(32_768 - 8_192)
+    expect(getModelMaxOutputTokens('other/unlisted-model')).toEqual({ default: 32_000, upperLimit: 64_000 })
+  })
+
+  test('ignores per-model reply limits outside the accepted range', () => {
+    process.env[MODEL_MAX_OUTPUT_TOKENS_ENV_KEY] = JSON.stringify({ 'tiny/model': 512, 'bad/model': 'many' })
+
+    expect(getModelMaxOutputTokens('tiny/model')).toEqual({ default: 32_000, upperLimit: 64_000 })
+    expect(getModelMaxOutputTokens('bad/model')).toEqual({ default: 32_000, upperLimit: 64_000 })
   })
 
   test('global auto compact window can raise unknown models above the default', () => {
@@ -123,6 +180,25 @@ describe('model context window resolution', () => {
     const withOverride = getEffectiveContextWindowSize('gpt-5.5')
     delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
     expect(withOverride).toBe(getEffectiveContextWindowSize('gpt-5.5'))
+  })
+
+  test('the window shown to the user follows the same cap as compaction', () => {
+    // deepseek-v4-flash is 1M in the built-in table. The context ring used to
+    // keep reading 1M after the provider's fallback window was lowered, while
+    // compaction already fired at the lower value.
+    expect(getEffectiveModelContextWindow('deepseek-v4-flash')).toBe(1_000_000)
+
+    process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '200000'
+    expect(getEffectiveModelContextWindow('deepseek-v4-flash')).toBe(200_000)
+    expect(getEffectiveContextWindowSize('deepseek-v4-flash')).toBe(200_000 - 20_000)
+
+    // A leftover higher value still cannot raise a known smaller window.
+    process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '1000000'
+    expect(getEffectiveModelContextWindow('k3')).toBe(262_144)
+
+    // Unknown models have no other source, so the value applies directly.
+    process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '500000'
+    expect(getEffectiveModelContextWindow('unknown-future-model')).toBe(500_000)
   })
 
   test('derives auto-compact thresholds from provider context windows', () => {
@@ -210,6 +286,63 @@ describe('model context window resolution', () => {
     )).toBe(true)
   })
 
+  test('counts the tool descriptions a session already sent in the fixed prefix', () => {
+    // Tool descriptions come from async tool.prompt() and are the largest part
+    // of the fixed prefix (~15K of ~26K tokens in a real relay request). The
+    // estimate only saw name + input_schema, so relays without usage never
+    // reached the auto-compact threshold.
+    const description = 'Reads a file from the local filesystem. '.repeat(400)
+    const inputSchema = z.object({ file_path: z.string() })
+    const mcpSchema = {
+      type: 'object' as const,
+      properties: { query: { type: 'string' } },
+    }
+    const params = {
+      systemPrompt: ['system'],
+      systemContext: {},
+      userContext: {},
+      toolUseContext: {
+        options: {
+          tools: [
+            { name: 'Read', inputSchema },
+            { name: 'mcp__docs__search', inputSchema, inputJSONSchema: mcpSchema },
+          ],
+        },
+      },
+    } as never
+    const withoutDescriptions = estimateFallbackFixedContextTokens(params)
+
+    // Same keys toolToAPISchema writes: name, or name:schema for tools that
+    // carry an inputJSONSchema.
+    const cache = getToolSchemaCache()
+    cache.set('Read', {
+      name: 'Read',
+      description,
+      input_schema: zodToJsonSchema(inputSchema) as never,
+    })
+    cache.set(`mcp__docs__search:${jsonStringify(mcpSchema)}`, {
+      name: 'mcp__docs__search',
+      description,
+      input_schema: mcpSchema,
+    })
+
+    expect(estimateFallbackFixedContextTokens(params)).toBeGreaterThanOrEqual(
+      withoutDescriptions + 2 * (description.length / 4),
+    )
+  })
+
+  test('counts a Chinese system prompt at about one token per character', () => {
+    const systemPrompt = '你是一个编程助手，请用中文回答。'.repeat(500)
+    const fixedTokens = estimateFallbackFixedContextTokens({
+      systemPrompt: [systemPrompt],
+      systemContext: {},
+      userContext: {},
+      toolUseContext: { options: { tools: [] } },
+    } as never)
+
+    expect(fixedTokens).toBeGreaterThanOrEqual(systemPrompt.length)
+  })
+
   test('crosses the GPT-5.6 threshold without recounting encrypted siblings', async () => {
     const responseId = 'msg_threshold'
     const messagesAt = (tokens: number) => [
@@ -220,7 +353,7 @@ describe('model context window resolution', () => {
           model: 'gpt-5.6-terra',
           content: [{
             type: 'redacted_thinking',
-            data: `echoflow-code:openai-reasoning:v1:${JSON.stringify({
+            data: `cc-haha:openai-reasoning:v1:${JSON.stringify({
               summary: [],
               encrypted_content: 'x'.repeat(400_000),
             })}`,
@@ -253,5 +386,90 @@ describe('model context window resolution', () => {
       .toBe(false)
     expect(await shouldAutoCompact(messagesAt(320_400), 'gpt-5.6-terra'))
       .toBe(true)
+  })
+})
+
+describe('rapid-refill breaker (#1544)', () => {
+  const THRESHOLD = 67_000
+  const afterCompact = (turnCounter: number, consecutiveRapidRefills: number) => ({
+    compacted: true,
+    turnId: 'turn',
+    turnCounter,
+    consecutiveRapidRefills,
+  })
+  const boundary = { type: 'system', subtype: 'compact_boundary', content: 'compacted' }
+  const assistantWithPrompt = (promptTokens: number) => ({
+    type: 'assistant',
+    message: {
+      model: 'custom-100k',
+      content: [{ type: 'text', text: 'done' }],
+      usage: {
+        input_tokens: promptTokens - 60_000 > 0 ? promptTokens - 60_000 : promptTokens,
+        output_tokens: 500,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: promptTokens - 60_000 > 0 ? 60_000 : 0,
+      },
+    },
+  })
+
+  test('counts a refill only when the compaction left most of the threshold in use', () => {
+    expect(getRapidRefillDecision(undefined, undefined, THRESHOLD))
+      .toEqual({ trip: false, consecutiveRapidRefills: 0 })
+
+    // Compaction freed nothing that matters: 84K of a 67K threshold.
+    expect(getRapidRefillDecision(afterCompact(1, 0), 84_000, THRESHOLD))
+      .toEqual({ trip: false, consecutiveRapidRefills: 1 })
+    expect(getRapidRefillDecision(afterCompact(1, 2), 84_000, THRESHOLD))
+      .toEqual({ trip: true, consecutiveRapidRefills: 3 })
+    // Right at the 75% line still counts; just below it does not.
+    expect(getRapidRefillDecision(afterCompact(1, 0), 50_250, THRESHOLD).consecutiveRapidRefills).toBe(1)
+    expect(getRapidRefillDecision(afterCompact(1, 2), 50_249, THRESHOLD))
+      .toEqual({ trip: false, consecutiveRapidRefills: 0 })
+    // A compaction that held for 3 turns resets the streak.
+    expect(getRapidRefillDecision(afterCompact(3, 2), 84_000, THRESHOLD))
+      .toEqual({ trip: false, consecutiveRapidRefills: 0 })
+    // No usage: keep the loop guard.
+    expect(getRapidRefillDecision(afterCompact(1, 2), undefined, THRESHOLD))
+      .toEqual({ trip: true, consecutiveRapidRefills: 3 })
+  })
+
+  // Schedules recorded from real DeepSeek Flash runs with a 100K compaction
+  // window (threshold 67K). Each entry is how many turns passed before the
+  // next compaction, and the first post-compact prompt size.
+  const replay = (schedule: Array<[turnsSincePrevious: number, postCompactPrompt: number]>) => {
+    let tracking: ReturnType<typeof afterCompact> | undefined
+    const outcomes: string[] = []
+    for (const [turns, postCompactPrompt] of schedule) {
+      if (tracking) tracking.turnCounter = turns
+      const decision = getRapidRefillDecision(tracking, tracking ? postCompactPrompt : undefined, THRESHOLD)
+      outcomes.push(decision.trip ? 'trip' : 'compact')
+      if (decision.trip) break
+      tracking = afterCompact(0, decision.consecutiveRapidRefills)
+    }
+    return outcomes
+  }
+
+  test('keeps compacting a small window that large reads refill, because each compaction frees most of it', () => {
+    // repro-win100k: four 25K-token reads per turn, ~26K left after each compaction.
+    expect(replay([[0, 0], [5, 26_000], [2, 26_000], [2, 26_000], [2, 26_000], [2, 26_000], [2, 26_000]]))
+      .toEqual(['compact', 'compact', 'compact', 'compact', 'compact', 'compact', 'compact'])
+  })
+
+  test('stops when the fixed context alone fills the threshold after every compaction', () => {
+    // repro-heavyprefix: ~57K CLAUDE.md, 84-90K in use right after each compaction.
+    expect(replay([[0, 0], [1, 84_700], [1, 87_300], [1, 89_600], [1, 92_000]]))
+      .toEqual(['compact', 'compact', 'compact', 'trip'])
+  })
+
+  test('reads the prompt size of the first request after the latest compaction', () => {
+    expect(getPostCompactPromptTokens([assistantWithPrompt(90_000)] as never)).toBeUndefined()
+    expect(getPostCompactPromptTokens([
+      assistantWithPrompt(150_000),
+      boundary,
+      { type: 'user', message: { content: 'summary' } },
+      { ...assistantWithPrompt(0), message: { ...assistantWithPrompt(0).message, usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+      assistantWithPrompt(84_000),
+      assistantWithPrompt(95_000),
+    ] as never)).toBe(84_000)
   })
 })

@@ -4,6 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { OPENAI_CODEX_API_ENDPOINT } from '../../services/openaiAuth/client.js'
 import { ProviderService } from '../services/providerService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import {
   deriveTitle,
   generateTitle,
@@ -12,9 +13,10 @@ import {
   saveAiTitle,
 } from '../services/titleService.js'
 import { sessionService } from '../services/sessionService.js'
-import { echoFlowOpenAIOAuthService } from '../services/echoFlowOpenAIOAuthService.js'
+import { drainTraceCaptureForTests } from '../services/traceCaptureService.js'
+import { hahaOpenAIOAuthService } from '../services/hahaOpenAIOAuthService.js'
+import { hahaDeepSeekOAuthService } from '../services/hahaDeepSeekOAuthService.js'
 import { SYSTEM_PROXY_URL_ENV } from '../services/networkSettings.js'
-import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 describe('titleService', () => {
   let tmpDir: string
@@ -32,42 +34,10 @@ describe('titleService', () => {
 
   afterEach(async () => {
     globalThis.fetch = originalFetch
-    echoFlowOpenAIOAuthService.dispose()
+    hahaOpenAIOAuthService.dispose()
     restoreEnv('CLAUDE_CONFIG_DIR', originalConfigDir)
     restoreEnv(SYSTEM_PROXY_URL_ENV, originalSystemProxyUrl)
     await fs.rm(tmpDir, { recursive: true, force: true })
-  })
-
-  async function writeProviderFixture(providerId: string, provider: Record<string, unknown>) {
-    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
-    await fs.mkdir(echoFlowDir, { recursive: true })
-    await fs.writeFile(
-      path.join(echoFlowDir, 'providers.json'),
-      JSON.stringify({
-        activeId: providerId,
-        providers: [provider],
-      }, null, 2),
-      'utf-8',
-    )
-  }
-
-  test('fails closed for direct Anthropic title requests when local redaction is enabled', async () => {
-    await fs.writeFile(path.join(tmpDir, 'settings.json'), JSON.stringify({
-      localRedaction: { enabled: true, personalInfo: false, customWords: [] },
-    }))
-    const provider = await new ProviderService().addProvider({
-      presetId: 'custom', name: 'Direct Anthropic Fixture', apiKey: 'test-key',
-      baseUrl: 'https://provider.example.test', apiFormat: 'anthropic',
-      models: { main: 'large-test', haiku: 'small-test', sonnet: 'large-test', opus: 'large-test' },
-    })
-    let calls = 0
-    globalThis.fetch = (async () => {
-      calls += 1
-      throw new Error('custom Anthropic title must not bypass redaction')
-    }) as typeof fetch
-
-    await expect(generateTitle('secret conversation', provider.id)).resolves.toBeNull()
-    expect(calls).toBe(0)
   })
 
   test('generates titles with a versioned Anthropic base URL (#1279)', async () => {
@@ -112,20 +82,29 @@ describe('titleService', () => {
 
     try {
       const providerId = 'zhipu-test'
-      await writeProviderFixture(providerId, {
-        id: providerId,
-        presetId: 'zhipuglm',
-        name: 'Zhipu GLM',
-        apiKey: 'test-key',
-        baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
-        apiFormat: 'anthropic',
-        models: {
-          main: 'glm-5.1',
-          haiku: 'glm-4.5-air',
-          sonnet: 'glm-5-turbo',
-          opus: 'glm-5.1',
-        },
-      })
+      await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+      await fs.writeFile(
+        path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'),
+        JSON.stringify({
+          activeId: providerId,
+          providers: [
+            {
+              id: providerId,
+              presetId: 'zhipuglm',
+              name: 'Zhipu GLM',
+              apiKey: 'test-key',
+              baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
+              apiFormat: 'anthropic',
+              models: {
+                main: 'glm-5.1',
+                haiku: 'glm-4.5-air',
+                sonnet: 'glm-5-turbo',
+                opus: 'glm-5.1',
+              },
+            },
+          ],
+        }, null, 2),
+      )
 
       await expect(generateTitle('请只回复 trace-ok')).resolves.toBe('Trace ok')
       expect(requestBody?.thinking).toEqual({ type: 'disabled' })
@@ -153,20 +132,29 @@ describe('titleService', () => {
 
     try {
       const providerId = 'fallback-thinking-test'
-      await writeProviderFixture(providerId, {
-        id: providerId,
-        presetId: 'custom',
-        name: 'Thinking Fallback',
-        apiKey: 'test-key',
-        baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
-        apiFormat: 'anthropic',
-        models: {
-          main: 'fallback-main',
-          haiku: 'fallback-haiku',
-          sonnet: 'fallback-main',
-          opus: 'fallback-main',
-        },
-      })
+      await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+      await fs.writeFile(
+        path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'),
+        JSON.stringify({
+          activeId: providerId,
+          providers: [
+            {
+              id: providerId,
+              presetId: 'custom',
+              name: 'Thinking Fallback',
+              apiKey: 'test-key',
+              baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
+              apiFormat: 'anthropic',
+              models: {
+                main: 'fallback-main',
+                haiku: 'fallback-haiku',
+                sonnet: 'fallback-main',
+                opus: 'fallback-main',
+              },
+            },
+          ],
+        }, null, 2),
+      )
 
       await expect(generateTitle('请只回复 trace-ok')).resolves.toBe('Trace ok')
       expect(requestBodies).toHaveLength(2)
@@ -192,20 +180,29 @@ describe('titleService', () => {
 
     try {
       const providerId = 'deepseek-test'
-      await writeProviderFixture(providerId, {
-        id: providerId,
-        presetId: 'deepseek',
-        name: 'DeepSeek',
-        apiKey: 'test-key',
-        baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
-        apiFormat: 'anthropic',
-        models: {
-          main: 'deepseek-v4-pro',
-          haiku: 'deepseek-v4-pro',
-          sonnet: 'deepseek-v4-pro',
-          opus: 'deepseek-v4-pro',
-        },
-      })
+      await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+      await fs.writeFile(
+        path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'),
+        JSON.stringify({
+          activeId: providerId,
+          providers: [
+            {
+              id: providerId,
+              presetId: 'deepseek',
+              name: 'DeepSeek',
+              apiKey: 'test-key',
+              baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
+              apiFormat: 'anthropic',
+              models: {
+                main: 'deepseek-v4-pro',
+                haiku: 'deepseek-v4-pro',
+                sonnet: 'deepseek-v4-pro',
+                opus: 'deepseek-v4-pro',
+              },
+            },
+          ],
+        }, null, 2),
+      )
 
       await expect(generateTitle('请只回复 trace-ok')).resolves.toBe('Trace ok')
       expect(requestBody?.thinking).toEqual({ type: 'disabled' })
@@ -336,20 +333,29 @@ describe('titleService', () => {
 
     try {
       const providerId = 'title-clean-test'
-      await writeProviderFixture(providerId, {
-        id: providerId,
-        presetId: 'anthropic',
-        name: 'Anthropic',
-        apiKey: 'test-key',
-        baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
-        apiFormat: 'anthropic',
-        models: {
-          main: 'claude-sonnet-4-7',
-          haiku: 'claude-haiku-4-5',
-          sonnet: 'claude-sonnet-4-7',
-          opus: 'claude-opus-4-7',
-        },
-      })
+      await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+      await fs.writeFile(
+        path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'),
+        JSON.stringify({
+          activeId: providerId,
+          providers: [
+            {
+              id: providerId,
+              presetId: 'anthropic',
+              name: 'Anthropic',
+              apiKey: 'test-key',
+              baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
+              apiFormat: 'anthropic',
+              models: {
+                main: 'claude-sonnet-4-7',
+                haiku: 'claude-haiku-4-5',
+                sonnet: 'claude-sonnet-4-7',
+                opus: 'claude-opus-4-7',
+              },
+            },
+          ],
+        }, null, 2),
+      )
 
       await expect(generateTitle([
         '<command-message>frontend-design</command-message>',
@@ -389,20 +395,29 @@ describe('titleService', () => {
 
     try {
       const providerId = 'title-language-test'
-      await writeProviderFixture(providerId, {
-        id: providerId,
-        presetId: 'minimax',
-        name: 'MiniMax',
-        apiKey: 'test-key',
-        baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
-        apiFormat: 'anthropic',
-        models: {
-          main: 'minimax-main',
-          haiku: 'minimax-haiku',
-          sonnet: 'minimax-main',
-          opus: 'minimax-main',
-        },
-      })
+      await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+      await fs.writeFile(
+        path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'),
+        JSON.stringify({
+          activeId: providerId,
+          providers: [
+            {
+              id: providerId,
+              presetId: 'minimax',
+              name: 'MiniMax',
+              apiKey: 'test-key',
+              baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
+              apiFormat: 'anthropic',
+              models: {
+                main: 'minimax-main',
+                haiku: 'minimax-haiku',
+                sonnet: 'minimax-main',
+                opus: 'minimax-main',
+              },
+            },
+          ],
+        }, null, 2),
+      )
 
       const languagePreference = resolveTitleLanguagePreference(
         '最近我们在最近 15 天做了很多的变更，你去看一下',
@@ -439,28 +454,6 @@ describe('titleService', () => {
     })
   })
 
-  test('fails closed for ChatGPT Official title generation when local redaction is enabled', async () => {
-    await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
-      JSON.stringify({ localRedaction: { enabled: true, personalInfo: false, customWords: [] } }),
-      'utf-8',
-    )
-    const providerService = new ProviderService()
-    await providerService.activateProvider('openai-official')
-    await echoFlowOpenAIOAuthService.saveTokens({
-      accessToken: 'fake-openai-token', refreshToken: 'fake-refresh-token',
-      expiresAt: Date.now() + 60 * 60_000, accountId: 'acct_title', email: 'title@example.com',
-    })
-    let calls = 0
-    globalThis.fetch = (async () => {
-      calls += 1
-      throw new Error('official title helper must not bypass redaction')
-    }) as typeof fetch
-
-    await expect(generateTitle('secret conversation')).resolves.toBeNull()
-    expect(calls).toBe(0)
-  })
-
   test('generates titles when ChatGPT Official OAuth is active', async () => {
     const systemProxyUrl = 'http://127.0.0.1:17890'
     process.env[SYSTEM_PROXY_URL_ENV] = systemProxyUrl
@@ -475,7 +468,7 @@ describe('titleService', () => {
     )
     const providerService = new ProviderService()
     await providerService.activateProvider('openai-official')
-    await echoFlowOpenAIOAuthService.saveTokens({
+    await hahaOpenAIOAuthService.saveTokens({
       accessToken: 'access-for-title',
       refreshToken: 'refresh-for-title',
       expiresAt: Date.now() + 60 * 60_000,
@@ -513,6 +506,51 @@ describe('titleService', () => {
     expect(upstreamCalls[0].headers['chatgpt-account-id']).toBe('acct_title')
     expect(upstreamCalls[0].body.stream).toBe(true)
     expect(upstreamCalls[0].proxy).toBe(systemProxyUrl)
+  })
+
+  test.each([false, true])('generates titles with the account token when DeepSeek Account is active (thinking retry: %s)', async (retryThinking) => {
+    await new ProviderService().activateProvider('deepseek-account')
+    await hahaDeepSeekOAuthService.saveTokens({
+      token: 'dsh_test_account_token',
+      issuer: 'https://platform.deepseek.com',
+      deviceId: 'device-1',
+    })
+    const calls: Array<{ url: string; headers: Headers; model: string }> = []
+    globalThis.fetch = (async (input, init) => {
+      const body = JSON.parse(String(init?.body)) as { model: string }
+      calls.push({ url: String(input), headers: new Headers(init?.headers), model: body.model })
+      if (body.model !== 'deepseek-flash') {
+        return Response.json({ error: 'Model Not Exist' }, { status: 400 })
+      }
+      if (retryThinking && calls.length === 1) {
+        return Response.json({ error: 'thinking unsupported' }, { status: 400 })
+      }
+      return Response.json({ content: [{ type: 'text', text: '{"title":"Account title"}' }] })
+    }) as typeof fetch
+
+    await expect(generateTitle('please name this session')).resolves.toBe('Account title')
+    expect(calls).toHaveLength(retryThinking ? 2 : 1)
+    expect(calls.map((call) => call.model)).toEqual(
+      Array(retryThinking ? 2 : 1).fill('deepseek-flash'),
+    )
+    expect((await new ProviderService().getProvider('deepseek-account')).models.haiku)
+      .toBe('deepseek-flash[1m]')
+    expect(calls[0]!.url).toBe('https://api.deepseek.com/anthropic/v1/messages')
+    expect(calls[0]!.headers.get('x-dsh-auth-token')).toBe('dsh_test_account_token')
+    expect(calls[0]!.headers.get('x-api-key')).toBeNull()
+    expect(calls[0]!.headers.get('authorization')).toBeNull()
+  })
+
+  test('skips AI titles without a request while DeepSeek Account is signed out', async () => {
+    await new ProviderService().activateProvider('deepseek-account')
+    let called = false
+    globalThis.fetch = (async () => {
+      called = true
+      return Response.json({})
+    }) as typeof fetch
+
+    await expect(generateTitle('please name this session')).resolves.toBeNull()
+    expect(called).toBe(false)
   })
 
   test('honors the configured provider auth strategy for title generation', async () => {
@@ -612,3 +650,101 @@ function restoreEnv(key: string, value: string | undefined) {
     process.env[key] = value
   }
 }
+
+/**
+ * Title generation builds its own upstream request instead of going through the
+ * CLI, so it has to make the same per-model protocol decision the proxy makes.
+ * Otherwise a provider that only answers on a non-Anthropic path silently gets no
+ * AI titles at all — the request fails, the failure is swallowed, and the user
+ * only sees the derived placeholder.
+ */
+describe('titleService protocol routing', () => {
+  let tmpDir: string
+  let originalConfigDir: string | undefined
+  let originalFetch: typeof globalThis.fetch
+
+  beforeEach(async () => {
+    originalConfigDir = process.env.CLAUDE_CONFIG_DIR
+    originalFetch = globalThis.fetch
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'title-service-routing-'))
+    process.env.CLAUDE_CONFIG_DIR = tmpDir
+    // The proxy records traces for a session-scoped request; give them a home so
+    // the background writer does not fail the run with an unhandled ENOENT.
+    await fs.mkdir(path.join(tmpDir, 'cc-haha', 'traces'), { recursive: true })
+  })
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch
+    // Let the background trace writer finish before the directory it targets goes
+    // away, otherwise it fails the run with an unhandled ENOENT.
+    await drainTraceCaptureForTests()
+    restoreEnv('CLAUDE_CONFIG_DIR', originalConfigDir)
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  test('uses the endpoint and client headers the provider actually requires', async () => {
+    const calls: Array<{ url: string; headers: Headers; body: any }> = []
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        headers: new Headers(init?.headers),
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      })
+      return Response.json({
+        id: 'chatcmpl-title',
+        object: 'chat.completion',
+        model: 'glm-5.3-flash',
+        choices: [{
+          index: 0,
+          message: { role: 'assistant', content: '{"title":"Routed title"}' },
+          finish_reason: 'stop',
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      })
+    }) as typeof fetch
+
+    const provider = await new ProviderService().addProvider({
+      presetId: 'opencode-go',
+      name: 'OpenCode Go',
+      apiKey: 'sk-opencode-title',
+      baseUrl: 'https://opencode.ai/zen/go/v1',
+      apiFormat: 'openai_chat',
+      models: { main: 'glm-5.3', haiku: 'glm-5.3-flash', sonnet: 'glm-5.3', opus: 'glm-5.3' },
+    })
+
+    expect(await generateTitle('Explain endpoint compatibility', provider.id, null, 'session-title-1'))
+      .toBe('Routed title')
+
+    expect(calls).toHaveLength(1)
+    // The haiku model is a chat model: Anthropic Messages would be rejected outright.
+    expect(new URL(calls[0]!.url).pathname).toBe('/zen/go/v1/chat/completions')
+    expect(calls[0]!.body.model).toBe('glm-5.3-flash')
+    // The gateway refuses any request without this, so a title call without it can
+    // never succeed.
+    expect(calls[0]!.headers.get('x-opencode-session')).toBe('session-title-1')
+    expect(calls[0]!.headers.get('authorization')).toBe('Bearer sk-opencode-title')
+  })
+
+  test('still talks to an Anthropic-format provider directly', async () => {
+    const paths: string[] = []
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch(req) {
+        paths.push(new URL(req.url).pathname)
+        return Response.json({ content: [{ type: 'text', text: '{"title":"Direct title"}' }] })
+      },
+    })
+    try {
+      const provider = await new ProviderService().addProvider({
+        presetId: 'custom', name: 'Direct Anthropic', apiKey: 'test-key',
+        baseUrl: `http://127.0.0.1:${server.port}`, apiFormat: 'anthropic',
+        models: { main: 'm', haiku: 'm', sonnet: 'm', opus: 'm' },
+      })
+      expect(await generateTitle('Explain endpoint compatibility', provider.id)).toBe('Direct title')
+      expect(paths).toEqual(['/v1/messages'])
+    } finally {
+      server.stop(true)
+    }
+  })
+})

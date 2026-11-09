@@ -5,6 +5,7 @@ import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growt
 import { getCanonicalName } from './model/model.js'
 import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
 import { getAPIProvider, isFirstPartyAnthropicBaseUrl } from './model/providers.js'
+import { readProviderEnv } from './model/providerEnvScope.js'
 import { getSettingsWithErrors } from './settings/settings.js'
 import { isEnvTruthy } from './envUtils.js'
 
@@ -12,8 +13,6 @@ export type ThinkingConfig =
   | { type: 'adaptive' }
   | { type: 'enabled'; budgetTokens: number }
   | { type: 'disabled' }
-
-export const ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY = 'ECHOFLOW_SEND_DISABLED_THINKING'
 
 /**
  * Build-time gate (feature) + runtime gate (GrowthBook). The build flag
@@ -134,11 +133,28 @@ export function modelSupportsThinking(model: string): boolean {
 }
 
 export function modelRequiresThinking(model: string): boolean {
+  const adaptiveOnly = isAdaptiveOnlyModel(getCanonicalName(model))
   const required3P = get3PModelCapabilityOverride(model, 'required_thinking')
   if (required3P !== undefined) {
-    return required3P
+    // Generic provider capabilities omit required_thinking. An adaptive-only
+    // model keeps the requirement while its route still declares adaptive
+    // thinking; only dropping adaptive_thinking opts out.
+    return required3P || (adaptiveOnly && modelSupportsAdaptiveThinking(model))
   }
-  return isAdaptiveOnlyModel(getCanonicalName(model))
+  return adaptiveOnly
+}
+
+/**
+ * Claude models whose API rejects manual `budget_tokens` thinking with a 400
+ * (platform.claude.com/docs/en/build-with-claude/thinking, per-model table).
+ * Opting out of adaptive thinking cannot fall back to a budget on these.
+ */
+export function modelRejectsManualThinking(model: string): boolean {
+  const canonical = getCanonicalName(model)
+  return (
+    /claude-(opus|sonnet|haiku|fable|mythos)-5(?!\d)/.test(canonical) ||
+    /claude-opus-4-[78](?!\d)/.test(canonical)
+  )
 }
 
 /** Fable 5.1 binds replayed thinking to the preceding system, tools and history. */
@@ -154,7 +170,7 @@ export function resolveModelThinkingEnabled(
 }
 
 function isMiniMaxAnthropicEndpoint(): boolean {
-  const baseUrl = process.env.ANTHROPIC_BASE_URL?.toLowerCase() ?? ''
+  const baseUrl = readProviderEnv('ANTHROPIC_BASE_URL')?.toLowerCase() ?? ''
   return baseUrl.includes('minimax') || baseUrl.includes('minimaxi')
 }
 
@@ -181,6 +197,7 @@ export function modelSupportsAdaptiveThinking(model: string): boolean {
   // Supported by current Claude Code flagship models.
   if (
     canonical.includes('sonnet-5') ||
+    canonical.includes('haiku-5') ||
     canonical.includes('opus-5') ||
     canonical.includes('opus-4-8') ||
     canonical.includes('opus-4-7') ||
@@ -230,5 +247,5 @@ export function shouldEnableThinkingByDefault(): boolean {
 }
 
 export function shouldSendExplicitDisabledThinking(): boolean {
-  return isEnvTruthy(process.env[ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY])
+  return isEnvTruthy(readProviderEnv('CC_HAHA_SEND_DISABLED_THINKING'))
 }

@@ -6,7 +6,7 @@ import { gzipSync } from 'node:zlib'
 import { constants as fsConstants, type Dirent } from 'node:fs'
 import { localIndexCoordinator } from './localIndex/coordinator.js'
 import type { LocalIndexStatus } from './localIndex/types.js'
-import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
+import { isSensitiveDiagnosticKey, redactDiagnosticText } from './diagnosticRedaction.js'
 import {
   buildDiagnosticsIssueReport,
   projectDiagnosticEventForSharing,
@@ -93,6 +93,17 @@ const RETENTION_SWEEP_INTERVAL_MS = 60 * 1000
 const TRUNCATED_OLDER_CONTENT_MARKER = '[TRUNCATED OLDER CONTENT]\n'
 const SENSITIVE_KEY_RE = /(api[_-]?key|auth[_-]?token|access[_-]?token|refresh[_-]?token|session[_-]?token|\btoken\b|secret|password|authorization|cookie|oauth)/i
 
+/**
+ * Launch the file manager directly and never with `windowsHide`: on Windows
+ * that flag passes SW_HIDE to Explorer, and a `cmd /c start` wrapper would
+ * flash its own console window instead (#983, #1489).
+ */
+export function getOpenLogDirCommand(platform: NodeJS.Platform, dir: string): string[] {
+  if (platform === 'darwin') return ['open', dir]
+  if (platform === 'win32') return ['explorer.exe', dir]
+  return ['xdg-open', dir]
+}
+
 export class DiagnosticsService {
   private consoleCaptureInstalled = false
   private processCaptureInstalled = false
@@ -101,8 +112,12 @@ export class DiagnosticsService {
   private lastRetentionSweepAt = 0
   private writeQueue: Promise<void> = Promise.resolve()
 
+  async drainForMigration(): Promise<void> {
+    await this.writeQueue
+  }
+
   getLogDir(): string {
-    return path.join(getEchoFlowInternalDir(this.getConfigDir()), 'diagnostics')
+    return path.join(this.getConfigDir(), 'cc-haha', 'diagnostics')
   }
 
   getDiagnosticsPath(): string {
@@ -147,7 +162,7 @@ export class DiagnosticsService {
 
   async recordEvent(input: DiagnosticEventInput): Promise<DiagnosticWriteResult> {
     // Test isolation: never let a test run write into the user's real
-    // the real EchoFlow diagnostics directory. Tests that genuinely exercise diagnostics
+    // ~/.claude/cc-haha/diagnostics. Tests that genuinely exercise diagnostics
     // set CLAUDE_CONFIG_DIR to a tmp dir; anything else under NODE_ENV=test is
     // a leak (e.g. a fire-and-forget recordEvent resolving after a test's
     // afterEach restored CLAUDE_CONFIG_DIR) and must be dropped.
@@ -343,7 +358,7 @@ export class DiagnosticsService {
     await this.ensureLogDir()
     await this.runRetentionSerialized(true, true)
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const fileName = `echoflow-code-diagnostics-${timestamp}.tar.gz`
+    const fileName = `cc-haha-diagnostics-${timestamp}.tar.gz`
     const outPath = path.join(this.getExportDir(), fileName)
     const scan = await this.scanDiagnosticsFile()
     const events = scan.events.slice(-MAX_SHARED_EVENTS).reverse()
@@ -385,10 +400,6 @@ export class DiagnosticsService {
         name: 'sessions-summary.json',
         content: JSON.stringify(this.buildSessionsSummary(sharedEvents), null, 2) + '\n',
       },
-      {
-        name: 'local-index-status.json',
-        content: JSON.stringify(this.buildLocalIndexSummary(), null, 2) + '\n',
-      },
     ]
 
     const archive = this.createTarGz(files)
@@ -413,15 +424,7 @@ export class DiagnosticsService {
   async openLogDir(): Promise<void> {
     await this.ensureLogDir()
     const dir = this.getLogDir()
-    if (process.platform === 'darwin') {
-      Bun.spawn(['open', dir], { stdout: 'ignore', stderr: 'ignore' })
-      return
-    }
-    if (process.platform === 'win32') {
-      Bun.spawn(['cmd', '/c', 'start', '', dir], { stdout: 'ignore', stderr: 'ignore' })
-      return
-    }
-    Bun.spawn(['xdg-open', dir], { stdout: 'ignore', stderr: 'ignore' })
+    Bun.spawn(getOpenLogDirCommand(process.platform, dir), { stdout: 'ignore', stderr: 'ignore' })
   }
 
   async clear(): Promise<void> {
@@ -454,7 +457,7 @@ export class DiagnosticsService {
           break
         }
         count += 1
-        result[key] = SENSITIVE_KEY_RE.test(key)
+        result[key] = SENSITIVE_KEY_RE.test(key) || isSensitiveDiagnosticKey(key)
           ? '[REDACTED]'
           : this.sanitizeValue(entry, depth + 1)
       }
@@ -464,7 +467,7 @@ export class DiagnosticsService {
   }
 
   sanitizeString(value: string, maxLength = MAX_STRING_LENGTH): string {
-    let sanitized = value
+    let sanitized = redactDiagnosticText(value)
       .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+/gi, '$1[REDACTED]')
       .replace(/([a-z][a-z0-9+.-]*:\/\/)([^/?#\s:@]+(?::[^/?#\s@]*)?@)/gi, '$1[REDACTED]@')
       .replace(/((?:api[_-]?key|auth[_-]?token|access[_-]?token|refresh[_-]?token|session[_-]?token|token|secret|password)\s*[:=]\s*)[^\s,;"'}]+/gi, '$1[REDACTED]')
@@ -649,7 +652,7 @@ export class DiagnosticsService {
   }
 
   private getConfigDir(): string {
-    return getEchoFlowConfigDir()
+    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
   }
 
   private formatConsoleArgs(args: unknown[]): string {
@@ -699,10 +702,12 @@ export class DiagnosticsService {
 
   private buildReadme(): string {
     return [
-      'EchoFlow Code diagnostics bundle',
+      'cc-haha diagnostics bundle',
       '',
       'This bundle is generated by the desktop app for debugging server and CLI startup/runtime failures.',
       'Content-bearing fields are omitted and secrets/personal data receive best-effort redaction.',
+      'The Electron host log is rescanned on export for named credentials (app_id, app_secret, token, API key, password, Authorization and Cookie), including JSON strings and escaped JSON.',
+      'This is pattern-based filtering, not a guarantee: unlabeled secrets and arbitrary application content may remain. Export does not scrub the original log files.',
       'Included metadata may contain event ids, timestamps, event types, severity, session ids, error codes/status, provider/model identifiers, and provider hostnames.',
       'Paths under the current home directory are normalized to "~". Long fields are truncated.',
       'Review every file before sharing because automated redaction cannot guarantee removal of all sensitive data.',
@@ -716,7 +721,6 @@ export class DiagnosticsService {
       '- electron-host.log: sanitized recent Electron host lifecycle diagnostics.',
       '- providers-summary.json: provider count, active id, base URL host, model ids, and API format without API keys.',
       '- sessions-summary.json: session ids observed in diagnostic events, without transcript content.',
-      '- local-index-status.json: local session index mode, state, counts, sizes, and last error code; marked unavailable if the status cannot be read.',
       '',
     ].join('\n')
   }
@@ -727,7 +731,7 @@ export class DiagnosticsService {
       .slice(0, 50)
 
     const lines = [
-      '# EchoFlow Code recent diagnostics',
+      '# cc-haha recent diagnostics',
       '',
       `Generated: ${new Date().toISOString()}`,
       `Events included: ${errorEvents.length}`,
@@ -772,7 +776,7 @@ export class DiagnosticsService {
 
   private buildAppInfo(): Record<string, unknown> {
     return this.sanitizeValue({
-      appVersion: process.env.APP_VERSION || 'unknown',
+      appVersion: process.env.APP_VERSION || '999.0.0-local',
       platform: process.platform,
       arch: process.arch,
       node: process.version,
@@ -782,28 +786,8 @@ export class DiagnosticsService {
     }) as Record<string, unknown>
   }
 
-  private buildLocalIndexSummary(): Record<string, unknown> {
-    try {
-      const status = this.getLocalIndexStatus()
-      return {
-        available: true,
-        mode: status.mode,
-        state: status.state,
-        discovered: status.discovered,
-        indexed: status.indexed,
-        degradedSources: status.degradedSources,
-        databaseBytes: status.databaseBytes,
-        walBytes: status.walBytes,
-        lastUpdatedAt: status.lastUpdatedAt,
-        lastErrorCode: status.lastErrorCode,
-      }
-    } catch {
-      return { available: false }
-    }
-  }
-
   private async buildProvidersSummary(): Promise<Record<string, unknown>> {
-    const providerPath = path.join(getEchoFlowInternalDir(this.getConfigDir()), 'providers.json')
+    const providerPath = path.join(this.getConfigDir(), 'cc-haha', 'providers.json')
     try {
       const raw = await fs.readFile(providerPath, 'utf-8')
       const parsed = JSON.parse(raw) as {

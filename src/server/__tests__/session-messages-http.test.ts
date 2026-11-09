@@ -137,16 +137,20 @@ afterEach(async () => {
 })
 
 describe('session messages HTTP surface', () => {
-  it('keeps a transcript above 20 MiB readable when checkpoint previews exceed their budget (#1373)', async () => {
+  it('keeps a transcript readable when checkpoint previews exceed their budget (#1373)', async () => {
     const sessionId = await seedSessionWithSubagent()
     const filePath = path.join(tmpDir, 'projects', '-tmp-http-invariant', `${sessionId}.jsonl`)
     const content = 'x'.repeat(8 * 1024)
     const count = 2700
+    // Unlike tool output, checkpoints retain every other record while parsing.
+    await fs.appendFile(filePath, Array.from({ length: 400 }, () => JSON.stringify({
+      type: 'progress', padding: content,
+    })).join('\n') + '\n')
     await fs.appendFile(filePath, Array.from({ length: count }, (_, n) => JSON.stringify({
       type: 'assistant', uuid: `issue-1373-${n}`, timestamp: '2026-01-02T00:00:00Z',
       message: { role: 'assistant', content },
     })).join('\n') + '\n')
-    expect((await fs.stat(filePath)).size).toBeGreaterThan(20 * 1024 * 1024)
+    expect((await fs.stat(filePath)).size).toBeGreaterThan(24 * 1024 * 1024)
 
     const checkpoint = await api('GET', `/api/sessions/${sessionId}/turn-checkpoints`)
     expect(checkpoint.status).toBe(413)
@@ -193,14 +197,16 @@ describe('session messages HTTP surface', () => {
   it('rejects oversized automatic checkpoint previews before canonical history loading', async () => {
     const sessionId = await seedSessionWithSubagent()
     const filePath = path.join(tmpDir, 'projects', '-tmp-http-invariant', `${sessionId}.jsonl`)
-    await fs.truncate(filePath, 17 * 1024 * 1024)
-    const canonical = spyOn(sessionService, 'getSessionMessagesWithEvidence').mockImplementation(() => { throw new Error('full history must not be hydrated') })
+    // Sparse and newline-free: reading it would build one 256 MiB line.
+    await fs.truncate(filePath, 256 * 1024 * 1024 + 1)
+    const hydrate = spyOn(sessionService as unknown as { entriesToMessages: () => unknown }, 'entriesToMessages')
+      .mockImplementation(() => { throw new Error('full history must not be hydrated') })
     try {
       const response = await api('GET', `/api/sessions/${sessionId}/turn-checkpoints`)
       expect(response.status).toBe(413)
       expect((await response.json() as { error: string }).error).toBe('HISTORY_CHECKPOINT_PREVIEW_LIMIT')
-      expect(canonical).not.toHaveBeenCalled()
-    } finally { canonical.mockRestore() }
+      expect(hydrate).not.toHaveBeenCalled()
+    } finally { hydrate.mockRestore() }
   })
 
   it('returns the whole bounded transcript in one response for mode=full', async () => {
@@ -218,6 +224,40 @@ describe('session messages HTTP surface', () => {
     expect(body.page.nextCursor).toBeNull()
   })
 
+  it('adds only a tail cursor to the paged response, and nothing to mode=full', async () => {
+    const sessionId = await seedSessionWithSubagent()
+    const paged = await (await api('GET', `/api/sessions/${sessionId}/messages`)).json() as { page: Record<string, unknown> }
+    expect(Object.keys(paged).sort()).toEqual(['messages', 'page', 'taskNotifications'])
+    expect(Object.keys(paged.page).sort()).toEqual([
+      'contextScanBytes', 'hasMore', 'historyComplete', 'nextCursor', 'omittedOversizedEntries',
+      'previousCursor', 'scannedBytes', 'sourceVersion', 'tailComplete', 'tailCursor',
+    ])
+    const full = await (await api('GET', `/api/sessions/${sessionId}/messages?mode=full`)).json() as { page: Record<string, unknown> }
+    expect(full.page.tailCursor).toBeUndefined()
+    expect(full.page.tailComplete).toBeUndefined()
+  })
+
+  it('a reconnecting client downloads only what was appended since its tail cursor', async () => {
+    const sessionId = await seedSessionWithSubagent()
+    const filePath = path.join(tmpDir, 'projects', '-tmp-http-invariant', `${sessionId}.jsonl`)
+    const first = await (await api('GET', `/api/sessions/${sessionId}/messages?media=ref`)).json() as {
+      messages: Array<{ id: string }>
+      page: { tailCursor: string }
+    }
+    expect(first.messages.length).toBeGreaterThan(0)
+    await fs.appendFile(filePath, [
+      { type: 'user', uuid: 'follow-user', timestamp: '2026-01-03T00:00:00Z', message: { role: 'user', content: 'next question' } },
+      { type: 'assistant', uuid: 'follow-answer', timestamp: '2026-01-03T00:00:01Z', message: { role: 'assistant', content: [{ type: 'text', text: 'next answer' }] } },
+    ].map(entry => JSON.stringify(entry)).join('\n') + '\n')
+    const response = await api('GET', `/api/sessions/${sessionId}/messages?media=ref&cursor=${encodeURIComponent(first.page.tailCursor)}`)
+    expect(response.status).toBe(200)
+    const delta = await response.json() as { messages: Array<{ id: string }>; page: { tailCursor: string; tailComplete: boolean } }
+    expect(delta.messages.map(message => message.id)).toEqual(['follow-user', 'follow-answer'])
+    expect(delta.page.tailComplete).toBe(true)
+    const idle = await (await api('GET', `/api/sessions/${sessionId}/messages?media=ref&cursor=${encodeURIComponent(delta.page.tailCursor)}`)).json() as { messages: unknown[] }
+    expect(idle.messages).toEqual([])
+  })
+
   it('rejects an unknown history mode', async () => {
     const sessionId = await seedSessionWithSubagent()
     const response = await api('GET', `/api/sessions/${sessionId}/messages?mode=sideways`)
@@ -228,7 +268,7 @@ describe('session messages HTTP surface', () => {
     const sessionId = await seedSessionWithSubagent()
     await fs.appendFile(path.join(tmpDir, 'projects', '-tmp-http-invariant', `${sessionId}.jsonl`),
       JSON.stringify({
-        type: 'echoflow-code-task-notification',
+        type: 'cc-haha-task-notification',
         taskNotification: { taskId: 'task-1', toolUseId: 'Agent:0', status: 'completed', summary: 'Done' },
         timestamp: '2026-01-01T00:02:00.000Z',
       }) + '\n')

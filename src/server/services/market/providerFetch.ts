@@ -3,8 +3,7 @@
  *
  * Every upstream request goes through providerFetch: 10s timeout, one retry,
  * network-proxy settings, source-health bookkeeping, and env-based test hooks
- * (ECHOFLOW_MARKET_DISABLE_PROVIDERS / ECHOFLOW_MARKET_BASE_CLAWHUB /
- * ECHOFLOW_MARKET_BASE_SKILLHUB).
+ * (HAHA_MARKET_DISABLE_PROVIDERS / HAHA_MARKET_BASE_CLAWHUB / HAHA_MARKET_BASE_SKILLHUB).
  */
 
 import {
@@ -68,12 +67,12 @@ export async function readResponseTextWithLimit(
 }
 
 export function getProviderBase(source: MarketSource): string {
-  const suffix = source === 'clawhub' ? 'BASE_CLAWHUB' : 'BASE_SKILLHUB'
-  return process.env[`ECHOFLOW_MARKET_${suffix}`] ?? DEFAULT_BASES[source]
+  const envKey = source === 'clawhub' ? 'HAHA_MARKET_BASE_CLAWHUB' : 'HAHA_MARKET_BASE_SKILLHUB'
+  return process.env[envKey] || DEFAULT_BASES[source]
 }
 
 export function isProviderDisabled(source: MarketSource): boolean {
-  const disabled = process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
+  const disabled = process.env.HAHA_MARKET_DISABLE_PROVIDERS
   if (!disabled) return false
   return disabled.split(',').map((s) => s.trim()).includes(source)
 }

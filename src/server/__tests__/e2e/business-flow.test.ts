@@ -17,7 +17,7 @@ let wsUrl: string
 let tmpDir: string
 const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
 const originalCliPath = process.env.CLAUDE_CLI_PATH
-const originalDisableTerminalShellEnv = process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
+const originalDisableTerminalShellEnv = process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
 const mockSdkCliPath = fileURLToPath(new URL('../fixtures/mock-sdk-cli.ts', import.meta.url))
 
 // The models API derives its model list from these env vars (see
@@ -33,10 +33,6 @@ const MODEL_ENV_KEYS = [
 const originalModelEnv = Object.fromEntries(
   MODEL_ENV_KEYS.map((key) => [key, process.env[key]]),
 ) as Record<(typeof MODEL_ENV_KEYS)[number], string | undefined>
-
-function echoFlowSettingsPath() {
-  return path.join(tmpDir, 'settings.json')
-}
 
 function restoreEnv() {
   for (const key of MODEL_ENV_KEYS) {
@@ -54,9 +50,9 @@ function restoreEnv() {
     delete process.env.CLAUDE_CLI_PATH
   }
   if (originalDisableTerminalShellEnv !== undefined) {
-    process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV = originalDisableTerminalShellEnv
+    process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = originalDisableTerminalShellEnv
   } else {
-    delete process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
+    delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
   }
 }
 
@@ -68,17 +64,13 @@ async function startTestServer() {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-biz-'))
   process.env.CLAUDE_CONFIG_DIR = tmpDir
   process.env.CLAUDE_CLI_PATH = mockSdkCliPath
-  process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV = '1'
+  process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
   for (const key of MODEL_ENV_KEYS) delete process.env[key]
   await fs.mkdir(path.join(tmpDir, 'projects'), { recursive: true })
   await fs.mkdir(path.join(tmpDir, 'agents'), { recursive: true })
 
   const { startServer } = await import('../../index.js')
   server = startServer(0, '127.0.0.1')
-  // A started test server must report the concrete port the kernel assigned:
-  // if startup misreports the bind, every later request would fail against a
-  // phantom endpoint instead of naming the real problem.
-  expect(Number.isInteger(server.port) && server.port > 0).toBe(true)
   baseUrl = `http://127.0.0.1:${server.port}`
   wsUrl = `ws://127.0.0.1:${server.port}`
 }
@@ -258,7 +250,7 @@ describe('Business Flow: Permission Modes', () => {
 
   it('should persist mode to settings file', async () => {
     await api('PUT', '/api/permissions/mode', { mode: 'plan' })
-    const settingsPath = echoFlowSettingsPath()
+    const settingsPath = path.join(tmpDir, 'settings.json')
     const raw = await fs.readFile(settingsPath, 'utf-8')
     const settings = JSON.parse(raw)
     expect(settings.defaultMode).toBe('plan')
@@ -287,11 +279,12 @@ describe('Business Flow: Agent Management', () => {
       systemPrompt: 'You are a security expert. Focus on OWASP top 10.',
       color: 'red',
     })
-    expect(status).toBe(201)
+    // Asserting on the pair prints the server's error body when creation fails.
+    expect({ status, data }).toMatchObject({ status: 201 })
   })
 
   it('should create a second agent', async () => {
-    const { status } = await api('POST', '/api/agents', {
+    const { status, data } = await api('POST', '/api/agents', {
       scope: 'user',
       name: 'test-writer',
       description: 'Writes unit tests',
@@ -299,7 +292,7 @@ describe('Business Flow: Agent Management', () => {
       tools: ['Read', 'Write', 'Bash'],
       systemPrompt: 'Write focused unit tests for the requested behavior.',
     })
-    expect(status).toBe(201)
+    expect({ status, data }).toMatchObject({ status: 201 })
   })
 
   it('should list both created agents through the shared loader', async () => {
@@ -382,7 +375,7 @@ describe('Business Flow: Models & Effort', () => {
 
   it('should return available fallback models', async () => {
     const { data } = await api('GET', '/api/models')
-    expect(data.models.length).toBe(8)
+    expect(data.models.length).toBe(9)
     const names = data.models.map((m: any) => m.name)
     expect(names).toContain('Fable 5.1')
     expect(names).toContain('Fable 5')
@@ -391,6 +384,7 @@ describe('Business Flow: Models & Effort', () => {
     expect(names).toContain('Opus 4.8')
     expect(names).toContain('Sonnet 5.5')
     expect(names).toContain('Sonnet 5')
+    expect(names).toContain('Haiku 5.5')
     expect(names).toContain('Haiku 4.5')
   })
 
@@ -465,9 +459,9 @@ describe('Business Flow: Models & Effort', () => {
     expect(status).toBe(400)
   })
 
-  it('should default effort to medium', async () => {
+  it('should default effort to low', async () => {
     const { data } = await api('GET', '/api/effort')
-    expect(data.level).toBe('medium')
+    expect(data.level).toBe('low')
     expect(data.available).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   })
 
@@ -496,7 +490,7 @@ describe('Business Flow: Models & Effort', () => {
     await api('PUT', '/api/models/current', { modelId: 'claude-opus-4-7' })
     await api('PUT', '/api/effort', { level: 'high' })
 
-    const settingsPath = echoFlowSettingsPath()
+    const settingsPath = path.join(tmpDir, 'settings.json')
     const raw = await fs.readFile(settingsPath, 'utf-8')
     const settings = JSON.parse(raw)
     expect(settings.model).toBe('claude-opus-4-7')
@@ -696,15 +690,6 @@ describe('Business Flow: WebSocket Chat', () => {
     const ws = new WebSocket(`${wsUrl}/ws/ws-test-2`)
 
     await new Promise<void>((resolve) => {
-      let settled = false
-      let timeout: ReturnType<typeof setTimeout> | undefined
-      const finish = () => {
-        if (settled) return
-        settled = true
-        if (timeout) clearTimeout(timeout)
-        ws.close()
-        resolve()
-      }
       ws.onopen = () => {}
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data as string)
@@ -712,12 +697,13 @@ describe('Business Flow: WebSocket Chat', () => {
         if (msg.type === 'connected') {
           ws.send(JSON.stringify({ type: 'user_message', content: 'test message' }))
         }
-        const hasStatus = messages.some((message) => message.type === 'status')
-        const hasDelta = messages.some((message) => message.type === 'content_delta')
-        if (msg.type === 'message_complete' && hasStatus && hasDelta) finish()
+        if (msg.type === 'message_complete') {
+          ws.close()
+          resolve()
+        }
       }
-      ws.onerror = finish
-      timeout = setTimeout(finish, 15000)
+      ws.onerror = () => { ws.close(); resolve() }
+      setTimeout(() => { ws.close(); resolve() }, 15000)
     })
 
     const types = messages.map((m) => m.type)

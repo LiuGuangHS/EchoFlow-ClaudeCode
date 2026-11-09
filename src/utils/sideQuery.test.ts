@@ -26,7 +26,7 @@ test('local proxy side queries keep their explicit small budget despite a provid
     })
   }, [{ type: 'text', text: 'OK' }])
   expect(requests[0]?.max_tokens).toBe(256)
-  expect(headers[0]?.get('x-echoflow-output-budget-source')).toBe('explicit')
+  expect(headers[0]?.get('x-cc-haha-output-budget-source')).toBe('explicit')
 })
 
 async function withCapturedRequests<T>(
@@ -59,7 +59,7 @@ async function withCapturedRequests<T>(
       })
     },
   })
-  const sandbox = await mkdtemp(join(tmpdir(), 'echoflow-side-query-'))
+  const sandbox = await mkdtemp(join(tmpdir(), 'cc-haha-side-query-'))
   const originalEnv = { ...process.env }
   const interactive = getIsInteractive()
   try {
@@ -69,7 +69,7 @@ async function withCapturedRequests<T>(
       ANTHROPIC_API_KEY: 'loopback-test-key',
       ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.port}`,
       ANTHROPIC_MODEL: model,
-      ECHOFLOW_SEND_DISABLED_THINKING: '1',
+      CC_HAHA_SEND_DISABLED_THINKING: '1',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     }, originalEnv))
     setIsInteractive(false)

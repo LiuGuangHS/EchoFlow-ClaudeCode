@@ -1,6 +1,6 @@
 import { ApiError } from '../middleware/errorHandler.js'
 import * as fs from 'node:fs/promises'
-import { readdirSync, watch, type FSWatcher } from 'node:fs'
+import { constants as fsConstants, watch, type FSWatcher } from 'node:fs'
 import { execFile as execFileCallback } from 'node:child_process'
 import * as path from 'node:path'
 import { promisify } from 'node:util'
@@ -9,6 +9,13 @@ import type { MessageEntry } from './sessionService.js'
 import type { FileHistorySnapshot } from '../../utils/fileHistory.js'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { isWithinRegisteredFilesystemRoot } from './filesystemAccessRoots.js'
+import {
+  changedWorkspaceWatchEntries,
+  createWorkspaceWatchScan,
+  readWorkspaceWatchState,
+  WORKSPACE_WATCH_RECONCILIATION,
+  type WorkspaceWatchState,
+} from './workspaceWatchState.js'
 import { collectErroredToolUseIds } from './transcriptToolResults.js'
 import {
   isSameOrInsidePathForPlatform,
@@ -22,6 +29,7 @@ import {
 } from './workspaceDocumentPreview.js'
 
 const MAX_PREVIEW_BYTES = 1024 * 1024
+export const MAX_WORKSPACE_DOWNLOAD_BYTES = 20 * 1024 * 1024
 const MAX_UNTRACKED_STAT_BYTES = 256 * 1024
 const GIT_TIMEOUT_MS = 5_000
 const MAX_GIT_BUFFER_BYTES = 2_000_000
@@ -30,6 +38,22 @@ const execFile = promisify(execFileCallback)
 
 function isVcsMetadataDirectoryName(name: string): boolean {
   return VCS_METADATA_DIRECTORY_NAMES.has(name.toLowerCase())
+}
+
+/** Downloads may include arbitrary binary artifacts, but never known credential stores. */
+function isProtectedDownloadPath(filePath: string): boolean {
+  const parts = filePath.toLowerCase().split(/[\\/]/)
+  return parts.some((name, index) => {
+    // These agents keep authorized source checkouts under their config home.
+    // Only that subtree is a workspace; sibling config/credential paths stay protected.
+    if ((name === '.codex' || name === '.claude') && parts[index + 1] === 'worktrees') return false
+    return isVcsMetadataDirectoryName(name) ||
+      ['.claude', '.codex', '.ssh', '.aws', '.azure', '.kube', '.gnupg', '.config',
+        '.npmrc', '.netrc', '.pypirc', '.git-credentials', 'credentials.json', '.credentials.json'].includes(name) ||
+      name === '.env' || name.startsWith('.env.') ||
+      /^id_(rsa|dsa|ecdsa|ed25519)(?:\.|$)/.test(name) ||
+      /\.(pem|key|p12|pfx|keystore)$/.test(name)
+  })
 }
 
 const LANGUAGE_MAP: Record<string, string> = {
@@ -130,6 +154,13 @@ export type WorkspaceTreeEntry = {
   isDirectory: boolean
 }
 
+export type WorkspaceFileStat = {
+  /** The path exactly as requested. */
+  path: string
+  state: 'file' | 'missing' | 'unavailable'
+  mtimeMs?: number
+}
+
 export type WorkspaceTreeResult = {
   state: 'ok' | 'missing' | 'error'
   path: string
@@ -176,6 +207,12 @@ type GitRepoInfo =
       kind: 'error'
       message: string
     }
+
+type ResolvedWorkspaceRoot = {
+  workDir: string
+  workspaceRoot: string
+  canonicalWorkspaceRoot: string
+}
 
 type WorkspacePathResolution = {
   requestedPath: string
@@ -296,16 +333,24 @@ export class WorkspaceService {
     }
 
     const repoInfo = await this.getGitRepoInfo(workDir)
+    // Inside a repository git status is authoritative and recorded session
+    // evidence only adds paths git cannot see, so evidence past its viewing
+    // budget is dropped. Without git it is the only evidence, and an
+    // incomplete record must fail rather than under-report.
+    const sessionEvidence = (changes: Promise<SessionFileChange[]>) => changes.catch((error) => {
+      if (repoInfo.kind === 'ok' && error instanceof ApiError && error.statusCode === 413) return []
+      throw error
+    })
     const sessionChanges = this.mergeSessionFileChanges(
       [
-        ...await this.getSessionFileChanges(
+        ...await sessionEvidence(this.getSessionFileChanges(
           sessionId,
           workspaceInfo.workspaceRoot,
-        ),
-        ...await this.getFileHistoryChanges(
+        )),
+        ...await sessionEvidence(this.getFileHistoryChanges(
           sessionId,
           workspaceInfo.workspaceRoot,
-        ),
+        )),
       ],
     )
 
@@ -573,6 +618,68 @@ export class WorkspaceService {
     }
   }
 
+  /** Explicit attachment download; independent of the document preview allowlist. */
+  async readDownloadFile(sessionId: string, requestedPath: string, signal?: AbortSignal) {
+    signal?.throwIfAborted()
+    const resolved = await this.resolveWorkspacePath(sessionId, requestedPath)
+    if (isProtectedDownloadPath(resolved.absolutePath) || isProtectedDownloadPath(resolved.canonicalTargetPath)) {
+      throw new ApiError(403, 'Credential and configuration files cannot be downloaded', 'FORBIDDEN')
+    }
+    const stat = await this.safeStat(resolved.canonicalTargetPath)
+    if (stat.kind === 'error') throw ApiError.internal(stat.message)
+    if (stat.kind === 'missing' || !stat.stat.isFile()) {
+      throw ApiError.notFound(`File not found: ${resolved.relativePath}`)
+    }
+    const tooLarge = () => new ApiError(413, 'File exceeds the 20 MiB download limit', 'PAYLOAD_TOO_LARGE')
+    if (stat.stat.size > MAX_WORKSPACE_DOWNLOAD_BYTES) throw tooLarge()
+
+    // Pin the checked inode. NOFOLLOW prevents a final-component symlink swap;
+    // fstat detects replacement through an ancestor while opening. NONBLOCK
+    // prevents a swapped FIFO from hanging before its file type can be checked.
+    const file = await fs.open(resolved.canonicalTargetPath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK)
+    try {
+      const opened = await file.stat()
+      if (!opened.isFile() || opened.dev !== stat.stat.dev || opened.ino !== stat.stat.ino) {
+        throw ApiError.conflict('File changed while preparing the download; retry')
+      }
+      // Resolution preceded stat/open. Recheck the path against the workspace
+      // after opening too, so swapping an ancestor before stat cannot authorize
+      // an outside inode merely because stat and fstat then happen to agree.
+      const checked = await this.resolveWorkspacePath(sessionId, requestedPath)
+      if (checked.canonicalTargetPath !== resolved.canonicalTargetPath ||
+        isProtectedDownloadPath(checked.absolutePath) || isProtectedDownloadPath(checked.canonicalTargetPath)) {
+        throw ApiError.conflict('File changed while preparing the download; retry')
+      }
+      const checkedStat = await this.safeStat(checked.canonicalTargetPath)
+      if (checkedStat.kind !== 'ok' || checkedStat.stat.dev !== opened.dev || checkedStat.stat.ino !== opened.ino) {
+        throw ApiError.conflict('File changed while preparing the download; retry')
+      }
+      if (opened.size > MAX_WORKSPACE_DOWNLOAD_BYTES) throw tooLarge()
+      const chunks: Buffer[] = []
+      let total = 0
+      while (true) {
+        signal?.throwIfAborted()
+        const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, MAX_WORKSPACE_DOWNLOAD_BYTES + 1 - total))
+        const { bytesRead } = await file.read(chunk, 0, chunk.length, null)
+        if (bytesRead === 0) break
+        total += bytesRead
+        // Enforce the limit while reading too: the file may grow after stat.
+        if (total > MAX_WORKSPACE_DOWNLOAD_BYTES) throw tooLarge()
+        chunks.push(chunk.subarray(0, bytesRead))
+      }
+      const name = path.basename(resolved.absolutePath)
+      return {
+        bytes: Buffer.concat(chunks, total),
+        name,
+        mimeType: documentFormatForPath(name)?.mimeType ?? this.detectImageMimeType(name) ??
+          (path.extname(name).toLowerCase() === '.txt' ? 'text/plain' : 'application/octet-stream'),
+      }
+    } finally {
+      await file.close()
+    }
+  }
+
   /** Watch only the requested directory levels, never the whole repository. */
   async watchDirectories(
     sessionId: string,
@@ -609,62 +716,112 @@ export class WorkspaceService {
     const watchers: FSWatcher[] = []
     const paths = new Set<string>()
     const directories = new Set<string>()
-    const knownNames = new Map<string, Set<string>>()
-    for (const target of targets.values()) {
-      try {
-        knownNames.set(target.absolutePath, new Set(readdirSync(target.absolutePath)))
-      } catch {
-        knownNames.set(target.absolutePath, new Set())
-      }
-    }
     let timer: ReturnType<typeof setTimeout> | undefined
+    let reconciliationTimer: ReturnType<typeof setTimeout> | undefined
+    const scanAbort = new AbortController()
     let stopped = false
     const stop = () => {
       if (stopped) return
       stopped = true
       if (timer !== undefined) clearTimeout(timer)
+      if (reconciliationTimer !== undefined) clearTimeout(reconciliationTimer)
+      scanAbort.abort()
+      for (const scan of scans.values()) void scan.close().catch(() => {})
+      scans.clear()
       signal.removeEventListener('abort', stop)
       for (const watcher of watchers) watcher.close()
       paths.clear()
       directories.clear()
     }
     signal.addEventListener('abort', stop, { once: true })
+    const notify = (directory: string, names: string[]) => {
+      if (stopped || signal.aborted) return
+      directories.add(directory)
+      for (const name of names) paths.add(this.normalizeRelativePath(path.join(directory, name)))
+      if (timer !== undefined) return
+      timer = setTimeout(() => {
+        timer = undefined
+        if (stopped || signal.aborted) return
+        const event = { paths: [...paths], directories: [...directories] }
+        paths.clear()
+        directories.clear()
+        onChange(event)
+      }, 60)
+    }
+    const targetList = [...targets.values()]
+    const states = new Map<string, WorkspaceWatchState>()
+    const scans = new Map<string, ReturnType<typeof createWorkspaceWatchScan>>()
+    const validate = async (target: typeof targetList[number]) => {
+      scanAbort.signal.throwIfAborted()
+      // Use the original workspace spelling too: a replaced symlink or a
+      // changed session root must not keep scanning the former watch target.
+      const resolved = await this.resolveWorkspacePath(sessionId, target.relativePath)
+      if (resolved.canonicalTargetPath !== target.absolutePath) {
+        throw new Error(`Watch directory changed its canonical path: ${target.relativePath}`)
+      }
+      scanAbort.signal.throwIfAborted()
+    }
+    const snapshot = async (target: typeof targetList[number]) => {
+      await validate(target)
+      const state = await readWorkspaceWatchState(target.absolutePath, scanAbort.signal, isVcsMetadataDirectoryName)
+      await validate(target)
+      return state
+    }
+    const reconcile = async (target: typeof targetList[number]) => {
+      await validate(target)
+      let scan = scans.get(target.absolutePath)
+      if (!scan) {
+        scan = createWorkspaceWatchScan(target.absolutePath, scanAbort.signal, isVcsMetadataDirectoryName)
+        scans.set(target.absolutePath, scan)
+      }
+      const state = await scan.readChunk()
+      await validate(target)
+      if (stopped || signal.aborted) return
+      if (!state) return
+      scans.delete(target.absolutePath)
+      const before = states.get(target.absolutePath)!
+      const names = changedWorkspaceWatchEntries(before, state)
+      // A dead/replaced native watch must move to a live ancestor (and then
+      // back to the restored target). A coarse dirty directory alone is also
+      // used for ordinary child edits, so explicitly name the target itself.
+      if (before.identity !== state.identity && target.relativePath !== '') names.push('')
+      if (names.length || before.identity !== state.identity || before.fingerprint !== state.fingerprint) {
+        notify(target.relativePath, names)
+      }
+      states.set(target.absolutePath, state)
+    }
+    let cursor = 0
+    const scheduleReconciliation = () => {
+      if (stopped || signal.aborted) return
+      reconciliationTimer = setTimeout(async () => {
+        reconciliationTimer = undefined
+        try {
+          const count = Math.min(targetList.length, WORKSPACE_WATCH_RECONCILIATION.directoriesPerTick)
+          for (let index = 0; index < count; index++) {
+            if (stopped || signal.aborted) return
+            await reconcile(targetList[cursor]!)
+            cursor = (cursor + 1) % targetList.length
+          }
+          // Schedule after completion, so slow disks cannot accumulate scans.
+          scheduleReconciliation()
+        } catch (error) {
+          if (stopped || signal.aborted) return
+          stop()
+          onError?.(error instanceof Error ? error : new Error(String(error)))
+        }
+      }, WORKSPACE_WATCH_RECONCILIATION.intervalMs)
+    }
     try {
-      for (const target of targets.values()) {
+      // Capture before registration, then reconcile once before ready. Ongoing
+      // reconciliation also covers native stream rebuild gaps after startup.
+      for (const target of targetList) states.set(target.absolutePath, await snapshot(target))
+      for (const target of targetList) {
+        scanAbort.signal.throwIfAborted()
         const watcher = watch(target.absolutePath, { recursive: false }, (_eventType, filename) => {
           if (stopped || signal.aborted) return
           const name = filename?.toString()
           if (name && isVcsMetadataDirectoryName(name.split(/[\\/]/)[0]!)) return
-          directories.add(target.relativePath)
-          if (name) paths.add(this.normalizeRelativePath(path.join(target.relativePath, name)))
-          if (timer !== undefined) return
-          timer = setTimeout(() => {
-            if (stopped || signal.aborted) return
-            const previousNames = knownNames.get(target.absolutePath) ?? new Set<string>()
-            let currentNames: Set<string>
-            try {
-              currentNames = new Set(readdirSync(target.absolutePath))
-            } catch {
-              currentNames = new Set()
-            }
-            for (const changedName of currentNames) {
-              if (!previousNames.has(changedName)) {
-                paths.add(this.normalizeRelativePath(path.join(target.relativePath, changedName)))
-              }
-            }
-            for (const removedName of previousNames) {
-              if (!currentNames.has(removedName)) {
-                paths.add(this.normalizeRelativePath(path.join(target.relativePath, removedName)))
-              }
-            }
-            knownNames.set(target.absolutePath, currentNames)
-            timer = undefined
-            if (stopped || signal.aborted) return
-            const event = { paths: [...paths], directories: [...directories] }
-            paths.clear()
-            directories.clear()
-            onChange(event)
-          }, 60)
+          notify(target.relativePath, name ? [name] : [])
         })
         watchers.push(watcher)
         watcher.on('error', (error) => {
@@ -672,17 +829,43 @@ export class WorkspaceService {
           onError?.(error)
         })
       }
+      for (const target of targetList) await reconcile(target)
+      scheduleReconciliation()
     } catch (error) {
       stop()
-      const code = (error as NodeJS.ErrnoException)?.code
-      if (code === 'EISDIR') {
-        onError?.(error instanceof Error ? error : new Error(String(error)))
-        return stop
-      }
       throw error
     }
     if (signal.aborted) stop()
     return stop
+  }
+
+  /**
+   * Whether each path is a file, and when it was last written. Paths resolve
+   * under the same boundary as {@link readFile}, so this tells a caller nothing
+   * the file route would not; a path that boundary refuses is `unavailable`.
+   */
+  async statFiles(
+    sessionId: string,
+    filePaths: string[],
+  ): Promise<WorkspaceFileStat[]> {
+    // One reply's links arrive together; look the workspace up once for all of them.
+    let root: ResolvedWorkspaceRoot
+    try {
+      root = await this.resolveWorkspaceRoot(sessionId)
+    } catch {
+      return filePaths.map((filePath) => ({ path: filePath, state: 'unavailable' }))
+    }
+    return Promise.all(filePaths.map(async (filePath): Promise<WorkspaceFileStat> => {
+      try {
+        const resolvedPath = await this.resolveWorkspacePathIn(root, filePath)
+        const stat = await this.safeStat(resolvedPath.absolutePath)
+        if (stat.kind === 'error') return { path: filePath, state: 'unavailable' }
+        if (stat.kind === 'missing' || !stat.stat.isFile()) return { path: filePath, state: 'missing' }
+        return { path: filePath, state: 'file', mtimeMs: stat.stat.mtimeMs }
+      } catch {
+        return { path: filePath, state: 'unavailable' }
+      }
+    }))
   }
 
   async readTree(
@@ -1286,6 +1469,11 @@ export class WorkspaceService {
     sessionId: string,
     requestedPath: string,
   ): Promise<WorkspacePathResolution> {
+    return this.resolveWorkspacePathIn(await this.resolveWorkspaceRoot(sessionId), requestedPath)
+  }
+
+  /** The session's workdir and its canonical root — the same for every path a request names. */
+  private async resolveWorkspaceRoot(sessionId: string): Promise<ResolvedWorkspaceRoot> {
     const workDir = await this.requireWorkDir(sessionId)
     const workspaceRoot = await this.getWorkspaceRoot(workDir)
     if (workspaceRoot.kind === 'missing') {
@@ -1294,19 +1482,26 @@ export class WorkspaceService {
     if (workspaceRoot.kind === 'error') {
       throw new Error(workspaceRoot.message)
     }
+    return { workDir, ...workspaceRoot }
+  }
 
-    const absolutePath = path.resolve(workDir, requestedPath || '.')
-    if (!this.isWithinRoot(absolutePath, workDir)) {
+  private async resolveWorkspacePathIn(
+    { workDir, ...workspaceRoot }: ResolvedWorkspaceRoot,
+    requestedPath: string,
+  ): Promise<WorkspacePathResolution> {
+    const requestedAbsolutePath = path.resolve(workDir, requestedPath || '.')
+    if (!this.isWithinRoot(requestedAbsolutePath, workDir)) {
       // Files this session changed outside its workdir (the user pointed the
       // model at an absolute path elsewhere, possibly another drive) are
       // registered as access roots when the turn checkpoint is built. Preview
       // those by absolute path — they have no workspace-relative form — instead
       // of rejecting them as out-of-sandbox.
-      if (this.isAbsoluteRequestPath(requestedPath) && isWithinRegisteredFilesystemRoot(absolutePath)) {
-        return this.resolveOutsideWorkspacePath(absolutePath, requestedPath)
+      if (this.isAbsoluteRequestPath(requestedPath) && isWithinRegisteredFilesystemRoot(requestedAbsolutePath)) {
+        return this.resolveOutsideWorkspacePath(requestedAbsolutePath, requestedPath)
       }
       throw new Error(`Path is outside workspace: ${requestedPath}`)
     }
+    const absolutePath = await this.matchUnicodeNormalization(workDir, requestedAbsolutePath)
 
     const canonicalTargetPath = await this.resolveCanonicalTargetPath(
       workspaceRoot.canonicalWorkspaceRoot,
@@ -1324,6 +1519,40 @@ export class WorkspaceService {
         path.relative(workspaceRoot.workspaceRoot, absolutePath),
       ),
     }
+  }
+
+  /**
+   * Models emit NFC names while some tools and file systems persist NFD (and
+   * vice versa). APFS treats both spellings as one file, but ext4 and NTFS
+   * compare bytes, so a missing path is matched segment by segment against
+   * the directory entries in a common normalization form. Anything that does
+   * not match keeps the requested spelling and stays missing.
+   */
+  private async matchUnicodeNormalization(workDir: string, absolutePath: string): Promise<string> {
+    const relativePath = path.relative(workDir, absolutePath)
+    if (!relativePath || /^[\x00-\x7f]*$/.test(relativePath)) return absolutePath
+    const exists = (candidate: string) => fs.lstat(candidate).then(() => true, () => false)
+    if (await exists(absolutePath)) return absolutePath
+
+    let current = workDir
+    for (const segment of relativePath.split(path.sep)) {
+      const exact = path.join(current, segment)
+      if (await exists(exact)) {
+        current = exact
+        continue
+      }
+      const wanted = segment.normalize('NFC')
+      let entries: string[]
+      try {
+        entries = await fs.readdir(current)
+      } catch {
+        return absolutePath
+      }
+      const match = entries.find((entry) => entry !== segment && entry.normalize('NFC') === wanted)
+      if (!match) return absolutePath
+      current = path.join(current, match)
+    }
+    return current
   }
 
   /**
@@ -1832,6 +2061,7 @@ export class WorkspaceService {
       const result = await execFile('git', args, {
         cwd: workDir,
         timeout: GIT_TIMEOUT_MS,
+        windowsHide: true,
         maxBuffer: MAX_GIT_BUFFER_BYTES,
         encoding: 'utf8',
       })

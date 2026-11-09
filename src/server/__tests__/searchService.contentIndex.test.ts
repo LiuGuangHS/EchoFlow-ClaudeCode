@@ -14,7 +14,7 @@ let scope: string
 let previousConfigDir: string | undefined
 
 beforeEach(async () => {
-  scope = await mkdtemp(join(tmpdir(), 'echoflow-code-search-service-content-index-'))
+  scope = await mkdtemp(join(tmpdir(), 'cc-haha-search-service-content-index-'))
   previousConfigDir = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = scope
   await mkdir(join(scope, 'projects', '-repo'), { recursive: true })
@@ -156,7 +156,6 @@ describe('SearchService SQLite content path', () => {
         projectPath: '-repo',
         workDir: '/repo',
         modifiedAt: '2026-07-16T00:00:00.000Z',
-        archived: false,
         matchCount: 1,
         matches: [{
           role: 'user',

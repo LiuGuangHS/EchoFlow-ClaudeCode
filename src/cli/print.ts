@@ -1,3 +1,4 @@
+import { filterAgentProfileTools, getAgentProfile, validateAgentProfileControlRequest, validateAgentProfileInitialize } from '../utils/agentProfile.js'
 import { createSessionMessageInbox, isPendingSessionMessage, sessionMessageUuid } from '../utils/sessionMessageInbox.js'
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { feature } from 'bun:bundle'
@@ -17,7 +18,7 @@ import {
 } from 'src/commands.js'
 import { createStreamlinedTransformer } from 'src/utils/streamlinedTransform.js'
 import { installStreamJsonStdoutGuard } from 'src/utils/streamJsonStdoutGuard.js'
-import type { ToolPermissionContext } from 'src/Tool.js'
+import type { SDKStatusDetail, ToolPermissionContext } from 'src/Tool.js'
 import type { ThinkingConfig } from 'src/utils/thinking.js'
 import { assembleToolPool, filterToolsByDenyRules } from 'src/tools.js'
 import uniqBy from 'lodash-es/uniqBy.js'
@@ -70,6 +71,7 @@ import type { Stream } from 'src/utils/stream.js'
 import { EMPTY_USAGE } from 'src/services/api/logging.js'
 import {
   loadConversationForResume,
+  ResumeMessageNotFoundError,
   type TurnInterruptionState,
 } from 'src/utils/conversationRecovery.js'
 import type {
@@ -165,7 +167,7 @@ import {
   DEFAULT_OUTPUT_STYLE_NAME,
   getAllOutputStyles,
 } from 'src/constants/outputStyles.js'
-import { TEAMMATE_MESSAGE_TAG, TICK_TAG } from 'src/constants/xml.js'
+import { TICK_TAG } from 'src/constants/xml.js'
 import {
   getSettings_DEPRECATED,
   getSettingsWithSources,
@@ -186,12 +188,17 @@ import {
   transitionPermissionMode,
 } from 'src/utils/permissions/permissionSetup.js'
 import {
-  tryGenerateSuggestion,
+  isUserStartedCommand,
   logSuggestionOutcome,
-  logSuggestionSuppressed,
-  type PromptVariant,
 } from 'src/services/PromptSuggestion/promptSuggestion.js'
-import { getLastCacheSafeParams } from 'src/utils/forkedAgent.js'
+import {
+  createSdkSuggestionState,
+  setSdkPromptSuggestions,
+  startSdkPushSuggestion,
+  takeOwedSdkSuggestionContext,
+  takeSdkSuggestionContext,
+} from 'src/services/PromptSuggestion/sdkPushSuggestion.js'
+import { getLastCacheSafeParams, type CacheSafeParams } from 'src/utils/forkedAgent.js'
 import {
   isLocalAgentTask,
   queuePendingMessage,
@@ -259,6 +266,14 @@ import {
   ElicitationCompleteNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import { disableStaleMcpReconnect } from './mcpReconnectState.js'
+import {
+  computerUsePermissionContext,
+  computerUseUnavailableMessage,
+  createComputerUseMcpRefresh,
+  readComputerUseRefreshConfiguration,
+} from './computerUseMcpRefresh.js'
+import { COMPUTER_USE_MCP_SERVER_NAME, isComputerUseMCPServer, isComputerUseRuntimeTool } from '../utils/computerUse/common.js'
+import { requiresComputerUse } from '../utils/computerUse/turnIntent.js'
 import { getMcpPrefix } from 'src/services/mcp/mcpStringUtils.js'
 import {
   commandBelongsToServer,
@@ -266,6 +281,7 @@ import {
 } from 'src/services/mcp/utils.js'
 import { setupVscodeSdkMcp } from 'src/services/mcp/vscodeSdkMcp.js'
 import { getAllMcpConfigs } from 'src/services/mcp/config.js'
+import { refreshGlobalConfigFromDisk } from 'src/utils/config.js'
 import {
   isQualifiedForGrove,
   checkGroveForNonInteractive,
@@ -274,7 +290,7 @@ import {
   toInternalMessages,
   toSDKRateLimitInfo,
 } from 'src/utils/messages/mappers.js'
-import { createModelSwitchBreadcrumbs } from 'src/utils/messages.js'
+import { createModelSwitchBreadcrumbs, createUserMessage } from 'src/utils/messages.js'
 import { PrintPartialOutputTracker } from './partialOutput.js'
 import { collectContextData } from 'src/commands/context/context-noninteractive.js'
 import { getSessionUsageSnapshot } from 'src/cost-tracker.js'
@@ -325,6 +341,7 @@ import {
 import {
   restoreAgentFromSession,
   restoreSessionStateFromLog,
+  restoreWorktreeForResume,
 } from 'src/utils/sessionRestore.js'
 import { SandboxManager } from 'src/utils/sandbox/sandbox-adapter.js'
 import {
@@ -339,7 +356,9 @@ import {
 import { asSessionId } from 'src/types/ids.js'
 import { jsonStringify } from '../utils/slowOperations.js'
 import { skillChangeDetector } from '../utils/skills/skillChangeDetector.js'
+import { invalidateComputerUseSkillGate } from '../utils/computerUse/skillGate.js'
 import { getCommands, clearCommandsCache } from '../commands.js'
+import { filterCommandsForHeadlessMode } from '../commands/headless.js'
 import {
   isBareMode,
   isEnvTruthy,
@@ -355,20 +374,23 @@ import {
   waitForTeammatesToBecomeIdle,
 } from '../utils/teammate.js'
 import { TEAM_LEAD_NAME } from '../utils/swarm/constants.js'
-import { SHUTDOWN_TEAM_PROMPT } from '../utils/swarm/teamShutdownPrompt.js'
+import { formatTeamFinishedPrompt, SHUTDOWN_TEAM_PROMPT } from '../utils/swarm/teamShutdownPrompt.js'
 import {
   readUnreadMessages,
-  markMessagesAsRead,
+  claimMailboxMessages,
+  formatTeammateMessages,
   isShutdownApproved,
+  type TeammateMessage,
 } from '../utils/teammateMailbox.js'
 import {
   partitionLeadMailboxMessages,
   resolveTeammatePermissionRequests,
 } from '../utils/swarm/printLeaderPermissionBridge.js'
-import { removeTeammateFromTeamFile, readTeamFile, getTeamFilePath } from '../utils/swarm/teamHelpers.js'
-import { setLeaderTeamName } from '../utils/tasks.js'
+import { removeTeammateFromTeamFile, readTeamFile, getTeamFilePath, unregisterTeamForSessionCleanup } from '../utils/swarm/teamHelpers.js'
+import { clearLeaderTeamName, setLeaderTeamName } from '../utils/tasks.js'
+import { clearTeammateColors } from '../utils/swarm/teammateLayoutManager.js'
 import { buildTeamRuntimeSnapshot } from '../utils/swarm/teamRuntimeSnapshot.js'
-import { unassignTeammateTasks } from '../utils/tasks.js'
+import { getCanonicalTeamTaskListId, listTasks, unassignTeammateTasks } from '../utils/tasks.js'
 import { getRunningTasks } from '../utils/task/framework.js'
 import { isBackgroundTask } from '../tasks/types.js'
 import { stopTaskFromControlRequest } from '../tasks/stopTask.js'
@@ -419,6 +441,175 @@ export function createShutdownTeamPrompt(): QueuedCommand {
   return {
     mode: 'prompt',
     value: SHUTDOWN_TEAM_PROMPT,
+    uuid: randomUUID(),
+    isMeta: true,
+  }
+}
+
+/**
+ * Polls in a row whose batch could not be acknowledged before the batch is
+ * processed anyway: delivering twice beats never delivering.
+ */
+export const MAX_LEAD_MAILBOX_ACK_FAILURES = 5
+
+export type LeadMailboxPollState = {
+  /** The unread mail left once the last teammate went away was drained. */
+  finalDrainDone: boolean
+  /** Consecutive polls whose batch could not be acknowledged. */
+  consecutiveAckFailures: number
+  /**
+   * The host paused the team (the desktop's Stop): teammate mail waits unread
+   * for the user's next message instead of starting lead turns nobody asked for.
+   */
+  held: boolean
+}
+
+export function createLeadMailboxPollState(): LeadMailboxPollState {
+  return { finalDrainDone: false, consecutiveAckFailures: 0, held: false }
+}
+
+export type LeadMailboxPollStep =
+  | { kind: 'stop' }
+  | { kind: 'held' }
+  | { kind: 'idle' }
+  | { kind: 'retry' }
+  | { kind: 'batch'; messages: TeammateMessage[] }
+
+/**
+ * One poll of the team lead's inbox. The batch is claimed (acknowledged by
+ * identity) before it is handed out, so mail that lands after the read stays
+ * unread and a concurrent mid-turn attachment can never deliver the same
+ * message again. When no teammate remains, unread mail gets one final drain
+ * instead of being stranded.
+ */
+export async function takeLeadMailboxBatch(
+  state: LeadMailboxPollState,
+  options: { teamName: string | undefined; hasActiveTeammates: boolean },
+): Promise<LeadMailboxPollStep> {
+  const { teamName, hasActiveTeammates } = options
+  if (state.held) return { kind: 'held' }
+  const unread = await readUnreadMessages(TEAM_LEAD_NAME, teamName)
+
+  if (!hasActiveTeammates) {
+    if (
+      unread.length === 0 ||
+      state.finalDrainDone ||
+      state.consecutiveAckFailures >= MAX_LEAD_MAILBOX_ACK_FAILURES
+    ) {
+      if (unread.length === 0) {
+        Object.assign(state, createLeadMailboxPollState())
+      }
+      return { kind: 'stop' }
+    }
+    state.finalDrainDone = true
+  } else {
+    state.finalDrainDone = false
+  }
+
+  if (unread.length === 0) {
+    state.consecutiveAckFailures = 0
+    return { kind: 'idle' }
+  }
+
+  const claimed = await claimMailboxMessages(TEAM_LEAD_NAME, teamName, unread)
+  if (claimed) {
+    state.consecutiveAckFailures = 0
+    if (claimed.length === 0) {
+      // Another consumer (a mid-turn attachment) took the whole batch.
+      return hasActiveTeammates ? { kind: 'idle' } : { kind: 'stop' }
+    }
+    return { kind: 'batch', messages: claimed }
+  }
+
+  state.consecutiveAckFailures += 1
+  if (
+    hasActiveTeammates &&
+    state.consecutiveAckFailures < MAX_LEAD_MAILBOX_ACK_FAILURES
+  ) {
+    logForDebugging(
+      `[print.ts] Could not mark ${unread.length} inbox message(s) read (${state.consecutiveAckFailures}/${MAX_LEAD_MAILBOX_ACK_FAILURES}); retrying next poll`,
+      { level: 'warn' },
+    )
+    return { kind: 'retry' }
+  }
+  logForDebugging(
+    `[print.ts] Could not mark ${unread.length} inbox message(s) read for ${state.consecutiveAckFailures} polls; processing the batch unmarked`,
+    { level: 'warn' },
+  )
+  return { kind: 'batch', messages: unread }
+}
+
+/**
+ * How long an approved team must stay finished before its lead is reminded.
+ * A member is marked idle a moment before its last report reaches the lead's
+ * inbox; reminding inside that gap would shut the team down unread.
+ */
+export const TEAM_FINISHED_SETTLE_MS = 3_000
+
+export type TeamFinishedReminderState = {
+  /** The finished state being watched, and when it was first seen. */
+  pending?: { signature: string; since: number }
+  /** The finished state the lead was already reminded about. */
+  remindedFor?: string
+}
+
+/**
+ * A non-interactive lead is told to shut its team down when its input closes.
+ * A desktop lead's input never closes, so a team it does not end by itself
+ * would stay in its finishing phase indefinitely, every member idle. Once an
+ * approved desktop team (`reviewRequired`) is finished -- every shared task
+ * completed, no member in a turn, and nothing unread in the lead's inbox --
+ * the lead is reminded once. Teammate mail after that (a member's report on
+ * more work, its shutdown approval) or a new task completing starts a new
+ * finished state, which earns a new reminder: a lead that stops after the
+ * members it shut down approve is still left to delete the team.
+ */
+export async function takeTeamFinishedPrompt(
+  state: TeamFinishedReminderState,
+  teamName: string | undefined,
+  now = Date.now(),
+): Promise<QueuedCommand | null> {
+  const team = teamName ? readTeamFile(teamName) : null
+  const members = team?.reviewRequired
+    ? team.members.filter(member => member.agentId !== team.leadAgentId)
+    : []
+  const working = members.some(member => (
+    member.terminated !== true &&
+    (member.isActive !== false || member.autoRetry !== undefined)
+  ))
+  const tasks = team && members.length > 0 && !working
+    ? (await listTasks(getCanonicalTeamTaskListId(team.name))).filter(
+        task => !task.metadata?._internal,
+      )
+    : []
+  if (
+    !team ||
+    tasks.length === 0 ||
+    tasks.some(task => task.status !== 'completed')
+  ) {
+    state.pending = undefined
+    return null
+  }
+
+  const signature = jsonStringify([
+    team.createdAt,
+    tasks.map(task => task.id).sort(),
+  ])
+  if (signature === state.remindedFor) return null
+  if (state.pending?.signature !== signature) {
+    state.pending = { signature, since: now }
+    return null
+  }
+  if (now - state.pending.since < TEAM_FINISHED_SETTLE_MS) return null
+
+  state.pending = undefined
+  state.remindedFor = signature
+  return {
+    mode: 'prompt',
+    value: formatTeamFinishedPrompt(
+      team.name,
+      members.filter(member => member.terminated !== true).map(member => member.name),
+    ),
     uuid: randomUUID(),
     isMeta: true,
   }
@@ -484,7 +675,9 @@ export function canBatchWith(
     !isPendingSessionMessage(head.uuid) &&
     !isPendingSessionMessage(next.uuid) &&
     next.workload === head.workload &&
-    next.isMeta === head.isMeta
+    next.isMeta === head.isMeta &&
+    !requiresComputerUse(head) &&
+    !requiresComputerUse(next)
   )
 }
 
@@ -505,6 +698,7 @@ export async function runHeadless(
     jsonSchema: Record<string, unknown> | undefined
     permissionPromptToolName: string | undefined
     allowedTools: string[] | undefined
+    computerUse?: boolean
     thinkingConfig: ThinkingConfig | undefined
     maxTurns: number | undefined
     maxBudgetUsd: number | undefined
@@ -524,7 +718,7 @@ export async function runHeadless(
     workload: string | undefined
     setupTrigger?: 'init' | 'maintenance' | undefined
     sessionStartHooksPromise?: ReturnType<typeof processSessionStartHooks>
-    setSDKStatus?: (status: SDKStatus) => void
+    setSDKStatus?: (status: SDKStatus, detail?: SDKStatusDetail) => void
   },
 ): Promise<void> {
   if (
@@ -942,6 +1136,7 @@ export async function runHeadless(
           message.subtype === 'task_notification' ||
           message.subtype === 'task_started' ||
           message.subtype === 'task_progress' ||
+          message.subtype === 'prompt_suggestion_activity' ||
           message.subtype === 'post_turn_summary')
       ) &&
       message.type !== 'stream_event' &&
@@ -1017,6 +1212,17 @@ export async function runHeadless(
   )
 }
 
+export function createPromptSuggestionActivityEmitter(structuredIO: StructuredIO) {
+  return (generationId: string, active: boolean) => structuredIO.outbound.enqueue({
+    type: 'system',
+    subtype: 'prompt_suggestion_activity',
+    generation_id: generationId,
+    active,
+    uuid: randomUUID(),
+    session_id: getSessionId(),
+  })
+}
+
 export function bindAgentRunMessageSink(structuredIO: StructuredIO): () => void {
   if (!(structuredIO instanceof RemoteIO)) return () => undefined
   return setAgentRunMessageSink(event => {
@@ -1086,6 +1292,7 @@ function runHeadlessStreaming(
     permissionPromptToolName: string | undefined
     hostPermissionPromptAvailable?: boolean
     allowedTools: string[] | undefined
+    computerUse?: boolean
     thinkingConfig: ThinkingConfig | undefined
     maxTurns: number | undefined
     maxBudgetUsd: number | undefined
@@ -1098,7 +1305,7 @@ function runHeadlessStreaming(
     includePartialMessages?: boolean | undefined
     enableAuthStatus?: boolean | undefined
     agent?: string | undefined
-    setSDKStatus?: (status: SDKStatus) => void
+    setSDKStatus?: (status: SDKStatus, detail?: SDKStatusDetail) => void
     promptSuggestions?: boolean | undefined
     workload?: string | undefined
     outputFormat: string | undefined
@@ -1114,6 +1321,8 @@ function runHeadlessStreaming(
     | undefined
   let inputClosed = false
   let shutdownPromptInjected = false
+  const leadMailboxPoll = createLeadMailboxPollState()
+  const teamFinishedReminder: TeamFinishedReminderState = {}
   let heldBackResult: StdoutMessage | null = null
   const deferredAgentNotifications = new TaskNotificationFollowUpBatch()
   let abortController: AbortController | undefined
@@ -1187,33 +1396,7 @@ function runHeadlessStreaming(
   })
 
   // Prompt suggestion tracking (push model)
-  const suggestionState: {
-    abortController: AbortController | null
-    inflightPromise: Promise<void> | null
-    lastEmitted: {
-      text: string
-      emittedAt: number
-      promptId: PromptVariant
-      generationRequestId: string | null
-    } | null
-    pendingSuggestion: {
-      type: 'prompt_suggestion'
-      suggestion: string
-      uuid: UUID
-      session_id: string
-    } | null
-    pendingLastEmittedEntry: {
-      text: string
-      promptId: PromptVariant
-      generationRequestId: string | null
-    } | null
-  } = {
-    abortController: null,
-    inflightPromise: null,
-    lastEmitted: null,
-    pendingSuggestion: null,
-    pendingLastEmittedEntry: null,
-  }
+  const suggestionState = createSdkSuggestionState()
 
   // Set up AWS auth status listener if enabled
   let unsubscribeAuthStatus: (() => void) | undefined
@@ -1589,17 +1772,46 @@ function runHeadlessStreaming(
     configs: {},
   }
 
+  const computerUseMcp = createComputerUseMcpRefresh({
+    readConfiguration: () => readComputerUseRefreshConfiguration(options.computerUse === true),
+    snapshot: () => ({
+      clients: uniqBy([...getAppState().mcp.clients, ...mcpClients], 'name'),
+      tools: getAppState().mcp.tools,
+    }),
+    connect: async (config, reconnect) => {
+      if (reconnect) return reconnectMcpServerImpl(COMPUTER_USE_MCP_SERVER_NAME, config)
+      const client = await connectToServer(COMPUTER_USE_MCP_SERVER_NAME, config)
+      return { client, tools: client.type === 'connected' ? await fetchToolsForClient(client) : [] }
+    },
+    retire: client => clearServerCache(COMPUTER_USE_MCP_SERVER_NAME, client.config),
+    publish: (client, currentTools, allowedTools) => {
+      // Startup and SDK pools can retain old objects after a configuration
+      // change. Keep one authoritative owner in AppState for this builtin.
+      mcpClients = mcpClients.filter(existing => !isComputerUseMCPServer(existing.name))
+      setAppState(prev => ({
+        ...prev,
+        toolPermissionContext: computerUsePermissionContext(prev.toolPermissionContext, allowedTools),
+        mcp: {
+          ...prev.mcp,
+          clients: [...prev.mcp.clients.filter(existing => !isComputerUseMCPServer(existing.name)), ...(client ? [client] : [])],
+          tools: [...prev.mcp.tools.filter(tool => !isComputerUseRuntimeTool(tool)), ...currentTools],
+        },
+      }))
+    },
+    onError: error => logForDebugging(`[Computer Use MCP] Refresh failed: ${errorMessage(error)}`),
+  })
+
   // Shared tool assembly for ask() and the get_context_usage control request.
   // Closes over the mutable sdkTools/dynamicMcpState bindings so both call
   // sites see late-connecting servers.
   const buildAllTools = (appState: AppState): Tools => {
     const assembledTools = assembleToolPool(
       appState.toolPermissionContext,
-      appState.mcp.tools,
+      [...appState.mcp.tools.filter(tool => !isComputerUseRuntimeTool(tool)), ...computerUseMcp.tools()],
     )
     let allTools = uniqBy(
       mergeAndFilterTools(
-        [...tools, ...sdkTools, ...dynamicMcpState.tools],
+        [...tools, ...sdkTools, ...dynamicMcpState.tools].filter(tool => !isComputerUseRuntimeTool(tool)),
         assembledTools,
         appState.toolPermissionContext.mode,
       ),
@@ -1631,7 +1843,7 @@ function runHeadlessStreaming(
         allTools = [...allTools, syntheticOutputResult.tool]
       }
     }
-    return allTools
+    return filterAgentProfileTools(allTools)
   }
 
   // Bridge handle for remote-control (SDK control message).
@@ -1885,7 +2097,7 @@ function runHeadlessStreaming(
   const idleTimeout = createIdleTimeoutManager(() => !running)
 
   // Mutable commands and agents for hot reloading
-  let currentCommands = commands
+  let currentCommands = filterCommandsForHeadlessMode(commands)
   let currentAgents = agents
 
   // Clear all plugin-related caches, reload commands/agents/hooks.
@@ -1905,7 +2117,7 @@ function runHeadlessStreaming(
     // Headless-specific: currentCommands/currentAgents are local mutable refs
     // captured by the query loop (REPL uses AppState instead). getCommands is
     // fresh because refreshActivePlugins cleared its cache.
-    currentCommands = await getCommands(cwd())
+    currentCommands = filterCommandsForHeadlessMode(await getCommands(cwd()))
 
     // Preserve SDK-provided agents (--agents CLI flag or SDK initialize
     // control_request) — both inject via parseAgentsFromJson with
@@ -1962,7 +2174,7 @@ function runHeadlessStreaming(
   const unsubscribeSkillChanges = skillChangeDetector.subscribe(() => {
     clearCommandsCache()
     void getCommands(cwd()).then(newCommands => {
-      currentCommands = newCommands
+      currentCommands = filterCommandsForHeadlessMode(newCommands)
     })
   })
 
@@ -2065,6 +2277,16 @@ function runHeadlessStreaming(
       let command: QueuedCommand | undefined
       let waitingForAgents = false
 
+      const startPushSuggestion = (cacheSafeParams: CacheSafeParams) =>
+        startSdkPushSuggestion(suggestionState, {
+          cacheSafeParams,
+          messages: mutableMessages,
+          getAppState,
+          isResultHeld: () => heldBackResult !== null,
+          emit: message => output.enqueue(message),
+          onActivity: createPromptSuggestionActivityEmitter(structuredIO),
+        })
+
       // Extract command processing into a named function for the do-while pattern.
       // Drains the queue, batching consecutive prompt-mode commands into one
       // ask() call so messages that queued up during a long turn coalesce
@@ -2098,6 +2320,13 @@ function runHeadlessStreaming(
             }
           }
           const batchUuids = batch.map(c => c.uuid).filter(u => u !== undefined)
+          // A host notice can batch with the user's next message; the turn is
+          // still the user's when any batched command was typed by them.
+          const userStartedTurn = batch.some(isUserStartedCommand)
+          // Stop hooks save a fresh fork context only when a turn finishes
+          // normally; compare against this to spot interrupted turns and
+          // local slash commands that never reached the model.
+          const cacheSafeParamsAtTurnStart = getLastCacheSafeParams()
 
           // QueryEngine will emit a replay for command.uuid (the last uuid in
           // the batch) via its messagesToAck path. Emit replays here for the
@@ -2123,11 +2352,23 @@ function runHeadlessStreaming(
           // per-server by main.tsx (mirrors useManageMCPConnections). Reading
           // fresh per-command means late-connecting servers are visible on the
           // next turn. registerElicitationHandlers is idempotent (tracking set).
+          // Settings can change after prewarm or any earlier turn. Reconcile
+          // the builtin before taking the per-query inventory, even when the
+          // config file did not exist when the CLI started watching skills.
+          const computerUseWasAvailable = computerUseMcp.tools().length > 0
+          await computerUseMcp.sync()
+          if (computerUseWasAvailable !== (computerUseMcp.tools().length > 0)) {
+            // The config may have been created after skill watchers started;
+            // make both explicit Skill calls and the menu fresh in this turn.
+            invalidateComputerUseSkillGate()
+            clearCommandsCache()
+            currentCommands = filterCommandsForHeadlessMode(await getCommands(cwd()))
+          }
           const appState = getAppState()
           const allMcpClients = [
             ...appState.mcp.clients,
-            ...sdkClients,
-            ...dynamicMcpState.clients,
+            ...sdkClients.filter(client => !isComputerUseMCPServer(client.name)),
+            ...dynamicMcpState.clients.filter(client => !isComputerUseMCPServer(client.name)),
           ]
           registerElicitationHandlers(allMcpClients)
           // Channel handlers for servers allowlisted via --channels at
@@ -2181,6 +2422,9 @@ function runHeadlessStreaming(
           suggestionState.abortController = null
           suggestionState.pendingSuggestion = null
           suggestionState.pendingLastEmittedEntry = null
+          // A new message from the user replaces a prediction still owed to
+          // an earlier turn that was waiting on background agents.
+          if (userStartedTurn) suggestionState.deferredUntilAgentsSettle = false
           if (suggestionState.lastEmitted) {
             if (command.mode === 'prompt') {
               // SDK user messages enqueue ContentBlockParam[], not a plain string
@@ -2218,6 +2462,9 @@ function runHeadlessStreaming(
           // const-capture: TS loses `while ((command = dequeue()))` narrowing
           // inside the closure.
           const cmd = command
+          const requiredComputerUse = requiresComputerUse(cmd) && !isPendingSessionMessage(cmd.uuid)
+            ? { unavailableMessage: computerUseUnavailableMessage(computerUseMcp.unavailableReason()) }
+            : undefined
           await runWithWorkload(cmd.workload ?? options.workload, async () => {
             for await (const message of ask({
               commands: uniqBy(
@@ -2227,6 +2474,9 @@ function runHeadlessStreaming(
               prompt: input,
               promptUuid: cmd.uuid,
               isMeta: cmd.isMeta,
+              // Same derivation as handlePromptSubmit: a task notification that
+              // starts its own turn is not the user's input.
+              origin: cmd.origin ?? (cmd.mode === 'task-notification' ? ({ kind: 'task-notification' } as const) : undefined),
               cwd: cwd(),
               tools: allTools,
               verbose: options.verbose,
@@ -2273,11 +2523,17 @@ function runHeadlessStreaming(
                 ),
               agents: currentAgents,
               orphanedPermission: cmd.orphanedPermission,
-              setSDKStatus: status => {
+              requiredComputerUse,
+              setSDKStatus: (status, detail) => {
                 output.enqueue({
                   type: 'system',
                   subtype: 'status',
                   status,
+                  ...(detail?.compactProgress && {
+                    compact_progress: {
+                      output_chars: detail.compactProgress.outputChars,
+                    },
+                  }),
                   session_id: getSessionId(),
                   uuid: randomUUID(),
                 })
@@ -2346,92 +2602,17 @@ function runHeadlessStreaming(
             )
           }
 
-          // Generate and emit prompt suggestion for SDK consumers
-          if (
-            options.promptSuggestions &&
-            !isEnvDefinedFalsy(process.env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION)
-          ) {
-            // TS narrows suggestionState to never in the while loop body;
-            // cast via unknown to reset narrowing.
-            const state = suggestionState as unknown as typeof suggestionState
-            state.abortController?.abort()
-            const localAbort = new AbortController()
-            suggestionState.abortController = localAbort
-
-            const cacheSafeParams = getLastCacheSafeParams()
-            if (!cacheSafeParams) {
-              logSuggestionSuppressed(
-                'sdk_no_params',
-                undefined,
-                undefined,
-                'sdk',
-              )
-            } else {
-              // Use a ref object so the IIFE's finally can compare against its own
-              // promise without a self-reference (which upsets TypeScript's flow analysis).
-              const ref: { promise: Promise<void> | null } = { promise: null }
-              ref.promise = (async () => {
-                try {
-                  const result = await tryGenerateSuggestion(
-                    localAbort,
-                    mutableMessages,
-                    getAppState,
-                    cacheSafeParams,
-                    'sdk',
-                  )
-                  if (!result || localAbort.signal.aborted) return
-                  const suggestionMsg = {
-                    type: 'prompt_suggestion' as const,
-                    suggestion: result.suggestion,
-                    uuid: randomUUID(),
-                    session_id: getSessionId(),
-                  }
-                  const lastEmittedEntry = {
-                    text: result.suggestion,
-                    emittedAt: Date.now(),
-                    promptId: result.promptId,
-                    generationRequestId: result.generationRequestId,
-                  }
-                  // Defer emission if the result is being held for background agents,
-                  // so that prompt_suggestion always arrives after result.
-                  // Only set lastEmitted when the suggestion is actually delivered
-                  // to the consumer; deferred suggestions may be discarded before
-                  // delivery if a new command arrives first.
-                  if (heldBackResult) {
-                    suggestionState.pendingSuggestion = suggestionMsg
-                    suggestionState.pendingLastEmittedEntry = {
-                      text: lastEmittedEntry.text,
-                      promptId: lastEmittedEntry.promptId,
-                      generationRequestId: lastEmittedEntry.generationRequestId,
-                    }
-                  } else {
-                    suggestionState.lastEmitted = lastEmittedEntry
-                    output.enqueue(suggestionMsg)
-                  }
-                } catch (error) {
-                  if (
-                    error instanceof Error &&
-                    (error.name === 'AbortError' ||
-                      error.name === 'APIUserAbortError')
-                  ) {
-                    logSuggestionSuppressed(
-                      'aborted',
-                      undefined,
-                      undefined,
-                      'sdk',
-                    )
-                    return
-                  }
-                  logError(toError(error))
-                } finally {
-                  if (suggestionState.inflightPromise === ref.promise) {
-                    suggestionState.inflightPromise = null
-                  }
-                }
-              })()
-              suggestionState.inflightPromise = ref.promise
-            }
-          }
+          // Generate and emit prompt suggestion for SDK consumers.
+          const suggestionContext = takeSdkSuggestionContext(suggestionState, {
+            enabled:
+              !!options.promptSuggestions &&
+              !isEnvDefinedFalsy(process.env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION),
+            userStartedTurn,
+            resultHeld: heldBackResult !== null,
+            cacheSafeParams: getLastCacheSafeParams(),
+            cacheSafeParamsAtTurnStart,
+          })
+          if (suggestionContext) startPushSuggestion(suggestionContext)
 
           // Log headless profiler metrics for this turn and start next turn
           logHeadlessProfilerTurn()
@@ -2487,6 +2668,14 @@ function runHeadlessStreaming(
       if (heldBackResult) {
         output.enqueue(heldBackResult)
         heldBackResult = null
+        // Agents settled without a follow-up turn: predict for the finished
+        // user turn now that its result is out.
+        const owedContext = takeOwedSdkSuggestionContext(
+          suggestionState,
+          !!options.promptSuggestions,
+          getLastCacheSafeParams(),
+        )
+        if (owedContext) startPushSuggestion(owedContext)
         if (suggestionState.pendingSuggestion) {
           output.enqueue(suggestionState.pendingSuggestion)
           // Now that the suggestion is actually delivered, record it for acceptance tracking
@@ -2581,8 +2770,6 @@ function runHeadlessStreaming(
       const teamContext = currentAppState.teamContext
 
       if (teamContext && isTeamLead(teamContext)) {
-        const agentName = 'team-lead'
-
         // Poll for messages while teammates are active
         // This is needed because teammates may send messages while we're waiting
         // Keep polling until the team is shut down
@@ -2591,32 +2778,43 @@ function runHeadlessStreaming(
         while (true) {
           // Check if teammates are still active
           const refreshedState = getAppState()
-          const hasActiveTeammates = hasTeammatesRequiringShutdown(refreshedState)
+          const teamName = refreshedState.teamContext?.teamName
+          // Claims exactly the batch it read before handing it out, and
+          // drains leftover mail once after the last teammate is gone.
+          const step = await takeLeadMailboxBatch(leadMailboxPoll, {
+            teamName,
+            hasActiveTeammates: hasTeammatesRequiringShutdown(refreshedState),
+          })
 
-          if (!hasActiveTeammates) {
+          if (step.kind === 'stop') {
             logForDebugging(
               '[print.ts] No more active teammates, stopping poll',
             )
             break
           }
 
-          const unread = await readUnreadMessages(
-            agentName,
-            refreshedState.teamContext?.teamName,
-          )
+          if (step.kind === 'held') {
+            logForDebugging(
+              '[print.ts] Team paused by the host; teammate mail waits for the next user message',
+            )
+            break
+          }
 
-          if (unread.length > 0) {
+          if (step.kind === 'retry') {
+            await sleep(POLL_INTERVAL_MS)
+            continue
+          }
+
+          if (step.kind === 'batch') {
+            const unread = step.messages
             logForDebugging(
               `[print.ts] Team-lead found ${unread.length} unread messages`,
             )
+            // The team moved on; whatever finishes after the lead reads this
+            // settles afresh and earns its own reminder.
+            teamFinishedReminder.pending = undefined
+            teamFinishedReminder.remindedFor = undefined
 
-            // Mark as read immediately to avoid duplicate processing
-            await markMessagesAsRead(
-              agentName,
-              refreshedState.teamContext?.teamName,
-            )
-
-            const teamName = refreshedState.teamContext?.teamName
             const partitioned = partitionLeadMailboxMessages(unread)
 
             if (
@@ -2695,18 +2893,14 @@ function runHeadlessStreaming(
 
             // Format remaining teammate chat the same way as useInboxPoller.
             // Permission requests stay out of the model context.
-            const formatted = partitioned.remaining
-              .map(
-                (m: { from: string; text: string; color?: string }) =>
-                  `<${TEAMMATE_MESSAGE_TAG} teammate_id="${m.from}"${m.color ? ` color="${m.color}"` : ''}>\n${m.text}\n</${TEAMMATE_MESSAGE_TAG}>`,
-              )
-              .join('\n\n')
+            const formatted = formatTeammateMessages(partitioned.remaining)
 
             // Enqueue and process
             enqueue({
               mode: 'prompt',
               value: formatted,
               uuid: randomUUID(),
+              isSynthetic: true,
             })
             void run()
             return // run() will come back here after processing
@@ -2720,6 +2914,21 @@ function runHeadlessStreaming(
               '[print.ts] Input closed with active teammates, injecting shutdown prompt',
             )
             enqueue(createShutdownTeamPrompt())
+            void run()
+            return // run() will come back here after processing
+          }
+
+          // A desktop lead's input never closes: remind it once its approved
+          // team has finished instead.
+          const teamFinishedPrompt = await takeTeamFinishedPrompt(
+            teamFinishedReminder,
+            teamName,
+          )
+          if (teamFinishedPrompt) {
+            logForDebugging(
+              '[print.ts] Approved team finished, reminding the lead to shut it down',
+            )
+            enqueue(teamFinishedPrompt)
             void run()
             return // run() will come back here after processing
           }
@@ -2915,7 +3124,7 @@ function runHeadlessStreaming(
       }
 
       if (message.type === 'control_request') {
-        if (message.request.subtype === 'enqueue_session_message') {
+        if (message.request.subtype === 'enqueue_session_message' || message.request.subtype === 'enqueue_scheduled_task') {
           try {
             const deliveryUuid = sessionMessageUuid(message.request.message_id)
             const persisted = !isPendingSessionMessage(deliveryUuid) && await doesMessageExistInSession(
@@ -2936,8 +3145,21 @@ function runHeadlessStreaming(
           } catch (error) {
             sendControlResponseError(message, error instanceof Error ? error.message : String(error))
           }
+        } else if (message.request.subtype === 'team_runtime_ended') {
+          // The host ended this team and removed its directories (the user
+          // cancelled or ended it). Let go of it as TeamDelete would, or the
+          // lead could never form another team in this session.
+          const endedTeam = message.request.team_name
+          if (getAppState().teamContext?.teamName === endedTeam) {
+            unregisterTeamForSessionCleanup(endedTeam)
+            clearTeammateColors()
+            clearLeaderTeamName()
+            setAppState(prev => ({ ...prev, teamContext: undefined, inbox: { messages: [] } }))
+          }
+          sendControlResponseSuccess(message)
         } else if (message.request.subtype === 'interrupt' || message.request.subtype === 'team_plan_pause') {
           sessionMessageInbox.cancelQueued(dequeueAllMatching)
+          if (message.request.subtype === 'team_plan_pause') leadMailboxPoll.held = true
           // Track escapes for attribution (ant-only feature)
           if (feature('COMMIT_ATTRIBUTION')) {
             setAppState(prev => ({
@@ -2971,6 +3193,11 @@ function runHeadlessStreaming(
           sendControlResponseSuccess(message)
           break // exits for-await → falls through to inputClosed=true drain below
         } else if (message.request.subtype === 'initialize') {
+          const profileError = validateAgentProfileInitialize(message.request)
+          if (profileError) {
+            sendControlResponseError(message, profileError)
+            continue
+          }
           // SDK MCP server names from the initialize message
           // Populated by both browser and ProcessTransport sessions
           if (
@@ -3026,6 +3253,11 @@ function runHeadlessStreaming(
             void run()
           }
         } else if (message.request.subtype === 'set_permission_mode') {
+          const profileError = validateAgentProfileControlRequest(message.request.subtype, message.request)
+          if (profileError) {
+            sendControlResponseError(message, profileError)
+            continue
+          }
           const m = message.request // for typescript (TODO: use readonly types to avoid this)
           setAppState(prev => ({
             ...prev,
@@ -3051,6 +3283,10 @@ function runHeadlessStreaming(
           notifySessionMetadataChanged({ model })
           injectModelSwitchBreadcrumbs(requestedModel, model)
 
+          sendControlResponseSuccess(message)
+        } else if (message.request.subtype === 'set_prompt_suggestions') {
+          options.promptSuggestions = message.request.enabled
+          setSdkPromptSuggestions(suggestionState, message.request.enabled, setAppState)
           sendControlResponseSuccess(message)
         } else if (message.request.subtype === 'set_max_thinking_tokens') {
           if (message.request.max_thinking_tokens === null) {
@@ -3166,6 +3402,11 @@ function runHeadlessStreaming(
           }
           sendControlResponseSuccess(message)
         } else if (message.request.subtype === 'mcp_set_servers') {
+          const profileError = validateAgentProfileControlRequest(message.request.subtype, message.request)
+          if (profileError) {
+            sendControlResponseError(message, profileError)
+            continue
+          }
           const { response, sdkServersChanged } = await applyMcpServerChanges(
             message.request.servers,
           )
@@ -3206,7 +3447,7 @@ function runHeadlessStreaming(
               loadAllPluginsCacheOnly(),
             ])
             if (cmdsR.status === 'fulfilled') {
-              currentCommands = cmdsR.value
+              currentCommands = filterCommandsForHeadlessMode(cmdsR.value)
             } else {
               logError(cmdsR.reason)
             }
@@ -3244,6 +3485,7 @@ function runHeadlessStreaming(
             sendControlResponseError(message, errorMessage(error))
           }
         } else if (message.request.subtype === 'mcp_reconnect') {
+          refreshGlobalConfigFromDisk()
           const currentAppState = getAppState()
           const { serverName } = message.request
           elicitationRegistered.delete(serverName)
@@ -4010,6 +4252,11 @@ function runHeadlessStreaming(
             sendControlResponseError(message, result.message)
           }
         } else if (message.request.subtype === 'send_agent_message') {
+          const profileError = validateAgentProfileControlRequest(message.request.subtype, message.request)
+          if (profileError) {
+            sendControlResponseError(message, profileError)
+            continue
+          }
           const agentId = message.request.agent_id.trim()
           const content = message.request.content.trim()
           if (!agentId || !content) {
@@ -4024,7 +4271,12 @@ function runHeadlessStreaming(
               isLocalAgentTask(task) &&
               !isMainSessionTask(task)
             ) {
-              queuePendingMessage(agentId, content, setAppState)
+              queuePendingMessage(
+                agentId,
+                content,
+                setAppState,
+                getAgentProfile() === 'lean' ? [createUserMessage({ content, origin: { kind: 'human' } })] : undefined,
+              )
               sendControlResponseSuccess(message, {
                 agent_id: agentId,
                 delivery: 'queued',
@@ -4370,6 +4622,9 @@ function runHeadlessStreaming(
         trackReceivedMessageUuid(message.uuid)
       }
 
+      // The user speaking again ends a host pause: mail held since then reaches
+      // the lead after this turn, alongside whatever the user now wants.
+      leadMailboxPoll.held = false
       enqueue({
         mode: 'prompt' as const,
         // file_attachments rides the protobuf catchall from the web composer.
@@ -4377,6 +4632,7 @@ function runHeadlessStreaming(
         value: await resolveAndPrepend(message, message.message.content),
         uuid: message.uuid,
         priority: message.priority,
+        ...(message.isSynthetic ? { isSynthetic: true } : {}),
       })
       // Increment prompt count for attribution tracking and save snapshot
       // The snapshot persists promptCount so it survives compaction
@@ -4416,6 +4672,7 @@ function runHeadlessStreaming(
 }
 
 export { runHeadlessStreaming as __runHeadlessStreamingForTests }
+export { loadInitialMessages as __loadInitialMessagesForTests }
 
 /**
  * Creates a CanUseToolFn that incorporates a custom permission prompt tool.
@@ -5237,6 +5494,9 @@ async function loadInitialMessages(
             ? { ...result, worktreeSession: undefined }
             : result,
         )
+        // Cd back into the worktree the session was working in, as the
+        // interactive resume does (processResumedConversation).
+        if (!options.forkSession) restoreWorktreeForResume(result.worktreeSession)
 
         // Write mode entry for the resumed session
         if (feature('COORDINATOR_MODE') && coordinatorModeModule) {
@@ -5350,6 +5610,7 @@ async function loadInitialMessages(
       const result = await loadConversationForResume(
         parsedSessionId.sessionId,
         parsedSessionId.jsonlFile || undefined,
+        { resumeSessionAt: options.resumeSessionAt },
       )
 
       // hydrateFromCCRv2InternalEvents writes an empty transcript file for
@@ -5375,23 +5636,6 @@ async function loadInitialMessages(
           gracefulShutdownSync(1)
           return { messages: [] }
         }
-      }
-
-      // Handle resumeSessionAt feature
-      if (options.resumeSessionAt) {
-        const index = result.messages.findIndex(
-          m => m.uuid === options.resumeSessionAt,
-        )
-        if (index < 0) {
-          emitLoadError(
-            `No message found with message.uuid of: ${options.resumeSessionAt}`,
-            options.outputFormat,
-          )
-          gracefulShutdownSync(1)
-          return { messages: [] }
-        }
-
-        result.messages = index >= 0 ? result.messages.slice(0, index + 1) : []
       }
 
       // Match coordinator mode to the resumed session's mode
@@ -5437,6 +5681,9 @@ async function loadInitialMessages(
           ? { ...result, worktreeSession: undefined }
           : result,
       )
+      // Cd back into the worktree the session was working in, as the
+      // interactive resume does (processResumedConversation).
+      if (!options.forkSession) restoreWorktreeForResume(result.worktreeSession)
 
       // Write mode entry for the resumed session
       if (feature('COORDINATOR_MODE') && coordinatorModeModule) {
@@ -5451,6 +5698,11 @@ async function loadInitialMessages(
         agentSetting: result.agentSetting,
       }
     } catch (error) {
+      if (error instanceof ResumeMessageNotFoundError) {
+        emitLoadError(error.message, options.outputFormat)
+        gracefulShutdownSync(1)
+        return { messages: [] }
+      }
       logError(error)
       const errorMessage =
         error instanceof Error

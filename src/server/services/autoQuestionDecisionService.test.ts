@@ -4,9 +4,10 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { ProviderService } from './providerService.js'
 import { drainTraceCaptureForTests } from './traceCaptureService.js'
-import { echoFlowOAuthService } from './echoFlowOAuthService.js'
-import { echoFlowOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
-import { echoFlowGrokOAuthService } from './echoFlowGrokOAuthService.js'
+import { hahaOAuthService } from './hahaOAuthService.js'
+import { hahaOpenAIOAuthService } from './hahaOpenAIOAuthService.js'
+import { hahaGrokOAuthService } from './hahaGrokOAuthService.js'
+import { hahaDeepSeekOAuthService } from './hahaDeepSeekOAuthService.js'
 import {
   decideAutoQuestionAnswers,
   type AutoQuestion,
@@ -42,7 +43,7 @@ describe('autoQuestionDecisionService', () => {
 
   afterEach(async () => {
     globalThis.fetch = originalFetch
-    echoFlowOpenAIOAuthService.dispose()
+    hahaOpenAIOAuthService.dispose()
     await drainTraceCaptureForTests()
     if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
     else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
@@ -228,71 +229,17 @@ describe('autoQuestionDecisionService', () => {
     expect(calls[0]!.headers.get('x-opencode-session')).toBe('session-auto-question')
   })
 
-  test('fails closed for custom Anthropic helpers when local redaction is enabled', async () => {
-    await fs.writeFile(path.join(configDir, 'settings.json'), JSON.stringify({
-      localRedaction: { enabled: true, personalInfo: false, customWords: [] },
-    }))
-    const provider = await new ProviderService().addProvider({
-      presetId: 'custom', name: 'Direct Anthropic Fixture', apiKey: 'fake-key',
-      baseUrl: 'https://provider.example.test', apiFormat: 'anthropic',
-      models: { main: 'large-test', haiku: 'small-test', sonnet: 'large-test', opus: 'large-test' },
-    })
-    let calls = 0
-    globalThis.fetch = (async () => {
-      calls += 1
-      throw new Error('custom Anthropic helper must not bypass redaction')
-    }) as typeof fetch
-
-    expect(await decideAutoQuestionAnswers({
-      questions: [undecided], conversationText: 'secret conversation', providerId: provider.id,
-      signal: new AbortController().signal,
-    })).toBeNull()
-    expect(calls).toBe(0)
-  })
-
-  test('fails closed for official OAuth helpers when local redaction is enabled', async () => {
-    await fs.writeFile(path.join(configDir, 'settings.json'), JSON.stringify({
-      localRedaction: { enabled: true, personalInfo: false, customWords: [] },
-    }))
-    await echoFlowOAuthService.saveTokens({
+  test('never presents the Claude Official OAuth token itself when the session has no provider ID', async () => {
+    // A hand-built request cannot carry the Claude Code CLI's identity
+    // (User-Agent, system prefix, billing header, body signature), so the
+    // subscription token must not leave through this path at all.
+    await hahaOAuthService.saveTokens({
       accessToken: 'fake-claude-token', refreshToken: 'fake-refresh-token',
       expiresAt: Date.now() + 60 * 60_000, scopes: ['user:inference'], subscriptionType: 'pro',
     })
-    await echoFlowOpenAIOAuthService.saveTokens({
-      accessToken: 'fake-openai-token', refreshToken: 'fake-refresh-token',
-      expiresAt: Date.now() + 60 * 60_000, accountId: 'acct-auto-question', email: 'test@example.com',
-    })
-    await echoFlowGrokOAuthService.saveTokens({
-      accessToken: 'fake-grok-token', refreshToken: 'fake-refresh-token',
-      expiresAt: Date.now() + 60 * 60_000, email: null,
-    })
-    let calls = 0
-    globalThis.fetch = (async () => {
-      calls += 1
-      throw new Error('official helper must not bypass redaction')
-    }) as typeof fetch
-
-    for (const providerId of [null, 'openai-official', 'grok-official'] as const) {
-      expect(await decideAutoQuestionAnswers({
-        questions: [undecided], conversationText: 'secret conversation', providerId,
-        signal: new AbortController().signal,
-      })).toBeNull()
-    }
-    expect(calls).toBe(0)
-  })
-
-  test('uses Claude Official OAuth Haiku when the session has no provider ID', async () => {
-    await echoFlowOAuthService.saveTokens({
-      accessToken: 'fake-claude-token', refreshToken: 'fake-refresh-token',
-      expiresAt: Date.now() + 60 * 60_000, scopes: ['user:inference'], subscriptionType: 'pro',
-    })
-    const calls: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = []
-    globalThis.fetch = (async (input, init) => {
-      calls.push({
-        url: String(input),
-        headers: new Headers(init?.headers),
-        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
-      })
+    const calls: string[] = []
+    globalThis.fetch = (async (input) => {
+      calls.push(String(input))
       return Response.json({ content: [{ type: 'text', text:
         '{"answers":[{"questionIndex":0,"optionLabels":["Markdown"]}]}' }] })
     }) as typeof fetch
@@ -300,16 +247,12 @@ describe('autoQuestionDecisionService', () => {
     expect(await decideAutoQuestionAnswers({
       questions: [undecided], conversationText: '', providerId: null,
       signal: new AbortController().signal,
-    })).toEqual({ 'Which format?': 'Markdown' })
-    expect(calls).toHaveLength(1)
-    expect(calls[0]!.url).toBe('https://api.anthropic.com/v1/messages')
-    expect(calls[0]!.headers.get('authorization')).toBe('Bearer fake-claude-token')
-    expect(calls[0]!.headers.get('anthropic-beta')).toBe('oauth-2025-04-20')
-    expect(calls[0]!.body.model).toBe('claude-haiku-4-5')
+    })).toBeNull()
+    expect(calls).toEqual([])
   })
 
   test('uses ChatGPT Official OAuth through its Responses endpoint', async () => {
-    await echoFlowOpenAIOAuthService.saveTokens({
+    await hahaOpenAIOAuthService.saveTokens({
       accessToken: 'fake-openai-token', refreshToken: 'fake-refresh-token',
       expiresAt: Date.now() + 60 * 60_000, accountId: 'acct-auto-question', email: 'test@example.com',
     })
@@ -338,7 +281,7 @@ describe('autoQuestionDecisionService', () => {
   })
 
   test('uses Grok Official OAuth when no API key is saved', async () => {
-    await echoFlowGrokOAuthService.saveTokens({
+    await hahaGrokOAuthService.saveTokens({
       accessToken: 'fake-grok-token', refreshToken: 'fake-refresh-token',
       expiresAt: Date.now() + 60 * 60_000, email: null,
     })
@@ -358,6 +301,55 @@ describe('autoQuestionDecisionService', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0]!.url).toContain('cli-chat-proxy.grok.com/v1/responses')
     expect(calls[0]!.headers.get('authorization')).toBe('Bearer fake-grok-token')
+  })
+
+  test.each([false, true])('answers with the DeepSeek account token header, never an API key (thinking retry: %s)', async (retryThinking) => {
+    await hahaDeepSeekOAuthService.saveTokens({
+      token: 'dsh_test_account_token',
+      issuer: 'https://platform.deepseek.com',
+      deviceId: 'device-1',
+    })
+    const calls: Array<{ url: string; headers: Headers; model: string }> = []
+    globalThis.fetch = (async (input, init) => {
+      const body = JSON.parse(String(init?.body)) as { model: string }
+      calls.push({ url: String(input), headers: new Headers(init?.headers), model: body.model })
+      if (body.model !== 'deepseek-flash') {
+        return Response.json({ error: 'Model Not Exist' }, { status: 400 })
+      }
+      if (retryThinking && calls.length === 1) {
+        return Response.json({ error: 'thinking unsupported' }, { status: 400 })
+      }
+      return Response.json({
+        content: [{ type: 'text', text: '{"answers":[{"questionIndex":0,"optionLabels":["JSON"]}]}' }],
+      })
+    }) as typeof fetch
+    expect(await decideAutoQuestionAnswers({
+      questions: [undecided], conversationText: '', providerId: 'deepseek-account',
+      signal: new AbortController().signal,
+    })).toEqual({ 'Which format?': 'JSON' })
+    expect(calls).toHaveLength(retryThinking ? 2 : 1)
+    expect(calls.map((call) => call.model)).toEqual(
+      Array(retryThinking ? 2 : 1).fill('deepseek-flash'),
+    )
+    expect((await new ProviderService().getProvider('deepseek-account')).models.haiku)
+      .toBe('deepseek-flash[1m]')
+    expect(calls[0]!.url).toBe('https://api.deepseek.com/anthropic/v1/messages')
+    expect(calls[0]!.headers.get('x-dsh-auth-token')).toBe('dsh_test_account_token')
+    expect(calls[0]!.headers.get('x-api-key')).toBeNull()
+    expect(calls[0]!.headers.get('authorization')).toBeNull()
+  })
+
+  test('leaves the question with the user while the DeepSeek account is signed out', async () => {
+    let called = false
+    globalThis.fetch = (async () => {
+      called = true
+      return Response.json({})
+    }) as typeof fetch
+    expect(await decideAutoQuestionAnswers({
+      questions: [undecided], conversationText: '', providerId: 'deepseek-account',
+      signal: new AbortController().signal,
+    })).toBeNull()
+    expect(called).toBe(false)
   })
 
   test('accepts a unique nonempty subset for multi-select questions', async () => {

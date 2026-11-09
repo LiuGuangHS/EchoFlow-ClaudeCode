@@ -37,14 +37,13 @@ export type CorsResolutionOptions = {
 }
 
 const LOCAL_DESKTOP_ORIGINS = new Set(['file://'])
-const CODEMOBILE_ORIGINS = new Set(['https://localhost'])
 
-export function isAllowedBuiltInOrigin(origin?: string | null): boolean {
+function isLocalOrigin(origin?: string | null): boolean {
   if (!origin) {
     return true
   }
 
-  return LOCAL_DESKTOP_ORIGINS.has(origin) || CODEMOBILE_ORIGINS.has(origin) || isLoopbackBrowserOrigin(origin)
+  return LOCAL_DESKTOP_ORIGINS.has(origin) || isLoopbackBrowserOrigin(origin)
 }
 
 function isLoopbackBrowserOrigin(origin: string): boolean {
@@ -97,7 +96,7 @@ export async function resolveCors(
     }
   }
 
-  if (!options.h5Enabled || isAllowedBuiltInOrigin(origin)) {
+  if (!options.h5Enabled || isLocalOrigin(origin)) {
     return {
       allowed: true,
       rejected: false,

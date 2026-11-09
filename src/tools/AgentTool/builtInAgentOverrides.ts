@@ -9,6 +9,7 @@ import {
 } from '../../utils/settings/pluginOnlyPolicy.js'
 import { getSettingsForSource } from '../../utils/settings/settings.js'
 import type { AgentDefinition } from './loadAgentsDir.js'
+import { resolveAgentModelSpec, usesNonClaudeAgentRouting } from '../../utils/model/agentModelRouting.js'
 
 /**
  * `SettingsSchema` inlines its effort level list to avoid a
@@ -25,6 +26,7 @@ export type OverriddenField<T> = {
 
 export type ResolvedBuiltInAgentOverride = {
   model?: OverriddenField<string>
+  provider?: OverriddenField<string>
   effort?: OverriddenField<EffortValue>
 }
 
@@ -43,12 +45,6 @@ export type ResolvedBuiltInAgentOverride = {
  *      it. Blocking only the write path would not be enough — settings.json is
  *      user-writable by definition.
  */
-function getBuiltInOverridesForSource(
-  source: SettingSource,
-): Record<string, unknown> | undefined {
-  return getSettingsForSource(source)?.builtInAgentOverrides
-}
-
 export function resolveBuiltInAgentOverrides(): Map<
   string,
   ResolvedBuiltInAgentOverride
@@ -59,7 +55,7 @@ export function resolveBuiltInAgentOverrides(): Map<
   for (const source of getEnabledSettingSources()) {
     if (agentsLocked && !isSourceAdminTrusted(source)) continue
 
-    const overrides = getBuiltInOverridesForSource(source)
+    const overrides = getSettingsForSource(source)?.builtInAgentOverrides
     if (!overrides) continue
 
     for (const [agentType, entry] of Object.entries(overrides)) {
@@ -72,19 +68,44 @@ export function resolveBuiltInAgentOverrides(): Map<
         typeof entry.model === 'string' && entry.model.trim().length > 0
           ? entry.model.trim()
           : undefined
+      const provider =
+        typeof entry.provider === 'string' && entry.provider.trim().length > 0
+          ? entry.provider.trim()
+          : undefined
       const effort = parseEffortValue(entry.effort)
       if (model === undefined && effort === undefined) continue
 
       const current = resolved.get(agentType) ?? {}
       // Later sources win, but only for the fields they actually specify — a
-      // project-level model must not erase a user-level effort.
-      if (model !== undefined) current.model = { value: model, source }
+      // project-level model must not erase a user-level effort. A provider only
+      // means something for the model saved beside it, so the two move together.
+      if (model !== undefined) {
+        current.model = { value: model, source }
+        if (provider !== undefined) current.provider = { value: provider, source }
+        else delete current.provider
+      }
       if (effort !== undefined) current.effort = { value: effort, source }
       resolved.set(agentType, current)
     }
   }
 
   return resolved
+}
+
+/** Shipped Claude tiers are defaults; only user overrides pin non-Claude runs. */
+export function getAgentModelSetting(
+  agent: AgentDefinition | undefined,
+  parentModel: string | null,
+): string | undefined {
+  if (
+    agent?.source === 'built-in' &&
+    usesNonClaudeAgentRouting(parentModel) &&
+    !resolveBuiltInAgentOverrides().get(agent.agentType)?.model
+  ) return 'inherit'
+  const model = agent?.model
+  return model && model !== 'inherit' && usesNonClaudeAgentRouting(parentModel)
+    ? resolveAgentModelSpec(model, parentModel)
+    : model
 }
 
 /**
@@ -117,6 +138,7 @@ export function applyBuiltInAgentOverrides(
     return {
       ...agent,
       ...(override.model ? { model: override.model.value } : {}),
+      ...(override.provider ? { provider: override.provider.value } : {}),
       ...(override.effort ? { effort: override.effort.value } : {}),
     }
   })

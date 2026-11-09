@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
@@ -20,14 +20,20 @@ import { captureLegacyPlanTasks, resolveProposedTeamPlan, snapshotTeamAgents, te
 let directory: string
 let context: ToolUseContext
 let saved: Record<string, string | undefined>
-const keys = ['CLAUDE_CONFIG_DIR', 'ECHOFLOW_TEAM_REVIEW_REQUIRED', 'ECHOFLOW_TEAM_LEADER_RUNTIME', 'CLAUDE_CODE_SUBAGENT_MODEL']
+const keys = [
+  'HOME', 'CLAUDE_CONFIG_DIR', 'CC_HAHA_TEAM_REVIEW_REQUIRED', 'CC_HAHA_TEAM_LEADER_RUNTIME', 'CLAUDE_CODE_SUBAGENT_MODEL',
+  'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_AZURE_OPENAI',
+]
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'team-plan-tools-'))
   saved = Object.fromEntries(keys.map(key => [key, process.env[key]]))
+  process.env.HOME = directory
   process.env.CLAUDE_CONFIG_DIR = directory
-  process.env.ECHOFLOW_TEAM_REVIEW_REQUIRED = '1'
-  process.env.ECHOFLOW_TEAM_LEADER_RUNTIME = JSON.stringify({ providerId: 'fake-provider', modelId: 'fake-model' })
+  process.env.CC_HAHA_TEAM_REVIEW_REQUIRED = '1'
+  process.env.CC_HAHA_TEAM_LEADER_RUNTIME = JSON.stringify({ providerId: 'fake-provider', modelId: 'fake-model' })
   delete process.env.CLAUDE_CODE_SUBAGENT_MODEL
   let state = { mainLoopModel: 'fake-model', inbox: { messages: [] } } as ReturnType<ToolUseContext['getAppState']>
   context = {
@@ -52,6 +58,164 @@ afterEach(async () => {
 })
 
 describe('whole-team planning tools', () => {
+  describe('generated model suggestions for a non-Claude leader', () => {
+    beforeEach(() => {
+      Object.assign(process.env, {
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:1/anthropic',
+        ANTHROPIC_MODEL: 'deepseek-v4-flash',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'deepseek-v4-pro',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-pro',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash',
+      })
+      for (const key of ['CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_AZURE_OPENAI']) delete process.env[key]
+      context.options.mainLoopModel = 'deepseek-v4-flash'
+    })
+
+    const proposal = (modelId: string, providerId = 'fake-provider', agentType = 'general-purpose') => ({
+      members: [{ id: 'w', name: 'w', agentType, prompt: 'Work', runtime: { providerId, modelId, effortLevel: 'high' } }],
+      tasks: [],
+    })
+
+    test('an automatic Opus suggestion follows Flash instead of the provider Pro slot', () => {
+      const member = resolveProposedTeamPlan(proposal('opus'), context).members[0]!
+      expect(member.runtime).toEqual({ providerId: 'fake-provider', modelId: 'deepseek-v4-flash' })
+      expect(member.suggestedRuntime).toEqual(member.runtime)
+    })
+
+    test('a generated legacy Claude version follows the selected provider model', () => {
+      process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'deepseek-v4-flash'
+      const member = resolveProposedTeamPlan(proposal('claude-opus-4-8'), context).members[0]!
+      expect(member.runtime).toEqual({ providerId: 'fake-provider', modelId: 'deepseek-v4-flash' })
+    })
+
+    test('preset snapshots preserve model specs while default members use the current provider mapping', () => {
+      process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'deepseek-v4-flash'
+      context.options.agentDefinitions.activeAgents.push({
+        agentType: 'legacy-opus', source: 'flagSettings', whenToUse: 'Fixture',
+        rawSystemPrompt: 'Fixture instructions', getSystemPrompt: () => 'Fixture instructions', model: 'claude-opus-4-6',
+      })
+      const catalog = snapshotTeamAgents(context)
+      expect(catalog['legacy-opus']?.model).toBe('claude-opus-4-6')
+      expect(catalog.Explore?.model).toBe('inherit')
+      const plan = resolveProposedTeamPlan({ members: [{ id: 'w', name: 'w', agentType: 'legacy-opus', prompt: 'Work' }], tasks: [] }, context)
+      expect(plan.members[0]?.runtime.modelId).toBe('deepseek-v4-flash')
+    })
+
+    for (const scenario of [
+      { agentType: 'manual-opus', model: 'opus', expectedModel: 'member-opus' },
+      { agentType: 'manual-legacy-opus', model: 'claude-opus-4-6', expectedModel: 'member-opus' },
+      { agentType: 'Explore', model: undefined, expectedModel: 'member-main' },
+    ]) {
+      test(`a preset switch to ${scenario.agentType} resolves against the member provider before approval`, async () => {
+        const { TeamPlanService } = await import('../../server/services/teamPlanService.js')
+        const { ProviderService } = await import('../../server/services/providerService.js')
+        const { validateTeamPlanRuntime } = await import('../../server/services/teamPlanRuntime.js')
+        const provider = await new ProviderService().addProvider({
+          presetId: 'custom', name: 'Member provider', baseUrl: 'http://127.0.0.1:1', apiKey: 'fake-member-key',
+          models: { main: 'member-main', sonnet: 'member-sonnet', opus: 'member-opus', haiku: 'member-haiku' },
+        })
+        if (scenario.model) context.options.agentDefinitions.activeAgents.push({
+          agentType: scenario.agentType, source: 'flagSettings', whenToUse: 'Fixture',
+          rawSystemPrompt: 'Fixture instructions', getSystemPrompt: () => 'Fixture instructions', model: scenario.model,
+        })
+        const created = await TeamCreateTool.call({ team_name: 'review-team', plan: {
+          members: [{ id: 'worker', name: 'worker', prompt: 'Work', runtime: { providerId: provider.id, modelId: 'member-main' } }],
+          tasks: [{ id: 'work', subject: 'Work', ownerId: 'worker', dependencies: [] }],
+        } }, context)
+        await TeamPlanTool.call({ team_name: 'review-team', operation: 'submit', expected_revision: created.data.plan!.revision }, context)
+        const pending = (await readTeamPlan('review-team'))!
+        const service = new TeamPlanService({ validate: validateTeamPlanRuntime, launch: async () => ({ memberIds: {} }), stop: async () => {} })
+        const edited = await service.update(pending.teamName, { ...pending, expectedRevision: pending.revision }, {
+          members: [{ id: 'worker', agentType: scenario.agentType }],
+        })
+        const validated = await validateTeamPlanRuntime(edited)
+        const approved = await approveTeamPlan(edited.teamName, { ...edited, expectedRevision: edited.revision }, 'fixture-approval', validated)
+        expect(approved.plan.approvedSnapshot?.members[0]?.runtime).toEqual({ providerId: provider.id, modelId: scenario.expectedModel })
+      })
+    }
+
+    test('a preset that pins a saved provider suggests that provider, its model slot and effort', async () => {
+      const { TeamPlanService } = await import('../../server/services/teamPlanService.js')
+      const { ProviderService } = await import('../../server/services/providerService.js')
+      const provider = await new ProviderService().addProvider({
+        presetId: 'custom', name: 'Reviewer provider', baseUrl: 'http://127.0.0.1:1', apiKey: 'fake-reviewer-key',
+        models: { main: 'reviewer-main', sonnet: 'reviewer-sonnet', opus: 'reviewer-opus', haiku: 'reviewer-haiku' },
+      })
+      context.options.agentDefinitions.activeAgents.push({
+        agentType: 'pinned-reviewer', source: 'flagSettings', whenToUse: 'Fixture',
+        rawSystemPrompt: 'Fixture instructions', getSystemPrompt: () => 'Fixture instructions',
+        model: 'haiku', provider: provider.id, effort: 'max',
+      })
+      expect(snapshotTeamAgents(context)['pinned-reviewer']).toMatchObject({ model: 'haiku', provider: provider.id })
+
+      // The lead's tier guess for its own provider does not outrank the preset.
+      const proposed = resolveProposedTeamPlan(proposal('opus', 'fake-provider', 'pinned-reviewer'), context).members[0]!
+      expect(proposed.runtime).toEqual({ providerId: provider.id, modelId: 'reviewer-haiku', effortLevel: 'max' })
+
+      const created = await TeamCreateTool.call({ team_name: 'review-team', plan: {
+        members: [{ id: 'worker', name: 'worker', prompt: 'Work' }],
+        tasks: [{ id: 'work', subject: 'Work', ownerId: 'worker', dependencies: [] }],
+      } }, context)
+      await TeamPlanTool.call({ team_name: 'review-team', operation: 'submit', expected_revision: created.data.plan!.revision }, context)
+      const pending = (await readTeamPlan('review-team'))!
+      const service = new TeamPlanService({ validate: async plan => plan, launch: async () => ({ memberIds: {} }), stop: async () => {} })
+      const switched = await service.update(pending.teamName, { ...pending, expectedRevision: pending.revision }, {
+        members: [{ id: 'worker', agentType: 'pinned-reviewer' }],
+      })
+      expect(switched.members[0]?.runtime).toEqual({ providerId: provider.id, modelId: 'reviewer-haiku', effortLevel: 'max' })
+      // The reviewer then lowers the effort; approval launches exactly that.
+      const lowered = await service.update(switched.teamName, { ...switched, expectedRevision: switched.revision }, {
+        members: [{ id: 'worker', runtime: { providerId: provider.id, modelId: 'reviewer-sonnet', effortLevel: 'low' } }],
+      })
+      const approved = await approveTeamPlan(lowered.teamName, { ...lowered, expectedRevision: lowered.revision }, 'fixture-approval', lowered)
+      expect(approved.plan.approvedSnapshot?.members[0]?.runtime).toEqual({
+        providerId: provider.id, modelId: 'reviewer-sonnet', effortLevel: 'low',
+      })
+    })
+
+    test('a pinned preset outranks a Claude lead\'s own suggestion and keeps the 1M mapping', async () => {
+      const { ProviderService } = await import('../../server/services/providerService.js')
+      const provider = await new ProviderService().addProvider({
+        presetId: 'custom', name: 'Pinned provider', baseUrl: 'http://127.0.0.1:1', apiKey: 'fake-pinned-key',
+        models: { main: 'pinned-main', sonnet: 'pinned-sonnet', opus: 'pinned-opus', haiku: 'pinned-haiku' },
+        model1mSupport: { main: false, haiku: true, sonnet: false, opus: false },
+      })
+      context.options.agentDefinitions.activeAgents.push({
+        agentType: 'pinned-reviewer', source: 'flagSettings', whenToUse: 'Fixture',
+        rawSystemPrompt: 'Fixture instructions', getSystemPrompt: () => 'Fixture instructions',
+        model: 'haiku', provider: provider.id, effort: 'max',
+      })
+      // A Claude Official lead: its tier suggestions are concrete choices, not
+      // something normalized away, yet the user's pin still wins.
+      for (const key of ['ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL']) delete process.env[key]
+      process.env.CC_HAHA_TEAM_LEADER_RUNTIME = JSON.stringify({ providerId: 'claude-official', modelId: 'claude-opus-4-7' })
+      context.options.mainLoopModel = 'claude-opus-4-7'
+
+      const member = resolveProposedTeamPlan(proposal('sonnet', 'claude-official', 'pinned-reviewer'), context).members[0]!
+
+      expect(member.runtime).toEqual({ providerId: provider.id, modelId: 'pinned-haiku[1m]', effortLevel: 'max' })
+      expect(member.suggestedRuntime).toEqual(member.runtime)
+    })
+
+    test('automatic suggestions preserve a manually configured Agent model and effort', () => {
+      context.options.agentDefinitions.activeAgents.push({
+        agentType: 'manual-pro', source: 'flagSettings', whenToUse: 'Fixture',
+        rawSystemPrompt: 'Fixture instructions', getSystemPrompt: () => 'Fixture instructions', model: 'deepseek-v4-pro', effort: 'low',
+      })
+      const member = resolveProposedTeamPlan(proposal('opus', 'fake-provider', 'manual-pro'), context).members[0]!
+      expect(member.runtime).toEqual({ providerId: 'fake-provider', modelId: 'deepseek-v4-pro', effortLevel: 'low' })
+    })
+
+    test('explicit model suggestions on another configured provider remain available for review', async () => {
+      await mkdir(join(directory, 'cc-haha'), { recursive: true })
+      await writeFile(join(directory, 'cc-haha', 'providers.json'), JSON.stringify({ providers: [{ id: 'other-provider' }] }))
+      const member = resolveProposedTeamPlan(proposal('opus', 'other-provider'), context).members[0]!
+      expect(member.runtime).toEqual({ providerId: 'other-provider', modelId: 'opus', effortLevel: 'high' })
+      expect(resolveProposedTeamPlan(proposal('deepseek-v4-pro'), context).members[0]?.runtime)
+        .toEqual({ providerId: 'fake-provider', modelId: 'deepseek-v4-pro', effortLevel: 'high' })
+    })
+  })
+
   test('headless team creation records the executing model when AppState has no model', async () => {
     context.setAppState(state => ({ ...state, mainLoopModel: null, mainLoopModelForSession: null }))
     context.options.mainLoopModel = 'executing-model'
@@ -84,8 +248,16 @@ describe('whole-team planning tools', () => {
     const result = teamPlanToolResult({ teamName: 'review-team', state: 'running', members: [], tasks: [] } as never)
     expect(result.message).toContain('running')
     expect(result.message).not.toContain('No teammate has started')
-    delete process.env.ECHOFLOW_TEAM_REVIEW_REQUIRED
+    delete process.env.CC_HAHA_TEAM_REVIEW_REQUIRED
     expect(getPrompt()).not.toContain('Human review before execution')
+  })
+
+  test('planning instructions say a dependent member starts only once its dependencies are done', async () => {
+    // A lead once wrote "if recon has not reported yet, start on your own",
+    // and the members did, ahead of the dependency the user approved.
+    const prompt = await TeamPlanTool.prompt({} as never)
+    expect(prompt).toContain('receives its prompt only once one of them is ready')
+    expect(prompt).toContain('never tell a member to start without them')
   })
   test('legacy Agent spawns only stage members, then whole-plan submit waits for human review', async () => {
     const created = await TeamCreateTool.call({ team_name: 'review-team' }, context)
@@ -130,7 +302,7 @@ describe('whole-team planning tools', () => {
 
   test('a persisted desktop draft cannot fall through to an execution backend if the environment flag is absent', async () => {
     await TeamCreateTool.call({ team_name: 'review-team' }, context)
-    delete process.env.ECHOFLOW_TEAM_REVIEW_REQUIRED
+    delete process.env.CC_HAHA_TEAM_REVIEW_REQUIRED
     const staged = await spawnTeammate({ name: 'worker', team_name: 'review-team', prompt: 'Work' }, context)
     expect(staged.data.staged).toBe(true)
     expect((await readTeamFileAsync('review-team'))?.members).toHaveLength(1)
@@ -154,6 +326,17 @@ describe('whole-team planning tools', () => {
     expect(resolveProposedTeamPlan(proposal, context).members[0]?.runtime.effortLevel).toBe('high')
     const explicit = { ...proposal, members: [{ ...proposal.members[0]!, runtime: { providerId: 'fake-provider', modelId: 'plain-model' } }] }
     expect(resolveProposedTeamPlan(explicit, context).members[0]?.runtime.effortLevel).toBeUndefined()
+  })
+
+  test('a suggested runtime naming an unknown provider falls back to the leader runtime', async () => {
+    const proposal = (providerId: string) => ({ members: [{ id: 'w', name: 'w', prompt: 'Work', runtime: { providerId, modelId: 'claude-sonnet-5-5' } }], tasks: [] })
+    // The model cannot see provider ids; a guess must not fail approval or
+    // move the member to a different, billed provider.
+    expect(resolveProposedTeamPlan(proposal('anthropic'), context).members[0]?.runtime).toEqual({ providerId: 'fake-provider', modelId: 'fake-model' })
+    expect(resolveProposedTeamPlan(proposal('claude-official'), context).members[0]?.runtime.providerId).toBe('fake-provider')
+    await mkdir(join(directory, 'cc-haha'), { recursive: true })
+    await writeFile(join(directory, 'cc-haha', 'providers.json'), JSON.stringify({ schemaVersion: 6, activeId: null, providers: [{ id: 'configured-provider', presetId: 'custom', name: 'Configured', apiKey: 'fake', baseUrl: 'http://127.0.0.1:1', apiFormat: 'anthropic', models: { main: 'm', haiku: 'm', sonnet: 'm', opus: 'm' } }] }))
+    expect(resolveProposedTeamPlan(proposal('configured-provider'), context).members[0]?.runtime).toEqual({ providerId: 'configured-provider', modelId: 'claude-sonnet-5-5' })
   })
 
   test('inline MCP credentials never enter the durable catalog or a proposed member', async () => {
@@ -192,5 +375,25 @@ describe('whole-team planning tools', () => {
     expect(await captureLegacyPlanTasks(increment)).toEqual([])
     const updated = await TaskUpdateTool.call({ taskId, status: 'in_progress' }, context)
     expect(updated.data.success).toBe(true)
+  })
+
+  test('a lead asked for another team is sent back to its own, where new members become an addition for review', async () => {
+    // Pointing at TeamDelete first had leads tear down a stopped team they
+    // could reuse, and delete its directories by hand when that stalled.
+    const created = await TeamCreateTool.call({ team_name: 'review-team', plan: {
+      members: [{ id: 'old', name: 'old', prompt: 'Existing work' }],
+      tasks: [{ id: 'work', subject: 'Existing work', ownerId: 'old', dependencies: [] }],
+    } }, context)
+    await TeamPlanTool.call({ team_name: 'review-team', operation: 'submit', expected_revision: created.data.plan!.revision }, context)
+    let plan = (await readTeamPlan('review-team'))!
+    const approved = await approveTeamPlan(plan.teamName, { ...plan, expectedRevision: plan.revision }, 'fixture-approval', plan)
+    plan = await mutateTeamPlan(plan.teamName, { ...approved.plan, expectedRevision: approved.plan.revision }, current => ({ ...current, state: 'running' }))
+
+    await expect(TeamCreateTool.call({ team_name: 'second-team' }, context)).rejects.toThrow(
+      'add members with the Agent tool (team_name: "review-team"). Use TeamDelete only when the user wants this team replaced',
+    )
+    const staged = await spawnTeammate({ name: 'writer', team_name: 'review-team', prompt: 'Write the summary' }, context)
+    expect(staged.data.staged).toBe(true)
+    expect(await readTeamPlan('review-team')).toMatchObject({ state: 'draft', parentPlanId: plan.planId })
   })
 })

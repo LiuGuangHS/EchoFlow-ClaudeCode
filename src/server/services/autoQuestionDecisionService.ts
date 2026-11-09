@@ -1,25 +1,27 @@
 import { normalizeAnthropicBaseUrl } from '../../services/api/anthropicBaseUrl.js'
-import { getOauthConfig, OAUTH_BETA_HEADER } from '../../constants/oauth.js'
+import { normalizeModelStringForAPI } from '../../utils/model/model.js'
 import { OPENAI_CODEX_API_ENDPOINT } from '../../services/openaiAuth/client.js'
 import { resolveOpenAICodexModel } from '../../services/openaiAuth/models.js'
 import { buildGrokIdentityHeaders, GROK_CLI_API_ENDPOINT } from '../../services/grokAuth/fetch.js'
+import { deepSeekAccountFetchInit } from '../../services/deepseekAuth/client.js'
 import { handleProxyRequest } from '../proxy/handler.js'
 import { anthropicToOpenaiResponses } from '../proxy/transform/anthropicToOpenaiResponses.js'
 import type { AnthropicRequest } from '../proxy/transform/types.js'
 import { openaiResponsesStreamToAnthropicResponse } from '../proxy/streaming/openaiResponsesStreamToAnthropicResponse.js'
 import type { ProviderAuthStrategy } from '../types/provider.js'
-import { echoFlowOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
-import { echoFlowGrokOAuthService } from './echoFlowGrokOAuthService.js'
-import { echoFlowOAuthService } from './echoFlowOAuthService.js'
-import { resolveClaudeOfficialRuntimeModel } from './claudeOfficialRuntime.js'
+import { hahaOpenAIOAuthService } from './hahaOpenAIOAuthService.js'
+import { hahaGrokOAuthService } from './hahaGrokOAuthService.js'
 import {
   getNetworkProxyFetchOptions,
-  isLocalRedactionEnabled,
   loadNetworkSettings,
   type NetworkSettings,
 } from './networkSettings.js'
 import { isOpenAIOfficialProviderId } from './openaiOfficialProvider.js'
 import { isGrokOfficialProviderId } from './grokOfficialProvider.js'
+import {
+  isDeepSeekAccountProviderId,
+  resolveDeepSeekAccountRequestHeaders,
+} from './deepseekAccountProvider.js'
 import { ProviderService } from './providerService.js'
 import {
   getPresetAuthStrategy,
@@ -166,14 +168,18 @@ async function askSmallModel({
   signal,
 }: AutoQuestionDecisionInput): Promise<string | null> {
   if (providerId === null) {
-    if (await isLocalRedactionEnabled()) return null
-    return askClaudeOfficial(questions, conversationText, signal)
+    // Claude Official. The subscription token is only ever presented to
+    // Anthropic by the Claude Code CLI itself: its User-Agent, system prefix,
+    // billing header and body signature are part of that identity, and a
+    // request built here by hand can carry none of them. Without an answer the
+    // question simply stays with the user.
+    return null
   }
   const provider = await new ProviderService().getProvider(providerId)
   if (signal.aborted) return null
   const networkSettings = await loadNetworkSettings()
   if (signal.aborted) return null
-  const model = provider.models.haiku || provider.models.main
+  const model = normalizeModelStringForAPI(provider.models.haiku || provider.models.main)
   if (!model) return null
 
   const body: AnthropicRequest = {
@@ -185,51 +191,29 @@ async function askSmallModel({
   const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(MODEL_TIMEOUT_MS)])
 
   if (isOpenAIOfficialProviderId(provider.id)) {
-    if (await isLocalRedactionEnabled()) return null
     return askOpenAIOfficial(body, model, networkSettings, requestSignal)
   }
   if (isGrokOfficialProviderId(provider.id)) {
-    if (await isLocalRedactionEnabled()) return null
     return askGrokOfficial(body, model, networkSettings, requestSignal)
   }
   if (!provider.baseUrl) return null
-  if (await isLocalRedactionEnabled()) return null
 
   if (providerNeedsProxy(resolveProviderApiFormat(provider), provider.supportsNestedToolResultMedia)) {
     return askThroughProxy(provider.id, sessionId, body, requestSignal)
   }
 
+  const url = `${normalizeAnthropicBaseUrl(provider.baseUrl.replace(/\/+$/, ''))}/v1/messages`
+  if (isDeepSeekAccountProviderId(provider.id)) {
+    // Signed out: leave the question with the user rather than sending an
+    // unauthenticated request.
+    const accountHeaders = await resolveDeepSeekAccountRequestHeaders()
+    if (!accountHeaders) return null
+    return askAnthropic(url, accountHeaders, body, networkSettings, requestSignal)
+  }
   const apiKey = resolveProviderApiKey(provider, getPresetDefaultEnv(provider.presetId))
   if (!apiKey) return null
-  const url = `${normalizeAnthropicBaseUrl(provider.baseUrl.replace(/\/+$/, ''))}/v1/messages`
   const authStrategy = provider.authStrategy ?? getPresetAuthStrategy(provider.presetId)
   return askAnthropic(url, buildAnthropicHeaders(apiKey, authStrategy), body, networkSettings, requestSignal)
-}
-
-async function askClaudeOfficial(
-  questions: AutoQuestion[],
-  conversationText: string,
-  signal: AbortSignal,
-): Promise<string | null> {
-  if (await isLocalRedactionEnabled()) return null
-  const model = await resolveClaudeOfficialRuntimeModel('haiku')
-  if (!model || signal.aborted) return null
-  const token = await echoFlowOAuthService.ensureFreshAccessToken()
-  if (!token || signal.aborted) return null
-  const networkSettings = await loadNetworkSettings()
-  if (signal.aborted) return null
-  const url = `${normalizeAnthropicBaseUrl(getOauthConfig().BASE_API_URL)}/v1/messages`
-  return askAnthropic(url, {
-    'Content-Type': 'application/json',
-    'anthropic-version': '2023-06-01',
-    'anthropic-beta': OAUTH_BETA_HEADER,
-    Authorization: `Bearer ${token}`,
-  }, {
-    model,
-    max_tokens: MAX_OUTPUT_TOKENS,
-    system: 'You are a constrained choice assistant. Return only the requested JSON object. Never invent options.',
-    messages: [{ role: 'user', content: buildModelPrompt(questions, conversationText) }],
-  }, networkSettings, AbortSignal.any([signal, AbortSignal.timeout(MODEL_TIMEOUT_MS)]))
 }
 
 function buildAnthropicHeaders(apiKey: string, authStrategy: ProviderAuthStrategy): Record<string, string> {
@@ -270,6 +254,7 @@ async function askAnthropic(
     body: JSON.stringify(withThinking ? { ...body, thinking: { type: 'disabled' } } : body),
     signal,
     ...getNetworkProxyFetchOptions(networkSettings, url),
+    ...deepSeekAccountFetchInit(headers),
   })
   let response = await send(true)
   if (!signal.aborted && (response.status === 400 || response.status === 422)) {
@@ -314,8 +299,7 @@ async function askOpenAIOfficial(
   networkSettings: NetworkSettings,
   signal: AbortSignal,
 ): Promise<string | null> {
-  if (await isLocalRedactionEnabled()) return null
-  const tokens = await echoFlowOpenAIOAuthService.ensureFreshTokens()
+  const tokens = await hahaOpenAIOAuthService.ensureFreshTokens()
   if (!tokens?.accessToken || signal.aborted) return null
   const mappedModel = resolveOpenAICodexModel(model)
   const requestBody = anthropicToOpenaiResponses({
@@ -349,8 +333,7 @@ async function askGrokOfficial(
   networkSettings: NetworkSettings,
   signal: AbortSignal,
 ): Promise<string | null> {
-  if (await isLocalRedactionEnabled()) return null
-  const tokens = await echoFlowGrokOAuthService.ensureFreshTokens()
+  const tokens = await hahaGrokOAuthService.ensureFreshTokens()
   if (!tokens?.accessToken || signal.aborted) return null
   const requestBody = anthropicToOpenaiResponses({
     ...body,

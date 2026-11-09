@@ -11,10 +11,17 @@ import { readLegacyTranscriptFiles } from './legacyTranscriptBudget.js'
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
+import * as os from 'os'
 import * as crypto from 'node:crypto'
 import { ApiError } from '../middleware/errorHandler.js'
 import { readTeamTranscriptProjection } from './teamTranscriptProjection.js'
-import { writeToMailbox } from '../../utils/teammateMailbox.js'
+import { readMemberFailure } from '../../utils/swarm/turnFailure.js'
+import { unescapeXmlAttr } from '../../utils/xml.js'
+import {
+  MAILBOX_HISTORY_SUFFIX,
+  readMailboxHistoryAtPath,
+  writeToMailbox,
+} from '../../utils/teammateMailbox.js'
 import {
   sessionService,
   type MessageEntry as SessionMessageEntry,
@@ -24,9 +31,6 @@ import { localIndexCoordinator } from './localIndex/coordinator.js'
 import { readSessionEntriesByLocator } from './localIndex/sessionEntries.js'
 import { deserializeSourceFingerprint } from './localIndex/sourceFingerprint.js'
 import type { LocalIndexGateway } from './localIndex/sessionIndex.js'
-import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
-import { getEchoFlowConfigDir, getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
-import type { TaskInfo } from './taskService.js'
 import {
   getCanonicalTeamTaskListId,
   readTaskListLifecycleState,
@@ -35,7 +39,9 @@ import {
 } from '../../utils/tasks.js'
 import type { TaskListLifecycleState } from '../../utils/tasks.js'
 import { cleanupTeamDirectories } from '../../utils/swarm/teamHelpers.js'
+import { parseMemberCommand, unsupportedMemberCommandReason } from '../../utils/swarm/memberCommand.js'
 import type { TaskInfo } from './taskService.js'
+import { powerActivityClock } from './powerActivityClock.js'
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -46,7 +52,12 @@ import type { TaskInfo } from './taskService.js'
  * task started and can then finish its turn, and an umbrella task stays open
  * across every turn underneath it.
  */
-export type TeamMemberActivity = 'active' | 'idle' | 'exited' | 'unknown'
+/**
+ * `stopped`: a process-backed member whose process is not running (the user's
+ * Stop, a crash, a closed lead). It keeps its conversation and a message
+ * restarts it, unlike `exited`, which means it left the team.
+ */
+export type TeamMemberActivity = 'active' | 'idle' | 'exited' | 'stopped' | 'unknown'
 
 export type TeamMember = {
   agentId: string
@@ -64,6 +75,10 @@ export type TeamMember = {
    * readers fall back to `status` rather than assuming a member went quiet.
    */
   activity?: TeamMemberActivity
+  /** Why the last turn failed, when no automatic retry is pending. */
+  lastError?: string
+  /** An automatic continuation is scheduled after a transient provider failure. */
+  autoRetry?: { attempt: number; max: number; nextAt: number }
   joinedAt: number
   cwd: string
   sessionId?: string
@@ -207,11 +222,7 @@ const MESSAGE_ENTRY_TYPES = new Set([
   'tool_use',
   'tool_result',
 ])
-const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES = new Set([
-  'echoflow-code-task-notification',
-  'echoflow-code-task-notification',
-])
-const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE = 'echoflow-code-task-notification'
+const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE = 'cc-haha-task-notification'
 const TASK_NOTIFICATION_BLOCK_RE = /<task-notification>\s*[\s\S]*?<\/task-notification>/i
 
 const TEAM_WORKBENCH_ARCHIVE_SCHEMA_VERSION = 1
@@ -549,7 +560,7 @@ function taskNotificationFromEntry(
   ownerAgentId?: string,
 ): SessionTaskNotification | null {
   const timestamp = stringValue(entry.timestamp)
-  if (PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES.has(entry.type)) {
+  if (entry.type === PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE) {
     const notification = objectValue(entry.taskNotification)
     if (!notification) return null
     const toolUseId = stringValue(notification.toolUseId)
@@ -1152,13 +1163,13 @@ export function projectTeamWorkbenchesFromTranscript(
         if (!body) continue
         team.messages.push({
           id: `${message.id}:teammate:${team.messages.length}`,
-          from: match[1]!,
+          from: unescapeXmlAttr(match[1]!),
           to: 'team-lead',
           recipients: ['team-lead'],
           kind: 'direct',
           text: body,
           timestamp,
-          ...(match[2] ? { color: match[2] } : {}),
+          ...(match[2] ? { color: unescapeXmlAttr(match[2]) } : {}),
         })
         team.updatedAt = timestamp
       }
@@ -1427,6 +1438,9 @@ type TeamFileRaw = {
     sessionId?: string
     backendType?: string
     isActive?: boolean
+    terminated?: boolean
+    lastError?: string
+    autoRetry?: { attempt: number; max: number; nextAt: number }
     mode?: string
   }>
 }
@@ -1439,6 +1453,7 @@ export class TeamService {
   private readonly localIndexGateway: LocalIndexGateway
   private readonly targetedEntryReader: typeof readSessionEntriesByLocator
   private readonly archiveWriteLocks = new Map<string, Promise<unknown>>()
+  private pendingMemberMessages = 0
 
   constructor(options: {
     sessionLocator?: Pick<typeof sessionService, 'findSessionFile'>
@@ -1468,7 +1483,7 @@ export class TeamService {
   }
 
   private getConfigDir(): string {
-    return getClaudeConfigHomeDir()
+    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
   }
 
   private getTeamsDir(): string {
@@ -1480,7 +1495,7 @@ export class TeamService {
   }
 
   private getWorkbenchArchiveDir(): string {
-    return path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'agent-teams')
+    return path.join(this.getConfigDir(), 'cc-haha', 'agent-teams')
   }
 
   private getWorkbenchArchivePath(sessionId: string): string {
@@ -1531,22 +1546,26 @@ export class TeamService {
       ? await this.discoverSubagentLastWrites(config.leadSessionId)
       : new Map<string, number>()
 
-    const members: TeamMember[] = config.members.map((m) => ({
-      agentId: m.agentId,
-      name: m.name,
-      agentType: m.agentType,
-      ...(m.model ? { model: m.model } : {}),
-      ...(m.providerId !== undefined ? { providerId: m.providerId } : {}),
-      ...(m.providerName !== undefined ? { providerName: m.providerName } : {}),
-      ...(m.effortLevel !== undefined ? { effortLevel: m.effortLevel } : {}),
-      color: m.color,
-      backendType: m.backendType,
-      status: this.deriveStatus(m.isActive),
-      activity: this.deriveActivity(m.isActive, lastWrites.get(m.name), now),
-      joinedAt: m.joinedAt,
-      cwd: m.cwd,
-      sessionId: m.sessionId,
-    }))
+    const members: TeamMember[] = config.members.map((m) => {
+      const failure = readMemberFailure(m as unknown as Record<string, unknown>)
+      return {
+        agentId: m.agentId,
+        name: m.name,
+        agentType: m.agentType,
+        ...(m.model ? { model: m.model } : {}),
+        ...(m.providerId !== undefined ? { providerId: m.providerId } : {}),
+        ...(m.providerName !== undefined ? { providerName: m.providerName } : {}),
+        ...(m.effortLevel !== undefined ? { effortLevel: m.effortLevel } : {}),
+        color: m.color,
+        backendType: m.backendType,
+        status: failure.lastError && !failure.autoRetry ? 'failed' : this.deriveStatus(m.isActive),
+        activity: m.terminated === true ? 'stopped' : this.deriveActivity(m.isActive, lastWrites.get(m.name), now),
+        ...failure,
+        joinedAt: m.joinedAt,
+        cwd: m.cwd,
+        sessionId: m.sessionId,
+      }
+    })
 
     // Discover members from inboxes/ that aren't in config.json (race condition fix)
     const inboxNames = await this.discoverInboxMembers(name)
@@ -1631,7 +1650,7 @@ export class TeamService {
       memberName = await this.resolveMemberName(config, teamName, agentId)
       const configMember = config.members.find((candidate) => candidate.agentId === agentId)
       memberSessionId = configMember?.sessionId
-      leadSessionId = config.leadSessionId
+      leadSessionId = config.leadSessionId ?? leadSessionId
       transcriptStartedAt = config.createdAt
     } catch (error) {
       configError = error
@@ -1731,9 +1750,9 @@ export class TeamService {
     }
 
     // Out-of-process teammates own root session JSONL files rather than lead
-    // subagent fragments. The incarnation time bounds this legacy identity
-    // lookup so a reused team/member name cannot select another run.
-    if (!transcriptPath && Number.isFinite(transcriptStartedAt)) {
+    // subagent fragments. Team and agent identity are persisted on those
+    // entries, so archived workbenches can still open the real execution log.
+    if (!transcriptPath) {
       const teammatePaths = await this.findTeammateSessionTranscripts(
         teamName,
         memberName,
@@ -1749,6 +1768,7 @@ export class TeamService {
         )
       }
     }
+
     if (!transcriptPath) {
       return {
         messages: [],
@@ -1776,6 +1796,10 @@ export class TeamService {
     return this.parseTranscriptFilePage(transcriptPath, options, projection)
   }
 
+  hasPendingMemberMessages(): boolean {
+    return this.pendingMemberMessages > 0
+  }
+
   async sendMemberMessage(
     teamName: string,
     agentId: string,
@@ -1785,7 +1809,25 @@ export class TeamService {
     if (!text) {
       throw ApiError.badRequest('content (string) is required in request body')
     }
+    const command = parseMemberCommand(text)
+    const unsupported = command && unsupportedMemberCommandReason(command)
+    if (unsupported) {
+      throw new ApiError(400, unsupported, 'MEMBER_COMMAND_UNSUPPORTED')
+    }
 
+    // Own the accepted instruction before async lookup or a contended mailbox
+    // write. The durable inbox owns it after this operation has settled.
+    this.pendingMemberMessages += 1
+    powerActivityClock.changed()
+    try {
+      await this.writeMemberMessage(teamName, agentId, text)
+    } finally {
+      this.pendingMemberMessages -= 1
+      powerActivityClock.changed()
+    }
+  }
+
+  private async writeMemberMessage(teamName: string, agentId: string, text: string): Promise<void> {
     const config = await this.loadTeamConfig(teamName)
     const recipientName = await this.resolveMemberName(
       config,
@@ -1799,7 +1841,7 @@ export class TeamService {
       )
     }
 
-    await writeToMailbox(
+    const delivered = await writeToMailbox(
       recipientName,
       {
         from: 'user',
@@ -1808,6 +1850,14 @@ export class TeamService {
       },
       teamName,
     )
+    if (!delivered) {
+      // The composer keeps the draft only if the request fails.
+      throw new ApiError(
+        503,
+        `Could not deliver the message to ${recipientName}. Try again.`,
+        'MAILBOX_UNAVAILABLE',
+      )
+    }
   }
 
   // ── Get Agent Teams workbench snapshot ──────────────────────────────────────
@@ -2369,7 +2419,7 @@ export class TeamService {
   // ── Internal helpers ────────────────────────────────────────────────────
 
   private async loadTeamConfig(name: string): Promise<TeamFileRaw> {
-    const configPath = path.join(this.getTeamsDir(), this.requireSafeTeamName(name), 'config.json')
+    const configPath = path.join(this.getTeamsDir(), name, 'config.json')
 
     try {
       const raw = await fs.readFile(configPath, 'utf-8')
@@ -2379,20 +2429,13 @@ export class TeamService {
     }
   }
 
-  private requireSafeTeamName(name: string): string {
-    if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
-      throw ApiError.badRequest('Invalid team name')
-    }
-    return name
-  }
-
   /**
    * Discover member names from the inboxes/ directory.
    * Each file `{name}.json` in inboxes/ represents a team member.
    * Excludes the team-lead inbox since the leader is already in config.
    */
   private async discoverInboxMembers(teamName: string): Promise<string[]> {
-    const inboxDir = path.join(this.getTeamsDir(), this.requireSafeTeamName(teamName), 'inboxes')
+    const inboxDir = path.join(this.getTeamsDir(), teamName, 'inboxes')
 
     try {
       const files = await fs.readdir(inboxDir)
@@ -2408,10 +2451,18 @@ export class TeamService {
   private async readWorkbenchMessages(
     teamName: string,
   ): Promise<TeamWorkbenchMessage[]> {
-    const inboxDir = path.join(this.getTeamsDir(), this.requireSafeTeamName(teamName), 'inboxes')
-    let files: string[]
+    const inboxDir = path.join(this.getTeamsDir(), teamName, 'inboxes')
+    // Read entries leave {recipient}.json for {recipient}.history.jsonl, so a
+    // recipient is known from either file.
+    const recipients = new Set<string>()
     try {
-      files = (await fs.readdir(inboxDir)).filter((file) => file.endsWith('.json'))
+      for (const file of await fs.readdir(inboxDir)) {
+        if (file.endsWith(MAILBOX_HISTORY_SUFFIX)) {
+          recipients.add(file.slice(0, -MAILBOX_HISTORY_SUFFIX.length))
+        } else if (file.endsWith('.json')) {
+          recipients.add(file.slice(0, -'.json'.length))
+        }
+      }
     } catch {
       return []
     }
@@ -2435,13 +2486,15 @@ export class TeamService {
 
     const grouped = new Map<string, MessageAccumulator>()
     const occurrenceByRecipientAndContent = new Map<string, number>()
-    for (const file of files.sort()) {
-      const recipient = file.replace(/\.json$/, '')
+    for (const recipient of [...recipients].sort()) {
       try {
-        const parsed = JSON.parse(await fs.readFile(path.join(inboxDir, file), 'utf8'))
-        if (!Array.isArray(parsed)) continue
+        // Archived history plus the live inbox: delivered messages stay in
+        // the feed after the CLI prunes them from the live file.
+        const entries: InboxMessage[] = await readMailboxHistoryAtPath(
+          path.join(inboxDir, `${recipient}.json`),
+        )
 
-        for (const raw of parsed as InboxMessage[]) {
+        for (const raw of entries) {
           if (
             typeof raw?.from !== 'string' ||
             typeof raw.text !== 'string' ||
@@ -2481,8 +2534,8 @@ export class TeamService {
           }
         }
       } catch {
-        // A mailbox can be between its truncate and rename while the CLI is
-        // writing it. The watcher will invalidate the snapshot again.
+        // The CLI may be replacing a mailbox file; the watcher will
+        // invalidate the snapshot again.
       }
     }
 
@@ -3098,7 +3151,7 @@ export class TeamService {
       const selected = page.entries.filter(locator =>
         locator.ordinal > afterOrdinal && (
           MESSAGE_ENTRY_TYPES.has(locator.entryType) ||
-          PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES.has(locator.entryType)
+          locator.entryType === PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE
         ),
       )
       const result = await this.targetedEntryReader({

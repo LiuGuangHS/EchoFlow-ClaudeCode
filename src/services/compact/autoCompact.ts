@@ -5,18 +5,20 @@ import type { QuerySource } from '../../constants/querySource.js'
 import type { ToolUseContext } from '../../Tool.js'
 import type { Message } from '../../types/message.js'
 import { getGlobalConfig } from '../../utils/config.js'
-import { getContextWindowForModel, has1mContext } from '../../utils/context.js'
+import { getEffectiveModelContextWindow } from '../../utils/context.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
 import { hasExactErrorMessage } from '../../utils/errors.js'
 import type { CacheSafeParams } from '../../utils/forkedAgent.js'
 import { logError } from '../../utils/log.js'
-import { getOpenAICodexContextWindowForModel } from '../../services/openaiAuth/models.js'
-import { roughTokenCountEstimation } from '../../services/tokenEstimation.js'
-import { getConfiguredOrBuiltInModelContextWindow } from '../../utils/model/modelContextWindows.js'
+import { findLastCompactBoundaryIndex } from '../../utils/messages.js'
+import { roughContextTokenCountEstimation } from '../../services/tokenEstimation.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
+import { getToolSchemaCache } from '../../utils/toolSchemaCache.js'
 import {
+  getTokenUsage,
   hasUsableContextUsage,
+  isUsableContextUsage,
   tokenCountWithEstimation,
 } from '../../utils/tokens.js'
 import { zodToJsonSchema } from '../../utils/zodToJsonSchema.js'
@@ -42,27 +44,7 @@ const MAX_SUMMARY_RESERVE_CONTEXT_FRACTION = 0.25
 
 // Returns the context window size minus the max output tokens for the model
 export function getEffectiveContextWindowSize(model: string): number {
-  let contextWindow = getContextWindowForModel(model, getSdkBetas())
-
-  const autoCompactWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
-  if (autoCompactWindow) {
-    const parsed = parseInt(autoCompactWindow, 10)
-    if (!isNaN(parsed) && parsed > 0) {
-      // For models with a known window (configured, built-in, [1m], or Codex
-      // catalog) the global override can only lower it — a 1M value left over
-      // from another provider's preset must not pin a smaller model above its
-      // provider's hard cap, where auto-compact never fires (#1162). Unknown
-      // models resolve to the 200K default, and this env is the only way to
-      // declare their real window, so there it applies directly.
-      const hasKnownWindow =
-        has1mContext(model) ||
-        getConfiguredOrBuiltInModelContextWindow(model) !== undefined ||
-        getOpenAICodexContextWindowForModel(model) != null
-      contextWindow = hasKnownWindow
-        ? Math.min(contextWindow, parsed)
-        : parsed
-    }
-  }
+  const contextWindow = getEffectiveModelContextWindow(model, getSdkBetas())
 
   const reservedTokensForSummary = Math.min(
     getMaxOutputTokensForModel(model),
@@ -82,6 +64,11 @@ export type AutoCompactTrackingState = {
   // Used as a circuit breaker to stop retrying when the context is
   // irrecoverably over the limit (e.g., prompt_too_long).
   consecutiveFailures?: number
+  // Consecutive compactions that each refilled to the threshold within
+  // RAPID_REFILL_TURN_WINDOW turns of the previous one. Used as a circuit
+  // breaker when compaction succeeds but frees too little room to matter
+  // (fixed context near the threshold, or oversized tool output).
+  consecutiveRapidRefills?: number
 }
 
 export const AUTOCOMPACT_BUFFER_TOKENS = 13_000
@@ -93,6 +80,70 @@ export const MANUAL_COMPACT_BUFFER_TOKENS = 3_000
 // BQ 2026-03-10: 1,279 sessions had 50+ consecutive failures (up to 3,272)
 // in a single session, wasting ~250K API calls/day globally.
 const MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
+
+// A compaction that leaves the context so full that it refills to the
+// threshold within a few turns is not helping: every later turn pays for
+// another summary call and loses detail (#1544). Same trip rule as the
+// official CLI (3 refills, each within 3 turns), but a refill only counts
+// when the compaction itself freed little room: a small window filled by
+// large tool output still compacts usefully every couple of turns and must
+// not have its turn ended.
+export const RAPID_REFILL_TURN_WINDOW = 3
+export const MAX_CONSECUTIVE_RAPID_REFILLS = 3
+// The first request after a compaction still using this share of the
+// threshold means the summary did not free usable room.
+export const RAPID_REFILL_MIN_POST_COMPACT_SHARE = 0.75
+
+export const AUTOCOMPACT_THRASHING_MESSAGE =
+  'Auto-compact is thrashing: the context refilled to the limit within 3 turns of the previous compaction, 3 times in a row, and each compaction left most of the limit in use. ' +
+  'The fixed context (system prompt, tools, MCP servers, skills, CLAUDE.md) leaves too little room for this context window. ' +
+  'Disable unused MCP servers or skills, shorten CLAUDE.md, switch to a model with a larger context window, or use /clear to start fresh.'
+
+/**
+ * Prompt size of the first API request after the latest compaction, read
+ * from its reported usage. Undefined when there was no compaction in these
+ * messages or the provider reported no usable usage.
+ */
+export function getPostCompactPromptTokens(
+  messages: readonly Message[],
+): number | undefined {
+  const boundaryIndex = findLastCompactBoundaryIndex([...messages])
+  if (boundaryIndex < 0) return undefined
+  for (const message of messages.slice(boundaryIndex + 1)) {
+    const usage = getTokenUsage(message)
+    if (usage && isUsableContextUsage(usage)) {
+      return (
+        (usage.input_tokens ?? 0) +
+        (usage.cache_creation_input_tokens ?? 0) +
+        (usage.cache_read_input_tokens ?? 0)
+      )
+    }
+  }
+  return undefined
+}
+
+export function getRapidRefillDecision(
+  tracking: AutoCompactTrackingState | undefined,
+  postCompactPromptTokens: number | undefined,
+  autoCompactThreshold: number,
+): { trip: boolean; consecutiveRapidRefills: number } {
+  // Without usage we cannot tell a useless compaction from a useful one;
+  // keep the loop guard rather than compact forever.
+  const compactionLeftLittleRoom =
+    postCompactPromptTokens === undefined ||
+    postCompactPromptTokens >=
+      autoCompactThreshold * RAPID_REFILL_MIN_POST_COMPACT_SHARE
+  const consecutiveRapidRefills =
+    tracking?.compacted === true &&
+    tracking.turnCounter < RAPID_REFILL_TURN_WINDOW &&
+    compactionLeftLittleRoom
+      ? (tracking.consecutiveRapidRefills ?? 0) + 1
+      : 0
+  return {
+    trip: consecutiveRapidRefills >= MAX_CONSECUTIVE_RAPID_REFILLS,
+    consecutiveRapidRefills,
+  }
+}
 
 export function getAutoCompactThreshold(model: string): number {
   const effectiveContextWindow = getEffectiveContextWindowSize(model)
@@ -197,11 +248,21 @@ export function isAutoCompactEnabled(): boolean {
 export function estimateFallbackFixedContextTokens(
   cacheSafeParams: CacheSafeParams,
 ): number {
-  const tools = cacheSafeParams.toolUseContext.options.tools.map(tool => ({
-    name: tool.name,
-    input_schema: tool.inputJSONSchema ?? zodToJsonSchema(tool.inputSchema),
-  }))
-  return roughTokenCountEstimation(jsonStringify({
+  // Tool descriptions come from async tool.prompt() and are usually the
+  // largest part of the prefix. Once a request has been sent they sit in the
+  // session tool schema cache (same keys as toolToAPISchema); tools not yet
+  // rendered fall back to name + input_schema.
+  const schemaCache = getToolSchemaCache()
+  const tools = cacheSafeParams.toolUseContext.options.tools.map(tool => {
+    const cacheKey = tool.inputJSONSchema
+      ? `${tool.name}:${jsonStringify(tool.inputJSONSchema)}`
+      : tool.name
+    return schemaCache.get(cacheKey) ?? {
+      name: tool.name,
+      input_schema: tool.inputJSONSchema ?? zodToJsonSchema(tool.inputSchema),
+    }
+  })
+  return roughContextTokenCountEstimation(jsonStringify({
     systemPrompt: cacheSafeParams.systemPrompt,
     systemContext: cacheSafeParams.systemContext,
     userContext: cacheSafeParams.userContext,
@@ -308,6 +369,8 @@ export async function autoCompactIfNeeded(
   wasCompacted: boolean
   compactionResult?: CompactionResult
   consecutiveFailures?: number
+  consecutiveRapidRefills?: number
+  rapidRefillBreakerTripped?: boolean
 }> {
   if (isEnvTruthy(process.env.DISABLE_COMPACT)) {
     return { wasCompacted: false }
@@ -334,6 +397,22 @@ export async function autoCompactIfNeeded(
 
   if (!shouldCompact) {
     return { wasCompacted: false }
+  }
+
+  const postCompactPromptTokens = tracking?.compacted
+    ? getPostCompactPromptTokens(messages)
+    : undefined
+  const { trip, consecutiveRapidRefills } = getRapidRefillDecision(
+    tracking,
+    postCompactPromptTokens,
+    getAutoCompactThreshold(model),
+  )
+  if (trip) {
+    logForDebugging(
+      `autocompact: rapid-refill breaker tripped — ${consecutiveRapidRefills} consecutive refills within <${RAPID_REFILL_TURN_WINDOW} turns each (last was ${tracking?.turnCounter} turns, post-compact prompt ${postCompactPromptTokens ?? 'unknown'} tokens)`,
+      { level: 'warn' },
+    )
+    return { wasCompacted: false, rapidRefillBreakerTripped: true }
   }
 
   const recompactionInfo: RecompactionInfo = {
@@ -366,6 +445,7 @@ export async function autoCompactIfNeeded(
     return {
       wasCompacted: true,
       compactionResult: sessionMemoryResult,
+      consecutiveRapidRefills,
     }
   }
 
@@ -390,6 +470,7 @@ export async function autoCompactIfNeeded(
       compactionResult,
       // Reset failure count on success
       consecutiveFailures: 0,
+      consecutiveRapidRefills,
     }
   } catch (error) {
     if (!hasExactErrorMessage(error, ERROR_MESSAGE_USER_ABORT)) {

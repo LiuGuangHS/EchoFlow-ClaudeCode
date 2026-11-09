@@ -29,14 +29,15 @@ import {
   REJECT_MESSAGE_WITH_REASON_PREFIX,
 } from '../../constants/messages.js'
 import { SessionService, sessionService } from '../services/sessionService.js'
+import { HISTORY_SEMANTIC_RECORD_BYTES } from '../services/boundedSessionHistory.js'
 import { createRepositoryBranch } from '../services/repositoryLaunchService.js'
 import { ProviderService } from '../services/providerService.js'
 import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { SettingsService } from '../services/settingsService.js'
-import { echoFlowOAuthService } from '../services/echoFlowOAuthService.js'
+import { hahaOAuthService } from '../services/hahaOAuthService.js'
 import { resetTerminalShellEnvironmentCacheForTests } from '../../utils/terminalShellEnvironment.js'
 import * as openAIModelCatalog from '../../services/openaiAuth/modelCatalog.js'
-import { IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY } from '../../services/imageGeneration/config.js'
+import * as titleService from '../services/titleService.js'
 
 async function rmWithRetry(targetPath: string): Promise<void> {
   const attempts = process.platform === 'win32' ? 5 : 1
@@ -1350,7 +1351,7 @@ describe('ConversationService', () => {
       expect(found).not.toBeNull()
 
       const encryptedReasoning =
-        `echoflow-code:openai-reasoning:v1:${JSON.stringify({
+        `cc-haha:openai-reasoning:v1:${JSON.stringify({
           summary: [],
           encrypted_content: 'x'.repeat(400_000),
         })}`
@@ -1919,6 +1920,149 @@ describe('ConversationService', () => {
     }
   })
 
+  describe('transcript estimates for sessions whose recorded provider cannot supply the window (#1547)', () => {
+    async function estimateWindow(options: {
+      responseModel: string
+      runtimeProviderId: string | null
+      providerModels: Record<'main' | 'haiku' | 'sonnet' | 'opus', string>
+      modelContextWindows: Record<string, number>
+      inputTokens: number
+    }) {
+      const previousConfigDir = process.env.CLAUDE_CONFIG_DIR
+      const previousNodeEnv = process.env.NODE_ENV
+      const previousModelContextWindows = process.env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS
+      const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-transcript-1547-'))
+      const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-workdir-1547-'))
+      process.env.CLAUDE_CONFIG_DIR = tmpConfigDir
+      process.env.NODE_ENV = 'development'
+      delete process.env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS
+
+      try {
+        const providerService = new ProviderService()
+        const provider = await providerService.addProvider({
+          presetId: 'custom',
+          name: 'DeepSeek',
+          apiKey: 'provider-key',
+          authStrategy: 'auth_token',
+          baseUrl: 'https://api.deepseek.com/anthropic',
+          apiFormat: 'anthropic',
+          models: options.providerModels,
+          modelContextWindows: options.modelContextWindows,
+        })
+        await providerService.activateProvider(provider.id)
+
+        const svc = new SessionService()
+        const { sessionId, workDir: sessionWorkDir } = await svc.createSession(workDir)
+        await svc.appendSessionMetadata(sessionId, {
+          workDir: sessionWorkDir,
+          runtimeProviderId: options.runtimeProviderId,
+          runtimeModelId: options.responseModel,
+        })
+        const found = await svc.findSessionFile(sessionId)
+        expect(found).not.toBeNull()
+        await fs.appendFile(found!.filePath, JSON.stringify({
+          type: 'assistant',
+          uuid: crypto.randomUUID(),
+          timestamp: '2026-10-13T12:00:00.000Z',
+          cwd: sessionWorkDir,
+          version: '999.0.0-test',
+          message: {
+            role: 'assistant',
+            model: options.responseModel,
+            content: [{ type: 'text', text: 'hello' }],
+            usage: { input_tokens: options.inputTokens, output_tokens: 20 },
+          },
+        }) + '\n')
+
+        return await svc.getTranscriptContextEstimate(sessionId)
+      } finally {
+        if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
+        else process.env.CLAUDE_CONFIG_DIR = previousConfigDir
+        if (previousNodeEnv === undefined) delete process.env.NODE_ENV
+        else process.env.NODE_ENV = previousNodeEnv
+        if (previousModelContextWindows === undefined) delete process.env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS
+        else process.env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS = previousModelContextWindows
+        await fs.rm(tmpConfigDir, { recursive: true, force: true })
+        await fs.rm(workDir, { recursive: true, force: true })
+      }
+    }
+
+    const deepseekModels = {
+      main: 'deepseek-v4-flash-vision-exp',
+      haiku: 'deepseek-v4-flash',
+      sonnet: 'deepseek-v4-flash-vision-exp',
+      opus: 'deepseek-v4-pro',
+    }
+    const deepseekWindows = {
+      'deepseek-v4-flash-vision-exp': 1_048_576,
+      'deepseek-v4-flash': 1_048_576,
+      'deepseek-v4-pro': 1_048_576,
+    }
+
+    it('uses the active provider when the recorded provider id no longer exists', async () => {
+      const estimate = await estimateWindow({
+        responseModel: 'deepseek-v4-flash-vision-exp',
+        runtimeProviderId: 'deleted-provider-id',
+        providerModels: deepseekModels,
+        modelContextWindows: deepseekWindows,
+        inputTokens: 418_457,
+      })
+
+      expect(estimate?.rawMaxTokens).toBe(1_048_576)
+      // Not clamped to a 200K guess: the real prompt size is preserved.
+      expect(estimate?.totalTokens).toBeGreaterThan(400_000)
+      expect(estimate?.percentage).toBeLessThan(100)
+    })
+
+    it('infers the saved provider window for a non-Claude model recorded without a provider', async () => {
+      const estimate = await estimateWindow({
+        responseModel: 'deepseek-v4-flash-vision-exp',
+        runtimeProviderId: null,
+        providerModels: deepseekModels,
+        modelContextWindows: deepseekWindows,
+        inputTokens: 418_457,
+      })
+
+      expect(estimate?.rawMaxTokens).toBe(1_048_576)
+      expect(estimate?.totalTokens).toBeGreaterThan(400_000)
+    })
+
+    it('keeps the built-in window for a Claude model recorded as Claude Official', async () => {
+      const estimate = await estimateWindow({
+        responseModel: 'claude-sonnet-4-6',
+        runtimeProviderId: null,
+        providerModels: {
+          main: 'claude-sonnet-4-6',
+          haiku: 'claude-sonnet-4-6',
+          sonnet: 'claude-sonnet-4-6',
+          opus: 'claude-sonnet-4-6',
+        },
+        modelContextWindows: { 'claude-sonnet-4-6': 1_000_000 },
+        inputTokens: 1_000,
+      })
+
+      expect(estimate?.rawMaxTokens).toBe(200_000)
+    })
+
+    it('keeps the catalog window for an OpenAI model another provider configures differently', async () => {
+      const estimate = await estimateWindow({
+        responseModel: 'gpt-5.6-terra',
+        runtimeProviderId: null,
+        providerModels: {
+          main: 'gpt-5.6-terra',
+          haiku: 'gpt-5.6-terra',
+          sonnet: 'gpt-5.6-terra',
+          opus: 'gpt-5.6-terra',
+        },
+        modelContextWindows: { 'gpt-5.6-terra': 64_000 },
+        inputTokens: 1_000,
+      })
+
+      expect(estimate?.rawMaxTokens).not.toBe(64_000)
+      expect(estimate?.rawMaxTokens).toBeGreaterThan(200_000)
+    })
+  })
+
   it('should not report transcript context as full for low-trust media usage spikes', async () => {
     const previousConfigDir = process.env.CLAUDE_CONFIG_DIR
     const previousNodeEnv = process.env.NODE_ENV
@@ -2237,34 +2381,6 @@ describe('WebSocket Chat Integration', () => {
     }
     throw new Error(`Timed out waiting for ${label}`)
   }
-
-  async function configureInstalledCliRuntime(): Promise<string> {
-    const installedPath = path.join(tmpDir, 'runtime', 'a', 'b', 'installed-claude-runtime.ts')
-    const configPath = path.join(tmpDir, 'claude-code-runtime.json')
-    await fs.mkdir(path.dirname(installedPath), { recursive: true })
-    await fs.copyFile(
-      fileURLToPath(new URL('./fixtures/mock-sdk-cli.ts', import.meta.url)),
-      installedPath,
-    )
-    await fs.mkdir(path.join(tmpDir, 'utils'), { recursive: true })
-    await fs.copyFile(
-      fileURLToPath(new URL('../../utils/sessionCollaborationEnvelope.ts', import.meta.url)),
-      path.join(tmpDir, 'utils', 'sessionCollaborationEnvelope.ts'),
-    )
-    await fs.writeFile(
-      path.join(tmpDir, 'utils', 'json.ts'),
-      'export function safeParseJSON(value: string) { try { return JSON.parse(value) } catch { return null } }\n',
-    )
-    await fs.chmod(installedPath, 0o755)
-    await fs.writeFile(configPath, JSON.stringify({
-      schemaVersion: 1,
-      defaultRuntimeId: 'installed',
-      installedPath,
-    }))
-    process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = configPath
-    return configPath
-  }
-
   const originalCliPath = process.env.CLAUDE_CLI_PATH
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
 
@@ -2900,6 +3016,104 @@ describe('WebSocket Chat Integration', () => {
     expect(basicBody.context).toBeUndefined()
   })
 
+  it('keeps inspection status available after an oversized screenshot is recorded', async () => {
+    const workDir = await fs.mkdtemp(path.join(tmpDir, 'inspection-'))
+    const created = await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir, permissionMode: 'acceptEdits' }),
+    })
+    expect(created.status).toBe(201)
+    const { sessionId } = await created.json() as { sessionId: string }
+    await runTurn(sessionId, 'hello before inspection')
+
+    const transcript = await sessionService.findSessionFile(sessionId)
+    expect(transcript).not.toBeNull()
+    const image = {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(HISTORY_SEMANTIC_RECORD_BYTES / 2) },
+    }
+    const screenshot = {
+      type: 'user',
+      uuid: crypto.randomUUID(),
+      message: {
+        role: 'user',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'screenshot',
+          content: [image],
+        }],
+      },
+      toolUseResult: [image],
+      version: '9.9.9',
+    }
+    const reply = {
+      type: 'assistant',
+      uuid: crypto.randomUUID(),
+      message: { role: 'assistant', model: 'mock-opus', usage: { input_tokens: 50_000, output_tokens: 10 } },
+    }
+    await fs.appendFile(transcript!.filePath, `${JSON.stringify(screenshot)}\n${JSON.stringify(reply)}\n`)
+
+    const inspectionUrl = `${baseUrl}/api/sessions/${sessionId}/inspection`
+    const readStatus = async () => {
+      const snapshot = spyOn(sessionService, 'getInspectionTranscriptSnapshot')
+      try {
+        const response = await fetch(`${inspectionUrl}?statusOnly=1`)
+        expect(response.status).toBe(200)
+        expect(snapshot).not.toHaveBeenCalled()
+        const body = await response.json()
+        expect(body).not.toHaveProperty('usage')
+        expect(body).not.toHaveProperty('contextEstimate')
+        return body
+      } finally {
+        snapshot.mockRestore()
+      }
+    }
+    const control = spyOn(conversationService, 'requestControl')
+    try {
+      expect(await readStatus()).toMatchObject({
+        active: true,
+        status: { sessionId, workDir, model: 'mock-opus', contextWindow: expect.any(Number), mcpServers: [{ name: 'mock', status: 'connected' }] },
+      })
+      expect(control.mock.calls.map(([, request]) => request.subtype)).toEqual(['mcp_status'])
+    } finally {
+      control.mockRestore()
+    }
+
+    const live = await fetch(`${inspectionUrl}?includeContext=0`)
+    expect(live.status).toBe(200)
+    const liveBody = await live.json()
+    expect(liveBody).toMatchObject({
+      active: true,
+      status: { sessionId, workDir, model: 'mock-opus', mcpServers: [{ name: 'mock', status: 'connected' }] },
+      usage: { source: 'current_process', totalInputTokens: 27_000 },
+    })
+    expect(liveBody.errors).toEqual({})
+
+    const context = await fetch(`${inspectionUrl}?contextOnly=1`)
+    expect(context.status).toBe(200)
+    expect(await context.json()).toMatchObject({ context: { model: 'mock-opus', estimateOnly: true } })
+
+    await conversationService.stopSessionAndWait(sessionId)
+    expect(await readStatus()).toMatchObject({
+      active: false,
+      status: { sessionId, workDir, permissionMode: 'acceptEdits', model: 'mock-opus', version: '9.9.9' },
+    })
+    const stopped = await fetch(inspectionUrl)
+    expect(stopped.status).toBe(200)
+    const stoppedBody = await stopped.json()
+    expect(stoppedBody).toMatchObject({
+      active: false,
+      status: { sessionId, workDir, permissionMode: 'acceptEdits' },
+      errors: {
+        usage: expect.stringContaining('semantic read limit'),
+        context: expect.stringContaining('semantic read limit'),
+      },
+    })
+    expect(stoppedBody).not.toHaveProperty('usage')
+    expect(stoppedBody).not.toHaveProperty('contextEstimate')
+  })
+
   it('should expose context-only inspection without waiting on mcp status', async () => {
     await withMockMcpStatusDelay(2_000, async () => {
       const sessionId = `chat-context-only-${crypto.randomUUID()}`
@@ -3085,6 +3299,23 @@ describe('WebSocket Chat Integration', () => {
     expect(messages.at(-1)?.type).toBe('message_complete')
   }, 15_000)
 
+  it('tells a caller waiting on a control request why the CLI exited', async () => {
+    const sessionId = `chat-control-exit-${crypto.randomUUID()}`
+    let rejection: Promise<string> | undefined
+    await runTurnUntilComplete(sessionId, 'hello', (message) => {
+      if (rejection || message.type === 'connected' || !conversationService.hasSession(sessionId)) return
+      rejection = conversationService.requestControl(sessionId, {
+        subtype: 'mock_exit_with_stderr', code: 3, stderr: 'Error: provider settings are unreadable',
+      }).then(() => 'resolved', (error: Error) => error.message)
+    })
+
+    expect(rejection).toBeDefined()
+    const reason = await rejection!
+    expect(reason).toContain('CLI session exited before the control request completed')
+    expect(reason).toContain('code 3')
+    expect(reason).toContain('Error: provider settings are unreadable')
+  }, 15_000)
+
   it('should handle permission_response without error', async () => {
     const messages: any[] = []
     const ws = new WebSocket(`${wsUrl}/ws/chat-test-4`)
@@ -3174,7 +3405,7 @@ describe('WebSocket Chat Integration', () => {
   })
 
   it('should keep a long desktop session alive in a /tmp project across engineering turns', async () => {
-    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-code-issue247-project-'))
+    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-issue247-project-'))
     let sessionId: string | undefined
 
     try {
@@ -3553,13 +3784,15 @@ describe('WebSocket Chat Integration', () => {
   it('should migrate a persisted opus[1m] Claude OAuth Pro session before starting the CLI', async () => {
     const providerService = new ProviderService()
     await providerService.activateOfficial()
-    await echoFlowOAuthService.saveTokens({
+    await hahaOAuthService.saveTokens({
       accessToken: 'persisted-pro-access',
       refreshToken: 'persisted-pro-refresh',
       expiresAt: Date.now() + 60 * 60_000,
       scopes: ['user:inference'],
       subscriptionType: 'pro',
     })
+    // Starting the CLI looks the account up through the profile endpoint.
+    hahaOAuthService.setFetchAccountUuidFn(async () => 'account-uuid-from-profile')
     const settingsService = new SettingsService()
     const previousSettings = await settingsService.getUserSettings()
     await settingsService.updateUserSettings({ model: 'opus[1m]' })
@@ -3610,7 +3843,8 @@ describe('WebSocket Chat Integration', () => {
     } finally {
       conversationService.startSession = originalStartSession
       conversationService.stopSession(sessionId)
-      await echoFlowOAuthService.deleteTokens()
+      await hahaOAuthService.deleteTokens()
+      hahaOAuthService.setFetchAccountUuidFn()
       await fs.writeFile(
         path.join(tmpDir, 'settings.json'),
         JSON.stringify(previousSettings, null, 2),
@@ -3622,10 +3856,10 @@ describe('WebSocket Chat Integration', () => {
   it('should pass the active provider id into default desktop sessions', async () => {
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
-      presetId: 'custom',
+      presetId: 'shengsuanyun',
       name: 'Active Default Provider',
       apiKey: 'key-active-default',
-      baseUrl: 'https://api.example.com/anthropic',
+      baseUrl: 'https://router.shengsuanyun.com/api',
       apiFormat: 'anthropic',
       models: {
         main: 'active-main',
@@ -4213,7 +4447,7 @@ describe('WebSocket Chat Integration', () => {
       startCalls.push({
         providerId: options?.providerId,
         model: options?.model,
-        imageProviderKind: env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY],
+        imageProviderKind: env.CC_HAHA_IMAGE_PROVIDER_KIND,
       })
       return originalStartSession(sid, workDir, sdkUrl, options)
     }) as typeof conversationService.startSession
@@ -4345,182 +4579,6 @@ describe('WebSocket Chat Integration', () => {
       await providerService.activateOfficial()
       await providerService.deleteProvider(customProvider.id)
     }
-  }, 20_000)
-
-  it('rejects an unavailable installed CLI runtime before stopping or persisting', async () => {
-    const createRes = await fetch(`${baseUrl}/api/sessions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workDir: process.cwd() }),
-    })
-    expect(createRes.status).toBe(201)
-    const { sessionId } = await createRes.json() as { sessionId: string }
-
-    await runTurn(sessionId, 'establish the existing CLI session')
-    const originalConfig = process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
-    process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = path.join(tmpDir, 'missing-runtime.json')
-    const originalStopSessionAndWait = conversationService.stopSessionAndWait.bind(conversationService)
-    const stopCalls: string[] = []
-    conversationService.stopSessionAndWait = (async (targetSessionId: string) => {
-      stopCalls.push(targetSessionId)
-      return originalStopSessionAndWait(targetSessionId)
-    }) as typeof conversationService.stopSessionAndWait
-
-    try {
-      const messages: any[] = []
-      const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Timed out waiting for CLI runtime validation')), 5000)
-        ws.onmessage = (event) => {
-          const message = JSON.parse(event.data as string)
-          messages.push(message)
-          if (message.type === 'connected') {
-            ws.send(JSON.stringify({ type: 'set_cli_runtime', cliRuntimeId: 'installed' }))
-          } else if (message.type === 'error') {
-            clearTimeout(timeout)
-            ws.close()
-            resolve()
-          }
-        }
-        ws.onerror = () => {
-          clearTimeout(timeout)
-          reject(new Error('WebSocket failed during CLI runtime validation'))
-        }
-      })
-
-      expect(messages.at(-1)).toMatchObject({
-        type: 'error',
-        code: 'CLI_RUNTIME_INVALID',
-      })
-      expect(stopCalls).toEqual([])
-      expect(conversationService.hasSession(sessionId)).toBe(true)
-      expect((await sessionService.getSessionLaunchInfo(sessionId))?.cliRuntimeId).toBeUndefined()
-    } finally {
-      conversationService.stopSessionAndWait = originalStopSessionAndWait
-      if (originalConfig === undefined) delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
-      else process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = originalConfig
-    }
-  }, 20_000)
-
-  it('restarts an idle session with the installed CLI runtime and persists after startup', async () => {
-    const createRes = await fetch(`${baseUrl}/api/sessions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workDir: process.cwd() }),
-    })
-    const { sessionId } = await createRes.json() as { sessionId: string }
-    await runTurn(sessionId, 'establish a resumable CLI runtime session')
-    const originalConfig = process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
-    await configureInstalledCliRuntime()
-    const originalStartSession = conversationService.startSession.bind(conversationService)
-    const originalStopSessionAndWait = conversationService.stopSessionAndWait.bind(conversationService)
-    const startCalls: Array<{ options?: { cliRuntimeId?: string } }> = []
-    const stopCalls: string[] = []
-    conversationService.startSession = (async (sid, workDir, sdkUrl, options) => {
-      startCalls.push({ options })
-      return originalStartSession(sid, workDir, sdkUrl, options)
-    }) as typeof conversationService.startSession
-    conversationService.stopSessionAndWait = (async (sid) => {
-      stopCalls.push(sid)
-      return originalStopSessionAndWait(sid)
-    }) as typeof conversationService.stopSessionAndWait
-
-    try {
-      const messages: any[] = []
-      const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Timed out waiting for installed CLI runtime restart')), 10000)
-        ws.onmessage = (event) => {
-          const message = JSON.parse(event.data as string)
-          messages.push(message)
-          if (message.type === 'connected') {
-            ws.send(JSON.stringify({ type: 'set_cli_runtime', cliRuntimeId: 'installed' }))
-          } else if (message.type === 'cli_runtime_applied') {
-            clearTimeout(timeout)
-            ws.close()
-            resolve()
-          } else if (message.type === 'error') {
-            clearTimeout(timeout)
-            ws.close()
-            reject(new Error(message.message))
-          }
-        }
-        ws.onerror = () => reject(new Error('WebSocket failed during installed CLI runtime restart'))
-      })
-
-      expect(stopCalls).toEqual([sessionId])
-      expect(startCalls.at(-1)?.options).toMatchObject({ cliRuntimeId: 'installed' })
-      expect(messages).toContainEqual({ type: 'cli_runtime_applied', cliRuntimeId: 'installed' })
-      expect((await sessionService.getSessionLaunchInfo(sessionId))?.cliRuntimeId).toBe('installed')
-    } finally {
-      conversationService.startSession = originalStartSession
-      conversationService.stopSessionAndWait = originalStopSessionAndWait
-      conversationService.stopSession(sessionId)
-      if (originalConfig === undefined) delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
-      else process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = originalConfig
-    }
-  }, 20_000)
-
-  it('defers CLI runtime switching until the active turn completes', async () => {
-    await withMockStreamDelay(350, async () => {
-      const sessionId = `cli-runtime-deferred-${crypto.randomUUID()}`
-      const originalConfig = process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
-      delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
-      const originalStartSession = conversationService.startSession.bind(conversationService)
-      const originalStopSessionAndWait = conversationService.stopSessionAndWait.bind(conversationService)
-      let startCount = 0
-      let stopCount = 0
-      conversationService.startSession = (async (sid, workDir, sdkUrl, options) => {
-        startCount += 1
-        return originalStartSession(sid, workDir, sdkUrl, options)
-      }) as typeof conversationService.startSession
-      conversationService.stopSessionAndWait = (async (sid) => {
-        stopCount += 1
-        return originalStopSessionAndWait(sid)
-      }) as typeof conversationService.stopSessionAndWait
-
-      try {
-        const messages: any[] = []
-        const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
-        await new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error('Timed out waiting for deferred CLI runtime switch')), 15000)
-          let requested = false
-          ws.onmessage = (event) => {
-            const message = JSON.parse(event.data as string)
-            messages.push(message)
-            if (message.type === 'connected') {
-              ws.send(JSON.stringify({ type: 'user_message', content: 'defer this CLI runtime switch' }))
-            } else if (message.type === 'content_delta' && !requested) {
-              requested = true
-              void configureInstalledCliRuntime().then(() => {
-                ws.send(JSON.stringify({ type: 'set_cli_runtime', cliRuntimeId: 'installed' }))
-              })
-              expect(stopCount).toBe(0)
-              expect(startCount).toBe(1)
-            } else if (message.type === 'cli_runtime_applied') {
-              clearTimeout(timeout)
-              ws.close()
-              resolve()
-            } else if (message.type === 'error') {
-              clearTimeout(timeout)
-              ws.close()
-              reject(new Error(message.message))
-            }
-          }
-          ws.onerror = () => reject(new Error('WebSocket failed during deferred CLI runtime switch'))
-        })
-
-        expect(stopCount).toBe(1)
-        expect(startCount).toBe(2)
-        expect(messages).toContainEqual({ type: 'cli_runtime_applied', cliRuntimeId: 'installed' })
-      } finally {
-        conversationService.startSession = originalStartSession
-        conversationService.stopSessionAndWait = originalStopSessionAndWait
-        conversationService.stopSession(sessionId)
-        if (originalConfig === undefined) delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
-        else process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = originalConfig
-      }
-    })
   }, 20_000)
 
   it('should keep the session idle in the UI while applying a runtime-only model switch', async () => {
@@ -5067,19 +5125,12 @@ describe('WebSocket Chat Integration', () => {
         expect(turnComplete).toBe(true)
         expect(restartError).toBe(true)
         expect(restartedBeforeTerminalResult).toBe(false)
-        expect(startCalls).toHaveLength(3)
+        expect(startCalls).toHaveLength(2)
         expect(startCalls[1]).toMatchObject({
           sessionId,
           options: {
             providerId: providerB.id,
             model: 'deferred-failure-b-opus',
-          },
-        })
-        expect(startCalls[2]).toMatchObject({
-          sessionId,
-          options: {
-            providerId: providerA.id,
-            model: 'deferred-failure-a-sonnet',
           },
         })
       } finally {
@@ -5091,8 +5142,10 @@ describe('WebSocket Chat Integration', () => {
     })
   }, 20_000)
 
-  it('should defer bypass permission changes until the active turn completes without restarting', async () => {
-    await withMockStreamDelay(350, async () => {
+  it('should apply a permission change to the running CLI during an active turn', async () => {
+    // The switch must land while the turn is still streaming. 350ms left too
+    // little headroom on a busy CI runner, where the turn could finish first.
+    await withMockStreamDelay(1_500, async () => {
       await fetch(`${baseUrl}/api/permissions/mode`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -5124,15 +5177,14 @@ describe('WebSocket Chat Integration', () => {
       }) as typeof conversationService.startSession
 
       const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+      const events: string[] = []
       let switchTriggered = false
-      let turnComplete = false
-      let modeConfirmed = false
-      let deferredInspectionChecked = false
+      let midTurnInspectionMode: string | undefined
       try {
         await new Promise<void>((resolve, reject) => {
           const timeout = setTimeout(() => {
             ws.close()
-            reject(new Error(`Timed out waiting for active-turn permission switch for session ${sessionId}`))
+            reject(new Error(`Timed out waiting for active-turn permission switch for session ${sessionId}: ${events.join(',')}`))
           }, 10_000)
 
           ws.onmessage = async (event) => {
@@ -5157,46 +5209,28 @@ describe('WebSocket Chat Integration', () => {
               !switchTriggered
             ) {
               switchTriggered = true
+              events.push('switch_sent')
               ws.send(JSON.stringify({
                 type: 'set_permission_mode',
                 mode: 'bypassPermissions',
               }))
-              await new Promise((resolve) => setTimeout(resolve, 25))
-              const inspectionRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/inspection?includeContext=0`)
-              if (!inspectionRes.ok) {
-                clearTimeout(timeout)
-                ws.close()
-                reject(new Error(`Inspection failed while permission switch was deferred: ${inspectionRes.status}`))
-                return
-              }
-              const inspectionBody = await inspectionRes.json() as { status?: { permissionMode?: string } }
-              deferredInspectionChecked = true
-              if (inspectionBody.status?.permissionMode !== 'default') {
-                clearTimeout(timeout)
-                ws.close()
-                reject(new Error(`Deferred permission switch was exposed before restart: ${inspectionBody.status?.permissionMode}`))
-                return
-              }
               return
             }
 
             if (msg.type === 'permission_mode_changed' && msg.mode === 'bypassPermissions') {
-              modeConfirmed = true
-              if (turnComplete) {
-                clearTimeout(timeout)
-                resolve()
+              events.push('mode_changed')
+              if (!events.includes('message_complete')) {
+                const inspectionRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/inspection?includeContext=0`)
+                const inspectionBody = await inspectionRes.json() as { status?: { permissionMode?: string } }
+                midTurnInspectionMode = inspectionBody.status?.permissionMode
               }
               return
             }
 
-            if (msg.type === 'message_complete' && switchTriggered && !turnComplete) {
-              turnComplete = true
-              expect(startCalls).toHaveLength(1)
-              if (modeConfirmed) {
-                clearTimeout(timeout)
-                resolve()
-              }
-              return
+            if (msg.type === 'message_complete' && switchTriggered) {
+              events.push('message_complete')
+              clearTimeout(timeout)
+              resolve()
             }
           }
 
@@ -5206,10 +5240,10 @@ describe('WebSocket Chat Integration', () => {
           }
         })
 
-        expect(switchTriggered).toBe(true)
-        expect(turnComplete).toBe(true)
-        expect(modeConfirmed).toBe(true)
-        expect(deferredInspectionChecked).toBe(true)
+        // The running CLI confirmed the switch before the turn ended, so tool
+        // calls later in the same turn are checked under the new mode.
+        expect(events).toEqual(['switch_sent', 'mode_changed', 'message_complete'])
+        expect(midTurnInspectionMode).toBe('bypassPermissions')
         expect(startCalls).toHaveLength(1)
         expect(startCalls[0]).toMatchObject({
           sessionId,
@@ -5228,6 +5262,161 @@ describe('WebSocket Chat Integration', () => {
           body: JSON.stringify({ mode: 'default' }),
         })
       }
+    })
+  }, 20_000)
+
+  it('should defer a legacy bypass restart until the active turn completes', async () => {
+    await withMockPermissionModeBehavior('unavailable', async () => {
+      await withMockStreamDelay(1_500, async () => {
+        const createRes = await fetch(`${baseUrl}/api/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workDir: process.cwd(), permissionMode: 'default' }),
+        })
+        expect(createRes.status).toBe(201)
+        const { sessionId } = await createRes.json() as { sessionId: string }
+
+        const originalStartSession = conversationService.startSession.bind(conversationService)
+        const startModes: Array<string | undefined> = []
+        conversationService.startSession = (async function patchedStartSession(
+          sid: string,
+          workDir: string,
+          sdkUrl: string,
+          options?: { permissionMode?: string; model?: string; effort?: string; thinking?: 'enabled' | 'adaptive' | 'disabled'; providerId?: string | null },
+        ) {
+          startModes.push(options?.permissionMode)
+          return originalStartSession(sid, workDir, sdkUrl, options)
+        }) as typeof conversationService.startSession
+
+        const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+        const messages: any[] = []
+        let switchTriggered = false
+        let midTurnStartModes: Array<string | undefined> | undefined
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error(`Timed out waiting for legacy turn ${sessionId}`)), 10_000)
+            ws.onmessage = (event) => {
+              const msg = JSON.parse(event.data as string)
+              messages.push(msg)
+              if (msg.type === 'connected') {
+                ws.send(JSON.stringify({ type: 'user_message', content: 'legacy active turn permission switch' }))
+                return
+              }
+              if (
+                msg.type === 'content_delta' &&
+                typeof msg.text === 'string' &&
+                msg.text.includes('legacy active turn permission switch') &&
+                !switchTriggered
+              ) {
+                switchTriggered = true
+                ws.send(JSON.stringify({ type: 'set_permission_mode', mode: 'bypassPermissions' }))
+                // The mock holds the turn open for 1.5s after this delta; an
+                // immediate restart would have started a second CLI by now.
+                setTimeout(() => {
+                  if (!messages.some((m) => m.type === 'message_complete')) midTurnStartModes = [...startModes]
+                }, 400)
+                return
+              }
+              if (msg.type === 'message_complete' && switchTriggered) {
+                clearTimeout(timeout)
+                resolve()
+              }
+            }
+            ws.onerror = () => {
+              clearTimeout(timeout)
+              reject(new Error(`WebSocket error for legacy turn ${sessionId}`))
+            }
+          })
+          await waitUntil(
+            () => messages.some((msg) =>
+              msg.type === 'permission_mode_changed' && msg.mode === 'bypassPermissions'
+            ),
+            `legacy bypass restart after the turn ${sessionId}`,
+          )
+
+          // Restarting mid-turn would have ended the turn the user was watching.
+          expect(midTurnStartModes).toEqual(['default'])
+          expect(startModes).toEqual(['default', 'bypassPermissions'])
+          expect(messages.some((msg) => msg.type === 'error')).toBe(false)
+          expect(conversationService.getSessionPermissionMode(sessionId)).toBe('bypassPermissions')
+        } finally {
+          ws.close()
+          conversationService.startSession = originalStartSession
+          conversationService.stopSession(sessionId)
+        }
+      })
+    })
+  }, 20_000)
+
+  it('should drop a deferred legacy bypass restart when the user switches back mid-turn', async () => {
+    await withMockPermissionModeBehavior('unavailable', async () => {
+      await withMockStreamDelay(1_500, async () => {
+        const createRes = await fetch(`${baseUrl}/api/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workDir: process.cwd(), permissionMode: 'default' }),
+        })
+        expect(createRes.status).toBe(201)
+        const { sessionId } = await createRes.json() as { sessionId: string }
+
+        const originalStartSession = conversationService.startSession.bind(conversationService)
+        const startModes: Array<string | undefined> = []
+        conversationService.startSession = (async function patchedStartSession(
+          sid: string,
+          workDir: string,
+          sdkUrl: string,
+          options?: { permissionMode?: string; model?: string; effort?: string; thinking?: 'enabled' | 'adaptive' | 'disabled'; providerId?: string | null },
+        ) {
+          startModes.push(options?.permissionMode)
+          return originalStartSession(sid, workDir, sdkUrl, options)
+        }) as typeof conversationService.startSession
+
+        const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+        const messages: any[] = []
+        let switchTriggered = false
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error(`Timed out waiting for legacy turn ${sessionId}`)), 10_000)
+            ws.onmessage = (event) => {
+              const msg = JSON.parse(event.data as string)
+              messages.push(msg)
+              if (msg.type === 'connected') {
+                ws.send(JSON.stringify({ type: 'user_message', content: 'legacy switch back mid-turn' }))
+                return
+              }
+              if (
+                msg.type === 'content_delta' &&
+                typeof msg.text === 'string' &&
+                msg.text.includes('legacy switch back mid-turn') &&
+                !switchTriggered
+              ) {
+                switchTriggered = true
+                ws.send(JSON.stringify({ type: 'set_permission_mode', mode: 'bypassPermissions' }))
+                ws.send(JSON.stringify({ type: 'set_permission_mode', mode: 'default' }))
+                return
+              }
+              if (msg.type === 'message_complete' && switchTriggered) {
+                clearTimeout(timeout)
+                resolve()
+              }
+            }
+            ws.onerror = () => {
+              clearTimeout(timeout)
+              reject(new Error(`WebSocket error for legacy turn ${sessionId}`))
+            }
+          })
+          // Give a stale deferred restart the chance to run after the turn.
+          await new Promise((resolve) => setTimeout(resolve, 500))
+
+          expect(startModes).toEqual(['default'])
+          expect(messages.some((msg) => msg.type === 'permission_mode_changed' && msg.mode === 'bypassPermissions')).toBe(false)
+          expect(conversationService.getSessionPermissionMode(sessionId)).toBe('default')
+        } finally {
+          ws.close()
+          conversationService.startSession = originalStartSession
+          conversationService.stopSession(sessionId)
+        }
+      })
     })
   }, 20_000)
 
@@ -5505,6 +5694,96 @@ describe('WebSocket Chat Integration', () => {
       })
     }
   }, 20_000)
+
+  for (const stopDuringTitle of [false, true]) {
+    it(`should ${stopDuringTitle ? 'cancel startup' : 'finish the first turn'} after a pending placeholder title save`, async () => {
+      const createRes = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workDir: process.cwd(), permissionMode: 'acceptEdits' }),
+      })
+      expect(createRes.status).toBe(201)
+      const { sessionId } = await createRes.json() as { sessionId: string }
+      const titleStarted = withResolvers<void>()
+      const releaseTitle = withResolvers<void>()
+      const titleFinished = withResolvers<void>()
+      let titlePending = false
+      let startupReadDuringTitle = false
+      let startupReads = 0
+      const originalSaveTitle = titleService.saveAiTitle
+      const originalWorkDir = sessionService.getSessionWorkDir.bind(sessionService)
+      const titleSpy = spyOn(titleService, 'saveAiTitle').mockImplementation(async (...args) => {
+        if (args[0] !== sessionId) return originalSaveTitle(...args)
+        titlePending = true
+        titleStarted.resolve()
+        try {
+          await releaseTitle.promise
+          return await originalSaveTitle(...args)
+        } finally {
+          titlePending = false
+          titleFinished.resolve()
+        }
+      })
+      const workDirSpy = spyOn(sessionService, 'getSessionWorkDir').mockImplementation(async (sid) => {
+        if (sid === sessionId) {
+          startupReads++
+          startupReadDuringTitle ||= titlePending
+        }
+        return originalWorkDir(sid)
+      })
+      const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+      const messages: any[] = []
+      const connected = withResolvers<void>()
+      ws.onmessage = (event) => {
+        const message = JSON.parse(event.data as string)
+        messages.push(message)
+        if (message.type === 'connected') connected.resolve()
+      }
+      try {
+        await connected.promise
+        ws.send(JSON.stringify({ type: 'user_message', content: 'first turn after permission switch' }))
+        await titleStarted.promise
+        if (stopDuringTitle) {
+          ws.send(JSON.stringify({ type: 'stop_generation' }))
+          await waitUntil(() => messages.some(message => message.type === 'status' && message.state === 'idle'), 'stop while saving placeholder title')
+        }
+        releaseTitle.resolve()
+        await titleFinished.promise
+        if (!stopDuringTitle) {
+          await waitUntil(() => messages.some(message => message.type === 'message_complete'), 'first turn after placeholder title save')
+          expect(conversationService.getSessionPermissionMode(sessionId)).toBe('acceptEdits')
+          expect(startupReads).toBeGreaterThan(0)
+        } else {
+          // Let the handler resume from the completed save before observing it.
+          await new Promise<void>(resolve => setImmediate(resolve))
+          expect(startupReads).toBe(0)
+          expect(conversationService.hasSession(sessionId)).toBe(false)
+        }
+        expect(startupReadDuringTitle).toBe(false)
+        expect(messages.filter(message => message.type === 'error')).toEqual([])
+      } finally {
+        releaseTitle.resolve()
+        ws.close()
+        titleSpy.mockRestore()
+        workDirSpy.mockRestore()
+        conversationService.stopSession(sessionId)
+      }
+    }, 20_000)
+  }
+
+  it('should finish the first turn when saving the placeholder title fails', async () => {
+    const sessionId = `title-save-failure-${crypto.randomUUID()}`
+    const titleSpy = spyOn(titleService, 'saveAiTitle').mockRejectedValue(new Error('fixture title write failed'))
+    try {
+      const messages = await runTurnUntilComplete(sessionId, 'continue despite a title write failure')
+      expect(titleSpy).toHaveBeenCalled()
+      expect(messages.some(message => message.type === 'message_complete')).toBe(true)
+      expect(messages.filter(message => message.type === 'error')).toEqual([])
+    } finally {
+      titleSpy.mockRestore()
+      conversationService.stopSession(sessionId)
+    }
+  })
 
   it('should switch from bypass permissions back to default without restarting', async () => {
     const createRes = await fetch(`${baseUrl}/api/sessions`, {
@@ -6205,7 +6484,7 @@ describe('WebSocket Chat Integration', () => {
     }
   }, 20_000)
 
-  it('should preserve xhigh effort for a K3 provider', async () => {
+  it('should pass an inherited xhigh effort to a K3 provider without remapping it', async () => {
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
       presetId: 'kimi',
@@ -6270,8 +6549,8 @@ describe('WebSocket Chat Integration', () => {
       expect(startCalls.find((call) => call.options?.providerId === provider.id)?.options).toMatchObject({
         providerId: provider.id,
         model: 'k3',
+        effort: 'xhigh',
       })
-      expect(startCalls.find((call) => call.options?.providerId === provider.id)?.options?.effort).toBe('xhigh')
     } finally {
       conversationService.startSession = originalStartSession
       conversationService.stopSession(sessionId)
@@ -6282,11 +6561,11 @@ describe('WebSocket Chat Integration', () => {
   it('should preserve xhigh for an unlisted Claude model on a compatible provider', async () => {
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
-      presetId: 'custom',
-      name: `Custom Claude ${crypto.randomUUID()}`,
-      apiKey: 'test-custom-claude-key',
+      presetId: 'xuanshuapi',
+      name: `XuanShu Claude ${crypto.randomUUID()}`,
+      apiKey: 'test-xuanshu-key',
       authStrategy: 'auth_token',
-      baseUrl: 'https://custom-claude.example.test',
+      baseUrl: 'https://www.xuanshuapi.com',
       apiFormat: 'anthropic',
       models: {
         main: 'claude-opus-5',
@@ -6418,10 +6697,6 @@ describe('WebSocket Chat Integration', () => {
         await waitUntil(() => hasTurnOutcome(since), 'rejected runtime user turn settled')
         expect(sentContents).toEqual(['warm original runtime'])
         expect(messages.slice(since)).toContainEqual(expect.objectContaining({ type: 'error', code: 'USER_TURN_FAILED' }))
-        // The handler sends the error and then `status: idle`, but they cross the
-        // socket in that order, not atomically — waiting only on the error can
-        // assert on `idle` before it arrives.
-        await waitUntil(() => messages.slice(since).some(message => message.type === 'status' && message.state === 'idle'), 'rejected runtime reported idle')
         expect(messages.slice(since)).toContainEqual({ type: 'status', state: 'idle' })
         expect(conversationService.hasSession(sessionId)).toBe(true)
       }
@@ -6933,33 +7208,17 @@ describe('WebSocket Chat Integration', () => {
     const { sessionId } = await createRes.json() as { sessionId: string }
 
     const originalStartSession = conversationService.startSession.bind(conversationService)
-    const originalStopSessionAndWait = conversationService.stopSessionAndWait.bind(conversationService)
-    const stopSessionAndWaitCalls: string[] = []
-    let releaseRuntimeShutdown!: () => void
-    let runtimeShutdownReleased = false
-    let replacementStartedBeforeShutdown = false
-    const runtimeShutdownGate = new Promise<void>((resolve) => {
-      releaseRuntimeShutdown = resolve
-    })
     const startCalls: Array<{
       sessionId: string
       options: { permissionMode?: string; model?: string; effort?: string; providerId?: string | null } | undefined
     }> = []
 
-    conversationService.stopSessionAndWait = async (targetSessionId: string) => {
-      stopSessionAndWaitCalls.push(targetSessionId)
-      await runtimeShutdownGate
-      await originalStopSessionAndWait(targetSessionId)
-    }
     conversationService.startSession = (async function patchedStartSession(
       sid: string,
       workDir: string,
       sdkUrl: string,
       options?: { permissionMode?: string; model?: string; effort?: string; thinking?: 'enabled' | 'adaptive' | 'disabled'; providerId?: string | null },
     ) {
-      if (sid === sessionId && startCalls.length > 0 && !runtimeShutdownReleased) {
-        replacementStartedBeforeShutdown = true
-      }
       startCalls.push({ sessionId: sid, options })
       return originalStartSession(sid, workDir, sdkUrl, options)
     }) as typeof conversationService.startSession
@@ -7002,10 +7261,6 @@ describe('WebSocket Chat Integration', () => {
               modelId: 'restart-b-opus',
             }))
             ws.send(JSON.stringify({ type: 'user_message', content: 'second turn immediately after switch' }))
-            setTimeout(() => {
-              runtimeShutdownReleased = true
-              releaseRuntimeShutdown()
-            }, 50)
             phase = 'turn2'
             return
           }
@@ -7029,8 +7284,6 @@ describe('WebSocket Chat Integration', () => {
         }
       })
 
-      expect(stopSessionAndWaitCalls).toEqual([sessionId])
-      expect(replacementStartedBeforeShutdown).toBe(false)
       expect(startCalls).toHaveLength(2)
       expect(startCalls[0]).toMatchObject({
         sessionId,
@@ -7047,7 +7300,6 @@ describe('WebSocket Chat Integration', () => {
         },
       })
     } finally {
-      conversationService.stopSessionAndWait = originalStopSessionAndWait
       conversationService.startSession = originalStartSession
       conversationService.stopSession(sessionId)
     }

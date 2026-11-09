@@ -12,12 +12,25 @@
 import { getOpenAIPolicyError } from '../../services/openaiAuth/policyError.js'
 import { buildOpenaiEndpoint } from './openaiEndpoint.js'
 import { normalizeAnthropicBaseUrl } from '../../services/api/anthropicBaseUrl.js'
+import { buildProviderMediaFetch } from '../../services/api/providerMedia/fetch.js'
 import { createGunzip, createInflate } from 'node:zlib'
 
 import { ProviderService } from '../services/providerService.js'
+import { diagnosticsService } from '../services/diagnosticsService.js'
 import type { ProviderAuthStrategy } from '../types/provider.js'
 import { resolvePromptCacheKey } from './promptCacheKey.js'
-import { anthropicToOpenaiChat } from './transform/anthropicToOpenaiChat.js'
+import {
+  getOpenAIChatImageContentMode,
+  isOpenAIChatImageRejection,
+  rememberOpenAIChatTextOnlyModel,
+} from './openaiChatImageSupport.js'
+import {
+  findOpenAIChatReasoningFieldRejection,
+  getOpenAIChatUnsupportedReasoningFields,
+  rememberOpenAIChatUnsupportedReasoningField,
+  type OpenAIChatReasoningField,
+} from './openaiChatReasoningFieldSupport.js'
+import { anthropicToOpenaiChat, type OpenAIChatImageContentMode } from './transform/anthropicToOpenaiChat.js'
 import { anthropicToOpenaiResponses } from './transform/anthropicToOpenaiResponses.js'
 import { RequestCompatibilityError, resolveRequestCompatibility, type RequestCompatibilityOptions } from './transform/requestCompatibility.js'
 import { ProtocolTraceObserver, observeProtocolStream, type ProtocolTraceTransport } from './protocolTrace.js'
@@ -27,12 +40,15 @@ import { openaiChatToAnthropic } from './transform/openaiChatToAnthropic.js'
 import { openaiResponsesToAnthropic } from './transform/openaiResponsesToAnthropic.js'
 import { openaiChatStreamToAnthropic } from './streaming/openaiChatStreamToAnthropic.js'
 import { openaiResponsesStreamToAnthropic } from './streaming/openaiResponsesStreamToAnthropic.js'
+import { anthropicToGemini, type GeminiRequest } from './transform/anthropicToGemini.js'
+import { GeminiUpstreamError, geminiErrorMessage, geminiResponseToAnthropic, geminiStreamToAnthropic } from './streaming/geminiStreamToAnthropic.js'
 import type { AnthropicRequest } from './transform/types.js'
 import { getProxyFetchOptions } from '../../utils/proxy.js'
 import {
   getNetworkProxyFetchOptions,
   loadNetworkSettings,
   type NetworkSettings,
+  resolveProviderNetworkSettings,
 } from '../services/networkSettings.js'
 import { normalizeModelStringForAPI } from '../../utils/model/model.js'
 import {
@@ -44,15 +60,10 @@ import {
   type TraceProviderInfo,
 } from '../services/traceCaptureService.js'
 import { resolveModelReasoningProfile } from '../../shared/modelReasoning.js'
-import { resolveModelApiFormat } from '../../shared/modelApiFormats.js'
+import { resolveModelApiBaseUrl, resolveModelApiRule } from '../../shared/modelApiFormats.js'
 import { applyUpstreamHeaders, resolveUpstreamHeaders } from './upstreamHeaders.js'
-import { SettingsService } from '../services/settingsService.js'
-import { normalizeLocalRedactionSettings } from '../../shared/localRedactionSettings.js'
-import { redactJson, restoreText } from './redaction.js'
-import { randomBytes } from 'node:crypto'
 
 const providerService = new ProviderService()
-const settingsService = new SettingsService()
 
 type ProxyFetchOptions = ReturnType<typeof getProxyFetchOptions>
 // `decompress` is a Bun fetch option absent from the DOM RequestInit type.
@@ -64,7 +75,7 @@ type ProxyTraceContext = {
   protocolTrace?: ProtocolTraceObserver
 }
 
-const TRACE_RECORDED_ERROR_MARKER = Symbol('echoflow-code-trace-recorded-error')
+const TRACE_RECORDED_ERROR_MARKER = Symbol('cc-haha-trace-recorded-error')
 
 // Per-context dedup for failures that rethrow a value that cannot carry a
 // marker (stream errors may be any value, e.g. a string from
@@ -109,9 +120,20 @@ async function fetchUpstreamWithTimeout(
   init: Omit<UpstreamRequestInit, 'signal'>,
   timeoutMs: number,
   isStream: boolean,
+  onRequest?: (body: string, headers: Headers) => void,
 ): Promise<Response> {
+  // Convert media only after the protocol transform and final authentication.
+  // Observe inference sends (including recovery), never multipart uploads, so
+  // completion traces describe the actual upstream request.
+  const mediaFetch = buildProviderMediaFetch((async (input, requestInit) => {
+    const requestUrl = input instanceof Request ? input.url : String(input)
+    if (requestUrl === url && typeof requestInit?.body === 'string') {
+      onRequest?.(requestInit.body, new Headers(requestInit.headers))
+    }
+    return fetch(input, requestInit)
+  }) as typeof fetch)
   if (!isStream) {
-    return fetch(url, {
+    return mediaFetch(url, {
       ...init,
       signal: AbortSignal.timeout(timeoutMs),
     })
@@ -121,46 +143,13 @@ async function fetchUpstreamWithTimeout(
   // response headers. Keeping the signal alive aborts long generations mid-body.
   const timeout = createTimeoutController(timeoutMs)
   try {
-    return await fetch(url, {
+    return await mediaFetch(url, {
       ...init,
       signal: timeout.signal,
     })
   } finally {
     timeout.clear()
   }
-}
-
-// Every restore target is JSON text (a JSON body or an SSE `data:` payload), so
-// a restored value has to be escaped as a JSON string or it breaks the payload.
-const escapeJsonString = (value: string) => JSON.stringify(value).slice(1, -1)
-
-function restoreJson<T>(value: T, values: Map<string, string>): T {
-  if (!values.size) return value
-  return JSON.parse(restoreText(JSON.stringify(value), values, escapeJsonString)) as T
-}
-
-function restoreStream(stream: ReadableStream<Uint8Array>, values: Map<string, string>): ReadableStream<Uint8Array> {
-  const decoder = new TextDecoder()
-  const encoder = new TextEncoder()
-  const keep = Math.max(40, ...[...values.keys()].map(token => token.length))
-  let pending = ''
-  return stream.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      const text = pending + decoder.decode(chunk, { stream: true })
-      let split = Math.max(0, text.length - keep)
-      // Never emit half a placeholder: a partly cut token can never be restored.
-      const cut = text.slice(0, split)
-      if (cut.lastIndexOf('{{') > cut.lastIndexOf('}}')) split = cut.lastIndexOf('{{')
-      // Never split a surrogate pair across chunks.
-      if (split > 0 && split < text.length && /[\uD800-\uDBFF]/.test(text[split - 1]) && /[\uDC00-\uDFFF]/.test(text[split])) split -= 1
-      controller.enqueue(encoder.encode(restoreText(text.slice(0, split), values, escapeJsonString)))
-      pending = text.slice(split)
-    },
-    flush(controller) {
-      pending += decoder.decode()
-      controller.enqueue(encoder.encode(restoreText(pending, values, escapeJsonString)))
-    },
-  }))
 }
 
 export function withStreamIdleTimeout(
@@ -268,23 +257,9 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
     model: normalizeModelStringForAPI(body.model),
   }
 
-  let userSettings: Record<string, unknown>
-  try {
-    userSettings = await settingsService.getUserSettings()
-  } catch {
-    return Response.json({ type: 'error', error: { type: 'api_error', message: 'Local redaction settings could not be loaded' } }, { status: 503 })
-  }
-  const localRedaction = normalizeLocalRedactionSettings(userSettings.localRedaction)
-  let redactionValues = new Map<string, string>()
-  if (localRedaction.enabled) {
-    const redacted = redactJson(body, localRedaction, randomBytes(32).toString('hex'))
-    body = JSON.parse(redacted.text) as AnthropicRequest
-    redactionValues = redacted.values
-  }
-
   const isStream = body.stream === true
   const baseUrl = config.baseUrl.replace(/\/+$/, '')
-  const networkSettings = await loadNetworkSettings()
+  const networkSettings = resolveProviderNetworkSettings(await loadNetworkSettings(), config.proxy)
   const traceContext = buildProxyTraceContext(req, config, body)
   const inboundSessionId = req.headers.get('x-claude-code-session-id')
   const promptCacheKey = resolvePromptCacheKey(body, inboundSessionId)
@@ -296,8 +271,10 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
   // Gateways that bind the wire format to the URL path announce their exceptions
   // on the preset; a model matching no rule keeps the provider's own format.
   // Resolved per request because one provider record can serve several formats.
-  const modelApiFormat = resolveModelApiFormat(config.modelApiFormats, body.model)
+  const modelApiRule = resolveModelApiRule(config.modelApiFormats, body.model)
+  const modelApiFormat = modelApiRule?.apiFormat
   const apiFormat = modelApiFormat ?? config.apiFormat
+  const upstreamBaseUrl = resolveModelApiBaseUrl(baseUrl, modelApiRule)
   const upstreamHeaders = resolveUpstreamHeaders(config.upstreamHeaders, { sessionId: inboundSessionId })
 
   try {
@@ -312,7 +289,7 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
       // applies without a per-model override: an OpenAI-format provider whose
       // model routes to anthropic still reaches the proxy, and its upstream is a
       // native Messages endpoint that accepts nested media unchanged.
-      if (!localRedaction.enabled && modelApiFormat === undefined && config.supportsNestedToolResultMedia) {
+      if (modelApiFormat === undefined && config.supportsNestedToolResultMedia) {
         return Response.json(
           {
             type: 'error',
@@ -331,18 +308,21 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
         resolvedApiFormat: apiFormat,
         supportsNestedToolResultMedia: config.supportsNestedToolResultMedia,
       })
-      return await handleAnthropicCompatible(body, baseUrl, config.apiKey, config.authStrategy, req.headers, isStream, networkSettings, traceContext, upstreamHeaders, hoistNestedMedia, redactionValues)
+      return await handleAnthropicCompatible(body, upstreamBaseUrl, config.apiKey, config.authStrategy, req.headers, isStream, networkSettings, traceContext, upstreamHeaders, hoistNestedMedia)
+    }
+    if (apiFormat === 'gemini') {
+      return await handleGemini(body, upstreamBaseUrl, config.apiKey, isStream, networkSettings, traceContext, requestOptions, upstreamHeaders)
     }
     if (apiFormat === 'openai_chat') {
-      return await handleOpenaiChat(body, baseUrl, config.apiKey, isStream, networkSettings, traceContext, requestOptions, upstreamHeaders, redactionValues)
+      return await handleOpenaiChat(body, upstreamBaseUrl, config.apiKey, isStream, networkSettings, traceContext, requestOptions, upstreamHeaders)
     }
-    return await handleOpenaiResponses(body, baseUrl, config.apiKey, isStream, networkSettings, traceContext, promptCacheKey, requestOptions, upstreamHeaders, redactionValues)
+    return await handleOpenaiResponses(body, upstreamBaseUrl, config.apiKey, isStream, networkSettings, traceContext, promptCacheKey, requestOptions, upstreamHeaders)
   } catch (err) {
     if (traceContext && !wasTraceErrorRecorded(err) && !recordedTraceErrorContexts.has(traceContext)) {
       void recordProxyTrace({
         context: traceContext,
         model: body.model,
-        upstreamUrl: baseUrl,
+        upstreamUrl: upstreamBaseUrl,
         upstreamRequest: null,
         startedAt: new Date().toISOString(),
         startedAtMs: Date.now(),
@@ -525,12 +505,11 @@ async function handleAnthropicCompatible(
   traceContext: ProxyTraceContext | null,
   upstreamHeaders: Record<string, string> = {},
   hoistNestedMedia = true,
-  redactionValues = new Map<string, string>(),
 ): Promise<Response> {
   // The media hoist is a compatibility rewrite for endpoints that drop media
   // nested in tool_result. A native Messages endpoint accepts it unchanged, so it
   // only runs when the provider actually asked for it.
-  const transformed = hoistNestedMedia ? hoistToolResultMediaForCompatibility(body) : body
+  let transformed = hoistNestedMedia ? hoistToolResultMediaForCompatibility(body) : body
   const url = `${normalizeAnthropicBaseUrl(baseUrl)}/v1/messages`
   const proxyOptions = getNetworkProxyFetchOptions(networkSettings, url)
 
@@ -556,14 +535,6 @@ async function handleAnthropicCompatible(
   // would otherwise never reach a gateway that requires it. The resolver drops
   // anything that would shadow the request framing or its credential.
   applyUpstreamHeaders(headers, upstreamHeaders)
-  if (redactionValues.size) {
-    // The inbound accept-encoding is copied above; a second case-variant key
-    // would be folded into `gzip, …, identity` by fetch instead of replacing it.
-    for (const name of Object.keys(headers)) {
-      if (name.toLowerCase() === 'accept-encoding') delete headers[name]
-    }
-    headers['accept-encoding'] = 'identity'
-  }
 
   const traceHeaders = Object.fromEntries(
     Object.entries(headers).map(([name, value]) => {
@@ -612,16 +583,24 @@ async function handleAnthropicCompatible(
 
   let upstream: Response
   try {
+    const initialRequest = transformed
+    const serialized = JSON.stringify(initialRequest)
     upstream = await fetchUpstreamWithTimeout(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(transformed),
+      body: serialized,
       // Keep the raw bytes: Bun decompresses by default, which would leave a
       // decompressed body behind the upstream Content-Encoding/Length headers
       // when forwarding the response unchanged.
       decompress: false,
       ...proxyOptions,
-    }, networkSettings.aiRequestTimeoutMs, isStream)
+    }, networkSettings.aiRequestTimeoutMs, isStream, (sentBody, sentHeaders) => {
+      // Recovery can restore inline media after a file reference fails.
+      transformed = sentBody === serialized ? initialRequest : JSON.parse(sentBody)
+      const beta = sentHeaders.get('anthropic-beta')
+      if (beta) traceHeaders['anthropic-beta'] = beta
+      else delete traceHeaders['anthropic-beta']
+    })
   } catch (err) {
     recordTraceError(err)
     console.error('[Proxy] Upstream anthropic request failed:', err)
@@ -638,11 +617,6 @@ async function handleAnthropicCompatible(
   }
 
   try {
-    if (redactionValues.size && upstream.headers.has('content-encoding') && upstream.headers.get('content-encoding')?.toLowerCase() !== 'identity') {
-      recordTraceError(new Error('Compressed upstream response cannot be restored for local redaction'))
-      return Response.json({ type: 'error', error: { type: 'api_error', message: 'Upstream returned a compressed response while local redaction is enabled' } }, { status: 502 })
-    }
-
     if (!upstream.ok) {
       // Pass the upstream error body and headers through unchanged so the SDK
       // keeps error classification (authentication_error, rate_limit_error, …),
@@ -665,15 +639,9 @@ async function handleAnthropicCompatible(
           responseHeaders: upstream.headers,
         })
       }
-      const errorHeaders = stripHopByHopHeaders(upstream.headers)
-      const errorBody = redactionValues.size ? new TextEncoder().encode(restoreText(new TextDecoder().decode(errBody), redactionValues, escapeJsonString)) : errBody
-      if (redactionValues.size) {
-        errorHeaders.delete('content-encoding')
-        errorHeaders.delete('content-length')
-      }
-      return new Response(errorBody, {
+      return new Response(errBody, {
         status: upstream.status,
-        headers: errorHeaders,
+        headers: stripHopByHopHeaders(upstream.headers),
       })
     }
 
@@ -723,7 +691,7 @@ async function handleAnthropicCompatible(
             })
           }, upstream.headers.get('content-encoding') ?? undefined)
         : anthropicStream
-      return new Response(redactionValues.size ? restoreStream(tracedStream, redactionValues) : tracedStream, {
+      return new Response(tracedStream, {
         status: 200,
         headers: responseHeaders,
       })
@@ -747,16 +715,9 @@ async function handleAnthropicCompatible(
         responseHeaders: upstream.headers,
       })
     }
-    const responseHeaders = stripHopByHopHeaders(upstream.headers)
-    const clientBody = redactionValues.size ? new TextEncoder().encode(restoreText(new TextDecoder().decode(responseBody), redactionValues, escapeJsonString)) : responseBody
-    if (redactionValues.size) {
-      responseHeaders.delete('content-encoding')
-      responseHeaders.delete('content-length')
-      responseHeaders.delete('etag')
-    }
-    return new Response(clientBody, {
+    return new Response(responseBody, {
       status: upstream.status,
-      headers: responseHeaders,
+      headers: stripHopByHopHeaders(upstream.headers),
     })
   } catch (err) {
     // A body read failure closes the pending trace with the original call id
@@ -777,21 +738,28 @@ async function handleOpenaiChat(
   traceContext: ProxyTraceContext | null,
   requestOptions: RequestCompatibilityOptions = {},
   upstreamHeaders: Record<string, string> = {},
-  redactionValues = new Map<string, string>(),
+  imageContentModeOverride?: OpenAIChatImageContentMode,
+  rejectedReasoningFields: ReadonlySet<OpenAIChatReasoningField> = new Set(),
 ): Promise<Response> {
   const knownDeepSeekHost = shouldUseDeepSeekReasoningCompat(baseUrl)
   const reasoningProfile = resolveModelReasoningProfile(body.model, 'openai_chat')
-  const transformed = anthropicToOpenaiChat(body, {
+  const url = buildOpenaiEndpoint(baseUrl, 'chat/completions')
+  const imageContentMode = imageContentModeOverride ?? getOpenAIChatImageContentMode(url, body.model)
+  const unsupportedReasoningFields = new Set([
+    ...getOpenAIChatUnsupportedReasoningFields(url, body.model),
+    ...rejectedReasoningFields,
+  ])
+  let transformed = anthropicToOpenaiChat(body, {
     ...requestOptions,
     roundTripReasoningContent: knownDeepSeekHost || reasoningProfile?.family === 'deepseek-v4',
-    passThinkingToggle: knownDeepSeekHost,
-    imageContentMode: shouldUseTextOnlyOpenAIChatContent(baseUrl, body.model) ? 'text_only' : 'vision',
+    passThinkingToggle: knownDeepSeekHost && !unsupportedReasoningFields.has('thinking'),
+    passReasoningEffort: !unsupportedReasoningFields.has('reasoning_effort'),
+    imageContentMode,
   })
   if (traceContext) {
     traceContext.protocolTrace = new ProtocolTraceObserver('openai_chat', transformed,
       resolveRequestCompatibility(body, { ...requestOptions, protocol: 'openai_chat' }).outputBudget)
   }
-  const url = buildOpenaiEndpoint(baseUrl, 'chat/completions')
   // Preset-declared headers first: `Authorization` is applied last so a preset can
   // never shadow the credential, and the resolver already drops framing headers.
   const upstreamRequestHeaders: Record<string, string> = {}
@@ -814,12 +782,16 @@ async function handleOpenaiChat(
 
   let upstream: Response
   try {
+    const initialRequest = transformed
+    const serialized = JSON.stringify(initialRequest)
     upstream = await fetchUpstreamWithTimeout(url, {
       method: 'POST',
       headers: upstreamRequestHeaders,
-      body: JSON.stringify(transformed),
+      body: serialized,
       ...proxyOptions,
-    }, networkSettings.aiRequestTimeoutMs, isStream)
+    }, networkSettings.aiRequestTimeoutMs, isStream, sentBody => {
+      transformed = sentBody === serialized ? initialRequest : JSON.parse(sentBody)
+    })
   } catch (err) {
     if (traceContext) {
       recordProxyTraceInBackground({
@@ -840,6 +812,76 @@ async function handleOpenaiChat(
 
   if (!upstream.ok) {
     const errText = await upstream.text().catch(() => '')
+    if (imageContentMode === 'vision' && isOpenAIChatImageRejection(upstream.status, errText, transformed)) {
+      // The upstream refused the request before generating anything, so the
+      // client has seen no output and resending is safe. The model is only
+      // remembered once the same request succeeds without images, so an
+      // unrelated failure of the resend cannot disable images for good.
+      if (traceContext) {
+        recordProxyTraceInBackground({
+          context: traceContext,
+          callId: traceCallId,
+          model: body.model,
+          upstreamUrl: url,
+          upstreamRequest: transformed,
+          requestHeaders: upstreamRequestHeaders,
+          startedAt,
+          startedAtMs,
+          responseStatus: upstream.status,
+          upstreamResponseBody: errText,
+          responseHeaders: upstream.headers,
+        })
+      }
+      const resent = await handleOpenaiChat(
+        body, baseUrl, apiKey, isStream, networkSettings, traceContext, requestOptions, upstreamHeaders, 'text_only',
+        unsupportedReasoningFields,
+      )
+      if (resent.ok) {
+        rememberOpenAIChatTextOnlyModel(url, body.model)
+        void diagnosticsService.recordEvent({
+          type: 'openai_chat_image_input_disabled',
+          severity: 'info',
+          summary: `Upstream rejected image input for ${body.model}; images are omitted for this model for 30 minutes`,
+          details: { model: body.model, upstreamUrl: url, httpStatus: upstream.status, upstreamError: errText.slice(0, 500) },
+        })
+      }
+      return resent
+    }
+    const rejectedField = findOpenAIChatReasoningFieldRejection(upstream.status, errText, transformed)
+    if (rejectedField && !unsupportedReasoningFields.has(rejectedField)) {
+      // Same contract as the image fallback: the upstream refused the request
+      // before generating anything, and the field is only remembered once the
+      // resend without it succeeds.
+      if (traceContext) {
+        recordProxyTraceInBackground({
+          context: traceContext,
+          callId: traceCallId,
+          model: body.model,
+          upstreamUrl: url,
+          upstreamRequest: transformed,
+          requestHeaders: upstreamRequestHeaders,
+          startedAt,
+          startedAtMs,
+          responseStatus: upstream.status,
+          upstreamResponseBody: errText,
+          responseHeaders: upstream.headers,
+        })
+      }
+      const resent = await handleOpenaiChat(
+        body, baseUrl, apiKey, isStream, networkSettings, traceContext, requestOptions, upstreamHeaders,
+        imageContentMode, new Set([...unsupportedReasoningFields, rejectedField]),
+      )
+      if (resent.ok) {
+        rememberOpenAIChatUnsupportedReasoningField(url, body.model, rejectedField)
+        void diagnosticsService.recordEvent({
+          type: 'openai_chat_reasoning_field_disabled',
+          severity: 'info',
+          summary: `Upstream rejected ${rejectedField} for ${body.model}; it is omitted for this model for 30 minutes`,
+          details: { model: body.model, field: rejectedField, upstreamUrl: url, httpStatus: upstream.status, upstreamError: errText.slice(0, 500) },
+        })
+      }
+      return resent
+    }
     let policyError = null
     try {
       policyError = getOpenAIPolicyError(JSON.parse(errText))
@@ -870,7 +912,7 @@ async function handleOpenaiChat(
       })
     }
     return Response.json(
-      restoreJson(errorBody, redactionValues),
+      errorBody,
       { status: policyError ? 403 : upstream.status },
     )
   }
@@ -918,7 +960,7 @@ async function handleOpenaiChat(
           })
         })
       : anthropicStream
-    return new Response(redactionValues.size ? restoreStream(tracedStream, redactionValues) : tracedStream, {
+    return new Response(tracedStream, {
       status: 200,
       headers: {
         'Content-Type': 'text/event-stream',
@@ -950,7 +992,7 @@ async function handleOpenaiChat(
       responseHeaders: upstream.headers,
     })
   }
-  return Response.json(restoreJson(anthropicResponse, redactionValues), { status: policyError ? 403 : 200 })
+  return Response.json(anthropicResponse, { status: policyError ? 403 : 200 })
 }
 
 function shouldUseDeepSeekReasoningCompat(baseUrl: string): boolean {
@@ -958,29 +1000,6 @@ function shouldUseDeepSeekReasoningCompat(baseUrl: string): boolean {
     /(^|[./-])deepseek([./-]|$)/i.test(baseUrl) ||
     /(^|[./-])opencode\.ai([:/]|$)/i.test(baseUrl)
   )
-}
-
-function shouldUseTextOnlyOpenAIChatContent(baseUrl: string, model: string): boolean {
-  // Keep classic DeepSeek text models compatible without dropping images for
-  // explicitly vision-capable models served by the same Chat endpoint.
-  if (/(^|[./-])deepseek([./-]|$)/i.test(baseUrl)) {
-    return !hasExplicitVisionModelMarker(model)
-  }
-
-  // OpenCode Go's Kimi K3 and Space Bunny Free accept image_url despite lacking
-  // "vision" in their model ids. Keep other unverified gateway models on the
-  // text-only path. Context-window suffixes have already been stripped.
-  if (/(^|[./-])opencode\.ai([:/]|$)/i.test(baseUrl)) {
-    return !hasExplicitVisionModelMarker(model) && !['kimi-k3', 'space-bunny-free'].includes(model.toLowerCase())
-  }
-
-  // Preserve the existing behavior for generic compatible providers whose
-  // capabilities are not controlled by either compatibility policy above.
-  return false
-}
-
-function hasExplicitVisionModelMarker(model: string): boolean {
-  return /(^|[/:._-])vision([/:._-]|$)/i.test(model)
 }
 
 async function handleOpenaiResponses(
@@ -993,9 +1012,8 @@ async function handleOpenaiResponses(
   promptCacheKey?: string,
   requestOptions: RequestCompatibilityOptions = {},
   upstreamHeaders: Record<string, string> = {},
-  redactionValues = new Map<string, string>(),
 ): Promise<Response> {
-  const transformed = anthropicToOpenaiResponses(body, { ...requestOptions, cacheKey: promptCacheKey })
+  let transformed = anthropicToOpenaiResponses(body, { ...requestOptions, cacheKey: promptCacheKey })
   if (traceContext) {
     traceContext.protocolTrace = new ProtocolTraceObserver('openai_responses', transformed,
       resolveRequestCompatibility(body, { ...requestOptions, protocol: 'openai_responses' }).outputBudget)
@@ -1023,12 +1041,16 @@ async function handleOpenaiResponses(
 
   let upstream: Response
   try {
+    const initialRequest = transformed
+    const serialized = JSON.stringify(initialRequest)
     upstream = await fetchUpstreamWithTimeout(url, {
       method: 'POST',
       headers: upstreamRequestHeaders,
-      body: JSON.stringify(transformed),
+      body: serialized,
       ...proxyOptions,
-    }, networkSettings.aiRequestTimeoutMs, isStream)
+    }, networkSettings.aiRequestTimeoutMs, isStream, sentBody => {
+      transformed = sentBody === serialized ? initialRequest : JSON.parse(sentBody)
+    })
   } catch (err) {
     if (traceContext) {
       recordProxyTraceInBackground({
@@ -1079,7 +1101,7 @@ async function handleOpenaiResponses(
       })
     }
     return Response.json(
-      restoreJson(errorBody, redactionValues),
+      errorBody,
       { status: policyError ? 403 : upstream.status },
     )
   }
@@ -1127,7 +1149,7 @@ async function handleOpenaiResponses(
           })
         })
       : anthropicStream
-    return new Response(redactionValues.size ? restoreStream(tracedStream, redactionValues) : tracedStream, {
+    return new Response(tracedStream, {
       status: 200,
       headers: {
         'Content-Type': 'text/event-stream',
@@ -1159,7 +1181,174 @@ async function handleOpenaiResponses(
       responseHeaders: upstream.headers,
     })
   }
-  return Response.json(restoreJson(anthropicResponse, redactionValues), { status: policyError ? 403 : 200 })
+  return Response.json(anthropicResponse, { status: policyError ? 403 : 200 })
+}
+
+/**
+ * Google `generateContent`, as OpenCode Go serves its Gemini models. A response
+ * Gemini splits across requests is followed here by resending the same body
+ * with the continuation token, so the client still receives one message.
+ */
+async function handleGemini(
+  body: AnthropicRequest,
+  baseUrl: string,
+  apiKey: string,
+  isStream: boolean,
+  networkSettings: NetworkSettings,
+  traceContext: ProxyTraceContext | null,
+  requestOptions: RequestCompatibilityOptions = {},
+  upstreamHeaders: Record<string, string> = {},
+): Promise<Response> {
+  const transformed = anthropicToGemini(body, requestOptions)
+  const model = encodeURIComponent(body.model)
+  const url = isStream
+    ? `${baseUrl}/models/${model}:streamGenerateContent?alt=sse`
+    : `${baseUrl}/models/${model}:generateContent`
+  // Preset-declared headers first, so the credential always wins over them.
+  const upstreamRequestHeaders: Record<string, string> = {}
+  applyUpstreamHeaders(upstreamRequestHeaders, upstreamHeaders)
+  upstreamRequestHeaders['Content-Type'] = 'application/json'
+  upstreamRequestHeaders['x-goog-api-key'] = apiKey
+  const proxyOptions = getNetworkProxyFetchOptions(networkSettings, url)
+  const send = (request: GeminiRequest) => fetchUpstreamWithTimeout(url, {
+    method: 'POST',
+    headers: upstreamRequestHeaders,
+    body: JSON.stringify(request),
+    ...proxyOptions,
+  }, networkSettings.aiRequestTimeoutMs, isStream)
+  const startedAtMs = Date.now()
+  const startedAt = new Date(startedAtMs).toISOString()
+  const traceCallId = traceContext
+    ? startProxyTraceCall({
+        context: traceContext,
+        model: body.model,
+        upstreamUrl: url,
+        upstreamRequest: transformed,
+        requestHeaders: upstreamRequestHeaders,
+        startedAt,
+      })
+    : undefined
+  const trace = (fields: Partial<RecordProxyTraceInput>) => {
+    if (!traceContext) return
+    recordProxyTraceInBackground({
+      callId: traceCallId,
+      context: traceContext,
+      model: body.model,
+      upstreamUrl: url,
+      upstreamRequest: transformed,
+      requestHeaders: upstreamRequestHeaders,
+      startedAt,
+      startedAtMs,
+      ...fields,
+    })
+  }
+
+  let upstream: Response
+  try {
+    upstream = await send(transformed)
+  } catch (err) {
+    trace({ error: err })
+    if (traceContext) markTraceErrorRecorded(err)
+    throw err
+  }
+
+  if (!upstream.ok) {
+    const errText = await upstream.text().catch(() => '')
+    const errorBody = {
+      type: 'error',
+      error: { type: 'api_error', message: `Upstream returned HTTP ${upstream.status}: ${errText.slice(0, 500)}` },
+    }
+    trace({
+      responseStatus: upstream.status,
+      upstreamResponseBody: errText,
+      anthropicResponseBody: errorBody,
+      responseHeaders: upstream.headers,
+    })
+    return Response.json(errorBody, { status: upstream.status })
+  }
+
+  // Only the first request is traced; continuations carry the same body plus a token.
+  const resend = async (continuationToken: string): Promise<Response> => {
+    const response = await send({ ...transformed, continuationToken })
+    if (response.ok) return response
+    const errText = await response.text().catch(() => '')
+    let message: string | undefined
+    try {
+      message = geminiErrorMessage(JSON.parse(errText))
+    } catch {
+      // An unstructured failure keeps its raw text below.
+    }
+    throw new GeminiUpstreamError(
+      `Gemini continuation returned HTTP ${response.status}: ${(message ?? errText).slice(0, 500)}`,
+      response.status,
+    )
+  }
+
+  if (isStream) {
+    if (!upstream.body) {
+      trace({ error: new Error('Upstream returned no body for stream') })
+      return Response.json(
+        { type: 'error', error: { type: 'api_error', message: 'Upstream returned no body for stream' } },
+        { status: 502 },
+      )
+    }
+    const idle = (stream: ReadableStream<Uint8Array>) => withStreamIdleTimeout(stream, networkSettings.aiRequestTimeoutMs)
+    const anthropicStream = geminiStreamToAnthropic(idle(upstream.body), body.model, async (token) => {
+      const response = await resend(token)
+      if (!response.body) throw new GeminiUpstreamError('Gemini continuation returned no body for stream')
+      return idle(response.body)
+    })
+    const tracedStream = traceContext
+      ? captureTraceStream(anthropicStream, async (bodySnapshot, error, protocolTraceEnd) => {
+          await recordProxyTrace({
+            callId: traceCallId,
+            context: traceContext,
+            model: body.model,
+            upstreamUrl: url,
+            upstreamRequest: transformed,
+            requestHeaders: upstreamRequestHeaders,
+            startedAt,
+            startedAtMs,
+            responseStatus: 200,
+            responseBodySnapshot: bodySnapshot,
+            protocolTraceEnd,
+            responseHeaders: upstream.headers,
+            ...(error ? { error } : {}),
+          })
+        })
+      : anthropicStream
+    return new Response(tracedStream, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+    })
+  }
+
+  // Non-streaming
+  const responseBody = await upstream.json()
+  let anthropicResponse: unknown
+  let status = 200
+  try {
+    anthropicResponse = await geminiResponseToAnthropic(
+      responseBody,
+      body.model,
+      async token => (await resend(token)).json(),
+    )
+  } catch (err) {
+    if (!(err instanceof GeminiUpstreamError)) throw err
+    status = err.status ?? 502
+    anthropicResponse = { type: 'error', error: { type: 'api_error', message: err.message } }
+  }
+  trace({
+    responseStatus: status,
+    upstreamResponseBody: responseBody,
+    anthropicResponseBody: anthropicResponse,
+    responseHeaders: upstream.headers,
+  })
+  return Response.json(anthropicResponse, { status })
 }
 
 function buildProxyTraceContext(

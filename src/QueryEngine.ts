@@ -1,4 +1,4 @@
-import { consumeSessionMessage, isPendingSessionMessage } from './utils/sessionMessageInbox.js'
+import { consumeSessionMessage, isPendingSessionMessage, getPendingScheduledTask } from './utils/sessionMessageInbox.js'
 import { feature } from 'bun:bundle'
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 import { randomUUID } from 'crypto'
@@ -23,7 +23,7 @@ import type { NonNullableUsage } from 'src/services/api/logging.js'
 import { EMPTY_USAGE } from 'src/services/api/logging.js'
 import stripAnsi from 'strip-ansi'
 import type { Command } from './commands.js'
-import { getSlashCommandToolSkills } from './commands.js'
+import { findCommand, getSlashCommandToolSkills } from './commands.js'
 import {
   COMMAND_NAME_TAG,
   LOCAL_COMMAND_STDERR_TAG,
@@ -38,17 +38,27 @@ import type { CanUseToolFn } from './hooks/useCanUseTool.js'
 import { loadMemoryPrompt } from './memdir/memdir.js'
 import { hasAutoMemPathOverride } from './memdir/paths.js'
 import { query } from './query.js'
-import { categorizeRetryableAPIError } from './services/api/errors.js'
+import { categorizeRetryableAPIError, getRetryableAPIErrorDiagnostics } from './services/api/errors.js'
 import type { MCPServerConnection } from './services/mcp/types.js'
+import { getComputerUsePrompt } from './skills/bundled/computerUse.js'
 import type { AppState } from './state/AppState.js'
-import { type Tools, type ToolUseContext, toolMatchesName } from './Tool.js'
+import {
+  type SDKStatusDetail,
+  type Tools,
+  type ToolUseContext,
+  toolMatchesName,
+} from './Tool.js'
 import type { AgentDefinition } from './tools/AgentTool/loadAgentsDir.js'
+import { ASK_USER_QUESTION_TOOL_NAME } from './tools/AskUserQuestionTool/prompt.js'
 import { SYNTHETIC_OUTPUT_TOOL_NAME } from './tools/SyntheticOutputTool/SyntheticOutputTool.js'
-import type { Message } from './types/message.js'
+import type { Message, MessageOrigin } from './types/message.js'
 import type { OrphanedPermission } from './types/textInputTypes.js'
 import { createAbortController } from './utils/abortController.js'
 import type { AttributionState } from './utils/commitAttribution.js'
+import { isComputerUseMCPServer, isComputerUseRuntimeTool } from './utils/computerUse/common.js'
 import { getGlobalConfig } from './utils/config.js'
+import { createAssistantMessage, createUserMessage, formatCommandInputTags } from './utils/messages.js'
+import { parseSlashCommand } from './utils/slashCommandParsing.js'
 import { getCwd } from './utils/cwd.js'
 import { isBareMode, isEnvTruthy } from './utils/envUtils.js'
 import { getFastModeState } from './utils/fastMode.js'
@@ -160,9 +170,10 @@ export type QueryEngineConfig = {
   /** Handler for URL elicitations triggered by MCP tool -32042 errors. */
   handleElicitation?: ToolUseContext['handleElicitation']
   includePartialMessages?: boolean
-  setSDKStatus?: (status: SDKStatus) => void
+  setSDKStatus?: (status: SDKStatus, detail?: SDKStatusDetail) => void
   abortController?: AbortController
   orphanedPermission?: OrphanedPermission
+  requiredComputerUse?: { unavailableMessage: string }
   /**
    * Snip-boundary handler: receives each yielded system message plus the
    * current mutableMessages store. Returns undefined if the message is not a
@@ -225,11 +236,11 @@ export class QueryEngine {
 
   async *submitMessage(
     prompt: string | ContentBlockParam[],
-    options?: { uuid?: string; isMeta?: boolean },
+    options?: { uuid?: string; isMeta?: boolean; origin?: MessageOrigin },
   ): AsyncGenerator<SDKMessage, void, unknown> {
     const {
       cwd,
-      commands,
+      commands: baseCommands,
       tools: baseTools,
       mcpClients: baseMcpClients,
       verbose = false,
@@ -250,14 +261,15 @@ export class QueryEngine {
       agents = [],
       setSDKStatus,
       orphanedPermission,
+      requiredComputerUse,
     } = this.config
 
     setCwd(cwd)
-    const selectedWorkerAgent = process.env.ECHOFLOW_TEAM_WORKER === '1'
+    const selectedWorkerAgent = process.env.CC_HAHA_TEAM_WORKER === '1'
       ? agents.find(agent => agent.agentType === (getMainThreadAgentType() ?? getAppState().agent))
       : undefined
-    const workerAgent = selectedWorkerAgent ? { ...selectedWorkerAgent, agentType: process.env.ECHOFLOW_TEAM_WORKER_PRESET_TYPE || selectedWorkerAgent.agentType, source: (process.env.ECHOFLOW_TEAM_WORKER_PRESET_SOURCE || selectedWorkerAgent.source) as AgentDefinition['source'] } : undefined
-    if (process.env.ECHOFLOW_TEAM_WORKER === '1' && !workerAgent) throw new Error('Approved team worker preset is unavailable')
+    const workerAgent = selectedWorkerAgent ? { ...selectedWorkerAgent, agentType: process.env.CC_HAHA_TEAM_WORKER_PRESET_TYPE || selectedWorkerAgent.agentType, source: (process.env.CC_HAHA_TEAM_WORKER_PRESET_SOURCE || selectedWorkerAgent.source) as AgentDefinition['source'] } : undefined
+    if (process.env.CC_HAHA_TEAM_WORKER === '1' && !workerAgent) throw new Error('Approved team worker preset is unavailable')
     let workerPreset = workerPresetSessions.get(getAppState)
     if (workerAgent && !workerPreset) {
       workerPreset = { activated: false }
@@ -267,12 +279,63 @@ export class QueryEngine {
       const { prepareTeamWorkerPreset } = await import('./utils/swarm/teamWorkerPreset.js')
       workerPreset.runtime = await prepareTeamWorkerPreset(workerAgent, baseTools, baseMcpClients)
     }
-    const tools = workerPreset?.runtime?.tools ?? baseTools
-    const mcpClients = workerPreset?.runtime?.clients ?? baseMcpClients
+    const availableTools = workerPreset?.runtime?.tools ?? baseTools
+    const availableClients = workerPreset?.runtime?.clients ?? baseMcpClients
+    const tools = requiredComputerUse
+      ? availableTools.filter(tool => isComputerUseRuntimeTool(tool)
+        || toolMatchesName(tool, ASK_USER_QUESTION_TOOL_NAME)
+        || toolMatchesName(tool, SYNTHETIC_OUTPUT_TOOL_NAME))
+      : availableTools
+    const mcpClients = requiredComputerUse
+      ? availableClients.filter(client => isComputerUseMCPServer(client.name))
+      : availableClients
+    const commands = requiredComputerUse
+      ? baseCommands.filter(command => command.name === 'computer-use' && command.type === 'prompt' && command.source === 'bundled')
+      : baseCommands
 
     this.discoveredSkillNames.clear()
     const persistSession = !isSessionPersistenceDisabled()
     const startTime = Date.now()
+
+    // A reset-only tool is not a usable desktop action. Stop before hooks,
+    // skill expansion or model sampling when the requested method is absent.
+    if (requiredComputerUse && !tools.some(tool => isComputerUseRuntimeTool(tool) && !tool.name.endsWith('__js_reset'))) {
+      const user = createUserMessage({ content: prompt, uuid: options?.uuid, permissionMode: getAppState().toolPermissionContext.mode })
+      const assistant = createAssistantMessage({ content: requiredComputerUse.unavailableMessage })
+      this.mutableMessages.push(user, assistant)
+      if (persistSession) {
+        await recordTranscript(this.mutableMessages)
+        await flushSessionStorage()
+      }
+      if (replayUserMessages) {
+        yield {
+          type: 'user',
+          message: user.message,
+          uuid: user.uuid,
+          timestamp: user.timestamp,
+          session_id: getSessionId(),
+          parent_tool_use_id: null,
+          isReplay: true,
+        }
+      }
+      yield {
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        duration_ms: Date.now() - startTime,
+        duration_api_ms: 0,
+        num_turns: 0,
+        stop_reason: null,
+        session_id: getSessionId(),
+        total_cost_usd: 0,
+        usage: EMPTY_USAGE,
+        modelUsage: {},
+        permission_denials: [],
+        errors: [requiredComputerUse.unavailableMessage],
+        uuid: randomUUID(),
+      }
+      return
+    }
 
     // Wrap canUseTool to track permission denials
     const wrappedCanUseTool: CanUseToolFn = async (
@@ -341,7 +404,7 @@ export class QueryEngine {
       ),
     }
 
-    if (workerAgent && process.env.ECHOFLOW_TEAM_WORKER_OMIT_CLAUDE_MD === '1') delete userContext.claudeMd
+    if (workerAgent && process.env.CC_HAHA_TEAM_WORKER_OMIT_CLAUDE_MD === '1') delete userContext.claudeMd
 
     // When an SDK caller provides a custom system prompt AND has set
     // CLAUDE_COWORK_MEMORY_PATH_OVERRIDE, inject the memory-mechanics prompt.
@@ -358,6 +421,10 @@ export class QueryEngine {
       ...(customPrompt !== undefined ? [customPrompt] : defaultSystemPrompt),
       ...(memoryMechanicsPrompt ? [memoryMechanicsPrompt] : []),
       ...(appendSystemPrompt ? [appendSystemPrompt] : []),
+      ...(requiredComputerUse ? [
+        getComputerUsePrompt(process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux'),
+        'The user explicitly requested Computer Use for this turn. Use the native desktop tools for desktop actions. If they cannot complete an action, explain the limitation before changing methods.',
+      ] : []),
     ])
 
     // Register function hook for structured output enforcement
@@ -449,6 +516,28 @@ export class QueryEngine {
       }
     }
 
+    // A local command may perform asynchronous work inside processUserInput
+    // (notably /compact). Acknowledge dispatch first so a replacement after
+    // Stop can forward progress as well as the eventual completion. Peer
+    // messages explicitly skip slash interpretation and must never ack this way.
+    const lastInputBlock = typeof prompt === 'string' ? null : prompt.at(-1)
+    const commandInput = typeof prompt === 'string'
+      ? prompt
+      : lastInputBlock?.type === 'text' ? lastInputBlock.text : null
+    const parsedCommand = commandInput?.startsWith('/') ? parseSlashCommand(commandInput) : null
+    const localCommand = parsedCommand && !isPendingSessionMessage(options?.uuid)
+      ? findCommand(parsedCommand.commandName, commands)
+      : undefined
+    if (parsedCommand && localCommand?.type === 'local' && !localCommand.isSensitive) {
+      yield {
+        type: 'system',
+        subtype: 'local_command',
+        content: formatCommandInputTags(parsedCommand.commandName, parsedCommand.args),
+        uuid: options?.uuid ?? randomUUID(),
+        session_id: getSessionId(),
+      } as SDKMessage
+    }
+
     const {
       messages: messagesFromUserInput,
       shouldQuery,
@@ -472,9 +561,24 @@ export class QueryEngine {
     })
 
     const isSessionMessage = isPendingSessionMessage(options?.uuid)
-    if (isSessionMessage) {
+    const scheduledTask = getPendingScheduledTask(options?.uuid)
+    // A prompt that is not the human's own input (a task notification starting
+    // its own turn, a channel message) keeps its origin on the messages it
+    // produces, as handlePromptSubmit does for the REPL. Without it the turn
+    // reads as the user's: a lean session would take a `/skill` the model wrote
+    // into a notification for the user's explicit selection.
+    const origin: MessageOrigin | undefined = isSessionMessage
+      ? { kind: 'channel', server: scheduledTask ? 'scheduled-task' : 'session-collaboration' }
+      : options?.origin
+    if (origin) {
       for (const message of messagesFromUserInput) {
-        if (message.type === 'user') message.origin = { kind: 'channel', server: 'session-collaboration' }
+        if (message.type === 'user') {
+          message.origin = origin
+          if (scheduledTask) {
+            message.scheduledTask = scheduledTask
+            message.isMeta = false
+          }
+        }
       }
     }
 
@@ -522,7 +626,7 @@ export class QueryEngine {
         (msg.type === 'user' &&
           !msg.isMeta && // Skip synthetic caveat messages
           !msg.toolUseResult && // Skip tool results (they'll be acked from query)
-          messageSelector().selectableUserMessagesFilter(msg)) || // Skip non-user-authored messages (task notifications, etc.)
+          (msg.scheduledTask || messageSelector().selectableUserMessagesFilter(msg))) || // Skip non-user-authored messages (task notifications, etc.)
         (msg.type === 'system' && msg.subtype === 'compact_boundary'), // Always ack compact boundaries
     )
     const messagesToAck = replayUserMessages ? replayableMessages : []
@@ -826,6 +930,7 @@ export class QueryEngine {
                 parent_tool_use_id: null,
                 uuid: msgToAck.uuid,
                 timestamp: msgToAck.timestamp,
+                ...(msgToAck.scheduledTask ? { scheduledTask: msgToAck.scheduledTask } : {}),
                 isReplay: true,
               } as SDKUserMessageReplay
             }
@@ -1065,6 +1170,7 @@ export class QueryEngine {
               retry_delay_ms: message.retryInMs,
               error_status: message.error.status ?? null,
               error: categorizeRetryableAPIError(message.error),
+              ...getRetryableAPIErrorDiagnostics(message.error),
               session_id: getSessionId(),
               uuid: message.uuid,
             }
@@ -1361,6 +1467,7 @@ export async function* ask({
   prompt,
   promptUuid,
   isMeta,
+  origin,
   cwd,
   tools,
   mcpClients,
@@ -1387,11 +1494,13 @@ export async function* ask({
   agents = [],
   setSDKStatus,
   orphanedPermission,
+  requiredComputerUse,
 }: {
   commands: Command[]
   prompt: string | Array<ContentBlockParam>
   promptUuid?: string
   isMeta?: boolean
+  origin?: MessageOrigin
   cwd: string
   tools: Tools
   verbose?: boolean
@@ -1416,8 +1525,9 @@ export async function* ask({
   includePartialMessages?: boolean
   handleElicitation?: ToolUseContext['handleElicitation']
   agents?: AgentDefinition[]
-  setSDKStatus?: (status: SDKStatus) => void
+  setSDKStatus?: (status: SDKStatus, detail?: SDKStatusDetail) => void
   orphanedPermission?: OrphanedPermission
+  requiredComputerUse?: QueryEngineConfig['requiredComputerUse']
 }): AsyncGenerator<SDKMessage, void, unknown> {
   const engine = new QueryEngine({
     cwd,
@@ -1446,6 +1556,7 @@ export async function* ask({
     setSDKStatus,
     abortController,
     orphanedPermission,
+    requiredComputerUse,
     ...(feature('HISTORY_SNIP')
       ? {
           snipReplay: (yielded: Message, store: Message[]) => {
@@ -1461,6 +1572,7 @@ export async function* ask({
     yield* engine.submitMessage(prompt, {
       uuid: promptUuid,
       isMeta,
+      origin,
     })
   } finally {
     setReadFileCache(engine.getReadFileState())

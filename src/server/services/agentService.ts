@@ -10,20 +10,22 @@
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import * as fs from 'fs/promises'
-import * as path from 'path'
 import YAML from 'yaml'
 import { getCwd } from '../../utils/cwd.js'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { findCanonicalGitRoot, findGitRoot } from '../../utils/git.js'
 import { getAgentDefinitionsWithOverrides } from '../../tools/AgentTool/loadAgentsDir.js'
+import { quoteProblematicValues } from '../../utils/frontmatterParser.js'
+import { parseYaml } from '../../utils/yaml.js'
 import { ApiError } from '../middleware/errorHandler.js'
+
 export type AgentScope = 'user' | 'project'
 
 export type AgentDefinition = {
   name: string
   description?: string
   model?: string
+  provider?: string
   effort?: string | number
   tools?: string[]
   systemPrompt?: string
@@ -32,9 +34,10 @@ export type AgentDefinition = {
 
 export type AgentUpdate = Omit<
   Partial<AgentDefinition>,
-  'model' | 'effort' | 'tools' | 'color'
+  'model' | 'provider' | 'effort' | 'tools' | 'color'
 > & {
   model?: string | null
+  provider?: string | null
   effort?: string | number | null
   tools?: string[] | null
   color?: string | null
@@ -599,14 +602,14 @@ export class AgentService {
       return null
     }
 
-    const document = YAML.parseDocument(match[1] ?? '')
-    if (document.errors.length > 0 || !document.contents) {
+    const document = parseAgentFrontmatter(match[1] ?? '')
+    const value = readFrontmatterValue(document)
+    if (value === undefined) {
       if (failIfInvalid) {
         throw ApiError.badRequest('Agent file contains invalid YAML frontmatter')
       }
       return null
     }
-    const value = document.toJS()
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       if (failIfInvalid) {
         throw ApiError.badRequest('Agent frontmatter must be a YAML mapping')
@@ -667,6 +670,7 @@ export class AgentService {
 
     setIfPresent('description')
     setIfPresent('model')
+    setIfPresent('provider')
     setIfPresent('effort')
     setIfPresent('tools')
     setIfPresent('color')
@@ -682,6 +686,7 @@ export class AgentService {
       description:
         typeof data.description === 'string' ? data.description : undefined,
       model: typeof data.model === 'string' ? data.model : undefined,
+      provider: typeof data.provider === 'string' ? data.provider : undefined,
       effort:
         typeof data.effort === 'string' || typeof data.effort === 'number'
           ? data.effort
@@ -824,6 +829,35 @@ async function withAgentMutationLock<T>(
     if (agentMutationTails.get(key) === current) {
       agentMutationTails.delete(key)
     }
+  }
+}
+
+// Edit the same text the CLI loader activates: it quotes values such as
+// unquoted `<example>Context: ...` descriptions only when its own parser
+// rejects the original. Deciding with another parser would rewrite values the
+// loader reads differently, e.g. turn a `[Bash, Write]` list into a string.
+function parseAgentFrontmatter(
+  frontmatterText: string,
+): ReturnType<typeof YAML.parseDocument> {
+  try {
+    parseYaml(frontmatterText)
+  } catch {
+    return YAML.parseDocument(quoteProblematicValues(frontmatterText))
+  }
+  return YAML.parseDocument(frontmatterText)
+}
+
+// `yaml` reports some documents as invalid only while resolving aliases
+// (unresolved or exponentially expanding ones). Keep them read-only instead of
+// letting the exception fail the whole agent list.
+function readFrontmatterValue(
+  document: ReturnType<typeof YAML.parseDocument>,
+): unknown {
+  if (document.errors.length > 0 || !document.contents) return undefined
+  try {
+    return document.toJS()
+  } catch {
+    return undefined
   }
 }
 

@@ -9,6 +9,7 @@ const service = new SideQuestionService({
   ensure: ensureCliSessionStartedForControl,
   control: (id, request, timeout, signal) => conversationService.requestControl(id, request, timeout, signal),
 })
+export const hasSideQuestionPowerActivity = () => service.hasPendingWork()
 const MAX_BODY_BYTES = 1024 * 1024
 
 async function readBody(req: Request): Promise<unknown> {
@@ -37,6 +38,7 @@ async function readBody(req: Request): Promise<unknown> {
 }
 
 export async function handleSideQuestionRoute(req: Request, url: URL, sessionId: string, questionId?: string): Promise<Response> {
+  if ((await sessionService.getSessionLaunchInfo(sessionId))?.agentProfile === 'lean') throw ApiError.conflict('Side questions are unavailable in lean sessions')
   // Same persisted-session lookup as the surrounding session API. New empty
   // sessions cannot be prewarmed by /btw to accidentally begin a main turn.
   if (!conversationService.hasSession(sessionId)) {

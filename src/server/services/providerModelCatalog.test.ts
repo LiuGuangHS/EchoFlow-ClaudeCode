@@ -3,10 +3,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { buildModelsUrlCandidates, fetchProviderModels } from './providerModelCatalog.js'
+
+const OPENROUTER_OFFLINE_FIXTURE = {
+  baseUrl: 'https://openrouter-fixture.example.test/api',
+  expectedModelsUrl: 'https://openrouter-fixture.example.test/api/v1/models',
+} as const
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -20,8 +25,8 @@ let calls: FetchCall[]
 const SANDBOXED_ENV_KEYS = [
   'CLAUDE_CONFIG_DIR',
   'HOME',
-  'ECHOFLOW_SYSTEM_PROXY_URL',
-  'ECHOFLOW_SYSTEM_PROXY_ERROR',
+  'CC_HAHA_SYSTEM_PROXY_URL',
+  'CC_HAHA_SYSTEM_PROXY_ERROR',
 ] as const
 
 /** Install a stub `fetch` that records every call it receives. */
@@ -70,8 +75,8 @@ beforeEach(async () => {
   // an empty sandbox so a developer's real settings cannot steer the tests.
   process.env.CLAUDE_CONFIG_DIR = tmpDir
   process.env.HOME = tmpDir
-  delete process.env.ECHOFLOW_SYSTEM_PROXY_URL
-  delete process.env.ECHOFLOW_SYSTEM_PROXY_ERROR
+  delete process.env.CC_HAHA_SYSTEM_PROXY_URL
+  delete process.env.CC_HAHA_SYSTEM_PROXY_ERROR
   originalFetch = globalThis.fetch
   calls = []
 })
@@ -149,9 +154,10 @@ describe('buildModelsUrlCandidates', () => {
       ],
     },
     {
-      name: '/api is not a compat suffix (OpenRouter)',
-      baseUrl: 'https://openrouter.ai/api',
-      expected: ['https://openrouter.ai/api/v1/models'],
+      name: '/api is not a compat suffix (OpenRouter-shaped custom fixture)',
+      // Keep the /api path rule without depending on a bundled or retired preset.
+      baseUrl: OPENROUTER_OFFLINE_FIXTURE.baseUrl,
+      expected: [OPENROUTER_OFFLINE_FIXTURE.expectedModelsUrl],
     },
     {
       name: 'a full endpoint URL is cut at its /v1/ prefix',
@@ -244,6 +250,33 @@ describe('endpoint scheme safety', () => {
   })
 })
 
+describe('provider proxy override', () => {
+  async function probeProxy(proxy?: { mode: 'follow_global' | 'direct' | 'manual'; url?: string }) {
+    await writeFile(
+      path.join(tmpDir, 'settings.json'),
+      JSON.stringify({ network: { proxy: { mode: 'manual', url: 'http://127.0.0.1:1' } } }),
+    )
+    stubFetch(() => jsonResponse({ data: [{ id: 'm1' }] }))
+    const result = await fetchProviderModels({
+      baseUrl: 'https://api.example.com/v1', apiKey: 'fake-key', ...(proxy && { proxy }),
+    })
+    expect(result.ok).toBe(true)
+    return (calls[0]!.init as { proxy?: string } | undefined)?.proxy
+  }
+
+  test('follows the global proxy unless the provider overrides it', async () => {
+    expect(await probeProxy()).toBe('http://127.0.0.1:1')
+    calls = []
+    expect(await probeProxy({ mode: 'follow_global' })).toBe('http://127.0.0.1:1')
+  })
+
+  test('a direct provider ignores the global proxy and a manual one uses its own', async () => {
+    expect(await probeProxy({ mode: 'direct' })).toBeUndefined()
+    calls = []
+    expect(await probeProxy({ mode: 'manual', url: 'http://127.0.0.1:2' })).toBe('http://127.0.0.1:2')
+  })
+})
+
 describe('fetchProviderModels', () => {
   test('reports missing config without any network I/O', async () => {
     stubFetch(() => { throw new Error('fetch must not be called') })
@@ -320,6 +353,35 @@ describe('fetchProviderModels', () => {
       ],
       endpoint: 'https://api.example.com/v1/models',
     })
+  })
+
+  test('keeps the author/slug namespace of an OpenRouter-shaped custom fixture', async () => {
+    stubFetchSequence([() => jsonResponse({
+      object: 'list',
+      data: [
+        { id: 'z-ai/glm-5.3', owned_by: 'z-ai' },
+        { id: 'anthropic/claude-sonnet-5.5', owned_by: 'anthropic' },
+      ],
+    })])
+
+    const result = await fetchProviderModels({
+      baseUrl: OPENROUTER_OFFLINE_FIXTURE.baseUrl,
+      apiKey: 'sk-or-offline-fixture',
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      // Sorting and namespaces both survive: the id the user picks here is the id
+      // the request must carry, so a stripped author prefix would 404 upstream.
+      models: [
+        { id: 'anthropic/claude-sonnet-5.5', ownedBy: 'anthropic' },
+        { id: 'z-ai/glm-5.3', ownedBy: 'z-ai' },
+      ],
+      endpoint: OPENROUTER_OFFLINE_FIXTURE.expectedModelsUrl,
+    })
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toBe(OPENROUTER_OFFLINE_FIXTURE.expectedModelsUrl)
+    expect(authHeaderOf(calls[0])).toBe('Bearer sk-or-offline-fixture')
   })
 
   test('accepts models[]/items[]/bare arrays and string entries', async () => {

@@ -28,8 +28,7 @@
     "needsApiKey": true,
     "websiteUrl": "https://api.echoflowai.cc/",
     "apiKeyUrl": "https://api.echoflowai.cc/register",
-    "promoText": "推荐接入 500+ 模型，支持 Claude / OpenAI 协议，访问高速稳定。新用户注册赠送试用。",
-    "featured": true,
+    "promoText": "支持 Claude / OpenAI 协议的 EchoFlow API 集成。",
     "authStrategy": "auth_token",
     "modelContextWindows": {
       "claude-sonnet-5-5": 1000000,
@@ -47,10 +46,11 @@
     "baseUrl": "https://api.deepseek.com/anthropic",
     "apiFormat": "anthropic",
     "defaultModels": {
-      "main": "deepseek-v4-pro[1m]",
-      "haiku": "deepseek-v4-flash",
-      "sonnet": "deepseek-v4-pro[1m]",
-      "opus": "deepseek-v4-pro[1m]"
+      "main": "deepseek-flash[1m]",
+      "fable": "deepseek-flash[1m]",
+      "haiku": "deepseek-flash[1m]",
+      "sonnet": "deepseek-flash[1m]",
+      "opus": "deepseek-flash[1m]"
     },
     "needsApiKey": true,
     "websiteUrl": "https://platform.deepseek.com",
@@ -58,6 +58,8 @@
     "authStrategy": "auth_token",
     "defaultEnv": {},
     "modelContextWindows": {
+      "deepseek-flash[1m]": 1000000,
+      "deepseek-flash": 1000000,
       "deepseek-v4-pro[1m]": 1000000,
       "deepseek-v4-pro": 1000000,
       "deepseek-v4-flash": 1000000,
@@ -177,17 +179,32 @@
     },
     "needsApiKey": true,
     "websiteUrl": "https://opencode.ai",
-    "promoText": "订阅制套餐，只需填 API Key。官方网关会按模型族自动选择协议端点，无需手动配置。",
+    "apiKeyUrl": "https://opencode.ai/go",
     "authStrategy": "api_key",
     "defaultEnv": {},
     "modelApiFormats": [
       {
-        "prefixes": ["grok-", "gpt-", "muse-spark-"],
+        "prefixes": [
+          "grok-",
+          "gpt-",
+          "muse-spark-"
+        ],
         "apiFormat": "openai_responses"
       },
       {
-        "prefixes": ["minimax-", "qwen", "union-alpha"],
+        "prefixes": [
+          "minimax-",
+          "qwen",
+          "union-alpha"
+        ],
         "apiFormat": "anthropic"
+      },
+      {
+        "prefixes": [
+          "gemini-"
+        ],
+        "apiFormat": "gemini",
+        "baseUrl": "/inference/go/google/v1beta"
       }
     ],
     "upstreamHeaders": {
@@ -199,6 +216,7 @@
       "deepseek-v4-flash-vision-exp": 1000000,
       "deepseek-v4-pro": 1000000,
       "deepseek-v4.1-flash": 1000000,
+      "gemini-4-argon-contributor": 1048576,
       "glm-5": 202752,
       "glm-5.1": 202752,
       "glm-5.2": 1000000,

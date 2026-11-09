@@ -2,7 +2,7 @@
  * Settings Service — 读写用户级和项目级设置文件
  *
  * 设置文件为 JSON 格式：
- *   - 用户级: <EchoFlow config root>/settings.json（用户共享设置）
+ *   - 用户级: ~/.claude/settings.json
  *   - 项目级: {projectRoot}/.claude/settings.json
  *
  * 合并策略：Object.assign({}, userSettings, projectSettings)
@@ -11,12 +11,12 @@
 import * as fs from 'fs/promises'
 import { randomBytes } from 'node:crypto'
 import * as path from 'path'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { ApiError } from '../middleware/errorHandler.js'
 import { normalizeJsonObject, readRecoverableJsonFile } from './recoverableJsonFile.js'
 import { ensurePersistentStorageUpgraded } from './persistentStorageMigrations.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 import { addFileGlobRuleToGitignore } from '../../utils/git/gitignore.js'
-import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
 import { getProcessEnvWithTerminalShellEnvironment } from '../../utils/terminalShellEnvironment.js'
 import type { ModelMapping } from '../types/provider.js'
@@ -49,7 +49,7 @@ export class SettingsService {
     return getEchoFlowConfigDir()
   }
 
-  /** 用户级设置文件路径（用户共享设置，不属于仓库管理的内部索引） */
+  /** 用户级设置文件路径 */
   private getUserSettingsPath(): string {
     return path.join(this.getConfigDir(), 'settings.json')
   }
@@ -104,6 +104,32 @@ export class SettingsService {
     return this.readJsonFile(this.getUserSettingsPath())
   }
 
+  /** Read-time upgrade for settings written before the desktop update toggle.
+   * Do not rewrite the user-owned file until an explicit preference is saved.
+   */
+  async getAutoUpdateEnabled(settings?: Record<string, unknown>): Promise<boolean> {
+    const user = settings ?? await this.getUserSettings()
+    return user.autoUpdateEnabled !== false
+  }
+
+  /** Forward read migration: the desktop experiment is opt-in for legacy files. */
+  async getLeanModeEnabled(settings?: Record<string, unknown>): Promise<boolean> {
+    const user = settings ?? await this.getUserSettings()
+    return user.leanModeEnabled === true
+  }
+
+  /** 旧设置缺少并发上限时按不限读取，不自动改写用户文件。 */
+  async getMaxConcurrentSubagents(settings?: Record<string, unknown>): Promise<number | null> {
+    const user = settings ?? await this.getUserSettings()
+    const value = user.maxConcurrentSubagents
+    return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null
+  }
+
+  /** Desktop composer next-prompt suggestions; opt-in because each turn costs an extra request. */
+  async getNextPromptSuggestionsEnabled(): Promise<boolean> {
+    return (await this.getUserSettings()).nextPromptSuggestionsEnabled === true
+  }
+
   /** Read-time upgrade for older settings that only stored the team env flag.
    * Keep the original file intact until the user explicitly saves a choice.
    */
@@ -111,11 +137,9 @@ export class SettingsService {
     const user = await this.getUserSettings()
     if (typeof user.agentTeamsEnabled === 'boolean') return user.agentTeamsEnabled
     const managed = await this.readJsonFile(path.join(getEchoFlowInternalDir(this.getConfigDir()), 'settings.json'))
-    const legacyManaged = await this.readJsonFile(path.join(this.getConfigDir(), 'echoflow', 'settings.json'))
     const inherited = await getProcessEnvWithTerminalShellEnvironment()
     const key = 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'
     const legacyValue = normalizeJsonObject(managed.env)?.[key] ??
-      normalizeJsonObject(legacyManaged.env)?.[key] ??
       normalizeJsonObject(user.env)?.[key] ?? inherited[key]
     return typeof legacyValue === 'string' ? isEnvTruthy(legacyValue) : true
   }
@@ -191,8 +215,20 @@ export class SettingsService {
 
   /** 更新用户级设置（顶层浅合并，并保留桌面终端的未知子字段） */
   async updateUserSettings(settings: Record<string, unknown>): Promise<void> {
+    if (Object.hasOwn(settings, 'leanModeEnabled') && typeof settings.leanModeEnabled !== 'boolean') {
+      throw ApiError.badRequest('leanModeEnabled must be a boolean')
+    }
+    if (Object.hasOwn(settings, 'autoUpdateEnabled') && typeof settings.autoUpdateEnabled !== 'boolean') {
+      throw ApiError.badRequest('autoUpdateEnabled must be a boolean')
+    }
     if (Object.hasOwn(settings, 'agentTeamsEnabled') && typeof settings.agentTeamsEnabled !== 'boolean') {
       throw ApiError.badRequest('agentTeamsEnabled must be a boolean')
+    }
+    if (Object.hasOwn(settings, 'maxConcurrentSubagents')) {
+      const value = settings.maxConcurrentSubagents
+      if (value !== null && !(typeof value === 'number' && Number.isSafeInteger(value) && value > 0)) {
+        throw ApiError.badRequest('maxConcurrentSubagents must be null or a positive safe integer')
+      }
     }
     const filePath = this.getUserSettingsPath()
     await this.withWriteLock(filePath, async () => {
@@ -274,9 +310,9 @@ export class SettingsService {
   }
 
   /**
-   * 合并单个内置 Agent 的 model/effort 覆盖。
+   * 合并单个内置 Agent 的 model/provider/effort 覆盖。
    *
-   * `patch` 为 null 时删除 model/effort；字段值为 null 时只删该字段。
+   * `patch` 为 null 时删除 model/provider/effort；字段值为 null 时只删该字段。
    * 条目清空后连同条目一起删除，`builtInAgentOverrides` 变空时删掉这个 key，
    * 不在用户的 settings.json 里留下空壳。
    *
@@ -288,6 +324,7 @@ export class SettingsService {
     agentType: string,
     patch: {
       model?: string | null
+      provider?: string | null
       effort?: string | number | null
     } | null,
   ): Promise<void> {
@@ -302,9 +339,10 @@ export class SettingsService {
         // future per-agent fields, so reset must not erase data written by a
         // newer client or another settings editor.
         delete entry.model
+        delete entry.provider
         delete entry.effort
       } else {
-        for (const field of ['model', 'effort'] as const) {
+        for (const field of ['model', 'provider', 'effort'] as const) {
           if (!Object.hasOwn(patch, field)) continue
           if (patch[field] === null) {
             delete entry[field]
