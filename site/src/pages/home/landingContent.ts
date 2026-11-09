@@ -147,7 +147,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
       { title: '看看它做得怎样', body: '检查结果，留下反馈，再决定下一步。', route: '/desktop/workspace' }
     ],
     faqs: [
-      { question: 'EchoFlow Code 的使用条款是什么？', answer: '请阅读仓库 LICENSE 与 THIRD_PARTY_LICENSES.md。根许可证仅对 EchoFlow 原创内容作权利保留，不授予第三方代码许可；使用或分发许可须另行取得书面协议。第三方代码保留各自适用的许可与声明。模型订阅和 API 费用由相应服务商收取。' },
+      { question: 'EchoFlow Code 的使用条款是什么？', answer: '请阅读仓库 LICENSE 与 THIRD_PARTY_LICENSES.md。根许可证仅保留 EchoFlow Code 原创内容的全部权利；该原创内容的授权须另行取得由 LiuGuangHS / EchoFlow Code 签署的书面协议。它不授予第三方代码许可，也不是完整的最终用户许可协议。第三方代码保留各自适用的许可与声明。模型订阅和 API 费用由相应服务商收取。' },
       { question: '我的设备能用吗？', answer: '桌面应用提供 macOS、Windows 和 Linux 安装包，支持对应的 Intel / AMD 与 ARM 架构，按下载指南选择适合系统的版本即可。手机连接支持浏览器扫码接力；EchoFlow Android / iPhone 安装包分发状态以发布页及手机连接文档为准。Computer Use 的平台支持有所不同，见下方说明。' },
       { question: '手机怎么连上电脑？', answer: '在桌面端「手机连接」里开启浏览器连接并扫码配对：同一 Wi-Fi 下直接连接，外出时走 Cloudflare。EchoFlow 手机安装包尚未核验，上游 APK 和 TestFlight 群组不属于 EchoFlow 分发渠道。任务始终在电脑上运行。' },
       { question: '可以用我已经有的模型吗？', answer: '可以。支持通过 Claude、ChatGPT、Grok 官方账号登录，也可配置第三方 API 或连接本地模型。可用模型取决于账号权限和服务商；完整的 Agent 工作流还需要模型支持工具调用。' },
@@ -247,7 +247,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
       { title: 'See how it turned out', body: 'Review the result, leave feedback, and choose what comes next.', route: '/en/desktop/workspace' }
     ],
     faqs: [
-      { question: 'What are the EchoFlow Code use terms?', answer: 'Read LICENSE and THIRD_PARTY_LICENSES.md in the repository. The root license reserves rights in original EchoFlow work only and does not license third-party code; permission to use or redistribute requires a separate written agreement. Third-party code retains its applicable licenses and notices. Model subscriptions and API usage are billed separately by your provider.' },
+      { question: 'What are the EchoFlow Code use terms?', answer: 'Read LICENSE and THIRD_PARTY_LICENSES.md in the repository. The root license reserves all rights in original EchoFlow Code work only. Permission for that work requires a separate written agreement signed by LiuGuangHS / EchoFlow Code. It does not license third-party code and is not a full end-user license agreement. Third-party code retains its applicable licenses and notices. Model subscriptions and API usage are billed separately by your provider.' },
       { question: 'Will it work on my devices?', answer: 'Desktop packages are available for macOS, Windows, and Linux, with supported Intel / AMD and ARM builds. Choose the right package in the installation guide. Phone access supports browser pairing; check the release page and phone connection guide for EchoFlow Android / iPhone package availability. Computer Use has separate platform requirements, described below.' },
       { question: 'How do I connect my phone?', answer: 'Enable browser access under Phone connection in the desktop app and scan its QR code. Connect directly on the same Wi-Fi, or through Cloudflare when away. EchoFlow mobile packages are not verified; upstream APKs and TestFlight groups are not EchoFlow distribution channels. Tasks always run on your computer.' },
       { question: 'Can I use a model I already have?', answer: 'Yes. Sign in with an official Claude, ChatGPT, or Grok account, configure a third-party API, or connect a local model. Available models depend on your account and provider. Agent workflows also require a model that supports tool calling.' },

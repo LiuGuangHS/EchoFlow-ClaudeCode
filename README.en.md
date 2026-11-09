@@ -63,6 +63,6 @@ TypeScript, Electron, React + Vite, Bun, React + Ink, Commander.js, Anthropic SD
 
 ## License
 
-The root [LICENSE](LICENSE) reserves rights in original EchoFlow Code work only; it does not license third-party code or grant permission to use or redistribute the project. Such permission requires a separate written agreement.
+The root [LICENSE](LICENSE) reserves all rights in original EchoFlow Code work only. Permission for that work requires a separate written agreement signed by LiuGuangHS / EchoFlow Code. It does not license third-party code and is not a full end-user license agreement.
 
 Reused agent-desktop code retains its Apache-2.0 license. Other third-party code and dependencies retain their applicable licenses and notices; see [Third-Party Licenses](THIRD_PARTY_LICENSES.md) and the notices alongside the source.

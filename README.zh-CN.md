@@ -140,6 +140,6 @@ EchoFlow Code 的目标不是再包一层聊天框，而是把 Coding Agent 变�
 
 ## 许可说明
 
-根目录的 [LICENSE](LICENSE) 仅对 EchoFlow Code 原创内容作权利保留，不授予第三方代码的许可，也不授予项目使用或分发许可；相关许可须另行取得书面协议。
+根目录的 [LICENSE](LICENSE) 仅保留 EchoFlow Code 原创内容的全部权利；该原创内容的授权须另行取得由 LiuGuangHS / EchoFlow Code 签署的书面协议。它不授予第三方代码的许可，也不是完整的最终用户许可协议。
 
 复用的 agent-desktop 代码保留 Apache-2.0 许可。其他第三方代码和依赖保留各自适用的许可与声明，见[第三方许可](THIRD_PARTY_LICENSES.md)及源码附带的声明。
