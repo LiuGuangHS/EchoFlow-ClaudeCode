@@ -50,9 +50,9 @@ describe('release please configuration', () => {
     expect(config.packages.desktop['versioning']).toBe('always-bump-patch')
   })
 
-  test('keeps the three version fields on the same product version', () => {
+  test('keeps the mobile package and Expo app versions synchronized', () => {
     expect(desktopPkg.version).toMatch(/^\d+\.\d+\.\d+$/)
-    expect(mobilePkg.version).toBe(desktopPkg.version)
-    expect(mobileApp.version).toBe(desktopPkg.version)
+    expect(mobilePkg.version).toMatch(/^\d+\.\d+\.\d+$/)
+    expect(mobileApp.expo.version).toBe(mobilePkg.version)
   })
 })
