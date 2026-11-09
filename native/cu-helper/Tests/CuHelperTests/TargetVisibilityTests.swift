@@ -1,7 +1,7 @@
 import CoreGraphics
 import XCTest
 
-@testable import echoflow_code_computer_use
+@testable import cc_haha_computer_use
 
 /// A fully covered Chromium window stops drawing while every action still
 /// reports success. Measured on one real session: 22 captures, 6 distinct
@@ -211,6 +211,23 @@ final class TargetVisibilityPolicyTests: XCTestCase {
                 XCTAssertFalse(notice.contains("refused"))
                 XCTAssertFalse(notice.contains("Uncover the window"))
             }
+        }
+    }
+
+    /// Behind the user's fullscreen app the same Chromium frame came back after
+    /// actions that changed the page. "Not covered, so coverage does not
+    /// explain it" would read those actions as failures.
+    func testAWindowOffTheShownSpacesBlamesThePictureNotTheAction() {
+        for liveStreamActive in [true, false] {
+            let notice = TargetVisibilityPolicy.identicalCaptureNotice(
+                windowIsCovered: false,
+                liveStreamActive: liveStreamActive,
+                windowIsOffScreen: true
+            )
+            XCTAssertTrue(notice.contains("not on a Space the user is looking at"))
+            XCTAssertTrue(notice.contains("judge it from the accessibility state"))
+            XCTAssertFalse(notice.contains("not fully covered"))
+            XCTAssertFalse(notice.contains("coverage does not"))
         }
     }
 

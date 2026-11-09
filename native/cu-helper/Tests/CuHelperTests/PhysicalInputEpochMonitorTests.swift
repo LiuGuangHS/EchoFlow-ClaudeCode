@@ -1,7 +1,7 @@
 import CoreGraphics
 import XCTest
 
-@testable import echoflow_code_computer_use
+@testable import cc_haha_computer_use
 
 /// The monitor is a permission-free read over the session's HID event
 /// counters. What must hold:
@@ -29,17 +29,6 @@ final class PhysicalInputEpochMonitorTests: XCTestCase {
         XCTAssertEqual(injectionSource.userData, HelperEventMarker.value)
         XCTAssertEqual(actionSource.userData, HelperEventMarker.value)
         XCTAssertEqual(injectionSource.userData, actionSource.userData)
-    }
-
-    /// The marker is a provenance stamp, not a random value. It must not spell
-    /// a retired product name in its bytes.
-    func testMarkerCarriesNoRetiredBrandFingerprint() {
-        let bytes = (0..<8).map { index in
-            UInt8((HelperEventMarker.value >> (56 - index * 8)) & 0xFF)
-        }
-        let spelling = String(decoding: bytes, as: UTF8.self)
-
-        XCTAssertFalse(spelling.lowercased().contains("ccha"))
     }
 
     /// Fixed counters → fixed epoch, and reading twice changes nothing.

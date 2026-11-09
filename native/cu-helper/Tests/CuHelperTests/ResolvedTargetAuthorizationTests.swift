@@ -1,5 +1,5 @@
 import XCTest
-@testable import echoflow_code_computer_use
+@testable import cc_haha_computer_use
 
 final class ResolvedTargetAuthorizationTests: XCTestCase {
     private let terminalIdentity = AXTreeProcessIdentity(
@@ -90,8 +90,8 @@ final class ResolvedTargetAuthorizationTests: XCTestCase {
             "com.spotify.client",
             "com.apple.Music",
             "com.amazon.Kindle",
-            "com.echoflow.code.desktop",
-            "dev.echoflow.cu-helper",
+            "com.claude-code-haha.desktop",
+            "dev.cchaha.cu-helper",
             "com.example.custom-host",
             "com.example.new-app",
         ]
@@ -141,15 +141,15 @@ final class ResolvedTargetAuthorizationTests: XCTestCase {
     func testWorktreeHostPathResolutionAuthorizesExactProcess() throws {
         let installed = AppTargetCandidate(
             pid: 100,
-            bundleIdentifier: "com.echoflow.code.desktop",
-            bundleURL: URL(fileURLWithPath: "/Applications/EchoFlow Code.app"),
-            localizedName: "EchoFlow Code",
-            executableName: "EchoFlow Code"
+            bundleIdentifier: "com.claude-code-haha.desktop",
+            bundleURL: URL(fileURLWithPath: "/Applications/Claude Code Haha.app"),
+            localizedName: "Claude Code Haha",
+            executableName: "Claude Code Haha"
         )
         let worktree = AppTargetCandidate(
             pid: 200,
             bundleIdentifier: installed.bundleIdentifier,
-            bundleURL: URL(fileURLWithPath: "/Users/test/worktree/desktop/build-artifacts/macos-arm64/EchoFlow Code.app"),
+            bundleURL: URL(fileURLWithPath: "/Users/test/worktree/desktop/build-artifacts/macos-arm64/Claude Code Haha.app"),
             localizedName: installed.localizedName,
             executableName: installed.executableName
         )
@@ -159,7 +159,7 @@ final class ResolvedTargetAuthorizationTests: XCTestCase {
         )
         let identity = AXTreeProcessIdentity(
             bundleID: worktree.bundleIdentifier,
-            executablePath: worktree.bundleURL!.appendingPathComponent("Contents/MacOS/EchoFlow Code").path,
+            executablePath: worktree.bundleURL!.appendingPathComponent("Contents/MacOS/Claude Code Haha").path,
             launchTime: 300
         )
 

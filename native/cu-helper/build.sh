@@ -6,24 +6,28 @@
 #
 # Env overrides:
 #   CU_HELPER_IDENTITY   (default: auto -> 'Apple Development: ...' if found, else 'cu-helper-dev')
-#   CU_HELPER_BUNDLE_ID  (default: dev.echoflow.cu-helper)  # constant => stable TCC row
+#   CU_HELPER_BUNDLE_ID  (default: dev.cchaha.cu-helper)  # constant => stable TCC row
 #   CU_HELPER_ARCH       (default: current machine arch; arm64 or x86_64)
 #   CU_HELPER_TIMESTAMP_MODE
 #                        (default: auto; secure for Developer ID, none for local development)
+#   CC_HAHA_LOCAL_UNSIGNED_BUILD=1
+#                        Local desktop packaging only: permits the explicit
+#                        build-wide identity '-' (Computer Use is unavailable).
 #
-# Output: prints "built: <arch-specific abs path>/echoflow-code-computer-use.app"
+# Output: prints "built: <arch-specific abs path>/cc-haha-computer-use.app"
 #
 # Stable-identity contract: same cert + same --identifier on every build,
-# --options runtime, a secure timestamp for Developer ID distribution, no ad-hoc.
+# --options runtime, a secure timestamp for Developer ID distribution.
 #
 # WHY this matters: macOS TCC (Privacy & Security) grants Accessibility + Screen
 # Recording to a binary keyed by its code-signing identity (the "designated
 # requirement" / cdhash lineage). An ad-hoc signature (codesign -s -) or a
 # per-build throwaway cert rotates that identity on EVERY rebuild, so the user
 # would have to re-grant both permissions after every `swift build`. To keep the
-# grants alive we ALWAYS sign with a STABLE cert and a CONSTANT --identifier.
-# We NEVER fall back to ad-hoc signing — if no stable identity exists we stop and
-# tell the user exactly how to create a one-time self-signed Code Signing cert.
+# grants alive, Computer Use builds need a STABLE cert and a CONSTANT --identifier.
+# We never auto-select ad-hoc signing. Only the local desktop packaging entrypoint
+# may explicitly request it; that package cannot pass Computer Use attestation.
+# Direct helper builds without a stable identity still stop with setup guidance.
 
 set -euo pipefail
 
@@ -49,7 +53,7 @@ BUILD_DIR="$PKG_DIR/.build"
 # Reuse the desktop brand asset so both Privacy lists show the product logo.
 APP_ICON_PATH="$PKG_DIR/../../desktop/src-tauri/icons/icon.icns"
 
-BUNDLE_ID="${CU_HELPER_BUNDLE_ID:-dev.echoflow.cu-helper}"
+BUNDLE_ID="${CU_HELPER_BUNDLE_ID:-dev.cchaha.cu-helper}"
 ARCH="${CU_HELPER_ARCH:-$(uname -m)}"
 SWIFT_SCRATCH_PATH="$BUILD_DIR/$ARCH"
 BIN_DIR=""
@@ -97,7 +101,7 @@ preflight() {
 # 2. Resolve a STABLE signing identity.
 #
 #    Priority:
-#      a) $ECHOFLOW_SIGN_IDENTITY (shared host/sidecar/helper build identity)
+#      a) $CC_HAHA_SIGN_IDENTITY (shared host/sidecar/helper build identity)
 #      b) $CU_HELPER_IDENTITY (legacy helper-only override for direct builds)
 #      c) the first 'Developer ID Application: ...' identity (release/CI)
 #      d) the first real 'Apple Development: ...' identity in the keychain
@@ -182,12 +186,16 @@ resolve_identity() {
   #     every call (see desktop/scripts/sign-identity.ts). It deliberately wins
   #     over the legacy helper-only variable so stale shell state cannot split a
   #     signed app across two certificates.
-  if [ -n "${ECHOFLOW_SIGN_IDENTITY:-}" ]; then
-    SIGN_IDENTITY="$ECHOFLOW_SIGN_IDENTITY"
+  if [ -n "${CC_HAHA_SIGN_IDENTITY:-}" ]; then
+    SIGN_IDENTITY="$CC_HAHA_SIGN_IDENTITY"
     if [ "$SIGN_IDENTITY" = "-" ]; then
-      die "ECHOFLOW_SIGN_IDENTITY='-' (ad-hoc) is refused. Ad-hoc signing rotates the TCC identity every build. Use a stable cert."
+      if [ "${CC_HAHA_LOCAL_UNSIGNED_BUILD:-}" != "1" ] \
+        || [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+        die "Ad-hoc signing requires explicit local unsigned packaging; CI must use a stable signing identity."
+      fi
+      log "warning: local ad-hoc helper build; Computer Use is unavailable without a shared signing certificate."
     fi
-    log "identity: $SIGN_IDENTITY (from ECHOFLOW_SIGN_IDENTITY)"
+    log "identity: $SIGN_IDENTITY (from CC_HAHA_SIGN_IDENTITY)"
     return 0
   fi
 
@@ -238,16 +246,7 @@ resolve_identity() {
     return 0
   fi
 
-  # f) CI fallback: allow ad-hoc signing ONLY when explicitly requested via
-  #    CU_HELPER_ALLOW_ADHOC=1 (for unsigned CI test builds).
-  if [ "${CU_HELPER_ALLOW_ADHOC:-}" = "1" ]; then
-    SIGN_IDENTITY="-"
-    log "identity: ad-hoc (CU_HELPER_ALLOW_ADHOC=1, CI test build only)"
-    log "warning: ad-hoc signature will NOT preserve TCC grants across rebuilds"
-    return 0
-  fi
-
-  # g) nothing usable -> instructions + fail.
+  # f) nothing usable -> instructions + fail. NEVER ad-hoc.
   print_self_signed_instructions
   die "no stable code-signing identity available (refusing to ad-hoc sign)."
 }
@@ -319,9 +318,9 @@ resolve_build_paths() {
     --scratch-path "$SWIFT_SCRATCH_PATH" \
     --show-bin-path)"
   [ -n "$BIN_DIR" ] || die "swift build --show-bin-path returned an empty path for $ARCH"
-  BIN_PATH="$BIN_DIR/echoflow-code-computer-use"
-  APP_PATH="$BIN_DIR/echoflow-code-computer-use.app"
-  RESOURCE_BUNDLE_PATH="$BIN_DIR/cu-helper_echoflow-code-computer-use.bundle"
+  BIN_PATH="$BIN_DIR/cc-haha-computer-use"
+  APP_PATH="$BIN_DIR/cc-haha-computer-use.app"
+  RESOURCE_BUNDLE_PATH="$BIN_DIR/cu-helper_cc-haha-computer-use.bundle"
 }
 
 build() {
@@ -427,7 +426,7 @@ verify() {
     die "Developer ID signature is missing a secure Timestamp; notarization would reject $BIN_PATH."
   fi
   log ""
-  log "verified: Identifier=$got_id (stable)"
+  log "verified: Identifier=$got_id"
 }
 
 # ---------------------------------------------------------------------------
@@ -451,7 +450,7 @@ wrap_app() {
   rm -rf "$APP_PATH"
   mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 
-  cp "$BIN_PATH" "$APP_PATH/Contents/MacOS/echoflow-code-computer-use"
+  cp "$BIN_PATH" "$APP_PATH/Contents/MacOS/cc-haha-computer-use"
 
   [ -f "$PKG_DIR/Info.plist" ] || die "Info.plist not found at $PKG_DIR/Info.plist (needed for the .app bundle)."
   cp "$PKG_DIR/Info.plist" "$APP_PATH/Contents/Info.plist"
@@ -462,7 +461,7 @@ wrap_app() {
   # NOT also put it in MacOS/ — a nested .bundle there breaks codesign with an
   # "In subcomponent" error. The optional sequence may contain only its README;
   # missing PNGs are supported, a missing declared build resource is not.
-  local res_bundle="${RESOURCE_BUNDLE_PATH:-$BUILD_DIR/$BUILD_CONFIG/cu-helper_echoflow-code-computer-use.bundle}"
+  local res_bundle="${RESOURCE_BUNDLE_PATH:-$BUILD_DIR/$BUILD_CONFIG/cu-helper_cc-haha-computer-use.bundle}"
   copy_cursor_resources "$res_bundle" "$APP_PATH"
 
   # Sign the WHOLE bundle with the SAME stable identity + hardened runtime.
@@ -486,7 +485,7 @@ wrap_app() {
   if [ "$RESOLVED_TIMESTAMP_MODE" = "secure" ] && ! printf '%s\n' "$app_dv" | grep -q '^Timestamp='; then
     die "Developer ID signature is missing a secure Timestamp; notarization would reject $APP_PATH."
   fi
-  log "verified: .app bundle Identifier=$app_id (stable)"
+  log "verified: .app bundle Identifier=$app_id"
 }
 
 # Run the production loader from an independent .app location. Checking only a
@@ -502,9 +501,9 @@ verify_relocated_cursor_resources() (
 
   # The subshell isolates this variable. Bash 3 unwinds function-local variables
   # before an EXIT trap after die(), so it must remain available for cleanup.
-  probe_root="$(mktemp -d "${TMPDIR:-/tmp}/echoflow-cursor-probe.XXXXXX")"
+  probe_root="$(mktemp -d "${TMPDIR:-/tmp}/cc-haha-cursor-probe.XXXXXX")"
   trap 'rm -rf "$probe_root"' EXIT
-  local probe_app="$probe_root/echoflow-code-computer-use.app"
+  local probe_app="$probe_root/cc-haha-computer-use.app"
   local report="$probe_root/resources.json"
   cp -R "$APP_PATH" "$probe_app"
   mkdir -p "$probe_root/home" "$probe_root/config" "$probe_root/tmp"
@@ -514,7 +513,7 @@ verify_relocated_cursor_resources() (
     CFFIXED_USER_HOME="$probe_root/home" \
     CLAUDE_CONFIG_DIR="$probe_root/config" \
     TMPDIR="$probe_root/tmp/" \
-    "$probe_app/Contents/MacOS/echoflow-code-computer-use" --probe-cursor-resources >"$report"; then
+    "$probe_app/Contents/MacOS/cc-haha-computer-use" --probe-cursor-resources >"$report"; then
     die "Cursor resource probe failed for relocated helper $probe_app"
   fi
 
@@ -523,7 +522,7 @@ verify_relocated_cursor_resources() (
     || die "Cursor resource probe did not report a resourceDirectory"
   resource_directory="$(cd "$resource_directory" 2>/dev/null && pwd -P)" \
     || die "Cursor resource probe reported an unreadable resourceDirectory"
-  local expected_directory="$probe_app/Contents/Resources/cu-helper_echoflow-code-computer-use.bundle/LensSequence"
+  local expected_directory="$probe_app/Contents/Resources/cu-helper_cc-haha-computer-use.bundle/LensSequence"
   [ -d "$expected_directory" ] || die "Cursor resource probe package is missing $expected_directory"
   expected_directory="$(cd "$expected_directory" && pwd -P)"
   local canonical_app
@@ -551,7 +550,7 @@ main() {
 
   # The ONE machine-readable line on STDOUT — the .app BUNDLE path. The caller
   # (build-sidecars.ts) copies the whole .app; the runtime resolver
-  # (cuHelperBridge.ts) targets <app>/Contents/MacOS/echoflow-code-computer-use.
+  # (cuHelperBridge.ts) targets <app>/Contents/MacOS/cc-haha-computer-use.
   printf 'built: %s\n' "$APP_PATH"
 }
 

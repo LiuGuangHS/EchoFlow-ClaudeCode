@@ -1,5 +1,5 @@
 import XCTest
-@testable import echoflow_code_computer_use
+@testable import cc_haha_computer_use
 
 #if DEBUG
 final class ProcessValidationObservationTests: XCTestCase {
@@ -8,7 +8,7 @@ final class ProcessValidationObservationTests: XCTestCase {
         let expected = try XCTUnwrap(ProvenProcessTarget(
             pid: .max,
             identity: AXTreeProcessIdentity(
-                bundleID: "dev.echoflow.tests.missing",
+                bundleID: "dev.cchaha.tests.missing",
                 executablePath: "/missing/process",
                 launchTime: 100
             )

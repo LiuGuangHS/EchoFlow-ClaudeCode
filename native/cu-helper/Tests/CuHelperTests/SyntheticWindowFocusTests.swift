@@ -2,7 +2,7 @@ import AppKit
 import CoreGraphics
 import XCTest
 
-@testable import echoflow_code_computer_use
+@testable import cc_haha_computer_use
 
 /// Construct real events without posting them. Delivery and foreground
 /// preservation remain real-machine acceptance requirements.
@@ -211,7 +211,7 @@ final class InputAcceptanceContractTests: XCTestCase {
     func testEveryInputPathEnsuresTheTargetWillAcceptIt() throws {
         let axAction = try source("AXAction.swift")
         let preparation = try XCTUnwrap(axAction.range(of: "private static func ensureTargetAcceptsInput").map {
-            String(axAction[$0.lowerBound...].prefix(400))
+            String(axAction[$0.lowerBound...].prefix(700))
         })
         XCTAssertTrue(preparation.contains("try await SyntheticWindowFocus.prepareInput"))
         for entry in ["clickPoint", "typeText", "pressKey"] {
@@ -248,5 +248,14 @@ final class InputAcceptanceContractTests: XCTestCase {
             focus.contains("SyntheticWindowFocus.prepareInput"),
             "decomposed mouse commands must await target acceptance too"
         )
+    }
+
+    func testAHiddenAppGetsTheAppLevelActivation() {
+        let window = SyntheticWindowFocus.Window(
+            id: 42, bounds: CGRect(x: 0, y: 0, width: 800, height: 600),
+            activationPoint: .some(CGPoint(x: 10, y: 10))
+        )
+        XCTAssertNil(SyntheticWindowFocus.activationWindow(window, appIsHidden: true))
+        XCTAssertEqual(SyntheticWindowFocus.activationWindow(window, appIsHidden: false), window)
     }
 }

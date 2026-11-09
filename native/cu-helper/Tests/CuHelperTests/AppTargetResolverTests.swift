@@ -1,5 +1,5 @@
 import XCTest
-@testable import echoflow_code_computer_use
+@testable import cc_haha_computer_use
 
 final class AppTargetResolverTests: XCTestCase {
     private let calculator = AppTargetCandidate(
@@ -29,21 +29,21 @@ final class AppTargetResolverTests: XCTestCase {
     func testFullPathSelectsOnlyThatBundleWhenRunningCopiesShareAName() throws {
         let installed = AppTargetCandidate(
             pid: 100,
-            bundleIdentifier: "com.echoflow.code.desktop",
-            bundleURL: URL(fileURLWithPath: "/Applications/EchoFlow Code.app"),
-            localizedName: "EchoFlow Code",
-            executableName: "EchoFlow Code"
+            bundleIdentifier: "com.claude-code-haha.desktop",
+            bundleURL: URL(fileURLWithPath: "/Applications/Claude Code Haha.app"),
+            localizedName: "Claude Code Haha",
+            executableName: "Claude Code Haha"
         )
         let worktree = AppTargetCandidate(
             pid: 200,
-            bundleIdentifier: "com.echoflow.code.desktop",
-            bundleURL: URL(fileURLWithPath: "/Users/test/worktree/desktop/build-artifacts/macos-arm64/EchoFlow Code.app"),
-            localizedName: "EchoFlow Code",
-            executableName: "EchoFlow Code"
+            bundleIdentifier: "com.claude-code-haha.desktop",
+            bundleURL: URL(fileURLWithPath: "/Users/test/worktree/desktop/build-artifacts/macos-arm64/Claude Code Haha.app"),
+            localizedName: "Claude Code Haha",
+            executableName: "Claude Code Haha"
         )
 
         let result = try AppTargetResolver.match(
-            identifier: "/Users/test/worktree/desktop/build-artifacts/macos-arm64/EchoFlow Code.app",
+            identifier: "/Users/test/worktree/desktop/build-artifacts/macos-arm64/Claude Code Haha.app",
             candidates: [installed, worktree]
         )
 
@@ -51,7 +51,7 @@ final class AppTargetResolverTests: XCTestCase {
         XCTAssertEqual(result.bundleURL, worktree.bundleURL)
         XCTAssertThrowsError(
             try AppTargetResolver.match(
-                identifier: "EchoFlow Code",
+                identifier: "Claude Code Haha",
                 candidates: [installed, worktree]
             )
         ) {
@@ -60,20 +60,20 @@ final class AppTargetResolverTests: XCTestCase {
     }
 
     func testFullPathCollapsesHelperProcessesIntoTheirMainBundleInstance() throws {
-        let path = "/Users/test/worktree/desktop/build-artifacts/macos-arm64/EchoFlow Code.app"
+        let path = "/Users/test/worktree/desktop/build-artifacts/macos-arm64/Claude Code Haha.app"
         let main = AppTargetCandidate(
             pid: 200,
-            bundleIdentifier: "com.echoflow.code.desktop",
+            bundleIdentifier: "com.claude-code-haha.desktop",
             bundleURL: URL(fileURLWithPath: path),
-            localizedName: "EchoFlow Code",
-            executableName: "EchoFlow Code"
+            localizedName: "Claude Code Haha",
+            executableName: "Claude Code Haha"
         )
         let renderer = AppTargetCandidate(
             pid: 201,
             bundleIdentifier: main.bundleIdentifier,
             bundleURL: main.bundleURL,
-            localizedName: "EchoFlow Code Helper (Renderer)",
-            executableName: "EchoFlow Code Helper (Renderer)"
+            localizedName: "Claude Code Haha Helper (Renderer)",
+            executableName: "Claude Code Haha Helper (Renderer)"
         )
 
         let result = try AppTargetResolver.match(

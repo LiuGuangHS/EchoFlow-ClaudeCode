@@ -642,7 +642,8 @@ public final class CommandRouter {
         guard let previous = lastCaptureDigest[pid], previous == digest else { return nil }
         return TargetVisibilityPolicy.identicalCaptureNotice(
             windowIsCovered: WindowGeometry.isFullyCovered(windowID: windowID),
-            liveStreamActive: liveStreamActive
+            liveStreamActive: liveStreamActive,
+            windowIsOffScreen: !WindowGeometry.isOnScreen(id: windowID, pid: pid)
         )
     }
 
@@ -668,7 +669,7 @@ public final class CommandRouter {
         try requireAXTrusted()
         // Resolve a RUNNING match first; if an app was named but isn't running,
         // LAUNCH it (Codex parity) rather than silently falling back to the
-        // frontmost app — which is the host (EchoFlow Code) and was the cause of
+        // frontmost app — which is the host (Claude Code Haha) and was the cause of
         // "get_app_state read / the glow framed our own window, and the model had to
         // shell out to `open -a`". Missing targets fail before TCC or launch.
         let resolved: ResolvedAppTarget
@@ -702,10 +703,12 @@ public final class CommandRouter {
         // target), not whatever happens to be frontmost.
         setResolvedTarget(target)
 
-        // A hidden, minimized, or other-Space window has no on-screen geometry
-        // that later input can bind to. Recover only this explicit, authorized
-        // target; ordinary background windows remain background-readable.
-        _ = try await TargetWindowRecovery.recoverIfNeeded(target: target)
+        // A minimized window cannot receive input. Restore only this explicit,
+        // authorized target, in the background; covered, hidden and
+        // other-Space windows are already actionable and stay as they are.
+        var recovery = TargetWindowRecovery.Runtime.live()
+        recovery.guardForeground = TargetWindowRecovery.foregroundGuard(runtime: foregroundRuntime)
+        _ = try await TargetWindowRecovery.recoverIfNeeded(target: target, runtime: recovery)
 
         let result = try await AXTree.appState(pid: pid, disableDiff: disableDiff)
         var object = try encode(result).asObject ?? [:]
@@ -1621,7 +1624,7 @@ public final class CommandRouter {
         guard AXIsProcessTrusted() else {
             throw CUError(
                 "not_trusted",
-                "Accessibility permission is required. Grant echoflow-code-computer-use in System Settings ▸ Privacy & Security ▸ Accessibility."
+                "Accessibility permission is required. Grant cc-haha-computer-use in System Settings ▸ Privacy & Security ▸ Accessibility."
             )
         }
     }

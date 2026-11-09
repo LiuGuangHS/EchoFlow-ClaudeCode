@@ -14,13 +14,13 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleIdentifier</key>
-  <string>dev.echoflow.cu-helper</string>
+  <string>dev.cchaha.cu-helper</string>
   <key>CFBundleExecutable</key>
-  <string>echoflow-code-computer-use</string>
+  <string>cc-haha-computer-use</string>
   <key>CFBundleName</key>
-  <string>echoflow-code-computer-use</string>
+  <string>cc-haha-computer-use</string>
   <key>CFBundleDisplayName</key>
-  <string>echoflow-code-computer-use</string>
+  <string>cc-haha-computer-use</string>
   <key>CFBundleIconFile</key>
   <string>icon.icns</string>
   <key>CFBundlePackageType</key>

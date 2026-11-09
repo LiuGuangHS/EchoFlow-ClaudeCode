@@ -1,7 +1,7 @@
 import CoreGraphics
 import XCTest
 
-@testable import echoflow_code_computer_use
+@testable import cc_haha_computer_use
 
 final class CoordinateClickRoutingTests: XCTestCase {
     private enum Element { case canvasWindow, closeButton, contentButton }
@@ -60,4 +60,13 @@ final class CoordinateClickRoutingTests: XCTestCase {
             XCTAssertTrue(error is Failure)
         }
     }
+
+    /// AX hit-testing a window on another Space answered with the app's menu
+    /// bar; only a point on a visible window may be pressed through AX.
+    func testOnlyAVisibleWindowPointIsRoutedThroughAccessibility() {
+        XCTAssertTrue(CoordinateClickRouting.prefersAccessibility(button: .left, pointIsOnVisibleWindow: true))
+        XCTAssertFalse(CoordinateClickRouting.prefersAccessibility(button: .left, pointIsOnVisibleWindow: false))
+        XCTAssertFalse(CoordinateClickRouting.prefersAccessibility(button: .right, pointIsOnVisibleWindow: true))
+    }
+
 }

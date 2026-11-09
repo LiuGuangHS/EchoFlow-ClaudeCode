@@ -1,5 +1,5 @@
 import XCTest
-@testable import echoflow_code_computer_use
+@testable import cc_haha_computer_use
 
 final class DaemonOverlayTargetTests: XCTestCase {
     private let textEditIdentity = AXTreeProcessIdentity(
@@ -11,10 +11,10 @@ final class DaemonOverlayTargetTests: XCTestCase {
     func testExplicitBackgroundPIDWinsRegardlessOfCandidateOrder() throws {
         let frontmostHost = AppTargetCandidate(
             pid: 900,
-            bundleIdentifier: "dev.example.host",
-            bundleURL: URL(fileURLWithPath: "/Applications/EchoFlow Code.app"),
-            localizedName: "EchoFlow Code",
-            executableName: "EchoFlow Code"
+            bundleIdentifier: "dev.cchaha.host",
+            bundleURL: URL(fileURLWithPath: "/Applications/Claude Code Haha.app"),
+            localizedName: "Claude Code Haha",
+            executableName: "Claude Code Haha"
         )
         let backgroundTarget = AppTargetCandidate(
             pid: 4321,
@@ -39,10 +39,10 @@ final class DaemonOverlayTargetTests: XCTestCase {
     func testOmittedTargetNeverFallsBackToFrontmost() throws {
         let host = AppTargetCandidate(
             pid: 900,
-            bundleIdentifier: "dev.example.host",
-            bundleURL: URL(fileURLWithPath: "/Applications/EchoFlow Code.app"),
-            localizedName: "EchoFlow Code",
-            executableName: "EchoFlow Code"
+            bundleIdentifier: "dev.cchaha.host",
+            bundleURL: URL(fileURLWithPath: "/Applications/Claude Code Haha.app"),
+            localizedName: "Claude Code Haha",
+            executableName: "Claude Code Haha"
         )
 
         XCTAssertNil(try DaemonOverlayTargetResolver.resolve(
