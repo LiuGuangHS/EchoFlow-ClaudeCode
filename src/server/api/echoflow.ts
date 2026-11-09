@@ -94,6 +94,10 @@ export async function handleEchoFlowApi(
   try {
     const action = segments[2]
 
+    if (context.remoteBrowser && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      return Response.json({ error: 'desktop_only' }, { status: 403 })
+    }
+
     if (!action && req.method === 'GET') {
       const accounts = await service.getAccounts()
       return Response.json({ account: accounts.main, accounts })
