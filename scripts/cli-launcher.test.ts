@@ -4,17 +4,17 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 test('source CLI launcher runs through Bun without requiring Bash', async () => {
-  const configDir = await mkdtemp(path.join(tmpdir(), 'echoflow-code-cli-launcher-'))
+  const configDir = await mkdtemp(path.join(tmpdir(), 'cc-haha-cli-launcher-'))
   const repoRoot = path.resolve(import.meta.dir, '..')
 
   try {
     const child = Bun.spawn(
-      [process.execPath, 'run', 'echoflow-code', '--version'],
+      [process.execPath, 'run', 'claude-haha', '--version'],
       {
         cwd: repoRoot,
         env: {
           ...process.env,
-          ECHOFLOW_SKIP_DOTENV: '1',
+          CC_HAHA_SKIP_DOTENV: '1',
           CLAUDE_CONFIG_DIR: configDir,
         },
         stdout: 'pipe',

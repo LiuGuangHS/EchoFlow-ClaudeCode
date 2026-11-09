@@ -31,7 +31,7 @@ describe('release please configuration', () => {
     // paths against its own directory.
     expect(config.packages.desktop['extra-files']).toEqual([
       { type: 'json', path: '/mobile/package.json', jsonpath: '$.version' },
-      { type: 'json', path: '/mobile/app.json', jsonpath: '$.version' },
+      { type: 'json', path: '/mobile/app.json', jsonpath: '$.expo.version' },
     ])
   })
 

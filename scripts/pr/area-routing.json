@@ -17,6 +17,7 @@
       "exact": [
         "README.md",
         "README.zh-CN.md",
+        "README.en.md",
         "package.json",
         "package-lock.json",
         ".github/workflows/deploy-docs.yml"

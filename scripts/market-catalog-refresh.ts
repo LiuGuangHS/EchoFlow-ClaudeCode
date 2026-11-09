@@ -7,7 +7,7 @@
  *
  * Reads `src/server/services/market/catalog/curation.json` (the editorial
  * source) and re-reads what upstream owns for every entry. Upstream bases
- * follow `ECHOFLOW_MARKET_BASE_CLAWHUB` / `ECHOFLOW_MARKET_BASE_SKILLHUB`.
+ * follow `HAHA_MARKET_BASE_CLAWHUB` / `HAHA_MARKET_BASE_SKILLHUB`.
  *
  * This talks to the live registries, so it is a maintainer tool only: no test
  * or CI lane runs it, and it refuses to run when `CI` is set.
@@ -43,7 +43,7 @@ type JsonResult = Record<string, any>
 async function getJson(url: string): Promise<JsonResult> {
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      const response = await fetch(url, { headers: { 'user-agent': 'echoflow-code-market-catalog' } })
+      const response = await fetch(url, { headers: { 'user-agent': 'cc-haha-market-catalog' } })
       if (response.status === 429 || response.status >= 500) throw new Error(`HTTP ${response.status}`)
       if (!response.ok) return { _status: response.status }
       return (await response.json()) as JsonResult

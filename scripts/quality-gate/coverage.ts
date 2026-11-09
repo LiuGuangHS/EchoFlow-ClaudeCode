@@ -1,16 +1,16 @@
 #!/usr/bin/env bun
 
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, sep, win32 } from 'node:path'
+import { dirname, join, relative, resolve, sep, win32 } from 'node:path'
 import { rootBunTestFilter } from '../pr/bun-test-filter'
-import { createSandboxedTestEnvironment } from '../pr/test-environment'
+import { createSandboxedTestEnvironment, removeTestSandbox } from '../pr/test-environment'
 import { loadQuarantineManifest, quarantinedPathSet } from './quarantine'
 
 type CoverageMetric = {
   total: number
   covered: number
-  pct: number | null
+  pct: number
 }
 
 type CoverageSummary = {
@@ -67,7 +67,6 @@ type CoverageReport = {
   finishedAt: string
   outputDir: string
   baselineRef?: string
-  scopeSelection?: string
   suites: SuiteCoverage[]
   changedLines?: ChangedLineCoverage
   targetGaps: string[]
@@ -96,12 +95,15 @@ type ChangedLineCoverage = {
   covered: number
   total: number
   pct: number
+  /** Changed lines in scopes whose suite failed: not counted, never shown as 0%. */
+  unmeasured?: number
   files: Array<{
     file: string
     suiteId: string
     covered: number
     total: number
     pct: number
+    unmeasured?: true
     reason?: string
   }>
   failures: string[]
@@ -139,7 +141,7 @@ const ADAPTERS_SCOPE: CoverageScope = {
   title: 'IM adapters',
   includePrefixes: ['adapters/'],
   excludePrefixes: ['adapters/node_modules/'],
-  excludePathFragments: ['/__fixtures__/'],
+  excludePathFragments: ['/__tests__/', '/fixtures/', '/__fixtures__/'],
   excludeSuffixes: ['.test.ts', '.test.tsx', '.d.ts'],
 }
 
@@ -166,7 +168,6 @@ const DESKTOP_SCOPE: CoverageScope = {
     // primitives render, which their own tests already do.
     'desktop/src/dev/',
   ],
-  excludePathFragments: ['/__fixtures__/'],
   excludeSuffixes: ['.test.ts', '.test.tsx', '.d.ts', 'vite-env.d.ts', '.css'],
 }
 
@@ -179,14 +180,12 @@ const ROOT_RUNTIME_CHANGED_SCOPE: CoverageScope = {
   excludeSuffixes: ['.test.ts', '.test.tsx', '.d.ts'],
 }
 
-const CHANGED_LINE_SCOPES = [
+export const CHANGED_LINE_SCOPES = [
   ...ROOT_COVERAGE_SCOPES,
   ROOT_RUNTIME_CHANGED_SCOPE,
   ADAPTERS_SCOPE,
   DESKTOP_SCOPE,
 ]
-// Exported for regression tests pinning the production scope definitions.
-export const changedLineScopes = CHANGED_LINE_SCOPES
 const TEST_FILE_PATTERN = /\.test\.[cm]?[jt]sx?$/
 
 function nowId() {
@@ -210,15 +209,11 @@ function parseArgs(argv: string[]) {
 }
 
 function pct(covered: number, total: number) {
-  return total === 0 ? null : Number(((covered / total) * 100).toFixed(2))
+  return total === 0 ? 100 : Number(((covered / total) * 100).toFixed(2))
 }
 
 function metric(covered: number, total: number): CoverageMetric {
   return { covered, total, pct: pct(covered, total) }
-}
-
-function formatPct(value: number | null) {
-  return value === null ? 'n/a' : `${value}%`
 }
 
 function normalize(path: string, rootDir = ROOT_DIR) {
@@ -292,9 +287,7 @@ function walkTestFiles(path: string, files: string[], excluded: Set<string>, roo
 export function collectServerTestFiles(rootDir = ROOT_DIR, quarantineManifest = loadQuarantineManifest()) {
   const excluded = quarantinedPathSet(quarantineManifest)
   const files: string[] = []
-  for (const root of ['src', 'tests']) {
-    walkTestFiles(join(rootDir, root), files, excluded, rootDir)
-  }
+  walkTestFiles(join(rootDir, 'src'), files, excluded, rootDir)
   return files.sort()
 }
 
@@ -368,24 +361,50 @@ function isUsableLcovRecord(record: LcovRecord) {
 }
 
 export function parseBunTestFileCount(output: string) {
-  const fileCounts = [...output.matchAll(/Ran \d+ tests? across (\d+) files?\./g)]
-    .map((match) => Number(match[1]))
-  return fileCounts.length > 0 ? Math.max(...fileCounts) : null
+  const match = output.match(/Ran \d+ tests? across (\d+) files?\./)
+  if (match) return Number(match[1])
+
+  const groupedTestFiles = new Set<string>()
+  for (const group of output.matchAll(/^::group::(.+):\r?$/gm)) {
+    const file = group[1]?.trim()
+    if (file && TEST_FILE_PATTERN.test(file)) {
+      groupedTestFiles.add(file.replace(/\\/g, '/'))
+    }
+  }
+  return groupedTestFiles.size > 0 ? groupedTestFiles.size : null
 }
 
-export function buildRootCoverageCommand(outputDir: string, serverFiles: string[]) {
+export function buildRootCoverageCommand(outputDir: string, serverFiles: string[], rootDir = ROOT_DIR) {
   return [
     'bun',
     '--no-env-file',
     '--feature=TRANSCRIPT_CLASSIFIER',
     'test',
+    // Preserve one LCOV universe without sharing globals/module caches across files.
+    '--isolate',
+    '--preload',
+    resolve(rootDir, 'preload.ts'),
     '--timeout=20000',
     '--coverage',
     '--coverage-reporter=lcov',
     '--coverage-reporter=text',
     '--coverage-dir',
-    join(outputDir, 'root-server').replace(/\\/g, '/'),
+    join(outputDir, 'root-server'),
     ...serverFiles.map(rootBunTestFilter),
+  ]
+}
+
+export function buildAdaptersCoverageCommand(outputDir: string) {
+  return [
+    'bun',
+    '--no-env-file',
+    'test',
+    '--isolate',
+    '--coverage',
+    '--coverage-reporter=lcov',
+    '--coverage-reporter=text',
+    '--coverage-dir',
+    join(outputDir, 'adapters'),
   ]
 }
 
@@ -461,9 +480,17 @@ export function hasUsableCoverageSummary(summary: CoverageSummary) {
   return Object.values(summary).some((coverage) => coverage.total > 0)
 }
 
+/**
+ * Remove a suite's sandbox HOME without letting a test's leftovers discard the
+ * finished coverage run. See `removeTestSandbox`.
+ */
+export function removeSandboxHome(directory: string, warn: (message: string) => void = console.warn) {
+  removeTestSandbox(directory, 'coverage', warn)
+}
+
 export async function runCommand(command: string[], cwd: string, logPath: string) {
   const started = Date.now()
-  const sandboxHome = mkdtempSync(join(tmpdir(), 'echoflow-code-coverage-test-'))
+  const sandboxHome = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-test-'))
   const header = `$ ${command.join(' ')}\n`
   const capturePath = join(sandboxHome, 'coverage-output.log')
   let logFd: number | undefined
@@ -493,7 +520,7 @@ export async function runCommand(command: string[], cwd: string, logPath: string
     }
   } finally {
     if (logFd !== undefined) closeSync(logFd)
-    rmSync(sandboxHome, { recursive: true, force: true })
+    removeSandboxHome(sandboxHome)
   }
 }
 
@@ -608,26 +635,6 @@ export function parseChangedLinesFromDiff(diff: string) {
   return changed
 }
 
-export function coverageScopesForFiles(files: string[]) {
-  const hasScopedChanges = files.some((file) => (
-    file.startsWith('src/') ||
-    file.startsWith('adapters/') ||
-    file.startsWith('desktop/src/')
-  ))
-  const fullRun = !hasScopedChanges || files.some((file) => (
-    file === 'package.json' ||
-    file === 'desktop/package.json' ||
-    file === 'desktop/bun.lock' ||
-    file.startsWith('scripts/quality-gate/coverage')
-  ))
-  return {
-    root: fullRun || files.some((file) => file.startsWith('src/')),
-    adapters: fullRun || files.some((file) => file.startsWith('adapters/')),
-    desktop: fullRun || files.some((file) => file.startsWith('desktop/src/')),
-    fullRun,
-  }
-}
-
 function gitOutput(rootDir: string, args: string[]) {
   const proc = Bun.spawnSync(['git', ...args], {
     cwd: rootDir,
@@ -638,39 +645,26 @@ function gitOutput(rootDir: string, args: string[]) {
   return new TextDecoder().decode(proc.stdout)
 }
 
-function changedDiffArgs(rootDir: string, baseRef?: string) {
+function collectChangedLines(rootDir: string, baseRef?: string) {
   const explicitBase = baseRef?.trim()
   if (explicitBase) {
-    return [`${explicitBase}...HEAD`]
+    const diff = gitOutput(rootDir, ['diff', '--unified=0', '--no-ext-diff', `${explicitBase}...HEAD`, '--'])
+    return diff ? parseChangedLinesFromDiff(diff) : new Map<string, Set<number>>()
   }
 
-  const dirty = gitOutput(rootDir, ['status', '--porcelain'])
+  const dirty = gitOutput(rootDir, ['diff', '--name-only', '--'])
   if (dirty?.trim()) {
-    return ['HEAD']
+    const diff = gitOutput(rootDir, ['diff', '--unified=0', '--no-ext-diff', 'HEAD', '--'])
+    return diff ? parseChangedLinesFromDiff(diff) : new Map<string, Set<number>>()
   }
 
   const branch = gitOutput(rootDir, ['branch', '--show-current'])?.trim()
   const hasOriginMain = gitOutput(rootDir, ['rev-parse', '--verify', 'origin/main'])
   if (branch && branch !== 'main' && hasOriginMain) {
-    return ['origin/main...HEAD']
-  }
-
-  return null
-}
-
-function collectChangedFiles(rootDir: string, baseRef?: string) {
-  const diffArgs = changedDiffArgs(rootDir, baseRef)
-  if (!diffArgs) return []
-  const diff = gitOutput(rootDir, ['diff', '--name-only', '--no-ext-diff', ...diffArgs, '--'])
-  return diff ? diff.split(/\r?\n/).filter(Boolean) : []
-}
-
-function collectChangedLines(rootDir: string, baseRef?: string) {
-  const diffArgs = changedDiffArgs(rootDir, baseRef)
-  if (diffArgs) {
-    const diff = gitOutput(rootDir, ['diff', '--unified=0', '--no-ext-diff', ...diffArgs, '--'])
+    const diff = gitOutput(rootDir, ['diff', '--unified=0', '--no-ext-diff', 'origin/main...HEAD', '--'])
     return diff ? parseChangedLinesFromDiff(diff) : new Map<string, Set<number>>()
   }
+
   return new Map<string, Set<number>>()
 }
 
@@ -679,16 +673,33 @@ export function evaluateChangedLineCoverage(
   coverageByFile: Map<string, FileLineCoverage>,
   scopes: CoverageScope[],
   minimumPercent: number,
+  /** Scope id -> why its suite produced no coverage. The suite failure is reported on its own. */
+  unavailableScopes: Map<string, string> = new Map(),
 ): ChangedLineCoverage {
   const files: ChangedLineCoverage['files'] = []
   let total = 0
   let covered = 0
+  let unmeasured = 0
 
   for (const [file, lines] of [...changedLines.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     const scope = scopes.find((candidate) => matchesScope(file, candidate))
     if (!scope) continue
 
     const fileCoverage = coverageByFile.get(file)
+    const unavailable = unavailableScopes.get(scope.id)
+    if (!fileCoverage && unavailable) {
+      unmeasured += lines.size
+      files.push({
+        file,
+        suiteId: scope.id,
+        covered: 0,
+        total: lines.size,
+        pct: 0,
+        unmeasured: true,
+        reason: `not measured: ${unavailable}`,
+      })
+      continue
+    }
     if (!fileCoverage) {
       const lineCount = lines.size
       total += lineCount
@@ -727,6 +738,7 @@ export function evaluateChangedLineCoverage(
     covered,
     total,
     pct: coverage,
+    ...(unmeasured > 0 ? { unmeasured } : {}),
     files,
     failures,
   }
@@ -764,7 +776,6 @@ export function evaluateThresholds(
     const minimums = thresholds.minimums[suite.id] ?? {}
     for (const [metricName, minimum] of Object.entries(minimums)) {
       const actual = suite.summary[metricName as keyof CoverageSummary].pct
-      if (actual === null) continue
       if (actual + Number.EPSILON < minimum) {
         failures.push(`${suite.id}: ${metricName} coverage ${actual}% is below minimum ${minimum}%`)
       }
@@ -774,11 +785,9 @@ export function evaluateThresholds(
     if (!baselineSummary) continue
     for (const metricName of ['lines', 'functions', 'branches', 'statements'] as const) {
       const actual = suite.summary[metricName].pct
-      const baselinePct = baselineSummary[metricName].pct
-      if (actual === null || baselinePct === null) continue
-      const expected = baselinePct - allowedDrop
+      const expected = baselineSummary[metricName].pct - allowedDrop
       if (actual + Number.EPSILON < expected) {
-        failures.push(`${suite.id}: ${metricName} coverage ${actual}% dropped below baseline ${baselinePct}%`)
+        failures.push(`${suite.id}: ${metricName} coverage ${actual}% dropped below baseline ${baselineSummary[metricName].pct}%`)
       }
     }
   }
@@ -786,14 +795,13 @@ export function evaluateThresholds(
   return failures
 }
 
-export function evaluateTargetGaps(suites: SuiteCoverage[], thresholds: CoverageThresholds) {
+function evaluateTargetGaps(suites: SuiteCoverage[], thresholds: CoverageThresholds) {
   const gaps: string[] = []
   for (const suite of suites) {
     if (suite.status !== 'passed' || !suite.summary) continue
     const targets = thresholds.targets?.[suite.id] ?? {}
     for (const [metricName, target] of Object.entries(targets)) {
       const actual = suite.summary[metricName as keyof CoverageSummary].pct
-      if (actual === null) continue
       if (actual + Number.EPSILON < target) {
         gaps.push(`${suite.id}: ${metricName} coverage ${actual}% is below target ${target}%`)
       }
@@ -811,7 +819,6 @@ function renderReport(report: CoverageReport) {
     `- Finished: ${report.finishedAt}`,
     `- Output: ${report.outputDir}`,
     ...(report.baselineRef ? [`- Baseline ref: ${report.baselineRef}`] : []),
-    ...(report.scopeSelection ? [`- Coverage scopes: ${report.scopeSelection}`] : []),
     '',
     '| Suite | Status | Lines | Functions | Branches | Statements |',
     '| --- | --- | ---: | ---: | ---: | ---: |',
@@ -822,10 +829,10 @@ function renderReport(report: CoverageReport) {
     lines.push(`| ${[
       suite.title,
       suite.status,
-      summary ? formatPct(summary.lines.pct) : '-',
-      summary ? formatPct(summary.functions.pct) : '-',
-      summary ? formatPct(summary.branches.pct) : '-',
-      summary ? formatPct(summary.statements.pct) : '-',
+      summary ? `${summary.lines.pct}%` : '-',
+      summary ? `${summary.functions.pct}%` : '-',
+      summary ? `${summary.branches.pct}%` : '-',
+      summary ? `${summary.statements.pct}%` : '-',
     ].join(' | ')} |`)
   }
 
@@ -838,8 +845,17 @@ function renderReport(report: CoverageReport) {
   }
 
   lines.push('', '## Changed Lines', '')
+  if (report.changedLines?.unmeasured) {
+    lines.push(`- Not measured: ${report.changedLines.unmeasured} changed lines belong to a suite that failed (see Failures); they are not counted as uncovered.`)
+  }
   if (!report.changedLines) {
     lines.push('- not evaluated')
+  } else if (report.changedLines.total === 0 && report.changedLines.unmeasured) {
+    lines.push(`- No measured changed lines. Minimum: ${report.changedLines.minimumPercent}%`)
+    lines.push('', '| File | Suite | Lines | Reason |', '| --- | --- | ---: | --- |')
+    for (const file of report.changedLines.files) {
+      lines.push(`| ${file.file} | ${file.suiteId} | - (${file.total} lines) | ${file.reason ?? '-'} |`)
+    }
   } else if (report.changedLines.total === 0) {
     lines.push(`- No changed executable production lines matched the coverage scopes. Minimum: ${report.changedLines.minimumPercent}%`)
   } else {
@@ -851,7 +867,8 @@ function renderReport(report: CoverageReport) {
       '| --- | --- | ---: | --- |',
     )
     for (const file of report.changedLines.files) {
-      lines.push(`| ${file.file} | ${file.suiteId} | ${file.pct}% (${file.covered}/${file.total}) | ${file.reason ?? '-'} |`)
+      const measured = file.unmeasured ? `- (${file.total} lines)` : `${file.pct}% (${file.covered}/${file.total})`
+      lines.push(`| ${file.file} | ${file.suiteId} | ${measured} | ${file.reason ?? '-'} |`)
     }
   }
 
@@ -891,139 +908,136 @@ export async function runCoverageGate(options: {
   const baselineRef = options.baselineRef ?? process.env.COVERAGE_BASE_REF
   mkdirSync(outputDir, { recursive: true })
 
-  const changedFiles = collectChangedFiles(rootDir, options.changedBaseRef ?? process.env.COVERAGE_BASE_REF)
-  const scopes = coverageScopesForFiles(changedFiles)
   const serverFiles = collectServerTestFiles(rootDir)
   const suites: SuiteCoverage[] = []
   const coverageByFile = new Map<string, FileLineCoverage>()
 
-  if (scopes.root) {
-    mkdirSync(join(outputDir, 'root-server'), { recursive: true })
-    const rootCommand = buildRootCoverageCommand(outputDir, serverFiles)
-    const rootLogPath = join(outputDir, 'root-server', 'coverage.log')
-    const rootResult = await runCommand(rootCommand, rootDir, rootLogPath)
-    const rootLcovPath = join(outputDir, 'root-server', 'lcov.info')
-    const rootLcov = existsSync(rootLcovPath)
-      ? readFileSync(rootLcovPath, 'utf8')
-      : ''
-    const rootRecords = parseLcovRecords(rootLcov, { rootDir }).filter(isUsableLcovRecord)
-    const rootTestFileCount = parseBunTestFileCount(rootResult.output)
-    const rootTestDiscoveryComplete = rootTestFileCount === serverFiles.length
-    const rootCoverageAvailable = hasUsableLcov(rootLcov, { rootDir }) && rootTestDiscoveryComplete
+  mkdirSync(join(outputDir, 'root-server'), { recursive: true })
+  const rootCommand = buildRootCoverageCommand(outputDir, serverFiles, rootDir)
+  const rootLogPath = join(outputDir, 'root-server', 'coverage.log')
+  const rootResult = await runCommand(rootCommand, rootDir, rootLogPath)
+  const rootLcovPath = join(outputDir, 'root-server', 'lcov.info')
+  const rootLcov = existsSync(rootLcovPath)
+    ? readFileSync(rootLcovPath, 'utf8')
+    : ''
+  const rootRecords = parseLcovRecords(rootLcov, { rootDir }).filter(isUsableLcovRecord)
+  const rootTestFileCount = parseBunTestFileCount(rootResult.output)
+  const rootTestDiscoveryComplete = rootTestFileCount === serverFiles.length
+  const rootCoverageAvailable = hasUsableLcov(rootLcov, { rootDir }) && rootTestDiscoveryComplete
 
-    if (rootResult.exitCode !== 0 && rootCoverageAvailable) {
-      writeFileSync(
-        rootLogPath,
-        `${readFileSync(rootLogPath, 'utf8')}\n# Coverage note: test assertions exited with ${rootResult.exitCode}; correctness is enforced by check:server's per-file sandboxed test processes. This lane uses the complete single-process LCOV universe because Bun LCOV does not expose function identities for lossless cross-process merging.\n`,
-      )
-    }
+  if (rootResult.exitCode !== 0 && rootCoverageAvailable) {
+    writeFileSync(
+      rootLogPath,
+      `${readFileSync(rootLogPath, 'utf8')}\n# Coverage note: test assertions exited with ${rootResult.exitCode}; correctness is enforced by check:server's per-file sandboxed test processes. This lane uses the complete single-process LCOV universe because Bun LCOV does not expose function identities for lossless cross-process merging.\n`,
+    )
+  }
 
-    for (const scope of ROOT_COVERAGE_SCOPES) {
-      const scopedRecords = rootRecords.filter((record) => matchesScope(record.file, scope))
-      const scopeCoverageAvailable = rootCoverageAvailable && scopedRecords.length > 0
-      const summary = scopeCoverageAvailable
-        ? summarizeLcovRecords(scopedRecords)
-        : undefined
-      suites.push({
-        id: scope.id,
-        title: scope.title,
-        status: scopeCoverageAvailable ? 'passed' : 'failed',
-        command: rootCommand,
-        durationMs: rootResult.durationMs,
-        logPath: rootLogPath,
-        ...(summary ? { summary } : {}),
-        ...(rootResult.exitCode !== 0 && rootCoverageAvailable ? {
-          note: `instrumentation test process exited with ${rootResult.exitCode}; correctness is enforced by the required per-file server gate`,
-        } : {}),
-        ...(!scopeCoverageAvailable ? {
-          error: rootCoverageAvailable
-            ? `coverage command produced no LCOV records for ${scope.id}`
-            : !rootTestDiscoveryComplete
-              ? `coverage command discovered ${rootTestFileCount ?? 0}/${serverFiles.length} root test files`
-              : `coverage command exited with ${rootResult.exitCode} and produced no usable LCOV records`,
-        } : {}),
-      })
-      if (scopeCoverageAvailable) {
-        for (const [file, coverage] of lcovRecordLineCoverage(scopedRecords, scope.id)) {
-          coverageByFile.set(file, coverage)
-        }
+  for (const scope of ROOT_COVERAGE_SCOPES) {
+    const scopedRecords = rootRecords.filter((record) => matchesScope(record.file, scope))
+    const scopeCoverageAvailable = rootCoverageAvailable && scopedRecords.length > 0
+    const summary = scopeCoverageAvailable
+      ? summarizeLcovRecords(scopedRecords)
+      : undefined
+    suites.push({
+      id: scope.id,
+      title: scope.title,
+      status: scopeCoverageAvailable ? 'passed' : 'failed',
+      command: rootCommand,
+      durationMs: rootResult.durationMs,
+      logPath: rootLogPath,
+      ...(summary ? { summary } : {}),
+      ...(rootResult.exitCode !== 0 && rootCoverageAvailable ? {
+        note: `instrumentation test process exited with ${rootResult.exitCode}; correctness is enforced by the required per-file server gate`,
+      } : {}),
+      ...(!scopeCoverageAvailable ? {
+        error: rootCoverageAvailable
+          ? `coverage command produced no LCOV records for ${scope.id}`
+          : !rootTestDiscoveryComplete
+            ? `coverage command discovered ${rootTestFileCount ?? 0}/${serverFiles.length} root test files`
+            : `coverage command exited with ${rootResult.exitCode} and produced no usable LCOV records`,
+      } : {}),
+    })
+    if (scopeCoverageAvailable) {
+      for (const [file, coverage] of lcovRecordLineCoverage(scopedRecords, scope.id)) {
+        coverageByFile.set(file, coverage)
       }
     }
+  }
 
-    const rootRuntimeRecords = rootRecords.filter((record) => (
-      matchesScope(record.file, ROOT_RUNTIME_CHANGED_SCOPE)
-    ))
-    for (const [file, coverage] of lcovRecordLineCoverage(
-      rootRuntimeRecords,
-      ROOT_RUNTIME_CHANGED_SCOPE.id,
-    )) {
+  const rootRuntimeRecords = rootRecords.filter((record) => (
+    matchesScope(record.file, ROOT_RUNTIME_CHANGED_SCOPE)
+  ))
+  for (const [file, coverage] of lcovRecordLineCoverage(
+    rootRuntimeRecords,
+    ROOT_RUNTIME_CHANGED_SCOPE.id,
+  )) {
+    coverageByFile.set(file, coverage)
+  }
+
+  const adapters = await runSuite(
+    'adapters',
+    'IM adapters',
+    buildAdaptersCoverageCommand(outputDir),
+    join(rootDir, 'adapters'),
+    join(outputDir, 'adapters'),
+    () => parseLcov(readFileSync(join(outputDir, 'adapters', 'lcov.info'), 'utf8')),
+  )
+  suites.push(adapters)
+  const adaptersLcovPath = join(outputDir, 'adapters', 'lcov.info')
+  if (adapters.status === 'passed' && existsSync(adaptersLcovPath)) {
+    const adaptersLcov = prefixRelativeLcovSourcePaths(readFileSync(adaptersLcovPath, 'utf8'), 'adapters')
+    for (const [file, coverage] of lcovLineCoverage(adaptersLcov, 'adapters', ADAPTERS_SCOPE, rootDir)) {
       coverageByFile.set(file, coverage)
     }
   }
 
-  if (scopes.adapters) {
-    const adapters = await runSuite(
-      'adapters',
-      'IM adapters',
-      ['bun', '--no-env-file', 'test', '--coverage', '--coverage-reporter=lcov', '--coverage-reporter=text', '--coverage-dir', join(outputDir, 'adapters')],
-      join(rootDir, 'adapters'),
-      join(outputDir, 'adapters'),
-      () => parseLcov(readFileSync(join(outputDir, 'adapters', 'lcov.info'), 'utf8')),
-    )
-    suites.push(adapters)
-    const adaptersLcovPath = join(outputDir, 'adapters', 'lcov.info')
-    if (adapters.status === 'passed' && existsSync(adaptersLcovPath)) {
-      const adaptersLcov = prefixRelativeLcovSourcePaths(readFileSync(adaptersLcovPath, 'utf8'), 'adapters')
-      for (const [file, coverage] of lcovLineCoverage(adaptersLcov, 'adapters', ADAPTERS_SCOPE, rootDir)) {
-        coverageByFile.set(file, coverage)
-      }
-    }
-  }
-
-  if (scopes.desktop) {
-    const desktop = await runSuite(
-      'desktop',
-      'Desktop React',
-      [
-        'bun',
-        '--no-env-file',
-        'run',
-        'test',
-        '--',
-        '--run',
-        '--coverage',
-        '--coverage.reporter=json-summary',
-        '--coverage.reporter=lcov',
-        `--coverage.reportsDirectory=${join(outputDir, 'desktop')}`,
-        // Instrumentation slows these suites 5-10x: the diagnostics and
-        // MessageList files run 0.5s plain and 4-40s under coverage, so a
-        // 20s budget fails tests that are not actually broken. The
-        // non-coverage `check:desktop` run keeps vitest's 5s default.
-        '--testTimeout=60000',
-      ],
-      join(rootDir, 'desktop'),
-      join(outputDir, 'desktop'),
-      () => parseVitestSummary(join(outputDir, 'desktop', 'coverage-summary.json')),
-    )
-    suites.push(desktop)
-    const desktopLcovPath = join(outputDir, 'desktop', 'lcov.info')
-    if (desktop.status === 'passed' && existsSync(desktopLcovPath)) {
-      const desktopLcov = prefixRelativeLcovSourcePaths(readFileSync(desktopLcovPath, 'utf8'), 'desktop')
-      for (const [file, coverage] of lcovLineCoverage(desktopLcov, 'desktop', DESKTOP_SCOPE, rootDir)) {
-        coverageByFile.set(file, coverage)
-      }
+  const desktop = await runSuite(
+    'desktop',
+    'Desktop React',
+    [
+      'bun',
+      '--no-env-file',
+      'run',
+      'test',
+      '--',
+      '--run',
+      '--coverage',
+      '--coverage.reporter=json-summary',
+      '--coverage.reporter=lcov',
+      `--coverage.reportsDirectory=${join(outputDir, 'desktop')}`,
+      '--testTimeout=20000',
+    ],
+    join(rootDir, 'desktop'),
+    join(outputDir, 'desktop'),
+    () => parseVitestSummary(join(outputDir, 'desktop', 'coverage-summary.json')),
+  )
+  suites.push(desktop)
+  const desktopLcovPath = join(outputDir, 'desktop', 'lcov.info')
+  if (desktop.status === 'passed' && existsSync(desktopLcovPath)) {
+    const desktopLcov = prefixRelativeLcovSourcePaths(readFileSync(desktopLcovPath, 'utf8'), 'desktop')
+    for (const [file, coverage] of lcovLineCoverage(desktopLcov, 'desktop', DESKTOP_SCOPE, rootDir)) {
+      coverageByFile.set(file, coverage)
     }
   }
 
   const thresholds = loadThresholds(options.thresholdsPath ?? join(rootDir, 'scripts', 'quality-gate', 'coverage-thresholds.json'))
   const failures = evaluateThresholds(suites, thresholds, rootDir, baselineRef)
   const changedLineMinimum = thresholds.changedLines?.minimumPercent
+  // A failed suite is already a failure above. Its changed lines were never
+  // measured, so they must not also read as 0% covered.
+  const unavailableScopes = new Map(suites
+    .filter((suite) => suite.status !== 'passed' || !suite.summary)
+    .map((suite) => [suite.id, `${suite.id}: ${suite.error ?? 'coverage suite failed'}`]))
+  if (!rootCoverageAvailable) {
+    unavailableScopes.set(ROOT_RUNTIME_CHANGED_SCOPE.id, `${ROOT_RUNTIME_CHANGED_SCOPE.id}: root coverage run produced no usable LCOV`)
+  }
   const changedLines = typeof changedLineMinimum === 'number'
     ? evaluateChangedLineCoverage(
       collectChangedLines(rootDir, options.changedBaseRef ?? process.env.COVERAGE_BASE_REF),
       coverageByFile,
       CHANGED_LINE_SCOPES,
       changedLineMinimum,
+      unavailableScopes,
     )
     : undefined
   if (changedLines) {
@@ -1037,9 +1051,6 @@ export async function runCoverageGate(options: {
     finishedAt: new Date().toISOString(),
     outputDir,
     ...(baselineRef ? { baselineRef } : {}),
-    scopeSelection: scopes.fullRun
-      ? 'all (no targeted changes or coverage policy files changed)'
-      : [scopes.root ? 'root' : null, scopes.adapters ? 'adapters' : null, scopes.desktop ? 'desktop' : null].filter(Boolean).join(', '),
     suites,
     ...(changedLines ? { changedLines } : {}),
     targetGaps,

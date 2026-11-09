@@ -60,6 +60,32 @@ describe('release note validation', () => {
     })).toEqual([])
   })
 
+  test('rejects a different version sharing the target version prefix', () => {
+    expect(auditReleaseSurface({
+      ...valid,
+      releaseNote: '# EchoFlow Code v0.5.60\n',
+    })).toEqual(['release note title does not match EchoFlow v0.5.6'])
+    expect(auditReleaseSurface({ ...valid, releaseNote: '# EchoFlow Code v0.5.6\r\n' })).toEqual([])
+  })
+
+  test('returns an actionable error when the release notes directory or target note is missing', () => {
+    const root = mkdtempSync(join(tmpdir(), 'release-surface-missing-'))
+    mkdirSync(join(root, 'desktop'))
+    writeFileSync(join(root, 'desktop/package.json'), JSON.stringify({ version: '0.5.6' }))
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: root })
+      for (const withDirectory of [false, true]) {
+        if (withDirectory) mkdirSync(join(root, 'release-notes'))
+        expect(runReleaseAudit(root)).toEqual([
+          'missing release note: release-notes/v0.5.6.md',
+          'release note title does not match EchoFlow v0.5.6',
+        ])
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   test('validates the target note title once', () => {
     // The target note is validated by its own title check.
     expect(auditReleaseSurface({

@@ -19,6 +19,11 @@ const testFiles = [
   'src/shared/modelApiFormats.test.ts',
   'src/server/proxy/upstreamHeaders.test.ts',
   'src/services/api/client.test.ts',
+  'src/services/api/providerMedia/deepseek.test.ts',
+  'src/services/api/providerMedia/fetch.test.ts',
+  'scripts/quality-gate/mock-llm/providerMediaTransport.test.ts',
+  'src/services/deepseekAuth/deepseekAuth.test.ts',
+  'src/server/proxy/handlerProviderMedia.test.ts',
   'src/services/api/claudeRequiredThinking.test.ts',
   'src/services/compact/autoCompact.test.ts',
   'src/services/openaiAuth/client.test.ts',
@@ -50,7 +55,7 @@ const testFiles = [
 
 for (const testFile of testFiles) {
   console.log(`\n[provider-contract] ${testFile}`)
-  const sandboxHome = mkdtempSync(join(tmpdir(), 'echoflow-code-provider-contract-'))
+  const sandboxHome = mkdtempSync(join(tmpdir(), 'cc-haha-provider-contract-'))
   let exitCode = 1
   try {
     const proc = Bun.spawn([

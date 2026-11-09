@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
+  buildAdaptersCoverageCommand,
   buildRootCoverageCommand,
   collectServerTestFiles,
-  coverageScopesForFiles,
+  CHANGED_LINE_SCOPES,
   evaluateChangedLineCoverage,
-  evaluateTargetGaps,
   evaluateThresholds,
   hasUsableCoverageSummary,
   hasUsableLcov,
@@ -16,40 +16,21 @@ import {
   parseChangedLinesFromDiff,
   parseLcov,
   prefixRelativeLcovSourcePaths,
+  removeSandboxHome,
   runCommand,
-  changedLineScopes,
 } from './coverage'
 
 describe('coverage gate helpers', () => {
-  test('selects coverage scopes from changed paths and falls back to all for policy changes', () => {
-    expect(coverageScopesForFiles(['desktop/src/App.tsx'])).toEqual({
-      root: false,
-      adapters: false,
-      desktop: true,
-      fullRun: false,
-    })
-    expect(coverageScopesForFiles(['src/server/routes.ts', 'desktop/src/App.tsx'])).toEqual({
-      root: true,
-      adapters: false,
-      desktop: true,
-      fullRun: false,
-    })
-    expect(coverageScopesForFiles(['scripts/quality-gate/coverage.ts'])).toEqual({
-      root: true,
-      adapters: true,
-      desktop: true,
-      fullRun: true,
-    })
-    expect(coverageScopesForFiles([]).fullRun).toBe(true)
-    expect(coverageScopesForFiles(['docs/readme.md']).fullRun).toBe(true)
-  })
-
-  test('collects root coverage with the transcript classifier build feature enabled', () => {
-    expect(buildRootCoverageCommand('/tmp/coverage', ['src/example.test.ts'])).toEqual([
+  test('collects isolated root coverage with the transcript classifier and an explicit target-root preload', () => {
+    const root = join(tmpdir(), 'cc-haha-coverage-command-fixture')
+    expect(buildRootCoverageCommand('/tmp/coverage', ['src/example.test.ts'], root)).toEqual([
       'bun',
       '--no-env-file',
       '--feature=TRANSCRIPT_CLASSIFIER',
       'test',
+      '--isolate',
+      '--preload',
+      resolve(root, 'preload.ts'),
       '--timeout=20000',
       '--coverage',
       '--coverage-reporter=lcov',
@@ -57,6 +38,20 @@ describe('coverage gate helpers', () => {
       '--coverage-dir',
       '/tmp/coverage/root-server',
       './src/example.test.ts',
+    ])
+  })
+
+  test('collects isolated adapters coverage with the existing reporters and output directory', () => {
+    expect(buildAdaptersCoverageCommand('/tmp/coverage')).toEqual([
+      'bun',
+      '--no-env-file',
+      'test',
+      '--isolate',
+      '--coverage',
+      '--coverage-reporter=lcov',
+      '--coverage-reporter=text',
+      '--coverage-dir',
+      '/tmp/coverage/adapters',
     ])
   })
 
@@ -148,33 +143,42 @@ describe('coverage gate helpers', () => {
   test('requires Bun coverage to report every discovered test file', () => {
     expect(parseBunTestFileCount('Ran 1605 tests across 141 files. [187.20s]')).toBe(141)
     expect(parseBunTestFileCount('Ran 1 test across 1 file. [10.00ms]')).toBe(1)
-    expect(parseBunTestFileCount('Ran 1 test across 1 file.\nRan 5640 tests across 479 files.')).toBe(479)
     expect(parseBunTestFileCount('process terminated before summary')).toBeNull()
+  })
+
+  test('recovers discovery from Bun CI file groups when a failed run has no summary', () => {
+    const output = [
+      '::group::src/server/a.test.ts:',
+      '(pass) first test',
+      '::endgroup::',
+      '::group::src\\server\\a.test.ts:',
+      '::endgroup::',
+      '::group::src/utils/b.test.tsx:',
+      '(fail) second test',
+      '::group::Coverage report:',
+      '::group::src/not-a-test.ts:',
+    ].join('\r\n')
+
+    expect(parseBunTestFileCount(output)).toBe(2)
+    expect(parseBunTestFileCount(`${output}\nRan 10 tests across 3 files.`)).toBe(3)
+  })
+
+  test('keeps missing and partial CI discovery fail-closed', () => {
+    expect(parseBunTestFileCount('::group::Coverage report:\n::endgroup::')).toBeNull()
+    expect(parseBunTestFileCount('diagnostic ::group::src/a.test.ts:\n')).toBeNull()
+    const output = '::group::src/a.test.ts:\n::endgroup::\n'
+    expect(parseBunTestFileCount(output)).toBe(1)
+    expect(parseBunTestFileCount(output)).not.toBe(2)
+    expect(hasUsableLcov('')).toBe(false)
   })
 
   test('rejects empty aggregate coverage summaries', () => {
     expect(hasUsableCoverageSummary({
-      lines: { total: 0, covered: 0, pct: null },
-      functions: { total: 0, covered: 0, pct: null },
-      branches: { total: 0, covered: 0, pct: null },
-      statements: { total: 0, covered: 0, pct: null },
+      lines: { total: 0, covered: 0, pct: 100 },
+      functions: { total: 0, covered: 0, pct: 100 },
+      branches: { total: 0, covered: 0, pct: 100 },
+      statements: { total: 0, covered: 0, pct: 100 },
     })).toBe(false)
-  })
-
-  test('marks metrics with no instrumented data as unavailable', () => {
-    const summary = parseLcov([
-      'SF:src/server/routes.ts',
-      'FNF:2',
-      'FNH:2',
-      'LF:2',
-      'LH:1',
-      'end_of_record',
-    ].join('\n'))
-
-    expect(summary.lines.pct).toBe(50)
-    expect(summary.functions.pct).toBe(100)
-    expect(summary.branches).toEqual({ covered: 0, total: 0, pct: null })
-    expect(hasUsableCoverageSummary(summary)).toBe(true)
   })
 
   test('prefixes package-relative lcov source paths for changed-line coverage', () => {
@@ -299,39 +303,6 @@ describe('coverage gate helpers', () => {
     expect(result.failures).toEqual([])
   })
 
-  test('excludes subprocess fixture harnesses from changed-line coverage', () => {
-    // Smoke harnesses under `__fixtures__/` run as bare subprocesses without
-    // coverage instrumentation, so they can never report line data. Counting
-    // them as changed production lines buries the gate in structurally
-    // uncoverable rows (real failure: publicAccessSmoke.ts 0/9). Every
-    // changed-line scope shares matchesScope, so every scope must carry the
-    // exclusion — root-runtime and adapters included.
-    const changedLines = parseChangedLinesFromDiff([
-      'diff --git a/src/server/__fixtures__/publicAccessSmoke.ts b/src/server/__fixtures__/publicAccessSmoke.ts',
-      '--- a/src/server/__fixtures__/publicAccessSmoke.ts',
-      '+++ b/src/server/__fixtures__/publicAccessSmoke.ts',
-      '@@ -22,0 +23,2 @@',
-      '+const control = async (route) => {',
-      '+  return route',
-      'diff --git a/src/query/__fixtures__/queryHarness.ts b/src/query/__fixtures__/queryHarness.ts',
-      '--- a/src/query/__fixtures__/queryHarness.ts',
-      '+++ b/src/query/__fixtures__/queryHarness.ts',
-      '@@ -4,0 +5,1 @@',
-      '+export const harness = true',
-      'diff --git a/adapters/__fixtures__/adapterHarness.ts b/adapters/__fixtures__/adapterHarness.ts',
-      '--- a/adapters/__fixtures__/adapterHarness.ts',
-      '+++ b/adapters/__fixtures__/adapterHarness.ts',
-      '@@ -4,0 +5,1 @@',
-      '+export const harness = true',
-    ].join('\n'))
-
-    const result = evaluateChangedLineCoverage(changedLines, new Map(), changedLineScopes, 90)
-
-    expect(result.files).toEqual([])
-    expect(result.total).toBe(0)
-    expect(result.failures).toEqual([])
-  })
-
   test('enforces changed-line coverage for root runtime outside server, tools, and utils', () => {
     const changedLines = parseChangedLinesFromDiff([
       'diff --git a/src/services/api/client.ts b/src/services/api/client.ts',
@@ -365,6 +336,85 @@ describe('coverage gate helpers', () => {
     expect(result.failures).toEqual([
       'changed-lines: coverage 50% is below minimum 90%',
     ])
+  })
+
+  test('never counts test fixtures in __fixtures__ as production lines', () => {
+    const changedLines = parseChangedLinesFromDiff([
+      'diff --git a/src/server/services/__fixtures__/team-worker-cli.ts b/src/server/services/__fixtures__/team-worker-cli.ts',
+      '--- a/src/server/services/__fixtures__/team-worker-cli.ts',
+      '+++ b/src/server/services/__fixtures__/team-worker-cli.ts',
+      '@@ -10,0 +11,1 @@',
+      '+const delay = 0',
+      'diff --git a/src/services/compact/__fixtures__/transcript.ts b/src/services/compact/__fixtures__/transcript.ts',
+      '--- a/src/services/compact/__fixtures__/transcript.ts',
+      '+++ b/src/services/compact/__fixtures__/transcript.ts',
+      '@@ -1,0 +1,1 @@',
+      '+export const fixture = true',
+    ].join('\n'))
+
+    const result = evaluateChangedLineCoverage(changedLines, new Map(), CHANGED_LINE_SCOPES, 90)
+
+    expect(result.files).toEqual([])
+    expect(result.failures).toEqual([])
+  })
+
+  test.each(['__tests__', 'fixtures', '__fixtures__'])('excludes adapter %s fixtures while enforcing production coverage', directory => {
+    const changed = new Map([
+      [`adapters/feishu/${directory}/transport.ts`, new Set([1])],
+      ['adapters/feishu/http-client.ts', new Set([1])],
+    ])
+    const result = evaluateChangedLineCoverage(changed, new Map(), CHANGED_LINE_SCOPES, 90)
+    expect(result.files.map(file => file.file)).toEqual(['adapters/feishu/http-client.ts'])
+    expect(result.total).toBe(1)
+    expect(result.failures).toEqual(['changed-lines: coverage 0% is below minimum 90%'])
+  })
+
+  test('reports changed lines of a failed suite as unmeasured instead of uncovered', () => {
+    const changedLines = parseChangedLinesFromDiff([
+      'diff --git a/desktop/src/main.tsx b/desktop/src/main.tsx',
+      '--- a/desktop/src/main.tsx',
+      '+++ b/desktop/src/main.tsx',
+      '@@ -20,0 +21,2 @@',
+      '+bootstrapDesktopApp()',
+      '+renderRoot()',
+      'diff --git a/src/server/routes.ts b/src/server/routes.ts',
+      '--- a/src/server/routes.ts',
+      '+++ b/src/server/routes.ts',
+      '@@ -10,0 +11,1 @@',
+      '+const covered = true',
+    ].join('\n'))
+
+    const result = evaluateChangedLineCoverage(
+      changedLines,
+      new Map([
+        ['src/server/routes.ts', {
+          suiteId: 'server-api',
+          executableLines: new Set([11]),
+          coveredLines: new Set([11]),
+        }],
+      ]),
+      [
+        { id: 'server-api', title: 'Server/API', includePrefixes: ['src/server/'] },
+        { id: 'desktop', title: 'Desktop', includePrefixes: ['desktop/src/'] },
+      ],
+      90,
+      new Map([['desktop', 'desktop: coverage command exited with 1']]),
+    )
+
+    // The desktop suite failing is its own failure; it must not also read as 0% coverage.
+    expect(result.pct).toBe(100)
+    expect(result.total).toBe(1)
+    expect(result.unmeasured).toBe(2)
+    expect(result.failures).toEqual([])
+    expect(result.files).toContainEqual({
+      file: 'desktop/src/main.tsx',
+      suiteId: 'desktop',
+      covered: 0,
+      total: 2,
+      pct: 0,
+      unmeasured: true,
+      reason: 'not measured: desktop: coverage command exited with 1',
+    })
   })
 
   test('reports minimum threshold failures', () => {
@@ -415,18 +465,16 @@ describe('coverage gate helpers', () => {
   })
 
   test('collects non-quarantined server tests when review windows have expired', () => {
-    const root = mkdtempSync(join(tmpdir(), 'echoflow-code-coverage-'))
+    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-'))
     try {
       mkdirSync(join(root, 'src/server/__tests__'), { recursive: true })
       mkdirSync(join(root, 'src/services'), { recursive: true })
       mkdirSync(join(root, 'src/tools'), { recursive: true })
       mkdirSync(join(root, 'src/utils'), { recursive: true })
-      mkdirSync(join(root, 'tests'), { recursive: true })
       writeFileSync(join(root, 'src/server/__tests__/active.test.ts'), '')
       writeFileSync(join(root, 'src/server/__tests__/component.test.tsx'), '')
       writeFileSync(join(root, 'src/server/__tests__/quarantined.test.ts'), '')
       writeFileSync(join(root, 'src/services/runtime.test.ts'), '')
-      writeFileSync(join(root, 'tests/root-runtime.test.ts'), '')
 
       const files = collectServerTestFiles(root, {
         quarantined: [
@@ -445,7 +493,6 @@ describe('coverage gate helpers', () => {
         'src/server/__tests__/active.test.ts',
         'src/server/__tests__/component.test.tsx',
         'src/services/runtime.test.ts',
-        'tests/root-runtime.test.ts',
       ])
     } finally {
       rmSync(root, { recursive: true, force: true })
@@ -483,64 +530,118 @@ describe('coverage gate helpers', () => {
 
     expect(failures).toEqual(['new-suite: branches coverage 80% is below minimum 85%'])
   })
+})
 
-  test('skips unavailable metrics without skipping the measurable ones', () => {
-    const summary = parseLcov([
-      'SF:src/server/routes.ts',
-      'FNF:1',
-      'FNH:1',
-      'LF:2',
-      'LH:1',
-      'end_of_record',
-    ].join('\n'))
-    const suite = {
-      id: 'root',
-      title: 'Root',
-      status: 'passed' as const,
-      command: ['bun', 'test'],
-      durationMs: 1,
-      logPath: 'coverage.log',
-      summary,
-    }
-    const root = mkdtempSync(join(tmpdir(), 'echoflow-code-baseline-'))
+describe('coverage subprocess output', () => {
+  test.each(['root', 'adapters'])('isolates %s globals and module caches while retaining coverage from every test file', async suite => {
+    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-isolation-'))
+    const outputDir = join(root, 'coverage')
     try {
-      const baselinePath = join(root, 'coverage-baseline.json')
-      writeFileSync(baselinePath, JSON.stringify({
-        schemaVersion: 1,
-        suites: {
-          root: {
-            lines: { total: 2, covered: 1, pct: 50 },
-            functions: { total: 1, covered: 1, pct: 100 },
-            branches: { total: 10, covered: 8, pct: 80 },
-            statements: { total: 2, covered: 1, pct: 50 },
-          },
-        },
-      }))
-
-      expect(evaluateThresholds([suite], {
-        schemaVersion: 1,
-        minimums: { root: { lines: 80, branches: 80 } },
-        ratchet: { baselinePath, allowedDropPercent: 0 },
-      }, root)).toEqual([
-        'root: lines coverage 50% is below minimum 80%',
-      ])
-      expect(evaluateTargetGaps([suite], {
-        schemaVersion: 1,
-        minimums: {},
-        targets: { root: { lines: 80, branches: 80 } },
-      })).toEqual([
-        'root: lines coverage 50% is below target 80%',
-      ])
+      mkdirSync(join(root, 'src'))
+      writeFileSync(join(root, 'preload.ts'), 'globalThis.coverageFixturePreload = true\n')
+      writeFileSync(join(root, 'src', 'shared.ts'), [
+        'let cached: string | undefined',
+        'export function first() {',
+        "  return cached ??= 'first'",
+        '}',
+        'export function second() {',
+        "  return cached ??= 'second'",
+        '}',
+        'export function unused() {',
+        "  return 'unused'",
+        '}',
+      ].join('\n'))
+      const files = ['first', 'second'].map(name => {
+        writeFileSync(join(root, 'src', `${name}.ts`), `export function value() { return '${name}' }\n`)
+        const file = `src/${name}.test.ts`
+        writeFileSync(join(root, file), `
+          import { expect, test } from 'bun:test'
+          import { ${name} } from './shared'
+          import { value } from './${name}'
+          test('${name} has a fresh global and module cache', () => {
+            expect(globalThis.coverageFixturePreload).toBe(${suite === 'root' ? 'true' : 'undefined'})
+            expect(globalThis.coverageFixtureState).toBeUndefined()
+            globalThis.coverageFixtureState = '${name}'
+            expect(${name}()).toBe('${name}')
+            expect(value()).toBe('${name}')
+          })
+        `)
+        return file
+      })
+      const command = suite === 'root'
+        ? buildRootCoverageCommand(outputDir, files, root)
+        : buildAdaptersCoverageCommand(outputDir)
+      command[0] = process.execPath
+      const result = await runCommand(command, root, join(root, 'coverage.log'))
+      expect({ exitCode: result.exitCode, output: result.output }).toMatchObject({ exitCode: 0 })
+      expect(parseBunTestFileCount(result.output)).toBe(2)
+      const lcov = readFileSync(join(outputDir, suite === 'root' ? 'root-server' : 'adapters', 'lcov.info'), 'utf8')
+      for (const name of ['first', 'second', 'shared']) {
+        const summary = parseLcov(lcov, {
+          rootDir: root,
+          scope: { id: name, title: name, includePrefixes: [`src/${name}.ts`] },
+        })
+        expect(summary.lines.total).toBeGreaterThan(0)
+        if (name === 'shared') {
+          // Two isolated files hit different functions in one source. Its
+          // denominator stays three, and the uncalled function stays uncovered.
+          expect(summary.functions).toEqual({ total: 3, covered: 2, pct: 66.67 })
+          expect(summary.lines).toEqual({ total: 6, covered: 5, pct: 83.33 })
+          const sharedRecord = lcov.split('end_of_record')
+            .find(record => /^SF:.*src\/shared\.ts$/m.test(record))
+          expect(sharedRecord).toMatch(/^DA:3,[1-9]\d*$/m)
+          expect(sharedRecord).toMatch(/^DA:6,[1-9]\d*$/m)
+          expect(sharedRecord).toMatch(/^DA:8,0$/m)
+        } else {
+          expect(summary.lines.pct).toBe(100)
+          expect(summary.functions).toEqual({ total: 1, covered: 1, pct: 100 })
+        }
+      }
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
-})
 
-describe('coverage subprocess output', () => {
+  test('initializes macros in the real coverage subprocess when bunfig only configures run preloads', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-preload-'))
+    const outputDir = join(root, 'coverage')
+    try {
+      mkdirSync(join(root, 'src'))
+      // This is the repository's bunfig shape. Top-level preloads apply to
+      // `bun run`; `bun test` requires test.preload or an explicit --preload.
+      writeFileSync(join(root, 'bunfig.toml'), 'preload = ["./preload.ts"]\n')
+      writeFileSync(join(root, 'preload.ts'), "globalThis.MACRO = { VERSION: 'coverage-fixture' }\n")
+      writeFileSync(join(root, 'src', 'version.ts'), 'export function version() { return MACRO.VERSION }\n')
+      writeFileSync(join(root, 'src', 'fixture.test.ts'), `
+        import { expect, test } from 'bun:test'
+        import { join } from 'node:path'
+        import { version } from './version'
+        test('coverage macro startup contract', () => {
+          expect(version()).toBe('coverage-fixture')
+          expect(process.env.HOME).toContain('cc-haha-coverage-test-')
+          expect(process.env.CLAUDE_CONFIG_DIR).toBe(join(process.env.HOME!, '.claude'))
+        })
+      `)
+      const command = buildRootCoverageCommand(outputDir, ['src/fixture.test.ts'], root)
+      command[0] = process.execPath
+      const withoutPreload = command.filter((arg, index) => (
+        arg !== '--preload' && command[index - 1] !== '--preload'
+      ))
+      const before = await runCommand(withoutPreload, root, join(root, 'before.log'))
+      expect(before.exitCode).not.toBe(0)
+      expect(before.output).toContain('MACRO is not defined')
+
+      const result = await runCommand(command, root, join(root, 'after.log'))
+      expect(result.exitCode).toBe(0)
+      expect(parseBunTestFileCount(result.output)).toBe(1)
+      expect(hasUsableLcov(readFileSync(join(outputDir, 'root-server', 'lcov.info'), 'utf8'))).toBe(true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   test('preserves output when the reporter replaces its destination directory', async () => {
-    if (process.platform === 'win32') return
-    const root = mkdtempSync(join(tmpdir(), 'echoflow-code-coverage-cleanup-'))
+    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-cleanup-'))
     const script = join(root, 'reporter.ts')
     const logPath = join(root, 'reports', 'coverage.log')
     try {
@@ -565,8 +666,7 @@ describe('coverage subprocess output', () => {
   })
 
   test('captures large synchronous reports to regular files without losing artifacts or exit status', async () => {
-    if (process.platform === 'win32') return
-    const root = mkdtempSync(join(tmpdir(), 'echoflow-code-coverage-output-'))
+    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-output-'))
     const script = join(root, 'reporter.ts')
     const logPath = join(root, 'logs', 'coverage.log')
     const summary = '\nRan 1 test across 1 file. [1.00ms]\n'
@@ -610,5 +710,48 @@ describe('coverage subprocess output', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+
+  // Root ignores directory permissions, so only a non-root POSIX run proves the retry.
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('removes a sandbox whose tests left read-only directories behind', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-readonly-'))
+    const script = join(root, 'leaves-readonly.ts')
+    const logPath = join(root, 'logs', 'coverage.log')
+    try {
+      writeFileSync(script, `
+        import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
+        import { tmpdir } from 'node:os'
+        import { join } from 'node:path'
+        // Mirrors a fixture that restores a read-only mode and fails before cleanup.
+        const locked = join(tmpdir(), 'fixture', 'locked')
+        mkdirSync(join(locked, 'nested'), { recursive: true })
+        writeFileSync(join(locked, 'nested', 'data.txt'), 'read-only data')
+        chmodSync(join(locked, 'nested'), 0o500)
+        chmodSync(locked, 0o500)
+        process.stdout.write(process.env.HOME ?? '')
+      `)
+      const warnings: string[] = []
+      const originalWarn = console.warn
+      console.warn = (message: string) => { warnings.push(message) }
+      let result: Awaited<ReturnType<typeof runCommand>>
+      try {
+        result = await runCommand([process.execPath, '--no-env-file', script], root, logPath)
+      } finally {
+        console.warn = originalWarn
+      }
+      expect(result.exitCode).toBe(0)
+      expect(result.output).toContain('cc-haha-coverage-test-')
+      expect(existsSync(result.output)).toBe(false)
+      expect(warnings).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('reports a sandbox it cannot remove instead of failing the finished run', () => {
+    const warnings: string[] = []
+    expect(() => removeSandboxHome(join(tmpdir(), 'cc-haha-coverage-missing-\0-sandbox'), message => warnings.push(message))).not.toThrow()
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('could not remove test sandbox')
   })
 })

@@ -1,14 +1,17 @@
-# CI 与仓库策略
+# CI and Repository Policy
 
-这些规则适用于 `.github/` 下的改动，并叠加根目录规则。
+These rules apply to `.github/` changes in addition to the root instructions.
 
-- 将工作流改动视为产品改动。运行 `bun run check:policy`；如果环境提供 `actionlint`，也运行它。
-- `scripts/pr/change-policy.ts` 是路径到检查路由的唯一事实来源。不要在提示性自动化中复制路由图。
-- 路由由路径前缀和 `scripts/pr/module-graph.ts` 的导入图共同决定。前缀决定 area 及所有阻断规则；导入图只扩大要运行的 surface check。无法构建导入图时，应选择所有 surface，而不是静默退回仅按前缀判断。
-- `nightly-quality.yml` 无条件运行每条确定性 lane，并重新证明模块图健康度。它存在的原因是按改动选择检查只能覆盖 diff 能触达的范围；不要把这些 job 移入必需的 PR gate。它只允许 `workflow_dispatch` 触发——是否花费约 90 分钟 CI 由维护者决定；如果重新加入 `schedule:`，`pr-quality-workflow.test.ts` 必须失败。
-- 保留 `pr-quality-gate` 作为稳定的必需状态。已选择的 job 必须成功，未选择的 job 必须明确标记为跳过；绝不能把失败转换成成功。
-- 必需检查必须保持离线，不得接收 provider 凭据，也不得依赖付费或实机服务。
-- `pull_request_target` 工作流可以使用可信的 base 代码检查 PR 元数据，但绝不能执行 PR head、安装由 PR 控制的依赖，或向贡献者代码暴露 secrets。
-- 保持 Bun 与 `package.json#packageManager` 一致；必需 job 使用冻结 lockfile 安装。
-- 不要为了让另一项改动通过而削弱 coverage、测试路由、CODEOWNERS 或分支保护。维护者覆盖标签必须有明确且记录在案的决定。
-- 仓库设置、ruleset、secrets 和必需检查的变更需要用户明确授权；仅编辑工作流文件不等于获得这项授权。
+- Treat workflow changes as product changes. Run `bun run check:policy`; run `actionlint` when available.
+- `scripts/pr/change-policy.ts` is the source of truth for path-to-check routing. Do not duplicate the routing graph in advisory automation.
+- Routing is path prefixes plus the import graph from `scripts/pr/module-graph.ts`. Prefixes decide areas and every blocking rule; the graph only widens which surface checks run. When the graph cannot be built the run selects every surface rather than silently falling back to prefixes.
+- `nightly-quality.yml` runs every deterministic lane unconditionally and re-proves the module graph. It exists because per-PR selection can only ever cover what a diff reaches; do not move its jobs into the required PR gate. It runs daily at 19:00 UTC and on `workflow_dispatch`; the maintainer chose that cadence, `pr-quality-workflow.test.ts` pins it, and changing it is the maintainer's call. Every job that runs runtime suites must install ripgrep first (also pinned there): agent discovery lists files through it.
+- Keep `pr-quality-gate` as the stable required status. Selected jobs must succeed and unselected jobs must be explicitly skipped; never convert failures into success.
+- Advisory lanes (`coverage-checks`) stay out of the gate's `needs` so the required status never waits on them. Sharding (`--shard=<i>/<n>`) only cuts wall time: shards must together run the whole check, which `pr-quality-workflow.test.ts` pins. Do not shrink what a selected lane runs to make CI faster.
+- Required PR jobs must remain offline and must not receive provider credentials or depend on paid/live services.
+- A `pull_request_target` workflow may inspect PR metadata using trusted base code, but must never execute the PR head, install PR-controlled dependencies, or expose secrets to contributor code.
+- Keep Bun aligned with `package.json#packageManager` and use frozen lockfile installs in required jobs.
+- Do not weaken coverage, test routing, CODEOWNERS, or branch protections to make another change pass. Maintainer override labels require an explicit, documented decision.
+- A PR authored by an individual CODEOWNER needs no `allow-cli-core-change` label (maintainer decision, 2026-10). Both `scope-plan` and `pr-triage.yml` read CODEOWNERS from the base branch, never the PR head. The other override labels are unchanged.
+- Never retry a failed test into a pass. `check:server` re-runs each failed file once to label it `FLAKY` or `FAILED`, and still fails the gate either way; fix the race, or quarantine with a reason and owner only as a last resort.
+- Repository settings, rulesets, secrets, and required-check changes require explicit user authorization; editing workflow files alone does not grant it.

@@ -15,7 +15,7 @@ import { createSandboxedTestEnvironment } from '../pr/test-environment'
  * configured: provider state is *copied in*, never written back.
  */
 
-/** Files under `<config>/echoflow-code/` that carry provider identity and credentials. */
+/** Files under `<config>/cc-haha/` that carry provider identity and credentials. */
 export const SEEDABLE_PROVIDER_STATE_FILES = [
   'providers.json',
   'settings.json',
@@ -43,7 +43,7 @@ export const LIVE_PASSTHROUGH_ENV_NAMES = [
   'QUALITY_GATE_PROVIDER_AUTH_STRATEGY',
   'QUALITY_GATE_PROVIDER_BASE_URL',
   'QUALITY_GATE_PROVIDER_MODEL',
-  'ECHOFLOW_SYSTEM_PROXY_URL',
+  'CC_HAHA_SYSTEM_PROXY_URL',
 ] as const
 
 export type UserStateFingerprint = Record<string, string>
@@ -100,8 +100,8 @@ export function seedProviderState(
   sandboxConfigDir: string,
   files: readonly string[] = SEEDABLE_PROVIDER_STATE_FILES,
 ): string[] {
-  const sourceDir = join(sourceConfigDir, 'echoflow-code')
-  const targetDir = join(sandboxConfigDir, 'echoflow-code')
+  const sourceDir = join(sourceConfigDir, 'cc-haha')
+  const targetDir = join(sandboxConfigDir, 'cc-haha')
   if (!existsSync(sourceDir)) {
     return []
   }
@@ -129,11 +129,11 @@ export function seedProviderState(
  */
 export const GUARDED_USER_STATE_PATHS = [
   'settings.json',
-  'echoflow-code/providers.json',
-  'echoflow-code/settings.json',
-  'echoflow-code/oauth.json',
-  'echoflow-code/openai-oauth.json',
-  'echoflow-code/grok-oauth.json',
+  'cc-haha/providers.json',
+  'cc-haha/settings.json',
+  'cc-haha/oauth.json',
+  'cc-haha/openai-oauth.json',
+  'cc-haha/grok-oauth.json',
 ] as const
 
 /**
@@ -254,7 +254,7 @@ export function createQualityGateSandbox(options: {
 }): QualityGateSandbox {
   const source = options.source ?? process.env
   const sourceConfigDir = options.sourceConfigDir ?? realUserConfigDir(source)
-  const home = mkdtempSync(join(tmpdir(), `echoflow-qa-${options.label}-`))
+  const home = mkdtempSync(join(tmpdir(), `cc-haha-qa-${options.label}-`))
   const env = buildSandboxLaneEnv(home, options.envOverrides ?? {}, source)
   const configDir = env.CLAUDE_CONFIG_DIR
   mkdirSync(configDir, { recursive: true })
@@ -274,7 +274,8 @@ export function createQualityGateSandbox(options: {
       return describeUserStateMutations(guardedBefore, fingerprintUserState(sourceConfigDir))
     },
     cleanup() {
-      rmSync(home, { recursive: true, force: true })
+      // A just-exited Windows CLI can leave an MCP child releasing its cwd.
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     },
   }
 }

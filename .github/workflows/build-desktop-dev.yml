@@ -59,7 +59,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Read version
         id: version
@@ -80,7 +80,7 @@ jobs:
           bun-version-file: package.json
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: 22
 
@@ -96,6 +96,11 @@ jobs:
         working-directory: adapters
         run: bun install
 
+      - name: Install mobile dependencies
+        working-directory: mobile
+        # `bun run build` exports the phone app (mobile/) into dist/m: it is the H5 for phones.
+        run: bun install --frozen-lockfile
+
       - name: Verify Windows legacy data recovery
         if: matrix.smoke_platform == 'windows'
         working-directory: desktop
@@ -106,6 +111,22 @@ jobs:
         env:
           SIDECAR_TARGET_TRIPLE: ${{ matrix.target_triple }}
         run: bun run prepare:ripgrep
+
+      - name: Prepare bundled Cloudflare connector
+        working-directory: desktop
+        env:
+          SIDECAR_TARGET_TRIPLE: ${{ matrix.target_triple }}
+        run: bun run prepare:cloudflared
+
+      - name: Setup native Computer Use Rust toolchain
+        if: matrix.smoke_platform != 'macos'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target_triple }}
+
+      - name: Prepare native Computer Use dependencies
+        if: matrix.smoke_platform != 'macos'
+        run: cargo +stable fetch --locked --manifest-path native/agent-desktop/Cargo.toml --target ${{ matrix.target_triple }}
 
       - name: Build sidecars
         working-directory: desktop
@@ -154,7 +175,7 @@ jobs:
           STAGING="desktop/build-artifacts/ci-EchoFlow-Code-v${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}"
           mkdir -p "$STAGING"
           find desktop/build-artifacts/electron -maxdepth 1 -type f \
-            \( -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.blockmap" -o -name "*.yml" \) \
+            \( -name "*.dmg" -o -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.yml" \) \
             | while read -r artifact; do
               cp -f "$artifact" "$STAGING/"
             done
@@ -165,7 +186,7 @@ jobs:
           ls -lh "$STAGING/" 2>/dev/null || true
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: EchoFlow-Code-v${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}
           path: ${{ steps.collect.outputs.staging_dir }}

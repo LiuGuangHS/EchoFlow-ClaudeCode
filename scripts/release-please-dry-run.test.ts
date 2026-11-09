@@ -152,7 +152,11 @@ function readRepoFiles(): Map<string, string> {
   files.set('.release-please-manifest.json', JSON.stringify({ desktop: BASELINE_VERSION }))
   for (const path of ['desktop/package.json', 'mobile/package.json', 'mobile/app.json']) {
     const parsed = JSON.parse(readFileSync(path, 'utf8'))
-    parsed.version = BASELINE_VERSION
+    if (path === 'mobile/app.json') {
+      parsed.expo.version = '0.1.3'
+    } else {
+      parsed.version = path === 'mobile/package.json' ? '0.1.3' : BASELINE_VERSION
+    }
     files.set(path, JSON.stringify(parsed, null, 2))
   }
   return files
@@ -239,6 +243,9 @@ describe('release please offline dry run', () => {
       const parsed = JSON.parse(content)
       if (update.path === '.release-please-manifest.json') {
         expect(parsed.desktop).toBe('0.7.3')
+      } else if (update.path === 'mobile/app.json') {
+        expect(parsed.expo.version).toBe('0.7.3')
+        expect(parsed.version).toBeUndefined()
       } else {
         expect(parsed.version).toBe('0.7.3')
       }

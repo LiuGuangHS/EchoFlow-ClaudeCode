@@ -79,7 +79,7 @@ export type ImpactSummary = {
 }
 
 export type CoverageMetricSummary = {
-  pct: number | null
+  pct: number
   covered: number
   total: number
 }

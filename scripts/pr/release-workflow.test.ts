@@ -1,12 +1,13 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parse } from 'yaml'
+import { parse, stringify } from 'yaml'
+import { mergeUpdateMetadataArtifacts } from '../release-update-metadata'
 
 describe('release desktop workflow', () => {
   function readReleaseWorkflow() {
-    return readFileSync('.github/workflows/release-desktop.yml', 'utf8')
+    return readFileSync('.github/workflows/release-desktop.yml', 'utf8').replaceAll('\r\n', '\n')
   }
 
   function extractJob(workflow: string, jobName: string) {
@@ -23,6 +24,82 @@ describe('release desktop workflow', () => {
 
   const electronBuilderCli = 'node ./node_modules/electron-builder/out/cli/cli.js ${{ matrix.builder_args }} --publish never'
 
+  type MatrixRow = { label: string, builder_args: string, arch: string }
+  type ArtifactConfig = { artifactName?: string }
+
+  const RELEASE_CHANNELS: Record<string, string> = {
+    'macOS-ARM64': 'latest-mac.yml',
+    'macOS-x64': 'latest-mac.yml',
+    'Linux-x64': 'latest-linux.yml',
+    'Linux-ARM64': 'latest-linux-arm64.yml',
+    'Windows-x64': 'latest.yml',
+    'Windows-ARM64': 'latest.yml',
+  }
+  const TARGET_EXTENSIONS: Record<string, string> = { dmg: 'dmg', zip: 'zip', nsis: 'exe', AppImage: 'AppImage', deb: 'deb', rpm: 'rpm' }
+  // Config keys electron-builder reads target options from; the mac zip has none.
+  const TARGET_CONFIG_KEYS: Record<string, string> = { dmg: 'dmg', nsis: 'nsis', AppImage: 'appImage', deb: 'deb', rpm: 'rpm' }
+
+  function releaseMatrix(): MatrixRow[] {
+    return parse(readReleaseWorkflow()).jobs.build.strategy.matrix.include
+  }
+
+  // builder-util getArtifactArchName: ${arch} is spelled per Linux package format.
+  function artifactArchName(arch: string, ext: string) {
+    if (arch === 'x64' && (ext === 'AppImage' || ext === 'rpm')) return 'x86_64'
+    if (arch === 'x64' && ext === 'deb') return 'amd64'
+    if (arch === 'arm64' && ext === 'rpm') return 'aarch64'
+    return arch
+  }
+
+  // The file names electron-builder writes for one matrix row: target options
+  // win over platform options, and `-c.<key>.artifactName=` overrides from the
+  // row's builder_args win over desktop/package.json at the same level.
+  function packagedAssetNames(row: MatrixRow, version: string) {
+    const build = JSON.parse(readFileSync('desktop/package.json', 'utf8')).build as
+      Record<string, ArtifactConfig | undefined> & { artifactName?: string }
+    const overrides = new Map(
+      [...row.builder_args.matchAll(/'-c\.([A-Za-z]+)\.artifactName=([^']+)'/g)].map(match => [match[1], match[2]]),
+    )
+    const [, platformKey, targetList] = row.builder_args.match(/--(mac|win|linux) ([A-Za-z ]+?) --/) ?? []
+    expect(platformKey, row.label).toBeTruthy()
+    const arch = row.builder_args.includes('--arm64') ? 'arm64' : 'x64'
+    return targetList.split(' ').map((target) => {
+      const ext = TARGET_EXTENSIONS[target]
+      const targetKey = TARGET_CONFIG_KEYS[target]
+      const pattern = (targetKey ? overrides.get(targetKey) ?? build[targetKey]?.artifactName : undefined)
+        ?? overrides.get(platformKey) ?? build[platformKey]?.artifactName ?? build.artifactName
+      expect(pattern, `${row.label} ${target}`).toBeTruthy()
+      return pattern!.replace(/\$\{(\w+)\}/g, (_, macro: string) => {
+        if (macro === 'version') return version
+        if (macro === 'ext') return ext
+        if (macro === 'os') return platformKey
+        if (macro === 'arch') return artifactArchName(arch, ext)
+        throw new Error(`Unexpected artifactName macro ${macro}`)
+      })
+    })
+  }
+
+  // electron-updater 6.8.3 out/providers/Provider.js findFile: among files with
+  // the extension, prefer one whose name contains process.arch.
+  function findUpdateFile(urls: string[], extension: string, processArch: string, not?: string[]) {
+    const filtered = urls.filter(url => url.toLowerCase().endsWith(`.${extension.toLowerCase()}`))
+    const result = filtered.find(url => url.includes(processArch)) ?? filtered[0]
+    if (result) return result
+    if (!not) return urls[0]
+    return urls.find(url => !not.some(ext => url.toLowerCase().endsWith(`.${ext.toLowerCase()}`)))
+  }
+
+  // electron-updater 6.8.3 out/MacUpdater.js doDownloadUpdate: Apple Silicon
+  // (including an x64 build under Rosetta) keeps only files named "arm64",
+  // Intel drops them, then the zip is chosen.
+  function pickMacUpdate(urls: string[], isArm64Mac: boolean, processArch: string) {
+    const isArm64 = (url: string) => url.includes('arm64')
+    const files = isArm64Mac && urls.some(isArm64)
+      ? urls.filter(url => isArm64(url))
+      : urls.filter(url => !isArm64(url))
+    return findUpdateFile(files, 'zip', processArch, ['pkg', 'dmg'])
+  }
+
   test('release packaging does not run the PR-quality gate', () => {
     const workflow = readReleaseWorkflow()
 
@@ -31,6 +108,28 @@ describe('release desktop workflow', () => {
     expect(workflow).not.toContain('quality-preflight')
     expect(workflow).not.toContain('bun run verify')
     expect(workflow).toContain('name: Build (${{ matrix.label }})')
+  })
+
+  test('release guidance distinguishes tag creation from trusted official publication', () => {
+    const releaseScript = readFileSync('scripts/release.ts', 'utf8')
+    const releaseWorkflow = readReleaseWorkflow()
+    const releasePleaseWorkflow = readFileSync('.github/workflows/release-please.yml', 'utf8')
+    const guidance = [
+      readFileSync('docs/internals/contributing.md', 'utf8'),
+      readFileSync('docs/en/internals/contributing.md', 'utf8'),
+    ]
+
+    expect(releaseScript).toContain('Tag created locally; this does not publish a release.')
+    expect(releaseScript).not.toContain('Push the tag (main itself is not pushed)')
+    expect(releasePleaseWorkflow).toContain('uses: ./.github/workflows/release-desktop.yml')
+    expect(releasePleaseWorkflow).toContain('official_release: true')
+    expect(releaseWorkflow).toContain('inputs.official_release == true')
+    expect(guidance[0]).toContain('Release Please')
+    expect(guidance[0]).toContain('不会发布正式版本')
+    expect(guidance[0]).not.toContain('tag 推送会触发 `Release Desktop`')
+    expect(guidance[1]).toContain('Release Please')
+    expect(guidance[1]).toContain('does not publish an official release')
+    expect(guidance[1]).not.toContain('tag push triggers `Release Desktop`')
   })
 
   test('version tags have exactly one desktop release publisher', () => {
@@ -72,9 +171,7 @@ describe('release desktop workflow', () => {
         expect(workflow).toContain(electronBuilderCli)
       }
       expect(workflow).toContain('smoke_platform')
-      expect(workflow).toContain('Rebuild node-pty for the Linux glibc floor')
-      expect(workflow).toContain('bash ./scripts/rebuild-node-pty-linux.sh')
-      expect(workflow).toContain('bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron ${{ matrix.smoke_platform == \'linux\' && \'--max-linux-glibc 2.28\' || \'\' }}')
+      expect(workflow).toContain('bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron')
       expect(workflow).not.toContain('tauri-apps/tauri-action@v0')
     }
   })
@@ -94,19 +191,6 @@ describe('release desktop workflow', () => {
     }
   })
 
-  test('release desktop verification installs adapter dependencies before compiling sidecars', () => {
-    const workflow = readReleaseWorkflow()
-    const job = extractJob(workflow, 'verify-desktop')
-
-    expect(job).toContain('path: adapters/node_modules')
-    expect(job).toContain("key: bun-adapters-${{ runner.os }}-${{ hashFiles('adapters/bun.lock') }}")
-    expect(job).toContain('working-directory: adapters')
-    expect(job).toContain('run: bun install --frozen-lockfile')
-    expect(job.indexOf('working-directory: adapters')).toBeLessThan(
-      job.indexOf('run: bun run check:desktop'),
-    )
-  })
-
   test('Windows x64 builds execute the compiled sidecar before packaging', () => {
     for (const workflowPath of [
       '.github/workflows/build-desktop-dev.yml',
@@ -120,11 +204,29 @@ describe('release desktop workflow', () => {
       )
       expect(smokeStep, workflowPath).toContain('working-directory: desktop')
       expect(smokeStep, workflowPath).toContain("ECHOFLOW_COMPILED_SIDECAR_SMOKE_STARTS: '20'")
+      expect(readFileSync('desktop/scripts/build-sidecars.test.ts', 'utf8'))
+        .toContain('process.env.ECHOFLOW_COMPILED_SIDECAR_SMOKE_STARTS')
       expect(smokeStep, workflowPath).toContain('bun run test:compiled-sidecar-smoke')
       expect(workflow.indexOf('Build sidecars'), workflowPath).toBeLessThan(
         workflow.indexOf('Verify compiled Windows sidecar startup'),
       )
       expect(workflow.indexOf('Verify compiled Windows sidecar startup'), workflowPath)
+        .toBeLessThan(workflow.indexOf('Build renderer and Electron bundles'))
+    }
+  })
+
+  test('desktop build workflows install the phone app before building the renderer', () => {
+    // `bun run build` exports mobile/ into dist/m; without its packages the build fails.
+    for (const workflowPath of [
+      '.github/workflows/build-desktop-dev.yml',
+      '.github/workflows/release-desktop.yml',
+    ]) {
+      const workflow = readFileSync(workflowPath, 'utf8')
+      const installStep = extractStep(workflow, 'Install mobile dependencies')
+
+      expect(installStep, workflowPath).toContain('working-directory: mobile')
+      expect(installStep, workflowPath).toContain('bun install --frozen-lockfile')
+      expect(workflow.indexOf('Install mobile dependencies'), workflowPath)
         .toBeLessThan(workflow.indexOf('Build renderer and Electron bundles'))
     }
   })
@@ -174,9 +276,10 @@ describe('release desktop workflow', () => {
     )?.[0]
 
     expect(collectStep).toContain('*.dmg')
-    // Development builds collect all artifacts including zip and blockmap for testing
-    expect(collectStep).toContain('*.zip')
-    expect(collectStep).toContain('*.blockmap')
+    // The macOS auto-update zip and blockmaps are not collected: unsigned builds
+    // ship manual downloads only, so the artifact stays the installer + script.
+    expect(collectStep).not.toContain('*.zip')
+    expect(collectStep).not.toContain('*.blockmap')
     expect(collectStep).toContain('*.yml')
     expect(collectStep).toContain('install-macos-unsigned.sh')
     expect(collectStep).toContain('[ "${{ matrix.smoke_platform }}" = "macos" ]')
@@ -202,7 +305,8 @@ describe('release desktop workflow', () => {
     expect(desktopPackage.homepage).toBe('https://github.com/LiuGuangHS/EchoFlow-ClaudeCode')
     expect(desktopPackage.author?.name).toBe('LiuGuangHS')
     expect(desktopPackage.author?.email).toBe('zhijun2003@users.noreply.github.com')
-    expect(desktopPackage.build?.linux?.maintainer).toBe('LiuGuangHS <zhijun2003@users.noreply.github.com>')
+    expect(desktopPackage.build?.linux?.maintainer)
+      .toBe(`${desktopPackage.author?.name} <${desktopPackage.author?.email}>`)
   })
 
   test('release workflow requires macOS Gatekeeper launch approval for signed builds', () => {
@@ -264,7 +368,8 @@ describe('release desktop workflow', () => {
     expect(signedBuildStep).toContain('xcrun stapler staple "$app_path"')
     expect(signedBuildStep).toContain('xcrun stapler validate "$app_path"')
     expect(signedBuildStep).toContain('spctl -a -vv -t execute "$app_path"')
-    expect(signedBuildStep).toContain('app_path="build-artifacts/electron/${{ matrix.app_bundle_dir }}/EchoFlow Code.app"')
+    const { build } = JSON.parse(readFileSync('desktop/package.json', 'utf8'))
+    expect(signedBuildStep).toContain(`app_path="build-artifacts/electron/\${{ matrix.app_bundle_dir }}/${build.productName}.app"`)
     expect(signedBuildStep).toContain('package_args=( ${{ matrix.builder_args }} --prepackaged "$app_path" --publish never -c.mac.notarize=false )')
     expect(signedBuildStep).toContain('find build-artifacts/electron -maxdepth 1 -type f -delete')
     expect(signedBuildStep).toContain('Signed electron-builder timed out')
@@ -303,6 +408,10 @@ describe('release desktop workflow', () => {
 
     expect(importIdentityStep).toContain('echo "ECHOFLOW_CI_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"')
     expect(signedBuildStep).toContain('export CSC_KEYCHAIN="${ECHOFLOW_CI_KEYCHAIN:?macOS signing keychain was not prepared}"')
+    // All three signers must consume the exact identity selected from the imported keychain.
+    for (const key of ['ECHOFLOW_SIGN_IDENTITY', 'CC_HAHA_SIGN_IDENTITY', 'CSC_NAME']) {
+      expect(importIdentityStep).toContain(`echo "${key}=$identity" >> "$GITHUB_ENV"`)
+    }
     expect(signedBuildStep).not.toContain('CSC_LINK:')
     expect(signedBuildStep).not.toContain('CSC_KEY_PASSWORD:')
     expect(cleanupStep).toContain('security delete-keychain "$ECHOFLOW_CI_KEYCHAIN"')
@@ -314,7 +423,7 @@ describe('release desktop workflow', () => {
     )
   })
 
-  test('release workflow allows unsigned macOS fallback and preserves SignPath draft policy', () => {
+  test('release workflow requires signed macOS Computer Use and preserves SignPath draft policy', () => {
     const workflow = readReleaseWorkflow()
     const signingJob = workflow.match(
       /signing-preflight:[\s\S]*?(?:\n {2}[a-zA-Z0-9_-]+:|$)/,
@@ -346,7 +455,7 @@ describe('release desktop workflow', () => {
       expect(signingJob).toContain(setting)
     }
     expect(signingJob).toContain('Missing macOS signing/notarization secrets')
-    expect(signingJob).toContain('the macOS build will be unsigned and Computer Use runtime may not pass client attestation.')
+    expect(signingJob).toContain('refusing to build a macOS release whose Computer Use runtime cannot pass client attestation')
     expect(signingJob).toContain("RELEASE_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true }}")
     expect(signingJob).toContain('macos_signed=false')
     expect(signingJob).toContain('macos_signed=true')
@@ -357,40 +466,49 @@ describe('release desktop workflow', () => {
     expect(signingJob).toContain("inputs.draft == true && vars.SIGNPATH_TEST_SIGNING_POLICY_SLUG || vars.SIGNPATH_RELEASE_SIGNING_POLICY_SLUG")
 
     const macRequiredBlock = signingJob?.match(
-      /missing=\(\)[\s\S]*?# Drafts may remain unsigned/,
+      /missing=\(\)[\s\S]*?# Windows signing is opt-in/,
     )?.[0]
-    expect(macRequiredBlock).toBeTruthy()
-    const winRequiredBlock = signingJob?.match(
-      /win_missing=\(\)[\s\S]*?windows_signed=true/,
-    )?.[0]
-    expect(winRequiredBlock).toContain('if [ "$RELEASE_DRAFT" != "true" ]; then')
-    expect(winRequiredBlock).toContain('exit 1')
+    expect(macRequiredBlock).not.toContain('if [ "$RELEASE_DRAFT" != "true" ]; then')
+    expect(macRequiredBlock).toContain('exit 1')
+    expect(signingJob).toContain('if [ "$RELEASE_DRAFT" != "true" ]; then')
     expect(signingJob).toContain('exit 1')
     expect(buildJob).toContain('- signing-preflight')
     expect(workflow.indexOf('signing-preflight:')).toBeLessThan(workflow.indexOf('build:'))
     expect(workflow.indexOf('signing-preflight:')).toBeLessThan(workflow.indexOf('Upload release artifacts for final publish'))
   })
 
-  test('an explicit manual Windows signing skip preserves unsigned macOS fallback and default release requirements', { timeout: 60_000 }, async () => {
+  test('Windows signing stays off until the repository variable or a manual run asks for it', async () => {
     const workflow = parse(readReleaseWorkflow())
-    expect(workflow.on.workflow_dispatch.inputs.skip_windows_signing).toEqual({
-      description: 'Build unsigned Windows artifacts while SignPath onboarding is pending',
+    expect(workflow.on.workflow_dispatch.inputs.skip_windows_signing).toBeUndefined()
+    expect(workflow.on.workflow_dispatch.inputs.windows_signing).toEqual({
+      description: 'Windows signing: auto follows the WINDOWS_SIGNING_ENABLED repository variable',
       required: false,
-      default: false,
-      type: 'boolean',
+      default: 'auto',
+      type: 'choice',
+      options: ['auto', 'unsigned', 'signed'],
     })
     const preflight = workflow.jobs['signing-preflight'].steps.find((step: { id?: string }) => step.id === 'validate')
-    expect(preflight.env.SKIP_WINDOWS_SIGNING).toBe("${{ github.event_name == 'workflow_dispatch' && inputs.skip_windows_signing == true }}")
+    expect(preflight.env.WINDOWS_SIGNING_ENABLED).toBe("${{ vars.WINDOWS_SIGNING_ENABLED == 'true' }}")
+    expect(preflight.env.WINDOWS_SIGNING_MODE).toBe("${{ github.event_name == 'workflow_dispatch' && inputs.windows_signing || 'auto' }}")
+    expect(preflight.env.SKIP_WINDOWS_SIGNING).toBeUndefined()
 
     const directory = mkdtempSync(join(tmpdir(), 'release-signing-preflight-'))
+    // Every SignPath setting is present, as in the repository today while approval is pending.
     const configured = Object.fromEntries(Object.keys(preflight.env).map(key => [key, 'test-value']))
+    const unsigned = 'macos_signed=true\nwindows_signed=false\n'
+    const signed = 'macos_signed=true\nwindows_signed=true\n'
     const cases = [
-      { name: 'configured release', env: {}, code: 0, outputs: 'macos_signed=true\nwindows_signed=true\n' },
-      { name: 'explicit skip with configured SignPath', env: { SKIP_WINDOWS_SIGNING: 'true' }, code: 0, outputs: 'macos_signed=true\nwindows_signed=false\n' },
-      { name: 'explicit skip without SignPath', env: { SKIP_WINDOWS_SIGNING: 'true', SIGNPATH_API_TOKEN: '' }, code: 0, outputs: 'macos_signed=true\nwindows_signed=false\n' },
-      { name: 'release missing SignPath without skip', env: { SIGNPATH_API_TOKEN: '' }, code: 1, outputs: 'macos_signed=true\nwindows_signed=false\n' },
-      { name: 'draft missing SignPath', env: { RELEASE_DRAFT: 'true', SIGNPATH_API_TOKEN: '' }, code: 0, outputs: 'macos_signed=true\nwindows_signed=false\n' },
-      { name: 'explicit skip allows unsigned macOS fallback', env: { SKIP_WINDOWS_SIGNING: 'true', CSC_LINK: '' }, code: 0, outputs: 'macos_signed=false\nwindows_signed=false\n' },
+      { name: 'tag or release with signing off', env: {}, code: 0, outputs: unsigned },
+      { name: 'draft with signing off', env: { RELEASE_DRAFT: 'true' }, code: 0, outputs: unsigned },
+      { name: 'signing off without SignPath settings', env: { SIGNPATH_API_TOKEN: '' }, code: 0, outputs: unsigned },
+      { name: 'manual unsigned run overrides enabled signing', env: { WINDOWS_SIGNING_ENABLED: 'true', WINDOWS_SIGNING_MODE: 'unsigned' }, code: 0, outputs: unsigned },
+      { name: 'enabled release signs', env: { WINDOWS_SIGNING_ENABLED: 'true' }, code: 0, outputs: signed },
+      { name: 'manual trial draft signs while the variable is off', env: { WINDOWS_SIGNING_MODE: 'signed', RELEASE_DRAFT: 'true' }, code: 0, outputs: signed },
+      { name: 'enabled release missing SignPath', env: { WINDOWS_SIGNING_ENABLED: 'true', SIGNPATH_API_TOKEN: '' }, code: 1, outputs: unsigned },
+      { name: 'enabled draft missing SignPath', env: { WINDOWS_SIGNING_ENABLED: 'true', RELEASE_DRAFT: 'true', SIGNPATH_API_TOKEN: '' }, code: 0, outputs: unsigned },
+      { name: 'manual trial missing SignPath', env: { WINDOWS_SIGNING_MODE: 'signed', RELEASE_DRAFT: 'true', SIGNPATH_API_TOKEN: '' }, code: 1, outputs: 'macos_signed=true\n' },
+      { name: 'unknown manual mode', env: { WINDOWS_SIGNING_MODE: 'sometimes' }, code: 1, outputs: 'macos_signed=true\n' },
+      { name: 'unsigned Windows still requires macOS credentials', env: { CSC_LINK: '' }, code: 1, outputs: 'macos_signed=false\n' },
     ]
     try {
       for (const [index, scenario] of cases.entries()) {
@@ -401,7 +519,8 @@ describe('release desktop workflow', () => {
           env: {
             ...configured,
             RELEASE_DRAFT: 'false',
-            SKIP_WINDOWS_SIGNING: 'false',
+            WINDOWS_SIGNING_ENABLED: 'false',
+            WINDOWS_SIGNING_MODE: 'auto',
             ...scenario.env,
             PATH: process.env.PATH,
             HOME: directory,
@@ -415,17 +534,35 @@ describe('release desktop workflow', () => {
         expect(code, `${scenario.name}: ${readFileSync(logPath, 'utf8')}`).toBe(scenario.code)
         expect(readFileSync(output, 'utf8'), scenario.name).toBe(scenario.outputs)
       }
+      // Unsigned Windows builds are the expected state, not a problem worth a warning.
+      expect(readFileSync(join(directory, 'log-0'), 'utf8')).toContain('::notice::Windows signing is off')
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
+  })
 
-    const unsignedBuild = extractStep(readReleaseWorkflow(), 'Build unsigned Electron release artifacts')
-    expect(unsignedBuild).toContain("matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed != 'true'")
-    for (const name of ['Sign Windows application executables with SignPath', 'Sign Windows installer with SignPath']) {
-      expect(extractStep(readReleaseWorkflow(), name)).toContain("needs.signing-preflight.outputs.windows_signed == 'true'")
+  // electron-builder only writes publisherName into app-update.yml when it can
+  // read a signing certificate, and the CI disables certificate discovery.
+  // Installed Windows clients therefore accept both signed and unsigned
+  // updates. Setting either key would make every client built with it reject
+  // the next unsigned update, with no way to recover in place.
+  test('Windows updates never require a code signature while unsigned releases are possible', () => {
+    const desktopPackage = JSON.parse(readFileSync('desktop/package.json', 'utf8')) as {
+      build: { win?: Record<string, unknown>, nsis?: Record<string, unknown>, publish?: Array<Record<string, unknown>> }
     }
-    expect(extractStep(readReleaseWorkflow(), 'Verify Windows installer execution')).not.toContain('windows_signed')
-    expect(extractStep(readReleaseWorkflow(), 'Verify packaged app structure')).not.toContain('windows_signed')
+    const winConfig = JSON.stringify([desktopPackage.build.win, desktopPackage.build.nsis, desktopPackage.build.publish])
+    expect(winConfig).not.toContain('publisherName')
+    expect(winConfig).not.toContain('verifyUpdateCodeSignature')
+    const workflow = readReleaseWorkflow()
+    expect(workflow).not.toContain('publisherName')
+    expect(workflow).not.toContain('verifyUpdateCodeSignature')
+    for (const stepName of [
+      'Build unsigned Electron release artifacts',
+      'Build unsigned Windows bootstrap installer for SignPath',
+      'Package NSIS installer from signed Windows application',
+    ]) {
+      expect(extractStep(workflow, stepName), stepName).toContain("CSC_IDENTITY_AUTO_DISCOVERY: 'false'")
+    }
   })
 
   test('release workflow signs project-owned Windows binaries before packaging and repairs updater metadata', () => {
@@ -457,8 +594,12 @@ describe('release desktop workflow', () => {
     expect(workflow.indexOf('Verify Windows updater config before SignPath')).toBeLessThan(
       workflow.indexOf('Stage project-owned Windows application executables'),
     )
-    expect(stageApplicationStep).toContain('EchoFlow Code.exe')
+    const { build } = JSON.parse(readFileSync('desktop/package.json', 'utf8'))
+    expect(stageApplicationStep).toContain(`${build.productName}.exe`)
+    expect(restoreApplicationStep).toContain(`${build.productName}.exe`)
     expect(stageApplicationStep).toContain('claude-sidecar-${{ matrix.target_triple }}.exe')
+    expect(stageApplicationStep).toContain('agent-desktop.exe')
+    expect(stageApplicationStep).toContain('Copy-Item -LiteralPath $agentDesktopExecutable')
     expect(stageApplicationStep).not.toContain('rg.exe')
     expect(stageApplicationStep).not.toContain('node-pty')
     expect(signApplicationStep).toContain('signpath/github-action-submit-signing-request@v2')
@@ -467,6 +608,8 @@ describe('release desktop workflow', () => {
     expect(signApplicationStep).toContain('github-artifact-id: ${{ steps.upload-unsigned-signpath-application.outputs.artifact-id }}')
     expect(restoreApplicationStep).toContain('Get-AuthenticodeSignature')
     expect(restoreApplicationStep).toContain('REQUIRE_TRUSTED_WINDOWS_SIGNATURE')
+    expect(restoreApplicationStep).toContain('Copy-Item -LiteralPath (Join-Path $signedDir "agent-desktop.exe")')
+    expect(restoreApplicationStep).toContain('Assert-SignPathSignature $agentDesktopExecutable')
     expect(packageInstallerStep).toContain('--prepackaged "build-artifacts/electron/${{ matrix.unpacked_dir }}"')
     expect(signInstallerStep).toContain('signpath/github-action-submit-signing-request@v2')
     expect(signInstallerStep).toContain('SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG')
@@ -475,21 +618,23 @@ describe('release desktop workflow', () => {
     expect(restoreInstallerStep).toContain('A trusted production signature is required')
     expect(refreshMetadataStep).toContain('scripts/refresh-windows-update-metadata.ts')
     expect(refreshMetadataStep).toContain('desktop/build-artifacts/electron/latest.yml')
-    expect(applicationConfiguration).toContain('<pe-file path="EchoFlow Code.exe">')
+    expect(applicationConfiguration).toContain(`<pe-file path="${build.productName}.exe">`)
     expect(applicationConfiguration).toContain('<pe-file path="claude-sidecar-*.exe">')
+    expect(applicationConfiguration).toContain('<pe-file path="agent-desktop.exe">')
     expect(applicationConfiguration).not.toContain('rg.exe')
     expect(installerConfiguration).toContain('<pe-file path="EchoFlow-Code-*-win-*.exe">')
+    const stageInstallerStep = extractStep(workflow, 'Stage unsigned Windows installer')
+    for (const row of releaseMatrix().filter(row => row.label.startsWith('Windows-'))) {
+      const staged = stageInstallerStep?.match(/\$installerName = "([^"]+)"/)?.[1]
+        .replace('${{ steps.version.outputs.value }}', '1.2.3')
+        .replace('${{ matrix.arch }}', row.arch)
+      expect(staged, row.label).toBe(packagedAssetNames(row, '1.2.3')[0])
+    }
     expect(workflow).not.toContain('WINDOWS_CERTIFICATE')
     expect(workflow).not.toContain('WINDOWS_CERTIFICATE_PASSWORD')
     expect(workflow.indexOf('Restore and verify signed Windows application executables')).toBeLessThan(workflow.indexOf('Package NSIS installer from signed Windows application'))
     expect(workflow.indexOf('Restore and verify signed Windows installer')).toBeLessThan(workflow.indexOf('Refresh signed Windows blockmap and update metadata'))
-    expect(workflow).toContain('Verify packaged app structure')
-    const refreshIndex = workflow.indexOf('Refresh signed Windows blockmap and update metadata')
-    const packageSmokeIndex = workflow.indexOf('Verify packaged app structure', refreshIndex)
-    const installerSmokeIndex = workflow.indexOf('Verify Windows installer execution', packageSmokeIndex)
-    expect(refreshIndex).toBeGreaterThanOrEqual(0)
-    expect(packageSmokeIndex).toBeGreaterThan(refreshIndex)
-    expect(installerSmokeIndex).toBeGreaterThan(packageSmokeIndex)
+    expect(workflow.indexOf('Refresh signed Windows blockmap and update metadata')).toBeLessThan(workflow.indexOf('Verify Windows installer execution'))
   })
 
   test('release workflow avoids same-name updater metadata uploads from matrix builds', () => {
@@ -517,22 +662,190 @@ describe('release desktop workflow', () => {
     expect(buildJob).toContain('builder_args: --linux AppImage deb rpm --arm64')
     expect(buildJob).toContain('EchoFlow-Code-${APP_VERSION}-win-arm64.exe')
     expect(buildJob).toContain('Upload release artifacts for final publish')
-    expect(buildJob).toContain('actions/upload-artifact@v5')
+    // Blockmaps stay on the runner for package-smoke; differential updates are disabled.
+    expect(extractStep(buildJob ?? '', 'Upload release artifacts for final publish')).not.toContain('*.blockmap')
+    expect(buildJob).toContain('actions/upload-artifact@v4')
     expect(buildJob).toContain('name: desktop-release-artifacts-${{ matrix.label }}')
     expect(buildJob).not.toContain('softprops/action-gh-release@v2')
     expect(buildJob).not.toContain('Load release notes')
   })
 
-  test('manual draft validation cannot overwrite an existing published release', () => {
+  test('no run can overwrite a release that is already published', async () => {
     const workflow = readReleaseWorkflow()
-    const publishJob = extractJob(workflow, 'publish-release')
+    const signingJob = extractJob(workflow, 'signing-preflight') ?? ''
+    const publishJob = extractJob(workflow, 'publish-release') ?? ''
+    const preflightGuard = extractStep(signingJob, 'Refuse to overwrite an existing published release')
+    const publishGuard = extractStep(publishJob, 'Refuse to overwrite an existing published release')
+    const guardRun = 'run: bash scripts/assert-release-unpublished.sh "${{ steps.version.outputs.value }}"'
 
-    expect(workflow).not.toContain('publish_draft_release:')
-    expect(publishJob).toContain("if: inputs.official_release == true || (github.event_name == 'workflow_dispatch' && inputs.draft == true)")
-    expect(publishJob).toContain('Refuse to overwrite an existing published release')
-    expect(publishJob).toContain("if: github.event_name == 'workflow_dispatch' && inputs.draft == true")
-    expect(publishJob).toContain('Refusing to overwrite published release v${{ steps.version.outputs.value }} with manual draft artifacts')
+    expect(workflow).toContain('publish_draft_release:')
+    expect(workflow).toContain("description: 'Publish manual draft artifacts to GitHub Releases'")
+    const publicationCondition = "if: inputs.official_release == true || (github.event_name == 'workflow_dispatch' && inputs.draft == true && inputs.publish_draft_release == true)"
+    expect(publishJob).toContain(publicationCondition)
+    // Before any build: every run permitted to write assets, not raw tag pushes.
+    expect(preflightGuard).toContain(publicationCondition)
+    expect(preflightGuard).toContain(guardRun)
+    expect(signingJob).toContain('scripts/assert-release-unpublished.sh\n')
+    expect(signingJob.indexOf('Refuse to overwrite an existing published release')).toBeLessThan(
+      signingJob.indexOf('Validate release signing and notarization secrets'),
+    )
+    // Right before uploading: unconditional, in case another ref published meanwhile.
+    expect(publishGuard).not.toContain('if:')
+    expect(publishGuard).toContain(guardRun)
     expect(publishJob.indexOf('Refuse to overwrite an existing published release')).toBeLessThan(publishJob.indexOf('Publish complete GitHub release'))
+
+    const directory = mkdtempSync(join(tmpdir(), 'release-overwrite-guard-'))
+    const fakeBin = join(directory, 'bin')
+    mkdirSync(fakeBin)
+    writeFileSync(join(fakeBin, 'gh'), [
+      '#!/bin/sh',
+      'echo "$@" >> "$FAKE_GH_LOG"',
+      'case "$FAKE_GH_MODE" in',
+      '  published) echo false ;;',
+      '  draft) echo true ;;',
+      "  missing) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;",
+      "  broken) echo 'gh: Server Error (HTTP 500)' >&2; exit 1 ;;",
+      'esac',
+      '',
+    ].join('\n'))
+    chmodSync(join(fakeBin, 'gh'), 0o755)
+    const cases = [
+      { mode: 'published', code: 1 },
+      { mode: 'draft', code: 0 },
+      { mode: 'missing', code: 0 },
+      { mode: 'broken', code: 1 },
+    ]
+    try {
+      for (const scenario of cases) {
+        const log = join(directory, `gh-${scenario.mode}.log`)
+        const result = Bun.spawnSync(['bash', 'scripts/assert-release-unpublished.sh', '0.7.7'], {
+          env: {
+            PATH: `${fakeBin}:${process.env.PATH}`,
+            HOME: directory,
+            GITHUB_REPOSITORY: 'NanmiCoder/cc-haha',
+            FAKE_GH_MODE: scenario.mode,
+            FAKE_GH_LOG: log,
+          },
+        })
+        const output = `${result.stdout.toString()}${result.stderr.toString()}`
+        expect(result.exitCode, `${scenario.mode}: ${output}`).toBe(scenario.code)
+        expect(readFileSync(log, 'utf8')).toBe("api repos/NanmiCoder/cc-haha/releases/tags/v0.7.7 --jq .draft\n")
+        if (scenario.mode === 'published') {
+          expect(output).toContain('::error::Refusing to overwrite published release v0.7.7')
+        }
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('draft lookup, upload and undraft keep one verified release identity and fail closed', () => {
+    const steps = parse(readReleaseWorkflow()).jobs['publish-release'].steps
+    const script = (name: string) => steps.find((step: { name: string }) => step.name === name).run as string
+    const directory = mkdtempSync(join(tmpdir(), 'release-identity-'))
+    const fakeBin = join(directory, 'bin')
+    mkdirSync(fakeBin)
+    writeFileSync(join(fakeBin, 'gh'), `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$FAKE_GH_LOG"
+if [[ "$*" == *"--method PATCH"* ]]; then
+  if [[ "$*" == *"draft=false"* ]]; then printf '%s\\n' "$FAKE_UNDRAFT_ID"; else printf '{}'; fi
+elif [[ "$*" == *"--method POST"* ]]; then
+  [[ "$*" == *"https://uploads.github.com/repos/fixture/release/releases/42/assets?name="* ]] || exit 88
+  printf '{}'
+elif [[ "$*" == *"--method DELETE"* ]]; then
+  printf '{}'
+elif [[ "$*" == *"/releases/42/assets?"* ]]; then
+  printf '[{"id":99,"name":"EchoFlow-Code-1.2.3-win-x64.exe"}]'
+elif [[ "$*" == *"/releases/42"* ]]; then
+  printf '%s\\n' "$FAKE_RELEASE"
+elif [[ "$*" == *"/releases?"* ]]; then
+  [[ "$FAKE_LOOKUP_FAILURE" != true ]] || exit 17
+  # Exercise the real workflow jq expression against paginated fixtures.
+  while [[ "$1" != --jq ]]; do shift; done
+  printf '%s\\n' "$FAKE_RELEASE_PAGES" | jq "$2"
+else
+  exit 88
+fi
+`)
+    chmodSync(join(fakeBin, 'gh'), 0o755)
+    const release = { id: 42, tag_name: 'v1.2.3', draft: true }
+    const log = join(directory, 'gh.log')
+    const output = join(directory, 'output')
+    const run = (name: string, overrides: Record<string, string> = {}) => {
+      writeFileSync(log, '')
+      writeFileSync(output, '')
+      const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', script(name)], {
+        cwd: directory,
+        env: {
+          PATH: `${fakeBin}:${process.env.PATH}`,
+          HOME: directory,
+          RUNNER_TEMP: directory,
+          GITHUB_OUTPUT: output,
+          GITHUB_REPOSITORY: 'fixture/release',
+          RELEASE_ID: '42',
+          RELEASE_TAG: 'v1.2.3',
+          RELEASE_NAME: 'EchoFlow Code v1.2.3',
+          RELEASE_BODY: 'Fixture release',
+          OFFICIAL_RELEASE: 'true',
+          FAKE_RELEASE: JSON.stringify(release),
+          FAKE_RELEASE_PAGES: JSON.stringify([[], [release]]),
+          FAKE_LOOKUP_FAILURE: 'false',
+          FAKE_UNDRAFT_ID: '42',
+          FAKE_GH_LOG: log,
+          ...overrides,
+        },
+      })
+      return { code: result.exitCode, log: readFileSync(log, 'utf8'), output: readFileSync(output, 'utf8') }
+    }
+    try {
+      const lookup = 'Verify existing release record'
+      const found = run(lookup)
+      expect(found.code).toBe(0)
+      expect(found.output).toBe('release_id=42\n')
+      expect(found.log).toContain('--paginate --slurp')
+      expect(run(lookup, { FAKE_RELEASE_PAGES: '[[]]' }).code).not.toBe(0)
+      expect(run(lookup, { FAKE_LOOKUP_FAILURE: 'true' }).code).not.toBe(0)
+      const manualMissing = run(lookup, { OFFICIAL_RELEASE: 'false', FAKE_RELEASE_PAGES: '[[]]' })
+      expect(manualMissing.code).toBe(0)
+      expect(manualMissing.output).toBe('')
+      for (const record of [{ ...release, draft: false }, { ...release, id: null }]) {
+        expect(run(lookup, { FAKE_RELEASE_PAGES: JSON.stringify([[record]]) }).code).not.toBe(0)
+      }
+      expect(run(lookup, { FAKE_RELEASE_PAGES: JSON.stringify([[release], [release]]) }).code).not.toBe(0)
+
+      const assetsDir = join(directory, 'artifacts/release-assets')
+      const metadataDir = join(directory, 'artifacts/update-metadata-standard')
+      mkdirSync(assetsDir, { recursive: true })
+      mkdirSync(metadataDir, { recursive: true })
+      writeFileSync(join(assetsDir, 'EchoFlow-Code-1.2.3-win-x64.exe'), 'fixture installer')
+      writeFileSync(join(assetsDir, 'EchoFlow-Code-1.2.3-win-x64.exe.blockmap'), 'not a release asset')
+      writeFileSync(join(metadataDir, 'latest.yml'), 'fixture metadata')
+      const upload = 'Publish existing GitHub release by ID'
+      const uploaded = run(upload)
+      expect(uploaded.code).toBe(0)
+      expect(uploaded.log).toContain('-F draft=true')
+      expect(uploaded.log).toContain('--method DELETE repos/fixture/release/releases/assets/99')
+      expect(uploaded.log).toContain('https://uploads.github.com/repos/fixture/release/releases/42/assets?name=EchoFlow-Code-1.2.3-win-x64.exe')
+      expect(uploaded.log).toContain('assets?name=latest.yml')
+      expect(uploaded.log).not.toContain('.blockmap')
+      expect(uploaded.log).not.toContain('draft=false')
+      expect(uploaded.log.indexOf('--method DELETE')).toBeLessThan(uploaded.log.indexOf('--method POST'))
+
+      const undraft = 'Publish GitHub release after complete upload'
+      for (const name of [upload, undraft]) {
+        for (const stale of [{ ...release, draft: false }, { ...release, id: 43 }, { ...release, tag_name: 'v9.9.9' }]) {
+          const rejected = run(name, { FAKE_RELEASE: JSON.stringify(stale) })
+          expect(rejected.code, `${name}: ${JSON.stringify(stale)}`).not.toBe(0)
+          expect(rejected.log).not.toContain('--method')
+        }
+      }
+      expect(run(undraft).code).toBe(0)
+      expect(run(undraft, { FAKE_UNDRAFT_ID: '43' }).code).not.toBe(0)
+      expect(run(undraft, { RELEASE_ID: '' }).code).not.toBe(0)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   test('release workflow publishes all release assets only after all matrix builds pass', () => {
@@ -541,29 +854,32 @@ describe('release desktop workflow', () => {
 
     expect(workflow).toContain('name: desktop-update-metadata-${{ matrix.label }}')
     expect(workflow).toContain('name: desktop-release-artifacts-${{ matrix.label }}')
-    expect(publishJob).toMatch(/needs:\s*\n\s*- build/)
-    expect(publishJob).toContain('actions/download-artifact@v5')
+    expect(publishJob).toContain('needs: build')
+    expect(publishJob).toContain('actions/download-artifact@v4')
     expect(publishJob).toContain('pattern: desktop-release-artifacts-*')
     expect(publishJob).toContain('pattern: desktop-update-metadata-*')
     expect(publishJob).toContain('Validate complete release asset set')
     expect(publishJob).toContain('bun run scripts/release-update-metadata.ts --metadata-dir artifacts/update-metadata --out-dir artifacts/update-metadata-standard')
     expect(publishJob).toContain('Validate standard update metadata set')
     expect(publishJob).toContain('softprops/action-gh-release@v2')
-    expect(publishJob).toContain('artifacts/release-assets/*.dmg')
-    expect(publishJob).toContain('artifacts/release-assets/*.zip')
-    expect(publishJob).toContain('artifacts/release-assets/*.exe')
-    expect(publishJob).toContain('artifacts/release-assets/*.AppImage')
-    expect(publishJob).toContain('artifacts/release-assets/*.deb')
-    expect(publishJob).toContain('artifacts/release-assets/*.rpm')
-    expect(publishJob).toContain('artifacts/release-assets/*.blockmap')
+    expect(publishJob).toContain('artifacts/release-assets/**/*.dmg')
+    expect(publishJob).toContain('artifacts/release-assets/**/*.zip')
+    expect(publishJob).toContain('artifacts/release-assets/**/*.exe')
+    expect(publishJob).toContain('artifacts/release-assets/**/*.AppImage')
+    expect(publishJob).toContain('artifacts/release-assets/**/*.deb')
+    expect(publishJob).toContain('artifacts/release-assets/**/*.rpm')
     expect(publishJob).toContain('artifacts/update-metadata-standard/*.yml')
-    expect(publishJob).toContain('desktop/scripts/install-macos-unsigned.sh')
+    // Not release assets: differential updates are disabled, and releases are
+    // always Developer ID signed, so users never need the unsigned installer.
+    expect(publishJob).not.toContain('*.blockmap')
+    expect(publishJob).not.toContain('install-macos-unsigned.sh')
     expect(publishJob).toContain('draft: true')
     expect(publishJob).toContain('Publish GitHub release after complete upload')
-    expect(publishJob).toContain("if: inputs.official_release == true")
-    expect(publishJob).toContain('--method PATCH')
-    expect(publishJob).toContain('releases/${RELEASE_ID}')
-    expect(publishJob).toContain('undrafted_id')
+    const undraft = extractStep(publishJob ?? '', 'Publish GitHub release after complete upload')
+    expect(undraft).toContain('if: inputs.official_release == true')
+    expect(undraft).toContain('RELEASE_ID: ${{ steps.release.outputs.release_id }}')
+    expect(undraft).toContain('"repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" -F draft=false')
+    expect(publishJob).not.toContain('gh release edit')
     expect(publishJob).toContain('Keep workflow-dispatch release as draft')
     expect(publishJob).toContain("if: github.event_name == 'workflow_dispatch' && inputs.draft == true")
     expect(publishJob).toContain('release remains draft')
@@ -585,128 +901,107 @@ describe('release desktop workflow', () => {
     expect(publishJob.indexOf('Validate standard update metadata set')).toBeLessThan(publishJob.indexOf('Publish complete GitHub release'))
   })
 
-  test('site release sync mirrors update metadata only after a published (undrafted) release', () => {
+  test('release asset names come from the packaging config and match every validated asset list', () => {
     const workflow = readReleaseWorkflow()
-    const publishJob = extractJob(workflow, 'publish-release')
-    const syncJob = extractJob(workflow, 'site-release-sync')
-    const undraftCondition = "if: inputs.official_release == true"
-    expect(publishJob).toContain('outputs:')
-    expect(publishJob).toContain('version: ${{ steps.version.outputs.value }}')
-    expect(syncJob).toBeTruthy()
-    expect(syncJob).toContain('needs: publish-release')
-    // 同步挂在 undraft 条件上：draft 发布绝不触发站点同步。
-    expect(syncJob).toContain(undraftCondition)
-    expect(publishJob).toContain(undraftCondition)
-    expect(publishJob).toContain("if: github.event_name == 'workflow_dispatch' && inputs.draft == true")
-    expect(syncJob).toContain('uses: ./.github/workflows/deploy-docs.yml')
-    expect(syncJob).toContain('release_tag: ${{ needs.publish-release.outputs.version }}')
-    // workflow_call 的 token 是调用方与被调方的交集：发布工作流本身不给 pages 权限，
-    // 就得在同步任务上单独声明，否则 Pages 部署只会在真实发版时失败。
-    expect(syncJob).toContain('permissions:')
-    expect(syncJob).toContain('pages: write')
-    expect(syncJob).toContain('id-token: write')
-    expect(workflow.indexOf('site-release-sync:')).toBeGreaterThan(workflow.indexOf('publish-release:'))
-  })
+    const version = JSON.parse(readFileSync('desktop/package.json', 'utf8')).version as string
+    const rows = releaseMatrix()
+    const matrixStep = extractStep(workflow, 'Validate matrix release asset set') ?? ''
+    const publishStep = extractStep(workflow, 'Validate complete release asset set') ?? ''
+    const listed = (block: string | undefined) =>
+      [...(block ?? '').matchAll(/"([^"]+)"/g)].map(match => match[1].replace('${APP_VERSION}', version))
 
-  test('release matrix asset basenames remain unique when final artifacts are flattened', () => {
-    const desktopPackage = JSON.parse(readFileSync('desktop/package.json', 'utf8')) as {
-      version: string
-      build: {
-        artifactName: string
-      }
+    expect(rows.map(row => row.label).sort()).toEqual(Object.keys(RELEASE_CHANNELS).sort())
+    const releaseAssets: string[] = []
+    for (const row of rows) {
+      // Matrix values are pasted into bash/pwsh unquoted, so electron-builder
+      // macros must sit inside single quotes or the shell expands them away.
+      expect(row.builder_args.replace(/'[^']*'/g, ''), row.label).not.toContain('$')
+      const assets = packagedAssetNames(row, version)
+      const block = matrixStep.match(new RegExp(`${row.label}\\)\\n\\s+expected=\\(([\\s\\S]*?)\\)`))?.[1]
+      expect(listed(block).sort(), row.label).toEqual([...assets, RELEASE_CHANNELS[row.label]].sort())
+      releaseAssets.push(...assets)
     }
-    const version = desktopPackage.version
-    expect(desktopPackage.build.artifactName).toBe('EchoFlow-Code-${version}-${os}-${arch}.${ext}')
 
-    const expectedReleaseAssets = [
-      `EchoFlow-Code-${version}-mac-arm64.dmg`,
-      `EchoFlow-Code-${version}-mac-arm64.dmg.blockmap`,
-      `EchoFlow-Code-${version}-mac-arm64.zip`,
-      `EchoFlow-Code-${version}-mac-arm64.zip.blockmap`,
-      `EchoFlow-Code-${version}-mac-x64.dmg`,
-      `EchoFlow-Code-${version}-mac-x64.dmg.blockmap`,
-      `EchoFlow-Code-${version}-mac-x64.zip`,
-      `EchoFlow-Code-${version}-mac-x64.zip.blockmap`,
-      `EchoFlow-Code-${version}-linux-x86_64.AppImage`,
-      `EchoFlow-Code-${version}-linux-amd64.deb`,
-      `EchoFlow-Code-${version}-linux-x86_64.rpm`,
+    expect(releaseAssets.sort()).toEqual([
       `EchoFlow-Code-${version}-linux-arm64.AppImage`,
       `EchoFlow-Code-${version}-linux-arm64.deb`,
       `EchoFlow-Code-${version}-linux-aarch64.rpm`,
-      `EchoFlow-Code-${version}-win-x64.exe`,
-      `EchoFlow-Code-${version}-win-x64.exe.blockmap`,
+      `EchoFlow-Code-${version}-linux-x86_64.AppImage`,
+      `EchoFlow-Code-${version}-linux-amd64.deb`,
+      `EchoFlow-Code-${version}-linux-x86_64.rpm`,
       `EchoFlow-Code-${version}-win-arm64.exe`,
-      `EchoFlow-Code-${version}-win-arm64.exe.blockmap`,
-    ]
-    const namespacedMetadata = [
-      'latest-mac-macOS-ARM64.yml',
-      'latest-mac-macOS-x64.yml',
-      'latest-linux-Linux-x64.yml',
-      'latest-linux-Linux-ARM64.yml',
-      'latest-Windows-x64.yml',
-    ]
-    const standardMetadata = [
-      'latest-mac.yml',
-      'latest-linux.yml',
-      'latest-linux-arm64.yml',
-      'latest.yml',
-    ]
-    const flattenedNames = [
-      ...expectedReleaseAssets,
-      ...namespacedMetadata,
-      ...standardMetadata,
-    ]
+      `EchoFlow-Code-${version}-win-x64.exe`,
+      `EchoFlow-Code-${version}-mac-arm64.dmg`,
+      `EchoFlow-Code-${version}-mac-x64.dmg`,
+      `EchoFlow-Code-${version}-mac-arm64.zip`,
+      `EchoFlow-Code-${version}-mac-x64.zip`,
+    ].sort())
+    expect(listed(publishStep.match(/expected=\(([\s\S]*?)\)/)?.[1]).sort()).toEqual([...releaseAssets].sort())
 
+    const namespacedMetadata = rows.map(row => RELEASE_CHANNELS[row.label].replace('.yml', `-${row.label}.yml`))
+    const flattenedNames = [...releaseAssets, ...namespacedMetadata, ...new Set(Object.values(RELEASE_CHANNELS))]
     expect(new Set(flattenedNames).size).toBe(flattenedNames.length)
-    expect(expectedReleaseAssets.filter((name) => name.endsWith('.dmg')).length).toBe(2)
-    expect(expectedReleaseAssets.filter((name) => name.endsWith('.zip')).length).toBe(2)
-    expect(expectedReleaseAssets.filter((name) => name.endsWith('.AppImage')).length).toBe(2)
-    expect(expectedReleaseAssets.filter((name) => name.endsWith('.deb')).length).toBe(2)
-    expect(expectedReleaseAssets.filter((name) => name.endsWith('.rpm')).length).toBe(2)
-    expect(expectedReleaseAssets.filter((name) => name.endsWith('.exe')).length).toBe(2)
-    expect(expectedReleaseAssets.some((name) => name.includes('-linux-') && name.endsWith('.blockmap'))).toBe(false)
-    for (const platform of ['mac', 'linux', 'win']) {
-      expect(expectedReleaseAssets.some((name) => name.includes(`-${platform}-`))).toBe(true)
-    }
-    expect(standardMetadata).toEqual([
-      'latest-mac.yml',
-      'latest-linux.yml',
-      'latest-linux-arm64.yml',
-      'latest.yml',
-    ])
   })
 
-  test('release workflow validates exact expected release assets and update metadata before publishing', () => {
+  test('renamed release assets still let every installed client pick its own update', () => {
+    const version = JSON.parse(readFileSync('desktop/package.json', 'utf8')).version as string
+    const inputDir = mkdtempSync(join(tmpdir(), 'release-asset-names-in-'))
+    const outputDir = mkdtempSync(join(tmpdir(), 'release-asset-names-out-'))
+    const assetsByRow = new Map<string, string[]>()
+    try {
+      // Each matrix row writes its channel file the way electron-builder does,
+      // then the real publish-job merge combines them.
+      for (const row of releaseMatrix()) {
+        const assets = packagedAssetNames(row, version)
+        assetsByRow.set(row.label, assets)
+        const files = assets.map(url => ({ url, sha512: `${url}-sha512`, size: 1 }))
+        writeFileSync(
+          join(inputDir, RELEASE_CHANNELS[row.label].replace('.yml', `-${row.label}.yml`)),
+          stringify({ version, files, path: files[0].url, sha512: files[0].sha512, releaseDate: '2026-11-02T00:00:00.000Z' }),
+        )
+      }
+      mergeUpdateMetadataArtifacts({ metadataDir: inputDir, outDir: outputDir })
+      const channel = (name: string) =>
+        (parse(readFileSync(join(outputDir, name), 'utf8')).files as Array<{ url: string }>).map(file => file.url)
+      const rowAsset = (label: string, extension: string) =>
+        assetsByRow.get(label)!.find(name => name.endsWith(`.${extension}`))
+
+      const mac = channel('latest-mac.yml')
+      expect(pickMacUpdate(mac, true, 'arm64'), 'Apple Silicon').toBe(rowAsset('macOS-ARM64', 'zip'))
+      expect(pickMacUpdate(mac, true, 'x64'), 'Intel build under Rosetta').toBe(rowAsset('macOS-ARM64', 'zip'))
+      expect(pickMacUpdate(mac, false, 'x64'), 'Intel').toBe(rowAsset('macOS-x64', 'zip'))
+
+      const windows = channel('latest.yml')
+      expect(findUpdateFile(windows, 'exe', 'x64'), 'Windows x64').toBe(rowAsset('Windows-x64', 'exe'))
+      expect(findUpdateFile(windows, 'exe', 'arm64'), 'Windows ARM64').toBe(rowAsset('Windows-ARM64', 'exe'))
+
+      // Linux clients read latest-linux.yml (x64) or latest-linux-arm64.yml.
+      for (const [label, processArch, channelName] of [
+        ['Linux-x64', 'x64', 'latest-linux.yml'],
+        ['Linux-ARM64', 'arm64', 'latest-linux-arm64.yml'],
+      ] as const) {
+        const linux = channel(channelName)
+        expect(findUpdateFile(linux, 'AppImage', processArch, ['rpm', 'deb', 'pacman']), `${label} AppImage`).toBe(rowAsset(label, 'AppImage'))
+        expect(findUpdateFile(linux, 'deb', processArch, ['AppImage', 'rpm', 'pacman']), `${label} deb`).toBe(rowAsset(label, 'deb'))
+        expect(findUpdateFile(linux, 'rpm', processArch, ['AppImage', 'deb', 'pacman']), `${label} rpm`).toBe(rowAsset(label, 'rpm'))
+      }
+    } finally {
+      rmSync(inputDir, { recursive: true, force: true })
+      rmSync(outputDir, { recursive: true, force: true })
+    }
+  })
+
+  test('release workflow validates update metadata before publishing', () => {
     const workflow = readReleaseWorkflow()
     const buildJob = extractJob(workflow, 'build')
     const publishJob = extractJob(workflow, 'publish-release')
-    const expectedFiles = [
-      'EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg',
-      'EchoFlow-Code-${APP_VERSION}-mac-arm64.zip',
-      'EchoFlow-Code-${APP_VERSION}-mac-x64.dmg',
-      'EchoFlow-Code-${APP_VERSION}-mac-x64.zip',
-      'EchoFlow-Code-${APP_VERSION}-linux-x86_64.AppImage',
-      'EchoFlow-Code-${APP_VERSION}-linux-amd64.deb',
-      'EchoFlow-Code-${APP_VERSION}-linux-x86_64.rpm',
-      'EchoFlow-Code-${APP_VERSION}-linux-arm64.AppImage',
-      'EchoFlow-Code-${APP_VERSION}-linux-arm64.deb',
-      'EchoFlow-Code-${APP_VERSION}-linux-aarch64.rpm',
-      'EchoFlow-Code-${APP_VERSION}-win-x64.exe',
-      'EchoFlow-Code-${APP_VERSION}-win-x64.exe.blockmap',
-      'EchoFlow-Code-${APP_VERSION}-win-arm64.exe',
-      'EchoFlow-Code-${APP_VERSION}-win-arm64.exe.blockmap',
-    ]
 
-    for (const file of expectedFiles) {
-      expect(buildJob).toContain(file)
-      expect(publishJob).toContain(file)
-    }
     for (const metadata of ['latest-mac.yml', 'latest-linux.yml', 'latest-linux-arm64.yml', 'latest.yml']) {
       expect(publishJob).toContain(`artifacts/update-metadata-standard/$file`)
       expect(publishJob).toContain(metadata)
     }
-    expect(buildJob).not.toContain('linux-x64.AppImage.blockmap')
-    expect(buildJob).not.toContain('linux-arm64.AppImage.blockmap')
+    expect(buildJob).not.toContain('.blockmap"')
+    expect(publishJob).not.toContain('.blockmap"')
     expect(buildJob).toContain('latest-linux-arm64.yml')
     expect(buildJob).toContain('Missing release assets for %s')
     expect(publishJob).toContain('Missing complete release assets')
@@ -755,7 +1050,7 @@ describe('release desktop workflow', () => {
     expect(desktopPackage.build.mac?.entitlements).toBe('build/entitlements.mac.plist')
     expect(desktopPackage.build.mac?.entitlementsInherit).toBe('build/entitlements.mac.inherit.plist')
     // The Computer Use helper is excluded on purpose. `native/cu-helper/build.sh`
-    // already signed it under the stable identity `dev.echoflow.cu-helper`, and
+    // already signed it under the stable identity `dev.cchaha.cu-helper`, and
     // macOS ties the user's Accessibility and Screen Recording grants to that
     // signing identity — re-signing it here would rotate the identity and
     // silently drop both permissions on every update.
@@ -765,7 +1060,7 @@ describe('release desktop workflow', () => {
     expect(desktopPackage.build.mac?.signIgnore).toEqual([
       '/Contents/Frameworks/.+\\.(?:pak|bin|dat|nib)$',
       '/Contents/Resources/.+\\.(?:asar|pak|bin|dat|icns|png|jpg|jpeg|gif|svg|ttf|woff|woff2)$',
-      'echoflow-code-computer-use\\.app',
+      'cc-haha-computer-use\\.app',
       'claude-sidecar-[^/]+$',
     ])
   })
@@ -776,7 +1071,7 @@ describe('release desktop workflow', () => {
   // `unauthorized_client` — the settings page just said "checking…" forever.
   //
   // The causal chain: `build-sidecars.ts` signs the sidecar with an explicit
-  // `--identifier com.echoflow.code.desktop.sidecar`, because
+  // `--identifier com.claude-code-haha.desktop.sidecar`, because
   // `ClientAttestation.swift` compares that identifier EXACTLY when it walks the
   // helper -> sidecar -> desktop process chain. If electron-builder re-signs the
   // sidecar it drops that flag, and codesign falls back to deriving the
@@ -808,10 +1103,20 @@ describe('release desktop workflow', () => {
     // ClientAttestation.swift's `sidecarIdentifier` has to move with it.
     expect(
       readFileSync('desktop/scripts/sign-identity.ts', 'utf8'),
-    ).toContain("SIDECAR_SIGNING_IDENTIFIER = 'com.echoflow.code.desktop.sidecar'")
+    ).toContain("SIDECAR_SIGNING_IDENTIFIER = 'com.claude-code-haha.desktop.sidecar'")
     expect(
       readFileSync('native/cu-helper/Sources/cu-helper/ClientAttestation.swift', 'utf8'),
-    ).toContain('sidecarIdentifier = "com.echoflow.code.desktop.sidecar"')
+    ).toContain('sidecarIdentifier = "com.claude-code-haha.desktop.sidecar"')
+  })
+
+  test('macOS host identifier remains the exact identity accepted by native attestation', () => {
+    const { build } = JSON.parse(readFileSync('desktop/package.json', 'utf8'))
+    const nativePolicy = readFileSync('native/cu-helper/Sources/cu-helper/ClientAttestation.swift', 'utf8')
+    const desktopIdentifier = nativePolicy.match(/desktopIdentifier = "([^"]+)"/)?.[1]
+    expect(desktopIdentifier).toBeTruthy()
+    expect(build.mac.appId ?? build.appId).toBe(desktopIdentifier)
+    // Rebranding Windows must not rotate the macOS signing/TCC identity.
+    expect(build.appId).toBe('com.echoflow.code.desktop')
   })
 
   test('Windows NSIS installer lets users choose the install directory', () => {
@@ -847,24 +1152,24 @@ describe('release desktop workflow', () => {
     expect(installerHook).toContain('!macro customInit')
     expect(installerHook).toContain('!macro customCheckAppRunning')
     expect(installerHook).toContain('!macro customPageAfterChangeDir')
-    expect(installerHook).toContain('UAC_AsUser_Call Function EchoFlowRecoverLegacy')
+    expect(installerHook).toContain('UAC_AsUser_Call Function CcHahaRecoverLegacy')
     expect(installerHook).toContain('${UAC_IsInnerInstance}')
     expect(installerHook).toContain('recover-legacy-install-data.ps1')
     expect(installerHook).toContain('ReadRegStr $4 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation')
     expect(installerHook).toContain('ReadRegStr $5 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation')
-    expect(installerHook).toContain('Function EchoFlowUninstallerParent')
-    expect(installerHook).toContain('Function EchoFlowFinalInstallDir')
+    expect(installerHook).toContain('Function CcHahaUninstallerParent')
+    expect(installerHook).toContain('Function CcHahaFinalInstallDir')
     expect(installerHook).toContain('HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString')
     expect(installerHook).toContain('HKLM "${UNINSTALL_REGISTRY_KEY}" UninstallString')
     expect(installerHook).toContain('UNINSTALL_REGISTRY_KEY_2')
     expect(installerHook).toContain('ReadEnvStr $2 APPDATA')
     expect(installerHook).toContain('ReadEnvStr $3 USERPROFILE')
     expect(installerHook).toContain('ReadEnvStr $6 CLAUDE_CONFIG_DIR')
-    expect(installerHook).toContain('ReadEnvStr $7 ECHOFLOW_APP_PORTABLE_DIR')
+    expect(installerHook).toContain('ReadEnvStr $7 CC_HAHA_APP_PORTABLE_DIR')
     expect(installerHook).toContain('No registered installation needs legacy data recovery')
-    expect(installerHook).toContain('Var echoFlowPerUserInstallLocation')
-    expect(installerHook).toContain('Var echoFlowPerMachineInstallLocation')
-    expect(installerHook).toMatch(/!macro EchoFlowRunLegacyRecovery[\s\S]*ReadRegStr \$echoFlowPerUserInstallLocation[\s\S]*\$echoFlowPerUserUninstallString == ""[\s\S]*No registered installation needs legacy data recovery[\s\S]*Call EchoFlowRecoverLegacy/)
+    expect(installerHook).toContain('Var ccHahaPerUserInstallLocation')
+    expect(installerHook).toContain('Var ccHahaPerMachineInstallLocation')
+    expect(installerHook).toMatch(/!macro CcHahaRunLegacyRecovery[\s\S]*ReadRegStr \$ccHahaPerUserInstallLocation[\s\S]*\$ccHahaPerUserUninstallString == ""[\s\S]*No registered installation needs legacy data recovery[\s\S]*Call CcHahaRecoverLegacy/)
     expect(installerHook).toContain('SetErrorLevel 20')
     expect(installerHook).toContain('/SD IDOK')
     expect(installerHook).toContain('Quit')
@@ -882,7 +1187,7 @@ describe('release desktop workflow', () => {
     expect(recoveryHelper).toContain('robocopy.exe')
     expect(recoveryHelper).not.toMatch(/\/XC|\/XN|\/XO/)
     expect(recoveryHelper).toContain('Multiple distinct legacy data sources')
-    expect(recoveryHelper).toContain('Active CLAUDE_CONFIG_DIR is managed outside EchoFlow Code')
+    expect(recoveryHelper).toContain('Active CLAUDE_CONFIG_DIR is managed outside Claude Code Haha')
     expect(recoveryHelper).toContain('Test-LexicalPathAtOrBelow')
     expect(recoveryHelper).toContain('-SharedInstallDirs @($PerMachineInstallDir)')
     expect(normalizedRecoveryHelper).toContain("function Invoke-LegacyRecovery {\n  param(\n    [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$InstallDirs")
@@ -923,9 +1228,9 @@ describe('release desktop workflow', () => {
     expect(installerSmoke).toContain('$Stage completed successfully.')
     expect(installerSmoke).toContain('Fresh install did not create the application executable')
     expect(installerSmoke).toContain('Reinstall removed the application executable')
-    expect(installerSmoke).toContain("'中文 安装目录\\EchoFlow Code'")
+    expect(installerSmoke).toContain("'中文 安装目录\\Claude Code Haha'")
     expect(installerSmoke).toContain('Invoke-InstalledApplicationSmoke')
-    expect(installerSmoke).toContain('ECHOFLOW_ELECTRON_WINDOW_SMOKE_LOG')
+    expect(installerSmoke).toContain('CC_HAHA_ELECTRON_WINDOW_SMOKE_LOG')
     expect(installerSmoke).toContain('desktop-server-state.json')
     expect(installerSmoke).toContain('"reason":"after-final-show"')
     expect(installerSmoke).toContain('"http://127.0.0.1:$port/health"')
@@ -939,167 +1244,5 @@ describe('release desktop workflow', () => {
     expect(compiledSidecarSmoke).toContain("'中文 安装目录'")
     expect(compiledSidecarSmoke).toContain("'中文 用户目录'")
     expect(compiledSidecarSmoke).toContain('copyFile(builtExecutable, executable)')
-  })
-
-  test('official release dispatch requires an explicit release tag', () => {
-    const workflow = readReleaseWorkflow()
-
-    // Release Please dispatches the publisher by tag, because a tag push made
-    // with GITHUB_TOKEN does not start a workflow run. The input stays
-    // optional so a maintainer draft run can omit it.
-    expect(workflow).toContain('release_tag:')
-    expect(workflow).toContain("description: 'Release tag to publish (vX.Y.Z)'")
-    expect(workflow).toContain("default: ''")
-  })
-
-  test('official release dispatch checks out the requested tag', () => {
-    const workflow = readReleaseWorkflow()
-    const contractJob = extractJob(workflow, 'release-contract')
-    const buildJob = extractJob(workflow, 'build')
-
-    expect(contractJob).toContain('ref: ${{ inputs.release_sha || github.sha }}')
-    expect(buildJob).toContain('ref: ${{ inputs.release_sha || github.sha }}')
-  })
-
-  test('official release dispatch requires the tag to match the packaged version', () => {
-    const workflow = readReleaseWorkflow()
-    const contractJob = extractJob(workflow, 'release-contract')
-    const buildJob = extractJob(workflow, 'build')
-
-    // A tag that does not match the packaged version must fail the run
-    // instead of publishing assets under the wrong version.
-    expect(contractJob).toContain('Release tag must match')
-    expect(buildJob).toContain('Release tag must match')
-  })
-
-  test('official release dispatch rejects a malformed release tag', () => {
-    const workflow = readReleaseWorkflow()
-    const contractJob = extractJob(workflow, 'release-contract')
-
-    expect(contractJob).toContain('Invalid release tag')
-    expect(contractJob).toMatch(/v\\d\+\\\.\\d\+\\\.\\d\+|v\[0-9\]/)
-  })
-
-  test('only a trusted reusable call or tag push can publish and sync; manual dispatch stays draft', () => {
-    const workflow = readReleaseWorkflow()
-    const publishJob = extractJob(workflow, 'publish-release')
-    const syncJob = extractJob(workflow, 'site-release-sync')
-
-    expect(publishJob).toContain("inputs.official_release == true || (github.event_name == 'workflow_dispatch' && inputs.draft == true)")
-    expect(syncJob).toContain("inputs.official_release == true")
-    expect(workflow).toContain("default: true")
-    expect(publishJob).not.toContain("github.event_name == 'workflow_dispatch' && inputs.draft == false")
-  })
-
-  test('manual draft publisher remains isolated from trusted release publication', () => {
-    const workflow = readReleaseWorkflow()
-    const publishJob = extractJob(workflow, 'publish-release')
-
-    expect(publishJob).toContain("if: github.event_name == 'workflow_dispatch' && inputs.draft == true")
-    expect(publishJob).not.toContain("github.event_name == 'workflow_dispatch' && inputs.draft == false")
-  })
-
-  test('official release uses a reusable workflow call from the trusted automatic Release Please run', () => {
-    const workflow = readReleaseWorkflow()
-    const parsed = parse(workflow)
-    const contractJob = extractJob(workflow, 'release-contract')
-
-    expect(parsed.on.workflow_call.inputs).toMatchObject({
-      official_release: { required: false, type: 'boolean', default: false },
-      release_tag: { required: false, type: 'string' },
-      release_sha: { required: false, type: 'string' },
-      draft: { required: false, type: 'boolean', default: true },
-    })
-    expect(contractJob).toContain("github.event_name == 'push'")
-    expect(contractJob).toContain('github.workflow_ref')
-    expect(contractJob).toContain('.github/workflows/release-please.yml@refs/heads/main')
-    expect(contractJob).toContain('inputs.official_release == true')
-    expect(contractJob).toContain('inputs.release_sha')
-    expect(workflow).toContain('release-please.yml')
-  })
-
-  test('reusable official call does not depend on the caller event name', () => {
-    const workflow = readReleaseWorkflow()
-
-    // 被 workflow_call 调用时 github.event_name 沿用调用方的 push，ref_name 是 main。
-    expect(workflow).not.toContain("github.event_name == 'workflow_call'")
-    expect(workflow).not.toContain("github.event_name != 'push'")
-    expect(workflow).toContain("github.event_name == 'push' && inputs.release_tag == ''")
-  })
-
-  test('all release jobs use immutable release SHA and verify peeled tag commit', () => {
-    const workflow = readReleaseWorkflow()
-
-    for (const jobName of [
-      'release-contract',
-      'verify-governance',
-      'verify-runtime',
-      'verify-desktop',
-      'build',
-      'publish-release',
-    ]) {
-      const job = extractJob(workflow, jobName)
-      expect(job, jobName).toContain('ref: ${{ inputs.release_sha || github.sha }}')
-    }
-    expect(extractJob(workflow, 'release-contract')).toContain('^{commit}')
-    expect(extractJob(workflow, 'release-contract')).toContain("if: github.event_name != 'workflow_dispatch' || inputs.release_tag != ''")
-  })
-
-  test('official publisher pins the existing draft release and isolates sync recovery', () => {
-    const workflow = readReleaseWorkflow()
-    const publishJob = extractJob(workflow, 'publish-release')
-    const syncJob = extractJob(workflow, 'site-release-sync')
-
-    expect(publishJob).toContain('release ID')
-    expect(publishJob).toContain('isDraft')
-    expect(publishJob).toContain('Verify release record after upload')
-    expect(publishJob).toContain('RELEASE_ID')
-    expect(publishJob).toContain("if: github.event_name != 'workflow_dispatch' || inputs.release_tag != ''")
-    expect(syncJob).not.toContain('softprops/action-gh-release')
-    expect(syncJob).not.toContain('gh release edit')
-  })
-
-  test('official reusable calls must explicitly request a non-draft release', () => {
-    const workflow = readReleaseWorkflow()
-    const contractStep = extractStep(workflow, 'Validate official release authorization')
-
-    expect(contractStep).toContain('DRAFT_RELEASE: ${{ inputs.draft == true }}')
-    expect(contractStep).toContain('DRAFT_RELEASE')
-    expect(contractStep).toContain('!= "false"')
-  })
-
-  test('existing draft assets are uploaded through the verified release ID', () => {
-    const workflow = readReleaseWorkflow()
-    const publishJob = extractJob(workflow, 'publish-release')
-
-    expect(publishJob).toContain('Publish existing GitHub release by ID')
-    expect(publishJob).toContain("if: steps.release.outputs.release_id != ''")
-    expect(publishJob).toContain('releases/${RELEASE_ID}/assets?name=')
-    expect(publishJob).toContain('--hostname uploads.github.com')
-    expect(publishJob).toContain('DELETE')
-    expect(publishJob).toContain('softprops/action-gh-release@v2')
-    expect(publishJob).toContain("if: steps.release.outputs.release_id == ''")
-  })
-
-  test('Release Please caller uses an immutable action and preserves the permissions chain', () => {
-    const workflow = readFileSync('.github/workflows/release-please.yml', 'utf8')
-    const parsed = parse(workflow)
-    const publishJob = extractJob(workflow, 'publish-release')
-    const actionPin = workflow.match(/uses: googleapis\/release-please-action@([0-9a-f]{40})/)
-
-    expect(actionPin?.[1]).toBe('5c625bfb5d1ff62eadeeb3772007f7f66fdcf071')
-    expect(parsed.jobs['publish-release'].permissions).toEqual({
-      actions: 'read',
-      contents: 'write',
-      pages: 'write',
-      'id-token': 'write',
-    })
-    expect(publishJob).toContain('draft: false')
-    expect(workflow).toContain("if: needs.release-please.outputs.release_created == 'true'")
-    expect(workflow).toContain("release_created: ${{ steps.release.outputs['desktop--release_created'] }}")
-    expect(workflow).toContain("release_sha: ${{ steps.release.outputs['desktop--sha'] }}")
-    expect(workflow).toContain("tag_name: ${{ steps.release.outputs['desktop--tag_name'] }}")
-    expect(workflow).toContain('EXPECTED_SHA: ${{ needs.release-please.outputs.release_sha }}')
-    expect(workflow).toContain('refs/tags/${RELEASE_TAG}^{commit}')
   })
 })

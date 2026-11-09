@@ -10,6 +10,7 @@ export type InstallPrePushHookOptions = {
   sourcePath?: string
   hookPath?: string
   force?: boolean
+  allowCliCoreChange?: boolean
   allowCoverageBaselineChange?: boolean
   allowMissingTests?: boolean
   liveProviderModels?: string[]
@@ -69,6 +70,10 @@ export function installPrePushHook(options: InstallPrePushHookOptions = {}): Ins
   copyFileSync(sourcePath, hookPath)
   chmodSync(hookPath, 0o755)
 
+  if (options.allowCliCoreChange) {
+    gitConfig(rootDir, 'quality.allowCliCoreChange', 'true')
+  }
+
   if (options.allowCoverageBaselineChange) {
     gitConfig(rootDir, 'quality.allowCoverageBaselineChange', 'true')
   }
@@ -99,6 +104,7 @@ export function installPrePushHook(options: InstallPrePushHookOptions = {}): Ins
 
 type ParsedArgs = {
   force: boolean
+  allowCliCoreChange: boolean
   allowCoverageBaselineChange: boolean
   allowMissingTests: boolean
   liveProviderModels: string[]
@@ -110,6 +116,7 @@ type ParsedArgs = {
 function parseArgs(argv: string[]): ParsedArgs {
   const parsed: ParsedArgs = {
     force: false,
+    allowCliCoreChange: false,
     allowCoverageBaselineChange: false,
     allowMissingTests: false,
     liveProviderModels: [],
@@ -122,6 +129,8 @@ function parseArgs(argv: string[]): ParsedArgs {
 
     if (arg === '--force') {
       parsed.force = true
+    } else if (arg === '--allow-cli-core-change') {
+      parsed.allowCliCoreChange = true
     } else if (arg === '--allow-coverage-baseline-change') {
       parsed.allowCoverageBaselineChange = true
     } else if (arg === '--allow-missing-tests') {
@@ -155,12 +164,12 @@ function printHelp() {
 
 Usage:
   bun run hooks:install [-- --force] [-- --no-live] [-- --live-provider-model <selector>] [-- --live-mode smoke|baseline]
-  bun run hooks:install -- --allow-coverage-baseline-change
+  bun run hooks:install -- --allow-cli-core-change --allow-coverage-baseline-change
 
 Examples:
   bun run hooks:install
   bun run hooks:install -- --no-live
-  bun run hooks:install -- --allow-coverage-baseline-change
+  bun run hooks:install -- --allow-cli-core-change --allow-coverage-baseline-change
 
 The installed hook never blocks git push. Run quality gates manually with
 bun run quality:push, bun run verify, or the relevant narrow check.
@@ -178,6 +187,7 @@ if (import.meta.main) {
 
     const result = installPrePushHook({
       force: args.force,
+      allowCliCoreChange: args.allowCliCoreChange,
       allowCoverageBaselineChange: args.allowCoverageBaselineChange,
       allowMissingTests: args.allowMissingTests,
       liveProviderModels: args.liveProviderModels,
@@ -197,7 +207,7 @@ if (import.meta.main) {
       console.log('Live model gates remain manual; use bun run quality:providers and bun run quality:smoke when needed.')
     }
 
-    if (args.allowCoverageBaselineChange || args.allowMissingTests) {
+    if (args.allowCliCoreChange || args.allowCoverageBaselineChange || args.allowMissingTests) {
       console.log('Legacy local maintainer override config was updated for this clone.')
     }
   } catch (error) {

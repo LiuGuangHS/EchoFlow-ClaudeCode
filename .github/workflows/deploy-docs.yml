@@ -30,12 +30,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
@@ -57,10 +57,7 @@ jobs:
         with:
           bun-version-file: package.json
 
-      # Mirror the update channel files into site/dist/update/ and write
-      # site/dist/download/manifest.json before upload, so a failed mirror
-      # fails the workflow instead of silently deploying without them.
-      # Without a release_tag (ordinary docs deploys) this re-mirrors 'latest'.
+      # Mirror before upload so a failed mirror cannot deploy an incomplete site.
       - name: Mirror update metadata and build download manifest
         env:
           GH_TOKEN: ${{ github.token }}

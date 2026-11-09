@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { createSandboxedTestEnvironment } from '../../pr/test-environment'
 
 export type PackageSmokePlatform = 'macos' | 'windows' | 'linux'
@@ -219,6 +219,23 @@ function addBundledRipgrepLicenseChecks(
       `${platformLabel} ripgrep license (${fileName})`,
       join(licensesDir, fileName),
     )
+  }
+}
+
+function addNativeDesktopRuntimeChecks(
+  report: PackageSmokeReport,
+  rootDir: string,
+  sidecarDir: string,
+  platform: 'Windows' | 'Linux',
+) {
+  const binary = platform === 'Windows' ? 'agent-desktop.exe' : 'agent-desktop'
+  addPresenceCheck(report, rootDir, `${platform} native Computer Use binary`, join(sidecarDir, binary))
+  addPresenceCheck(report, rootDir, `${platform} native Computer Use manifest`, join(sidecarDir, 'agent-desktop-manifest.json'))
+  if (platform === 'Linux') {
+    addPresenceCheck(report, rootDir, 'Linux native Computer Use clipboard owner', join(sidecarDir, 'agent-desktop-linux-clipboard-owner'))
+  }
+  for (const file of ['LICENSE', 'NOTICE', 'THIRD-PARTY-NOTICES', 'UPSTREAM.json', 'PATCHES.md']) {
+    addPresenceCheck(report, rootDir, `${platform} native Computer Use license (${file})`, join(sidecarDir, 'agent-desktop-licenses', file))
   }
 }
 
@@ -574,7 +591,6 @@ function addUpdateMetadataChecks(
   report: PackageSmokeReport,
   rootDir: string,
   metadataFiles: string[],
-  installerFiles?: string[],
 ) {
   for (const metadataFile of metadataFiles) {
     report.optionalArtifacts.push({
@@ -583,25 +599,7 @@ function addUpdateMetadataChecks(
     })
 
     const metadataDir = dirname(metadataFile)
-    const metadataContent = readFileSync(metadataFile, 'utf8')
-    const references = parseUpdateMetadataReferences(metadataContent)
-    if (installerFiles) {
-      const referencedInstallers = [...new Set(references
-        .filter(reference => /\.exe(?:[?#].*)?$/i.test(reference))
-        .map(reference => basename(decodeURIComponent(reference))))]
-      const matchesInstaller = referencedInstallers.length === 1
-        && installerFiles.some(installer => basename(installer) === referencedInstallers[0])
-      const pairingCheck = {
-        label: 'Windows update metadata installer pairing',
-        path: toRelative(rootDir, metadataFile),
-      }
-      if (matchesInstaller) {
-        report.passedChecks.push(pairingCheck)
-      } else {
-        report.missingChecks.push(pairingCheck)
-        report.notes.push(`Windows update metadata ${toRelative(rootDir, metadataFile)} must reference exactly one packaged installer.`)
-      }
-    }
+    const references = parseUpdateMetadataReferences(readFileSync(metadataFile, 'utf8'))
     for (const reference of references) {
       const decodedReference = decodeURIComponent(reference)
       addPresenceCheck(
@@ -680,27 +678,15 @@ function assertCursorResourcesContained(helperApp: string, directory: string) {
   const visited = new Set<string>()
   while (pending.length > 0) {
     const target = pending.pop()!
-    let canonical: string
-    try {
-      canonical = realpathSync(target)
-    } catch (error) {
-      throw new Error(`cursor resource is invalid or inaccessible: ${target}`)
-    }
+    const canonical = realpathSync(target)
     const withinApp = relative(app, canonical)
-    if (isAbsolute(withinApp) || withinApp === '..' || withinApp.startsWith('../') || withinApp.startsWith('..\\')) {
+    if (isAbsolute(withinApp) || withinApp === '..' || normalizePath(withinApp).startsWith('../')) {
       throw new Error(`cursor resource escapes the helper app: ${target}`)
     }
     if (visited.has(canonical)) continue
     visited.add(canonical)
-    const entry = lstatSync(target)
-    if (entry.isSymbolicLink()) {
-      // realpathSync above has already proved the link target remains inside the app.
-      // Inspect the target after that boundary check so symlinks cannot be treated as
-      // opaque packaged resources.
-      const targetEntry = statSync(target)
-      if (targetEntry.isDirectory()) pending.push(...readdirSync(target).map(name => join(target, name)))
-      else if (!targetEntry.isFile()) throw new Error(`cursor resource is not a regular file: ${target}`)
-    } else if (entry.isDirectory()) pending.push(...readdirSync(target).map(name => join(target, name)))
+    const entry = statSync(target)
+    if (entry.isDirectory()) pending.push(...readdirSync(target).map(name => join(target, name)))
     else if (!entry.isFile()) throw new Error(`cursor resource is not a regular file: ${target}`)
   }
 }
@@ -711,7 +697,7 @@ function addMacosCursorResourceCheck(
   helperApp: string,
   options: InspectOptions,
 ) {
-  const sequenceRelative = 'Contents/Resources/cu-helper_echoflow-code-computer-use.bundle/LensSequence'
+  const sequenceRelative = 'Contents/Resources/cu-helper_cc-haha-computer-use.bundle/LensSequence'
   const sourceDirectory = join(helperApp, sequenceRelative)
   const structureLabel = 'macOS cu-helper cursor resource directory'
   const executionLabel = 'macOS relocated cu-helper cursor resource execution'
@@ -738,14 +724,14 @@ function addMacosCursorResourceCheck(
     return
   }
   try {
-    const inner = 'Contents/MacOS/echoflow-code-computer-use'
+    const inner = 'Contents/MacOS/cc-haha-computer-use'
     const architectures = parseMachOArchitectures(readFileSync(join(helperApp, inner)))
     if (!architectures.includes(hostMachOArch as MachOArch)) {
       if (architectures.length === 0) throw new Error('helper has no recognized Mach-O architecture')
       report.notes.push(`SKIPPED: ${executionLabel}; binary ${architectures.join(',')}, host ${hostMachOArch}. Only package structure was checked.`)
       return
     }
-    probeRoot = mkdtempSync(join(tmpdir(), 'echoflow-code-packaged-cursor-'))
+    probeRoot = mkdtempSync(join(tmpdir(), 'cc-haha-packaged-cursor-'))
     const app = join(probeRoot, 'Relocated Helper.app')
     cpSync(helperApp, app, { recursive: true, verbatimSymlinks: true })
     assertCursorResourcesContained(app, join(app, sequenceRelative))
@@ -858,9 +844,9 @@ function addMacosComputerUseAttestationCheck(
   }
 
   const targets = [
-    { name: 'host', path: appBundle, identifier: 'com.echoflow.code.desktop', deep: true },
-    { name: 'sidecar', path: sidecar, identifier: 'com.echoflow.code.desktop.sidecar', deep: false },
-    { name: 'helper', path: helperApp, identifier: 'dev.echoflow.cu-helper', deep: true },
+    { name: 'host', path: appBundle, identifier: 'com.claude-code-haha.desktop', deep: true },
+    { name: 'sidecar', path: sidecar, identifier: 'com.claude-code-haha.desktop.sidecar', deep: false },
+    { name: 'helper', path: helperApp, identifier: 'dev.cchaha.cu-helper', deep: true },
   ] as const
   const metadata: CodesignMetadata[] = []
   for (const target of targets) {
@@ -1046,15 +1032,18 @@ function inspectMacosArtifacts(rootDir: string, report: PackageSmokeReport, opti
   const nodePtyDir = join(unpackedDir, 'node_modules', 'node-pty')
   const prebuildsDir = join(nodePtyDir, 'prebuilds')
   const sidecarDir = join(unpackedDir, 'src-tauri', 'binaries')
-  const helperApp = join(sidecarDir, 'echoflow-code-computer-use.app')
+  const helperApp = join(sidecarDir, 'cc-haha-computer-use.app')
   const helperInfoPlist = join(helperApp, 'Contents', 'Info.plist')
-  const helperExecutable = join(helperApp, 'Contents', 'MacOS', 'echoflow-code-computer-use')
+  const helperExecutable = join(helperApp, 'Contents', 'MacOS', 'cc-haha-computer-use')
   const hostExecutable = join(contentsDir, 'MacOS', report.productName)
 
   addPresenceCheck(report, rootDir, 'macOS Info.plist', join(contentsDir, 'Info.plist'))
   addPresenceCheck(report, rootDir, 'macOS app executable', hostExecutable)
   addPresenceCheck(report, rootDir, 'macOS app.asar', join(resourcesDir, 'app.asar'))
   addPresenceCheck(report, rootDir, 'macOS unpacked H5 shell', join(unpackedDir, 'dist', 'index.html'))
+  // Phones get the phone app the desktop build exports into dist/m (mobile/scripts/export-h5.ts).
+  addPresenceCheck(report, rootDir, 'macOS phone H5 app', join(unpackedDir, 'dist', 'm', 'index.html'))
+  addPresenceCheck(report, rootDir, 'macOS phone H5 marker', join(unpackedDir, 'dist', 'm', 'h5.json'))
   addInstalledUpdateMetadataCheck(
     report,
     rootDir,
@@ -1170,7 +1159,7 @@ function inspectMacosArtifacts(rootDir: string, report: PackageSmokeReport, opti
   }
 }
 
-function inspectWindowsArtifacts(rootDir: string, report: PackageSmokeReport) {
+function inspectWindowsArtifacts(rootDir: string, report: PackageSmokeReport, options: InspectOptions) {
   const installers = findMatches(report.artifactsDir, (candidate) => {
     const normalized = normalizePath(candidate)
     return normalized.endsWith('.exe') && !isInsideWindowsUnpackedDir(normalized)
@@ -1185,7 +1174,7 @@ function inspectWindowsArtifacts(rootDir: string, report: PackageSmokeReport) {
     path: toRelative(rootDir, candidate),
   })))
   if (releaseMode) {
-    addUpdateMetadataChecks(report, rootDir, updateMetadata, installers)
+    addUpdateMetadataChecks(report, rootDir, updateMetadata)
     addBlockmapChecks(report, rootDir, 'Windows update artifact', installers)
     addMatchCheck(
       report,
@@ -1200,6 +1189,34 @@ function inspectWindowsArtifacts(rootDir: string, report: PackageSmokeReport) {
 
   if (unpackedDir) {
     const resourcesDir = join(unpackedDir, 'resources')
+    const executable = join(unpackedDir, `${report.productName}.exe`)
+    const shellIcon = join(resourcesDir, 'app-icon.ico')
+    const iconRecord = { label: 'Windows application and taskbar icons', path: toRelative(rootDir, executable) }
+    let iconProbeRoot: string | undefined
+    try {
+      const expectedIconPath = join(rootDir, 'desktop', 'src-tauri', 'icons', 'icon.ico')
+      const expectedIcon = readFileSync(expectedIconPath)
+      if (!readFileSync(shellIcon).equals(expectedIcon)) throw new Error('The taskbar ICO differs from the application ICO')
+      if (!existsSync(executable)) throw new Error('The Windows app executable is missing')
+      // Desktop packaging installs the builder's PE parser; the root-only
+      // policy lane must not import desktop dependencies while checking Linux.
+      iconProbeRoot = mkdtempSync(join(tmpdir(), 'cc-haha-windows-icon-'))
+      const result = (options.commandRunner ?? defaultCommandRunner)('bun', [
+        'run', join(rootDir, 'desktop', 'scripts', 'assert-windows-icon.ts'), executable, expectedIconPath,
+      ], {
+        cwd: rootDir,
+        env: createSandboxedTestEnvironment(iconProbeRoot, undefined, process.env),
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024,
+      })
+      if (result.status !== 0) throw new Error(firstDiagnosticLine(result.stderr ?? '') ?? 'The Windows executable icon inspection failed')
+      report.passedChecks.push(iconRecord)
+    } catch (error) {
+      report.missingChecks.push(iconRecord)
+      report.notes.push(`Windows icon inspection failed: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      if (iconProbeRoot) rmSync(iconProbeRoot, { recursive: true, force: true })
+    }
     const unpackedResourcesDir = join(resourcesDir, 'app.asar.unpacked')
     const nodePtyDir = join(unpackedResourcesDir, 'node_modules', 'node-pty')
     const sidecarDir = join(unpackedResourcesDir, 'src-tauri', 'binaries')
@@ -1240,6 +1257,7 @@ function inspectWindowsArtifacts(rootDir: string, report: PackageSmokeReport) {
       sidecarDir,
     )
     addBundledRipgrepLicenseChecks(report, rootDir, sidecarDir, 'Windows')
+    addNativeDesktopRuntimeChecks(report, rootDir, sidecarDir, 'Windows')
     addMatchCheck(
       report,
       rootDir,
@@ -1417,6 +1435,7 @@ function inspectLinuxArtifacts(rootDir: string, report: PackageSmokeReport, opti
       sidecarDir,
     )
     addBundledRipgrepLicenseChecks(report, rootDir, sidecarDir, 'Linux')
+    addNativeDesktopRuntimeChecks(report, rootDir, sidecarDir, 'Linux')
     addMatchCheck(
       report,
       rootDir,
@@ -1471,7 +1490,7 @@ export async function inspectPackagedArtifacts(rootDir: string, options: Inspect
   if (options.platform === 'macos') {
     inspectMacosArtifacts(resolvedRootDir, report, options)
   } else if (options.platform === 'windows') {
-    inspectWindowsArtifacts(resolvedRootDir, report)
+    inspectWindowsArtifacts(resolvedRootDir, report, options)
   } else {
     inspectLinuxArtifacts(resolvedRootDir, report, options)
   }

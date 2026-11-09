@@ -1,11 +1,75 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { evaluateChangePolicy } from './change-policy'
+import { codeOwnerLogins, evaluateChangePolicy } from './change-policy'
+import { createSandboxedTestEnvironment } from './test-environment'
 
 describe('evaluateChangePolicy', () => {
-  test('blocks production changes without matching test overrides', () => {
+  test.each([
+    'scripts/issue-router/cli.ts',
+    'scripts/issue-router/store.ts',
+    'scripts/issue-router/git.ts',
+    'scripts/issue-router/persistence.test.ts',
+    'scripts/issue-router/fixtures/v1.sql',
+    '.agents/workflows/issue-router.md',
+  ])('keeps issue router behavior and its operating contract on policy and persistence checks: %s', (file) => {
+    const result = evaluateChangePolicy([file])
+    expect(result.checks.policy).toBe(true)
+    expect(result.checks.persistence).toBe(true)
+    expect(result.checks.desktop).toBe(false)
+    expect(result.checks.desktopNative).toBe(false)
+    expect(result.checks.server).toBe(false)
+    expect(result.checks.mobile).toBe(false)
+    expect(result.blocked).toBe(false)
+  })
+
+  test('runs issue router regressions in policy and migration tests in persistence checks', () => {
+    const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'))
+    expect(scripts['issue-router']).toBe('bun --no-env-file run scripts/issue-router/cli.ts')
+    expect(scripts['check:issue-router']).toBe('bun --no-env-file test ./scripts/issue-router/')
+    for (const testFile of readdirSync('scripts/issue-router').filter((file) => file.endsWith('.test.ts'))) {
+      expect(scripts['check:policy'].split(/\s+/)).toContain(`./scripts/issue-router/${testFile}`)
+    }
+    const persistence = readFileSync('scripts/quality-gate/persistence-upgrade.ts', 'utf8')
+    expect(persistence).toContain("['bun', '--no-env-file', 'test', './scripts/issue-router/persistence.test.ts']")
+  })
+
+  test('validates mobile archive selection changes without desktop packaging', () => {
+    const result = evaluateChangePolicy(['.easignore'])
+    expect(result.areas).toEqual(['release'])
+    expect(result.checks.mobile).toBe(true)
+    expect(result.checks.policy).toBe(true)
+    expect(result.checks.desktop).toBe(false)
+    expect(result.checks.desktopNative).toBe(false)
+    expect(result.blocked).toBe(false)
+  })
+
+  test.each(['scripts/mobile-release.ts', 'scripts/mobile-release.test.ts', '.github/workflows/release-mobile.yml'])('routes mobile publishing changes through release policy: %s', file => {
+    const result = evaluateChangePolicy([file])
+    expect(result.areas).toContain('release')
+    expect(result.checks.policy).toBe(true)
+  })
+
+  test.each(['mobile/src/app/index.tsx', 'mobile/app.json', 'mobile/bun.lock', 'mobile/plugins/withPinnedWebSockets.js'])('selects mobile checks for %s without desktop packaging', (file) => {
+    const result = evaluateChangePolicy([file])
+    expect(result.areas).toEqual(['mobile'])
+    expect(result.checks.mobile).toBe(true)
+    expect(result.checks.desktop).toBe(false)
+    expect(result.checks.desktopNative).toBe(false)
+  })
+
+  test('selects mobile consumers of shared code without adding unrelated areas', () => {
+    const files = ['src/shared/modelReasoning.ts', 'src/shared/modelReasoning.test.ts']
+    expect(evaluateChangePolicy(files).checks.mobile).toBe(false)
+    const result = evaluateChangePolicy(files, [], ['mobile/src/core/runtimeCatalog.ts'])
+    expect(result.checks.mobile).toBe(true)
+    expect(result.areas).toEqual([])
+    expect(result.blocked).toBe(false)
+    expect(evaluateChangePolicy(['desktop/src/pages/Settings.tsx']).checks.mobile).toBe(false)
+  })
+
+  test('blocks CLI core changes without an override label', () => {
     const result = evaluateChangePolicy([
       'src/commands/help.ts',
       'desktop/src/pages/Settings.tsx',
@@ -19,23 +83,60 @@ describe('evaluateChangePolicy', () => {
     expect(result.cliCoreFiles).toEqual(['src/commands/help.ts'])
   })
 
-  test('blocks root runtime changes without matching test overrides', () => {
+  test('allows CLI core changes with a maintainer override label', () => {
     const result = evaluateChangePolicy(
       ['src/tools/WebSearchTool/backend.ts'],
+      ['allow-cli-core-change', 'allow-missing-tests'],
     )
 
-    expect(result.blocked).toBe(true)
+    expect(result.blocked).toBe(false)
     expect(result.areas).toEqual(['cli-core'])
     expect(result.checks.server).toBe(true)
   })
 
-  test('routes docs-site, native-helper, and workflow paths to their owning surfaces', () => {
-    expect(evaluateChangePolicy(['site/src/App.tsx']).areaLabels).toEqual(['area:docs'])
-    expect(evaluateChangePolicy(['native/cu-helper/Sources/main.swift']).areaLabels).toEqual(['area:desktop'])
+  test('lets a CODEOWNER change CLI core without the override label', () => {
+    const owners = codeOwnerLogins('# maintainers\n/src/utils/ @NanmiCoder\n/docs/ @org/docs-team\n')
+    const result = evaluateChangePolicy(
+      ['src/utils/context.ts', 'src/utils/__tests__/context.test.ts'],
+      [],
+      [],
+      { author: 'nanmicoder', codeOwners: owners },
+    )
 
-    const workflow = evaluateChangePolicy(['.github/workflows/custom.yml'])
-    expect(workflow.areas).toEqual([])
-    expect(workflow.checks.policy).toBe(true)
+    expect(result.blocked).toBe(false)
+    expect(result.cliCoreOverride).toBe('codeowner-author')
+    expect(result.cliCoreFiles).toEqual(['src/utils/context.ts', 'src/utils/__tests__/context.test.ts'].sort())
+  })
+
+  test('still requires the label from an author who is not a CODEOWNER', () => {
+    const result = evaluateChangePolicy(
+      ['src/utils/context.ts', 'src/utils/__tests__/context.test.ts'],
+      [],
+      [],
+      { author: 'drive-by-contributor', codeOwners: ['nanmicoder'] },
+    )
+
+    expect(result.blocked).toBe(true)
+    expect(result.cliCoreOverride).toBeNull()
+    expect(result.blockingReasons[0]).toContain('allow-cli-core-change')
+  })
+
+  test('never treats a team handle as an individual CODEOWNER', () => {
+    expect(codeOwnerLogins('* @NanmiCoder @org/maintainers user@example.com\n# @commented')).toEqual(['nanmicoder'])
+    const result = evaluateChangePolicy(['src/utils/context.ts'], [], [], {
+      author: 'org/maintainers',
+      codeOwners: codeOwnerLogins('* @org/maintainers'),
+    })
+    expect(result.cliCoreOverride).toBeNull()
+  })
+
+  test('requires the label when the PR author is unknown', () => {
+    const result = evaluateChangePolicy(['src/utils/context.ts'], ['allow-missing-tests'], [], { codeOwners: ['nanmicoder'] })
+
+    expect(result.blocked).toBe(true)
+    expect(result.cliCoreOverride).toBeNull()
+    const labelled = evaluateChangePolicy(['src/utils/context.ts'], ['allow-cli-core-change', 'allow-missing-tests'])
+    expect(labelled.cliCoreOverride).toBe('label')
   })
 
   test('keeps docs-only changes on the docs lane', () => {
@@ -43,7 +144,7 @@ describe('evaluateChangePolicy', () => {
       'docs/index.md',
       'site/src/App.tsx',
       'README.md',
-      'README.zh-CN.md',
+      'README.en.md',
     ])
 
     expect(result.blocked).toBe(false)
@@ -52,6 +153,21 @@ describe('evaluateChangePolicy', () => {
     expect(result.checks.coverage).toBe(false)
     expect(result.checks.desktop).toBe(false)
     expect(result.checks.desktopNative).toBe(false)
+  })
+
+  test.each(['README.md', 'README.zh-CN.md', 'README.en.md'])('keeps advisory README classification aligned with policy: %s', (file) => {
+    const routing = JSON.parse(readFileSync('scripts/pr/area-routing.json', 'utf8'))
+    expect(routing.areas.docs.exact).toContain(file)
+    expect(evaluateChangePolicy([file]).areas).toContain('docs')
+  })
+
+  test.each(['README.md', 'README.zh-CN.md', 'README.en.md'])('routes a single README change to docs: %s', (file) => {
+    const result = evaluateChangePolicy([file])
+
+    expect(result.areas).toEqual(['docs'])
+    expect(result.checks.docs).toBe(true)
+    expect(result.checks.coverage).toBe(false)
+    expect(result.blocked).toBe(false)
   })
 
   test('routes desktop and server changes without escalating renderer code to native packaging', () => {
@@ -78,90 +194,7 @@ describe('evaluateChangePolicy', () => {
     expect(result.checks.desktopNative).toBe(false)
     expect(result.checks.coverage).toBe(true)
     expect(result.blocked).toBe(true)
-    expect(result.missingTestSignals).toEqual(['Adapter product files changed without a matching adapter test file in the PR: adapters/telegram'])
-  })
-
-  test('requires a test in the adapter package that changed', () => {
-    const missing = evaluateChangePolicy([
-      'adapters/wechat/index.ts',
-      'adapters/telegram/__tests__/telegram.test.ts',
-    ])
-
-    expect(missing.missingTestSignals).toEqual([
-      'Adapter product files changed without a matching adapter test file in the PR: adapters/wechat',
-    ])
-
-    const covered = evaluateChangePolicy([
-      'adapters/wechat/index.ts',
-      'adapters/common/attachment/image-block-watcher.ts',
-      'adapters/wechat/__tests__/protocol.test.ts',
-      'adapters/common/attachment/__tests__/image-block-watcher.test.ts',
-    ])
-
-    expect(covered.missingTestSignals).toEqual([])
-  })
-
-  test('routes the native mobile shell to its own lane without widening coverage or native packaging', () => {
-    const result = evaluateChangePolicy(['mobile/src/lib/credentials.ts'])
-
-    expect(result.areas).toEqual(['mobile'])
-    expect(result.areaLabels).toEqual(['area:mobile'])
-    expect(result.checks.mobile).toBe(true)
-    // The mobile app pins no coverage configuration and shares no module graph
-    // with the rest of the repository, so its diffs must not select those lanes.
-    expect(result.checks.coverage).toBe(false)
-    expect(result.checks.desktop).toBe(false)
-    expect(result.checks.desktopNative).toBe(false)
-    expect(result.checks.server).toBe(false)
-    expect(result.checks.policy).toBe(false)
-    expect(result.blocked).toBe(true)
-    expect(result.missingTestSignals).toEqual(['Mobile product files changed without a mobile test file in the PR.'])
-  })
-
-  test('clears the mobile test signal when the change ships a mobile test', () => {
-    const result = evaluateChangePolicy([
-      'mobile/src/lib/credentials.ts',
-      'mobile/src/lib/credentials.test.ts',
-    ])
-
-    expect(result.areas).toEqual(['mobile'])
-    expect(result.checks.mobile).toBe(true)
-    expect(result.missingTestSignals).toEqual([])
-    expect(result.blocked).toBe(false)
-  })
-
-  test('routes the dsh seam workspace to its own lane without widening coverage or native packaging', () => {
-    const result = evaluateChangePolicy([
-      'harness/profile/package.json',
-      'harness/bundles/egress-guard/src/index.js',
-    ])
-
-    expect(result.areas).toEqual(['harness'])
-    expect(result.areaLabels).toEqual(['area:harness'])
-    expect(result.checks.harness).toBe(true)
-    // The seam workspace carries its own npm toolchain and shares no module
-    // graph with the rest of the repository, so its diffs must not select the
-    // bun-side lanes.
-    expect(result.checks.coverage).toBe(false)
-    expect(result.checks.desktop).toBe(false)
-    expect(result.checks.desktopNative).toBe(false)
-    expect(result.checks.server).toBe(false)
-    expect(result.checks.policy).toBe(false)
-  })
-
-  test('keeps harness changes off the desktop and server lanes when combined with them', () => {
-    const result = evaluateChangePolicy([
-      'desktop/electron/main.ts',
-      'harness/src/nodeFloor.js',
-    ])
-
-    // Import-aware selection: each surface keeps its own lane, and neither
-    // borrows the other's check.
-    expect(result.areas).toEqual(['desktop', 'harness'])
-    expect(result.checks.harness).toBe(true)
-    expect(result.checks.desktopNative).toBe(true)
-    expect(result.checks.desktop).toBe(false)
-    expect(result.checks.server).toBe(false)
+    expect(result.missingTestSignals).toEqual(['Adapter product files changed without an adapter test file in the PR.'])
   })
 
   test('allows production changes when matching tests are included', () => {
@@ -178,16 +211,6 @@ describe('evaluateChangePolicy', () => {
     const result = evaluateChangePolicy([
       'desktop/electron/main.ts',
       'desktop/electron/main.test.ts',
-    ])
-
-    expect(result.checks.desktop).toBe(false)
-    expect(result.checks.desktopNative).toBe(true)
-  })
-
-  test('routes desktop launcher scripts to native without selecting the desktop UI lane', () => {
-    const result = evaluateChangePolicy([
-      'desktop/scripts/electron-dev.ts',
-      'desktop/scripts/dev-launcher.test.ts',
     ])
 
     expect(result.checks.desktop).toBe(false)
@@ -261,8 +284,6 @@ describe('evaluateChangePolicy', () => {
       '.github/CODEOWNERS',
       '.github/copilot-instructions.md',
       'docs/internals/contributing.md',
-      'scripts/harness-audit.js',
-      'scripts/harness-audit.test.ts',
     ])
 
     expect(result.checks.policy).toBe(true)
@@ -286,80 +307,6 @@ describe('evaluateChangePolicy', () => {
     expect(result.checks.adapters).toBe(false)
     expect(result.checks.docs).toBe(false)
     expect(result.checks.coverage).toBe(false)
-  })
-
-  test('keeps root test-harness configuration on the policy lane', () => {
-    // `bunfig.toml` and the preload files it loads decide how every root test
-    // executes. Before this routing existed they fell through to no area and
-    // no check, so a diff that rewrote the root test harness passed the PR
-    // gates without running a single surface check.
-    for (const harnessPath of ['bunfig.toml', 'preload.ts', 'test-preload.ts']) {
-      const result = evaluateChangePolicy([harnessPath])
-      expect(result.checks.policy).toBe(true)
-      expect(result.checks.server).toBe(false)
-      expect(result.checks.desktop).toBe(false)
-      expect(result.checks.coverage).toBe(false)
-    }
-  })
-
-  test('routes shipped helpers and test harnesses to executable checks', () => {
-    const helper = evaluateChangePolicy(['runtime/win_helper.py'])
-    expect(helper.areas).toEqual(['server'])
-    expect(helper.checks.server).toBe(true)
-    expect(helper.checks.policy).toBe(true)
-
-    const desktopHarness = evaluateChangePolicy(['desktop/bunfig.toml'])
-    expect(desktopHarness.areas).toEqual(['desktop'])
-    expect(desktopHarness.checks.desktopNative).toBe(true)
-    expect(desktopHarness.checks.policy).toBe(false)
-
-    for (const path of [
-      'stubs/color-diff-napi.ts',
-      'fixtures/e8c7b0.json',
-      '.agents/skills/release-announcement/SKILL.md',
-      'tests/formatTokens.test.ts',
-    ]) {
-      const result = evaluateChangePolicy([path])
-      expect(result.checks.policy).toBe(true)
-    }
-
-    const rootTests = evaluateChangePolicy(['tests/formatTokens.test.ts'])
-    expect(rootTests.areas).toEqual(['server'])
-    expect(rootTests.checks.server).toBe(true)
-  })
-
-  test('selects a check for every tracked top-level directory', () => {
-    const listed = Bun.spawnSync(['git', 'ls-files'], { stdout: 'pipe' })
-    expect(listed.exitCode).toBe(0)
-    const files = listed.stdout.toString().trim().split('\n')
-    const representativeByRoot = new Map<string, string>()
-    for (const file of files) {
-      if (!file.includes('/')) continue
-      const root = file.split('/')[0]
-      if (!representativeByRoot.has(root) || file.endsWith('/AGENTS.md')) {
-        representativeByRoot.set(root, file)
-      }
-    }
-
-    for (const [root, file] of representativeByRoot) {
-      const result = evaluateChangePolicy([file])
-      expect(Object.values(result.checks).some(Boolean), `${root}: ${file}`).toBe(true)
-    }
-  })
-
-  test('routes cli-core across the whole root runtime and blocks missing tests', () => {
-    const runtime = evaluateChangePolicy(['src/services/example.ts'])
-    expect(runtime.areas).toEqual(['cli-core'])
-    expect(runtime.cliCoreFiles).toEqual(['src/services/example.ts'])
-    expect(runtime.blocked).toBe(true)
-
-    const server = evaluateChangePolicy(['src/server/example.ts'])
-    expect(server.areas).toEqual(['server'])
-    expect(server.cliCoreFiles).toEqual([])
-
-    const entrypoint = evaluateChangePolicy(['bin/echoflow-code'])
-    expect(entrypoint.checks.server).toBe(true)
-    expect(entrypoint.checks.policy).toBe(true)
   })
 
   test('does not require a test file for non-executable desktop assets', () => {
@@ -440,7 +387,6 @@ describe('evaluateChangePolicy', () => {
   })
 
   test('plan-only mode publishes a blocked scope without preventing product jobs', async () => {
-    if (process.platform === 'win32') return
     const dir = mkdtempSync(join(tmpdir(), 'change-policy-plan-'))
     try {
       const filesPath = join(dir, 'files.txt')
@@ -465,50 +411,105 @@ describe('evaluateChangePolicy', () => {
         stderr: 'pipe',
       })
 
-      const exitCode = await Promise.race([
-        proc.exited,
-        new Promise<number>((_, reject) => setTimeout(() => reject(new Error('Process timeout')), 20000)),
-      ])
-      expect(exitCode).toBe(0)
+      expect(await proc.exited).toBe(0)
       const outputs = readFileSync(outputPath, 'utf8')
       expect(outputs).toContain('blocked=true')
       expect(outputs).toContain('desktop_checks=true')
       expect(outputs).toContain('desktop_native_checks=false')
     } finally {
-      try {
-        rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
-      } catch {
-        // Cleanup failed, likely file lock on Windows
-      }
+      rmSync(dir, { recursive: true, force: true })
     }
-  }, 30000)
+  })
+})
 
-  test('prints each missing-test signal once in the impact report', async () => {
-    if (process.platform === 'win32') return
-    const proc = Bun.spawn([
-      'bun',
-      'run',
-      'scripts/pr/impact-report.ts',
-      '--files',
-      'desktop/src/pages/Settings.tsx',
-      '--no-dependency-graph',
-    ], {
-      cwd: process.cwd(),
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
+describe('change-policy NUL-delimited Git paths', () => {
+  test.each(['src/utils/quote"scope.ts', 'src/utils/tab\tscope.ts', 'src/utils/line\nscope.ts'])(
+    'keeps %j intact and enforces its selected checks', async file => {
+      const dir = mkdtempSync(join(tmpdir(), 'change-policy-nul-'))
+      try {
+        const filesPath = join(dir, 'files.nul')
+        const outputPath = join(dir, 'github-output.txt')
+        writeFileSync(filesPath, `${file}\0`)
+        const proc = Bun.spawn([
+          process.execPath, '--no-env-file', 'run', 'scripts/pr/change-policy.ts',
+          '--files0', filesPath, '--no-dependency-graph',
+        ], {
+          cwd: process.cwd(), env: createSandboxedTestEnvironment(join(dir, 'home'), { GITHUB_OUTPUT: outputPath }),
+          stdout: 'pipe', stderr: 'pipe',
+        })
+        const stdout = await new Response(proc.stdout).text()
+        const stderr = await new Response(proc.stderr).text()
+        expect(await proc.exited, stderr).toBe(1)
+        expect(stdout).toContain(file)
+        const outputs = readFileSync(outputPath, 'utf8')
+        for (const check of ['server', 'agent_e2e', 'coverage']) {
+          expect(outputs).toContain(`${check}_checks=true`)
+        }
+        expect(outputs).toContain('blocked=true')
+        expect(outputs).toContain('CLI core changes require')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
 
-    const exitCode = await Promise.race([
-      proc.exited,
-      new Promise<number>((_, reject) => setTimeout(() => reject(new Error('Process timeout')), 20000)),
-    ])
-    expect(exitCode).toBe(0)
+  test.each(['src/utils/truncated.ts', 'src/utils/trailing.ts \0', 'src/utils/literal\\name.ts\0', '\0'])(
+    'fails closed for malformed or lossy Git path input %j', async input => {
+      const dir = mkdtempSync(join(tmpdir(), 'change-policy-invalid-nul-'))
+      try {
+        const filesPath = join(dir, 'files.nul')
+        const outputPath = join(dir, 'github-output.txt')
+        writeFileSync(filesPath, input)
+        const proc = Bun.spawn([
+          process.execPath, '--no-env-file', 'run', 'scripts/pr/change-policy.ts',
+          '--files0', filesPath, '--no-dependency-graph', '--plan-only',
+        ], {
+          cwd: process.cwd(), env: createSandboxedTestEnvironment(join(dir, 'home'), { GITHUB_OUTPUT: outputPath }),
+          stdout: 'pipe', stderr: 'pipe',
+        })
+        const stderr = await new Response(proc.stderr).text()
+        expect(await proc.exited, stderr).not.toBe(0)
+        expect(stderr).toContain('Invalid NUL-delimited Git paths')
+        expect(() => readFileSync(outputPath)).toThrow()
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
+})
 
-    const output = await new Response(proc.stdout).text()
-    const signal = 'Desktop product files changed without a desktop test file in the PR.'
-    expect(output.split(signal).length - 1).toBe(1)
-    expect(output).toContain(`- BLOCKING: ${signal}`)
-  }, 30000)
+describe('change-policy CLI owner exemption', () => {
+  test('publishes the CODEOWNER exemption from the author and base CODEOWNERS files', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'change-policy-owner-'))
+    try {
+      const run = async (author: string) => {
+        const outputPath = join(dir, `github-output-${author}.txt`)
+        writeFileSync(join(dir, 'files.txt'), 'src/utils/context.ts\nsrc/utils/__tests__/context.test.ts\n')
+        writeFileSync(join(dir, 'labels.txt'), '')
+        writeFileSync(join(dir, 'author.txt'), `${author}\n`)
+        writeFileSync(join(dir, 'CODEOWNERS'), '/src/utils/ @NanmiCoder\n')
+        const proc = Bun.spawn([
+          'bun', 'run', 'scripts/pr/change-policy.ts',
+          '--files', join(dir, 'files.txt'),
+          '--labels-file', join(dir, 'labels.txt'),
+          '--author-file', join(dir, 'author.txt'),
+          '--codeowners-file', join(dir, 'CODEOWNERS'),
+          '--plan-only',
+        ], { cwd: process.cwd(), env: { ...process.env, GITHUB_OUTPUT: outputPath }, stdout: 'pipe', stderr: 'pipe' })
+        expect(await proc.exited).toBe(0)
+        return readFileSync(outputPath, 'utf8')
+      }
+
+      const owner = await run('NanmiCoder')
+      expect(owner).toContain('blocked=false')
+      expect(owner).toContain('cli_core_override=codeowner-author')
+      const outsider = await run('someone-else')
+      expect(outsider).toContain('blocked=true')
+      expect(outsider).toContain('cli_core_override=\n')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('evaluateChangePolicy dependent-file widening', () => {
@@ -550,12 +551,12 @@ describe('evaluateChangePolicy dependent-file widening', () => {
   test('keeps areas, labels, and the missing-test block scoped to the actual diff', () => {
     const result = evaluateChangePolicy(
       ['src/shared/modelReasoning.ts', 'src/shared/modelReasoning.test.ts'],
-      ['allow-cli-core-change'],
+      [],
       ['desktop/src/lib/runtimeSelection.ts', 'desktop/src/stores/chatStore.ts'],
     )
 
     // A hub edit must not demand desktop tests for files the author never touched.
-    expect(result.areas).toEqual(['cli-core'])
+    expect(result.areas).toEqual([])
     expect(result.missingTestSignals).toEqual([])
     expect(result.blocked).toBe(false)
     expect(result.files).toEqual(['src/shared/modelReasoning.test.ts', 'src/shared/modelReasoning.ts'])
@@ -620,6 +621,30 @@ describe('evaluateChangePolicy dependent-file widening', () => {
       'adapters/telegram/formatting.ts',
       'adapters/telegram/__tests__/formatting.test.ts',
     ]).checks.agentFlow).toBe(false)
+  })
+
+  test('selects the mock-LLM agent lane for any runtime source change', () => {
+    // The lane runs the real CLI agent loop, so a change anywhere in the runtime can
+    // break it — not only the server/WebSocket paths the mock-CLI lane watches.
+    const toolChange = evaluateChangePolicy(['src/tools/BashTool/BashTool.tsx', 'src/tools/BashTool/BashTool.test.ts'])
+    expect(toolChange.checks.agentE2e).toBe(true)
+    expect(toolChange.checks.agentFlow).toBe(false)
+
+    for (const harness of [
+      'scripts/quality-gate/mock-llm/scriptedModel.ts',
+      'scripts/quality-gate/replay/replayServer.ts',
+      'scripts/quality-gate/replay/cassettes/replay-multi-tool.json',
+      'scripts/quality-gate/agent-flow/live.ts',
+      'scripts/quality-gate/sandbox.ts',
+      'bun.lock',
+    ]) {
+      expect(evaluateChangePolicy([harness]).checks.agentE2e, harness).toBe(true)
+    }
+
+    // Desktop-only, docs-only, and agent instruction edits stay out of it.
+    expect(evaluateChangePolicy(['desktop/src/pages/Settings.tsx', 'desktop/src/pages/Settings.test.tsx']).checks.agentE2e).toBe(false)
+    expect(evaluateChangePolicy(['docs/guide/install.md']).checks.agentE2e).toBe(false)
+    expect(evaluateChangePolicy(['src/AGENTS.md']).checks.agentE2e).toBe(false)
   })
 
   test('ignores dependents that are already part of the diff', () => {

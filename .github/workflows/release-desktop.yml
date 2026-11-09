@@ -36,8 +36,14 @@ on:
         required: false
         default: true
         type: boolean
-      skip_windows_signing:
-        description: 'Build unsigned Windows artifacts while SignPath onboarding is pending'
+      windows_signing:
+        description: 'Windows signing: auto follows the WINDOWS_SIGNING_ENABLED repository variable'
+        required: false
+        default: auto
+        type: choice
+        options: [auto, unsigned, signed]
+      publish_draft_release:
+        description: 'Publish manual draft artifacts to GitHub Releases'
         required: false
         default: false
         type: boolean
@@ -54,25 +60,22 @@ jobs:
   release-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    outputs:
-      release_sha: ${{ steps.resolve.outputs.release_sha }}
-      release_tag: ${{ steps.resolve.outputs.release_tag }}
     steps:
       - name: Validate official release authorization
         if: inputs.official_release == true
         shell: bash
         env:
-          OFFICIAL_RELEASE: ${{ inputs.official_release == true }}
-          DRAFT_RELEASE: ${{ inputs.draft == true }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           RELEASE_SHA: ${{ inputs.release_sha }}
+          DRAFT_RELEASE: ${{ inputs.draft == true }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
           expected_workflow_ref="${GITHUB_REPOSITORY}/.github/workflows/release-please.yml@refs/heads/main"
-          if [[ "${OFFICIAL_RELEASE}" != "true" || "${DRAFT_RELEASE}" != "false" || "${{ github.workflow_ref }}" != "${expected_workflow_ref}" || "${{ inputs.official_release == true }}" != "true" ]]; then
+          if [[ "$DRAFT_RELEASE" != "false" || "$WORKFLOW_REF" != "$expected_workflow_ref" ]]; then
             echo "::error::Only the trusted Release Please workflow may request official publication."
             exit 1
           fi
-          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || ! "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::Official publication requires a valid release_tag and full release_sha."
             exit 1
           fi
@@ -83,13 +86,13 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Invalid release tag: ${RELEASE_TAG}"
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid release tag: $RELEASE_TAG"
             exit 1
           fi
 
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -103,53 +106,21 @@ jobs:
       - name: Release surface audit
         run: bun run check:release-surface
 
-      - name: Verify version matches tag
-        if: github.event_name == 'push' && inputs.release_tag == ''
-        shell: bash
-        run: |
-          VERSION=$(node -p "require('./desktop/package.json').version")
-          EXPECTED_TAG="v${VERSION}"
-          if [ "${GITHUB_REF_NAME}" != "$EXPECTED_TAG" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match app version ${EXPECTED_TAG}"
-            exit 1
-          fi
-
-      - name: Verify release tag matches packaged version
-        if: inputs.release_tag != ''
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          VERSION=$(node -p "require('./desktop/package.json').version")
-          EXPECTED_TAG="v${VERSION}"
-          if [ "${RELEASE_TAG}" != "$EXPECTED_TAG" ]; then
-            echo "::error::Release tag must match the packaged version: ${RELEASE_TAG} != ${EXPECTED_TAG}"
-            exit 1
-          fi
-
-      - name: Resolve and verify peeled release commit
-        id: resolve
+      - name: Verify release tag matches packaged version and immutable commit
         if: github.event_name != 'workflow_dispatch' || inputs.release_tag != ''
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           EXPECTED_SHA: ${{ inputs.release_sha || github.sha }}
         run: |
-          peeled_sha=$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")
-          if [[ "${peeled_sha}" != "${EXPECTED_SHA}" ]]; then
-            echo "::error::Release tag does not peel to the requested immutable commit."
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          if [[ "$RELEASE_TAG" != "v${VERSION}" ]]; then
+            echo "::error::Release tag must match the packaged version."
             exit 1
           fi
-          echo "release_sha=${peeled_sha}" >> "$GITHUB_OUTPUT"
-          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
-
-      - name: Verify immutable checkout
-        if: github.event_name != 'workflow_dispatch' || inputs.release_tag != ''
-        env:
-          EXPECTED_SHA: ${{ inputs.release_sha || github.sha }}
-        run: |
-          test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
-          git rev-parse "${{ inputs.release_tag || github.ref_name }}^{commit}"
+          peeled_sha=$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")
+          test "$peeled_sha" = "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Verify release notes exist
         shell: bash
@@ -157,7 +128,7 @@ jobs:
           VERSION=$(node -p "require('./desktop/package.json').version")
           NOTES_FILE="release-notes/v${VERSION}.md"
           if [ ! -f "$NOTES_FILE" ]; then
-            echo "::error::Missing release notes file: ${NOTES_FILE}"
+            echo "::error::Missing release notes file: $NOTES_FILE"
             exit 1
           fi
           if ! grep -qP "^# EchoFlow Code v${VERSION//./\\.}" "$NOTES_FILE"; then
@@ -166,11 +137,38 @@ jobs:
           fi
 
   signing-preflight:
+    needs: release-contract
     runs-on: ubuntu-latest
     outputs:
       macos_signed: ${{ steps.validate.outputs.macos_signed }}
       windows_signed: ${{ steps.validate.outputs.windows_signed }}
     steps:
+      - name: Checkout release version
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha || github.sha }}
+          sparse-checkout: |
+            desktop/package.json
+            scripts/assert-release-unpublished.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Fail in seconds instead of after a full build when this run would write
+      # to a release that is already public (for example a manual run started
+      # after the tag-push run already published the tag).
+      - name: Refuse to overwrite an existing published release
+        if: inputs.official_release == true || (github.event_name == 'workflow_dispatch' && inputs.draft == true && inputs.publish_draft_release == true)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/assert-release-unpublished.sh "${{ steps.version.outputs.value }}"
+
       - name: Validate release signing and notarization secrets
         id: validate
         shell: bash
@@ -187,11 +185,13 @@ jobs:
           SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG }}
           SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG }}
           RELEASE_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true }}
-          SKIP_WINDOWS_SIGNING: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_windows_signing == true }}
+          WINDOWS_SIGNING_ENABLED: ${{ vars.WINDOWS_SIGNING_ENABLED == 'true' }}
+          WINDOWS_SIGNING_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_signing || 'auto' }}
         run: |
           # macOS signing + notarization is preferred: Squirrel.Mac auto-update and
-          # first-launch Gatekeeper approval work best with a notarized Developer ID build.
-          # If secrets are unavailable, keep the unsigned fallback and publish its helper.
+          # first-launch Gatekeeper approval and Computer Use client attestation
+          # require a consistent Developer ID build. Drafts use the same native
+          # runtime, so an unsigned macOS lane would be a knowingly broken app.
           missing=()
           [ -n "$CSC_LINK" ] || missing+=("MACOS_CERTIFICATE")
           [ -n "$CSC_KEY_PASSWORD" ] || missing+=("MACOS_CERTIFICATE_PASSWORD")
@@ -199,22 +199,39 @@ jobs:
           [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] || missing+=("APPLE_APP_SPECIFIC_PASSWORD")
           [ -n "$APPLE_TEAM_ID" ] || missing+=("APPLE_TEAM_ID")
           if [ "${#missing[@]}" -gt 0 ]; then
-            printf '::warning::Missing macOS signing/notarization secrets (%s): the macOS build will be unsigned and Computer Use runtime may not pass client attestation.\n' "${missing[*]}"
+            printf '::error::Missing macOS signing/notarization secrets (%s): refusing to build a macOS release whose Computer Use runtime cannot pass client attestation.\n' "${missing[*]}"
             echo "macos_signed=false" >> "$GITHUB_OUTPUT"
+            exit 1
           else
             echo "macos_signed=true" >> "$GITHUB_OUTPUT"
           fi
-          # A maintainer can explicitly release unsigned Windows builds while
-          # SignPath approval is pending, even when its configuration is present.
-          if [ "$SKIP_WINDOWS_SIGNING" = "true" ]; then
-            echo "::warning::Windows signing explicitly skipped for this manual release; Windows artifacts will be unsigned."
-            echo "windows_signed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # Drafts may remain unsigned while SignPath onboarding is being tested. A tag
-          # release also ships unsigned when SignPath is not configured at all, which is
-          # the current EchoFlow release configuration; a partially configured pipeline is a real
-          # misconfiguration and still refuses to publish.
+          # Windows signing is opt-in while SignPath approval is pending: the
+          # WINDOWS_SIGNING_ENABLED repository variable turns it on for every
+          # trigger, and a manual run may override it either way (for example
+          # to trial-sign a draft before the variable is enabled). Unsigned
+          # Windows builds are the expected state, so they only get a notice.
+          case "$WINDOWS_SIGNING_MODE" in
+            unsigned)
+              echo "::notice::Windows signing disabled for this manual run; Windows artifacts will be unsigned."
+              echo "windows_signed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            signed)
+              ;;
+            auto)
+              if [ "$WINDOWS_SIGNING_ENABLED" != "true" ]; then
+                echo "::notice::Windows signing is off (repository variable WINDOWS_SIGNING_ENABLED is not true); Windows artifacts will be unsigned."
+                echo "windows_signed=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              ;;
+            *)
+              echo "::error::Unknown windows_signing mode: ${WINDOWS_SIGNING_MODE}"
+              exit 1
+              ;;
+          esac
+          # Once signing is requested, drafts may remain unsigned while SignPath onboarding is
+          # being tested. Tags and non-draft releases require the full GitHub connector configuration.
           win_missing=()
           [ -n "$SIGNPATH_API_TOKEN" ] || win_missing+=("SIGNPATH_API_TOKEN secret")
           [ -n "$SIGNPATH_ORGANIZATION_ID" ] || win_missing+=("SIGNPATH_ORGANIZATION_ID variable")
@@ -222,187 +239,23 @@ jobs:
           [ -n "$SIGNPATH_SIGNING_POLICY_SLUG" ] || win_missing+=("selected SignPath signing policy variable")
           [ -n "$SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG" ] || win_missing+=("SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG variable")
           [ -n "$SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG" ] || win_missing+=("SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG variable")
-          # Six settings make up a usable SignPath pipeline. None of them are present in
-          # this repository, so an unsigned release is the expected state rather than an
-          # accident; half of them present is a mistake and must not ship silently.
-          signpath_present=$((6 - ${#win_missing[@]}))
           if [ "${#win_missing[@]}" -gt 0 ]; then
+            if [ "$WINDOWS_SIGNING_MODE" = "signed" ]; then
+              printf '::error::Windows signing was requested for this manual run, but SignPath configuration is missing (%s).\n' "${win_missing[*]}"
+              exit 1
+            fi
             printf '::warning::SignPath configuration missing (%s): the Windows build will be unsigned.\n' "${win_missing[*]}"
             echo "windows_signed=false" >> "$GITHUB_OUTPUT"
             if [ "$RELEASE_DRAFT" != "true" ]; then
-              if [ "$signpath_present" -gt 0 ]; then
-                echo "::error::Refusing to publish a non-draft desktop release without SignPath Windows signing. SignPath is only partly configured (${signpath_present} of 6 settings present): finish the configuration or remove it. A repository with no SignPath configuration at all ships unsigned by design."
-                exit 1
-              fi
-              echo "::warning::Publishing an unsigned Windows release: this repository has no SignPath configuration and the release notes state that the Windows artifacts are unsigned."
+              echo "::error::Refusing to publish a non-draft desktop release without SignPath Windows signing."
+              exit 1
             fi
           else
             echo "windows_signed=true" >> "$GITHUB_OUTPUT"
           fi
 
-  verify-governance:
-    needs:
-      - release-contract
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-          ref: ${{ inputs.release_sha || github.sha }}
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Cache root dependencies
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: bun-root-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-
-      - name: Install root dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Policy and gate regressions
-        run: bun run check:policy
-
-  verify-runtime:
-    needs:
-      - release-contract
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-          ref: ${{ inputs.release_sha || github.sha }}
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Cache root dependencies
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: bun-root-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-
-      - name: Cache desktop dependencies
-        uses: actions/cache@v4
-        with:
-          path: desktop/node_modules
-          key: bun-desktop-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
-
-      - name: Cache adapter dependencies
-        uses: actions/cache@v4
-        with:
-          path: adapters/node_modules
-          key: bun-adapters-${{ runner.os }}-${{ hashFiles('adapters/bun.lock') }}
-
-      - name: Install root dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install desktop dependencies
-        working-directory: desktop
-        run: bun install --frozen-lockfile
-
-      - name: Install adapter dependencies
-        working-directory: adapters
-        run: bun install --frozen-lockfile
-
-      - name: Root runtime tests
-        run: bun run check:server
-
-      - name: Deterministic agent flow
-        run: bun run check:agent-flow
-
-      - name: Adapter tests
-        run: bun run check:adapters
-
-  verify-desktop:
-    needs:
-      - release-contract
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-          ref: ${{ inputs.release_sha || github.sha }}
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Cache root dependencies
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: bun-root-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-
-      - name: Cache desktop dependencies
-        uses: actions/cache@v4
-        with:
-          path: desktop/node_modules
-          key: bun-desktop-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
-
-      - name: Cache adapter dependencies
-        uses: actions/cache@v4
-        with:
-          path: adapters/node_modules
-          key: bun-adapters-${{ runner.os }}-${{ hashFiles('adapters/bun.lock') }}
-
-      - name: Install root dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install desktop dependencies
-        working-directory: desktop
-        run: bun install --frozen-lockfile
-
-      - name: Install adapter dependencies
-        working-directory: adapters
-        run: bun install --frozen-lockfile
-
-      - name: Desktop lint, tests, and build
-        run: bun run check:desktop
-
-      - name: Persistence upgrade contracts
-        run: bun run check:persistence-upgrade
-
-  release-verify-gate:
-    name: release-verify-gate
-    needs:
-      - verify-governance
-      - verify-runtime
-      - verify-desktop
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Require all verification to pass
-        run: |
-          failures=0
-          for entry in \
-            "verify-governance:${{ needs.verify-governance.result }}" \
-            "verify-runtime:${{ needs.verify-runtime.result }}" \
-            "verify-desktop:${{ needs.verify-desktop.result }}"
-          do
-            name="${entry%%:*}" status="${entry#*:}"
-            if [ "$status" != "success" ]; then
-              echo "::error::${name} ended with result: ${status}"
-              failures=$((failures + 1))
-            else
-              echo "${name}: success"
-            fi
-          done
-          if [ "$failures" -gt 0 ]; then
-            exit 1
-          fi
-
   build:
     needs:
-      - release-contract
       - signing-preflight
     strategy:
       fail-fast: false
@@ -458,7 +311,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_sha || github.sha }}
 
@@ -479,18 +332,6 @@ jobs:
             exit 1
           fi
 
-      - name: Validate release tag matches version
-        if: inputs.release_tag != ''
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          EXPECTED_TAG="v${{ steps.version.outputs.value }}"
-          if [ "${RELEASE_TAG}" != "$EXPECTED_TAG" ]; then
-            echo "::error::Release tag must match the packaged version: ${RELEASE_TAG} != ${EXPECTED_TAG}"
-            exit 1
-          fi
-
       - name: Install Linux dependencies
         if: contains(matrix.platform, 'ubuntu')
         run: |
@@ -503,38 +344,25 @@ jobs:
           bun-version-file: package.json
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Cache root dependencies
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: bun-root-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-
-      - name: Cache desktop dependencies
-        uses: actions/cache@v4
-        with:
-          path: desktop/node_modules
-          key: bun-desktop-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
-
-      - name: Cache adapter dependencies
-        uses: actions/cache@v4
-        with:
-          path: adapters/node_modules
-          key: bun-adapters-${{ runner.os }}-${{ hashFiles('adapters/bun.lock') }}
-
       - name: Install root dependencies
-        run: bun install --frozen-lockfile
+        run: bun install
 
       - name: Install desktop dependencies
         working-directory: desktop
         # The x64 Windows runner also packages ARM64; retain both native addons.
-        run: bun install --frozen-lockfile --cpu="*"
+        run: bun install --cpu="*"
 
       - name: Install adapter dependencies
         working-directory: adapters
+        run: bun install
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        # `bun run build` exports the phone app (mobile/) into dist/m: it is the H5 for phones.
         run: bun install --frozen-lockfile
 
       - name: Verify Windows legacy data recovery
@@ -550,8 +378,8 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
-          certificate_path="${RUNNER_TEMP}/echoflow-code-signing.p12"
-          keychain_path="${RUNNER_TEMP}/echoflow-code-signing.keychain-db"
+          certificate_path="${RUNNER_TEMP}/echoflow-signing.p12"
+          keychain_path="${RUNNER_TEMP}/echoflow-signing.keychain-db"
           keychain_password="$(uuidgen)"
           printf '%s' "$CSC_LINK" | base64 --decode > "$certificate_path"
           security create-keychain -p "$keychain_password" "$keychain_path"
@@ -580,6 +408,8 @@ jobs:
             exit 1
           fi
           echo "ECHOFLOW_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "CC_HAHA_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "CSC_NAME=$identity" >> "$GITHUB_ENV"
           echo "ECHOFLOW_CI_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
           echo "ECHOFLOW_CI_CERTIFICATE=$certificate_path" >> "$GITHUB_ENV"
           echo "Imported native-runtime signing identity: $identity"
@@ -590,12 +420,27 @@ jobs:
           SIDECAR_TARGET_TRIPLE: ${{ matrix.target_triple }}
         run: bun run prepare:ripgrep
 
+      - name: Prepare bundled Cloudflare connector
+        working-directory: desktop
+        env:
+          SIDECAR_TARGET_TRIPLE: ${{ matrix.target_triple }}
+        run: bun run prepare:cloudflared
+
+      - name: Setup native Computer Use Rust toolchain
+        if: matrix.smoke_platform != 'macos'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target_triple }}
+
+      - name: Prepare native Computer Use dependencies
+        if: matrix.smoke_platform != 'macos'
+        run: cargo +stable fetch --locked --manifest-path native/agent-desktop/Cargo.toml --target ${{ matrix.target_triple }}
+
       - name: Build sidecars
         working-directory: desktop
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache
           SIDECAR_TARGET_TRIPLE: ${{ matrix.target_triple }}
-          CU_HELPER_ALLOW_ADHOC: ${{ matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed != 'true' && '1' || '' }}
         run: bun run build:sidecars
 
       - name: Verify compiled Windows sidecar startup
@@ -839,9 +684,11 @@ jobs:
           $sidecarName = "claude-sidecar-${{ matrix.target_triple }}.exe"
           $mainExecutable = Join-Path $unpackedDir "EchoFlow Code.exe"
           $sidecarExecutable = Join-Path $unpackedDir "resources/app.asar.unpacked/src-tauri/binaries/$sidecarName"
+          $agentDesktopExecutable = Join-Path $unpackedDir "resources/app.asar.unpacked/src-tauri/binaries/agent-desktop.exe"
           New-Item -ItemType Directory -Path $stageDir | Out-Null
           Copy-Item -LiteralPath $mainExecutable -Destination (Join-Path $stageDir "EchoFlow Code.exe")
           Copy-Item -LiteralPath $sidecarExecutable -Destination (Join-Path $stageDir $sidecarName)
+          Copy-Item -LiteralPath $agentDesktopExecutable -Destination (Join-Path $stageDir "agent-desktop.exe")
           "stage_dir=$stageDir" >> $env:GITHUB_OUTPUT
           "unpacked_dir=$unpackedDir" >> $env:GITHUB_OUTPUT
           "sidecar_name=$sidecarName" >> $env:GITHUB_OUTPUT
@@ -849,7 +696,7 @@ jobs:
       - name: Upload unsigned Windows application executables
         if: matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed == 'true'
         id: upload-unsigned-signpath-application
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: signpath-unsigned-application-${{ matrix.arch }}
           path: ${{ steps.stage-signpath-application.outputs.stage_dir }}
@@ -880,8 +727,10 @@ jobs:
           $sidecarName = "${{ steps.stage-signpath-application.outputs.sidecar_name }}"
           $mainExecutable = Join-Path $unpackedDir "EchoFlow Code.exe"
           $sidecarExecutable = Join-Path $unpackedDir "resources/app.asar.unpacked/src-tauri/binaries/$sidecarName"
+          $agentDesktopExecutable = Join-Path $unpackedDir "resources/app.asar.unpacked/src-tauri/binaries/agent-desktop.exe"
           Copy-Item -LiteralPath (Join-Path $signedDir "EchoFlow Code.exe") -Destination $mainExecutable -Force
           Copy-Item -LiteralPath (Join-Path $signedDir $sidecarName) -Destination $sidecarExecutable -Force
+          Copy-Item -LiteralPath (Join-Path $signedDir "agent-desktop.exe") -Destination $agentDesktopExecutable -Force
 
           function Assert-SignPathSignature([string] $Path) {
             $signature = Get-AuthenticodeSignature -LiteralPath $Path
@@ -899,6 +748,7 @@ jobs:
 
           Assert-SignPathSignature $mainExecutable
           Assert-SignPathSignature $sidecarExecutable
+          Assert-SignPathSignature $agentDesktopExecutable
 
       - name: Package NSIS installer from signed Windows application
         if: matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed == 'true'
@@ -925,7 +775,7 @@ jobs:
       - name: Upload unsigned Windows installer
         if: matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed == 'true'
         id: upload-unsigned-signpath-installer
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: signpath-unsigned-installer-${{ matrix.arch }}
           path: ${{ steps.stage-signpath-installer.outputs.stage_dir }}
@@ -970,14 +820,14 @@ jobs:
         if: matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed == 'true'
         run: bun run scripts/refresh-windows-update-metadata.ts --installer "${{ steps.stage-signpath-installer.outputs.installer_path }}" --metadata desktop/build-artifacts/electron/latest.yml
 
-      - name: Verify packaged app structure
-        run: bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron ${{ matrix.smoke_platform == 'linux' && '--max-linux-glibc 2.28' || '' }}
-
       - name: Verify Windows installer execution
         if: matrix.smoke_platform == 'windows' && matrix.arch == 'x64'
         timeout-minutes: 10
         working-directory: desktop
         run: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/windows-installer-smoke.ps1 -ArtifactsDir ./build-artifacts/electron -Arch x64
+
+      - name: Verify packaged app structure
+        run: bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron ${{ matrix.smoke_platform == 'linux' && '--max-linux-glibc 2.28' || '' }}
 
       - name: Verify macOS launch policy
         if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed == 'true' && (github.event_name != 'workflow_dispatch' || inputs.notarize_macos == true)
@@ -989,7 +839,7 @@ jobs:
 
       - name: Warn unsigned macOS launch policy skipped
         if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed != 'true'
-        run: echo "::warning::Skipping macOS Gatekeeper package-smoke because this release is unsigned. Ship install-macos-unsigned.sh with the DMG."
+        run: echo "::warning::Skipping macOS Gatekeeper package-smoke because this build is unsigned; users would need install-macos-unsigned.sh or xattr to open it."
 
       - name: Validate matrix release asset set
         shell: bash
@@ -1001,18 +851,14 @@ jobs:
             macOS-ARM64)
               expected=(
                 "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg"
-                "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg.blockmap"
                 "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip"
-                "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip.blockmap"
                 "latest-mac.yml"
               )
               ;;
             macOS-x64)
               expected=(
                 "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg"
-                "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg.blockmap"
                 "EchoFlow-Code-${APP_VERSION}-mac-x64.zip"
-                "EchoFlow-Code-${APP_VERSION}-mac-x64.zip.blockmap"
                 "latest-mac.yml"
               )
               ;;
@@ -1035,14 +881,12 @@ jobs:
             Windows-x64)
               expected=(
                 "EchoFlow-Code-${APP_VERSION}-win-x64.exe"
-                "EchoFlow-Code-${APP_VERSION}-win-x64.exe.blockmap"
                 "latest.yml"
               )
               ;;
             Windows-ARM64)
               expected=(
                 "EchoFlow-Code-${APP_VERSION}-win-arm64.exe"
-                "EchoFlow-Code-${APP_VERSION}-win-arm64.exe.blockmap"
                 "latest.yml"
               )
               ;;
@@ -1082,14 +926,14 @@ jobs:
           done
 
       - name: Upload update metadata for merge
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: desktop-update-metadata-${{ matrix.label }}
           path: desktop/build-artifacts/electron/latest*.yml
           if-no-files-found: ignore
 
       - name: Upload release artifacts for final publish
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: desktop-release-artifacts-${{ matrix.label }}
           path: |
@@ -1099,22 +943,19 @@ jobs:
             desktop/build-artifacts/electron/*.AppImage
             desktop/build-artifacts/electron/*.deb
             desktop/build-artifacts/electron/*.rpm
-            desktop/build-artifacts/electron/*.blockmap
             desktop/build-artifacts/electron/*.yml
           if-no-files-found: error
 
   publish-release:
-    if: inputs.official_release == true || (github.event_name == 'workflow_dispatch' && inputs.draft == true)
-    outputs:
-      version: ${{ steps.version.outputs.value }}
-    needs:
-      - build
-      - release-verify-gate
+    if: inputs.official_release == true || (github.event_name == 'workflow_dispatch' && inputs.draft == true && inputs.publish_draft_release == true)
+    needs: build
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: v${{ steps.version.outputs.value }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_sha || github.sha }}
 
@@ -1135,62 +976,29 @@ jobs:
             exit 1
           fi
 
-      - name: Validate release tag matches version
-        if: inputs.release_tag != ''
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          EXPECTED_TAG="v${{ steps.version.outputs.value }}"
-          if [ "${RELEASE_TAG}" != "$EXPECTED_TAG" ]; then
-            echo "::error::Release tag must match the packaged version: ${RELEASE_TAG} != ${EXPECTED_TAG}"
-            exit 1
-          fi
-
+      # Re-check right before uploading: another run for the same version on a
+      # different ref (outside this run's concurrency group) may have published
+      # while this one was building.
       - name: Refuse to overwrite an existing published release
-        if: github.event_name == 'workflow_dispatch' && inputs.draft == true
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          error_file="${RUNNER_TEMP}/release-view-error.txt"
-          set +e
-          release_state=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/v${{ steps.version.outputs.value }}" --jq '.draft' 2>"$error_file")
-          status=$?
-          set -e
-
-          if [ "$status" -ne 0 ]; then
-            if grep -q 'HTTP 404' "$error_file"; then
-              exit 0
-            fi
-            cat "$error_file" >&2
-            exit "$status"
-          fi
-
-          if [ "$release_state" = "false" ]; then
-            echo "::error::Refusing to overwrite published release v${{ steps.version.outputs.value }} with manual draft artifacts."
-            exit 1
-          fi
+        run: bash scripts/assert-release-unpublished.sh "${{ steps.version.outputs.value }}"
 
       - name: Verify existing release record
-        if: github.event_name != 'workflow_dispatch' || inputs.release_tag != ''
         id: release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          RELEASE_TAG: v${{ steps.version.outputs.value }}
           OFFICIAL_RELEASE: ${{ inputs.official_release }}
         run: |
           error_file="${RUNNER_TEMP}/release-view-error.txt"
-          set +e
-          # releases/tags/<tag> never returns draft releases, so look the release up in the list.
-          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '[.[] | select(.tag_name == env.RELEASE_TAG)] | .[0] // empty' 2>"$error_file")
-          status=$?
-          set -e
-          if [ "$status" -ne 0 ]; then
+          # The tag endpoint does not return drafts; Release Please creates a draft.
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '[.[] | select(.tag_name == env.RELEASE_TAG)] | .[0] // empty' 2>"$error_file") || {
             cat "$error_file" >&2
-            exit "$status"
-          fi
+            exit 1
+          }
           if [ -z "$release_json" ]; then
             if [ "$OFFICIAL_RELEASE" = "true" ]; then
               echo "::error::Trusted release publication requires an existing draft release."
@@ -1200,16 +1008,11 @@ jobs:
           fi
           release_id=$(jq -r '.id' <<<"$release_json")
           is_draft=$(jq -r '.draft' <<<"$release_json")
-          if [ -z "$release_id" ] || [ "$release_id" = "null" ]; then
-            echo "::error::Release record did not contain a release ID."
-            exit 1
-          fi
-          if [ "$OFFICIAL_RELEASE" = "true" ] && [ "$is_draft" != "true" ]; then
-            echo "::error::Trusted release publication requires the existing release to remain draft."
+          if [ -z "$release_id" ] || [ "$release_id" = "null" ] || [ "$is_draft" != "true" ]; then
+            echo "::error::Release identity is invalid or the release is already public."
             exit 1
           fi
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
-          echo "is_draft=$is_draft" >> "$GITHUB_OUTPUT"
 
       - name: Load release notes
         id: release_notes
@@ -1233,10 +1036,10 @@ jobs:
           bun-version-file: package.json
 
       - name: Install root dependencies
-        run: bun install --frozen-lockfile
+        run: bun install
 
       - name: Download release artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v4
         with:
           pattern: desktop-release-artifacts-*
           path: artifacts/release-assets
@@ -1249,13 +1052,9 @@ jobs:
         run: |
           expected=(
             "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg"
-            "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg.blockmap"
             "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip"
-            "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip.blockmap"
             "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg"
-            "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg.blockmap"
             "EchoFlow-Code-${APP_VERSION}-mac-x64.zip"
-            "EchoFlow-Code-${APP_VERSION}-mac-x64.zip.blockmap"
             "EchoFlow-Code-${APP_VERSION}-linux-x86_64.AppImage"
             "EchoFlow-Code-${APP_VERSION}-linux-amd64.deb"
             "EchoFlow-Code-${APP_VERSION}-linux-x86_64.rpm"
@@ -1263,9 +1062,7 @@ jobs:
             "EchoFlow-Code-${APP_VERSION}-linux-arm64.deb"
             "EchoFlow-Code-${APP_VERSION}-linux-aarch64.rpm"
             "EchoFlow-Code-${APP_VERSION}-win-x64.exe"
-            "EchoFlow-Code-${APP_VERSION}-win-x64.exe.blockmap"
             "EchoFlow-Code-${APP_VERSION}-win-arm64.exe"
-            "EchoFlow-Code-${APP_VERSION}-win-arm64.exe.blockmap"
           )
 
           missing=()
@@ -1278,7 +1075,7 @@ jobs:
           fi
 
       - name: Download update metadata artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v4
         with:
           pattern: desktop-update-metadata-*
           path: artifacts/update-metadata
@@ -1311,27 +1108,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ steps.release.outputs.release_id }}
-          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          RELEASE_TAG: v${{ steps.version.outputs.value }}
           RELEASE_NAME: EchoFlow Code v${{ steps.version.outputs.value }}
           RELEASE_BODY: ${{ steps.release_notes.outputs.body }}
         run: |
           release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")
-          current_id=$(jq -r '.id' <<<"${release_json}")
-          current_tag=$(jq -r '.tag_name' <<<"${release_json}")
-          is_draft=$(jq -r '.draft' <<<"${release_json}")
-          if [ "${current_id}" != "${RELEASE_ID}" ] || [ "${current_tag}" != "${RELEASE_TAG}" ] || [ "${is_draft}" != "true" ]; then
+          current_id=$(jq -r '.id' <<<"$release_json")
+          current_tag=$(jq -r '.tag_name' <<<"$release_json")
+          is_draft=$(jq -r '.draft' <<<"$release_json")
+          if [ "$current_id" != "$RELEASE_ID" ] || [ "$current_tag" != "$RELEASE_TAG" ] || [ "$is_draft" != "true" ]; then
             echo "::error::Verified release identity or draft state changed before upload."
             exit 1
           fi
-
-          gh api \
-            --method PATCH \
-            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
-            -f "name=${RELEASE_NAME}" \
-            -f "body=${RELEASE_BODY}" \
-            -F draft=true \
-            -F prerelease=false >/dev/null
-
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -f "name=${RELEASE_NAME}" -f "body=${RELEASE_BODY}" -F draft=true -F prerelease=false >/dev/null
           shopt -s nullglob
           files=(
             artifacts/release-assets/*.dmg
@@ -1340,22 +1130,17 @@ jobs:
             artifacts/release-assets/*.AppImage
             artifacts/release-assets/*.deb
             artifacts/release-assets/*.rpm
-            artifacts/release-assets/*.blockmap
             artifacts/update-metadata-standard/*.yml
-            desktop/scripts/install-macos-unsigned.sh
           )
           for file in "${files[@]}"; do
             asset_name=$(basename "$file")
             assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")
-            asset_id=$(jq -r --arg name "${asset_name}" '.[] | select(.name == $name) | .id' <<<"${assets}")
-            if [ -n "${asset_id}" ]; then
+            asset_id=$(jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' <<<"$assets")
+            if [ -n "$asset_id" ]; then
               gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" >/dev/null
             fi
-            gh api \
-              --hostname uploads.github.com \
-              --method POST \
-              -H 'Content-Type: application/octet-stream' \
-              --input "$file" \
+            gh api --hostname uploads.github.com --method POST \
+              -H 'Content-Type: application/octet-stream' --input "$file" \
               "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${asset_name}" >/dev/null
           done
 
@@ -1370,35 +1155,13 @@ jobs:
           prerelease: false
           fail_on_unmatched_files: true
           files: |
-            artifacts/release-assets/*.dmg
-            artifacts/release-assets/*.zip
-            artifacts/release-assets/*.exe
-            artifacts/release-assets/*.AppImage
-            artifacts/release-assets/*.deb
-            artifacts/release-assets/*.rpm
-            artifacts/release-assets/*.blockmap
+            artifacts/release-assets/**/*.dmg
+            artifacts/release-assets/**/*.zip
+            artifacts/release-assets/**/*.exe
+            artifacts/release-assets/**/*.AppImage
+            artifacts/release-assets/**/*.deb
+            artifacts/release-assets/**/*.rpm
             artifacts/update-metadata-standard/*.yml
-            desktop/scripts/install-macos-unsigned.sh
-
-      - name: Verify release record after upload
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ steps.release.outputs.release_id }}
-          OFFICIAL_RELEASE: ${{ inputs.official_release }}
-        run: |
-          if [ -n "${RELEASE_ID}" ]; then
-            release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")
-            current_id=$(jq -r '.id' <<<"${release_json}")
-            is_draft=$(jq -r '.draft' <<<"${release_json}")
-            if [ "${current_id}" != "${RELEASE_ID}" ]; then
-              echo "::error::Release ID changed while uploading assets."
-              exit 1
-            fi
-            if [ "${OFFICIAL_RELEASE}" = "true" ] && [ "${is_draft}" != "true" ]; then
-              echo "::error::Release was published before the official undraft step."
-              exit 1
-            fi
-          fi
 
       - name: Publish GitHub release after complete upload
         if: inputs.official_release == true
@@ -1407,20 +1170,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ steps.release.outputs.release_id }}
         run: |
-          if [ -z "${RELEASE_ID}" ]; then
+          if [ -z "$RELEASE_ID" ]; then
             echo "::error::Trusted release publication requires a verified release ID."
             exit 1
           fi
-
-          undrafted_id=$(
-            gh api \
-              --method PATCH \
-              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
-              -F draft=false \
-              --jq 'select(.draft == false) | .id'
-          )
-
-          if [ "${undrafted_id}" != "${RELEASE_ID}" ]; then
+          undrafted_id=$(gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" -F draft=false --jq 'select(.draft == false) | .id')
+          if [ "$undrafted_id" != "$RELEASE_ID" ]; then
             echo "::error::The verified release ID was not undrafted."
             exit 1
           fi
@@ -1431,10 +1186,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release view "v${{ steps.version.outputs.value }}" --json isDraft --jq 'if .isDraft then "release remains draft" else error("workflow-dispatch release was published unexpectedly") end' --repo "${{ github.repository }}"
 
-  # Mirror the update channel files to code.echoflow.cn/update/ and generate the
-  # download-page manifest after the complete GitHub release exists. GitHub
-  # Releases stays the full publish source; a failed mirror must fail the run.
-  # The condition matches the undraft step: draft releases never trigger a sync.
   site-release-sync:
     needs: publish-release
     if: inputs.official_release == true
@@ -1444,5 +1195,14 @@ jobs:
       id-token: write
     uses: ./.github/workflows/deploy-docs.yml
     with:
-      release_tag: ${{ needs.publish-release.outputs.version }}
+      release_tag: ${{ needs.publish-release.outputs.release_tag }}
     secrets: inherit
+
+  release-mobile:
+    needs: publish-release
+    if: vars.MOBILE_RELEASE_ENABLED == 'true' && inputs.official_release == true
+    uses: ./.github/workflows/release-mobile.yml
+    with:
+      release_tag: ${{ needs.publish-release.outputs.release_tag }}
+    secrets:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}

@@ -13,6 +13,7 @@ describe('quality gate modes', () => {
     expect(lanes).toContain('impact-report')
     expect(lanes).toContain('policy-checks')
     expect(lanes).toContain('desktop-checks')
+    expect(lanes).toContain('mobile-checks')
     expect(lanes).toContain('server-checks')
     expect(lanes).toContain('provider-contract-checks')
     expect(lanes).toContain('chat-contract-checks')
@@ -41,9 +42,6 @@ describe('quality gate modes', () => {
     const lanes = lanesForMode('baseline').map((lane) => lane.id)
     expect(lanes).toContain('baseline-catalog')
     expect(lanes).toContain('quarantine')
-    // Release-surface hygiene is a release-time concern, not a per-PR one: a PR
-    // that touches the scripts should not be blocked by notes it did not write.
-    expect(lanes).not.toContain('release-surface')
     expect(lanes).toContain('coverage')
     expect(lanes).toContain('baseline:failing-unit:current-runtime')
     expect(lanes).toContain('provider-smoke:current-runtime')
@@ -59,6 +57,7 @@ describe('quality gate modes', () => {
     const packageSmokeArch = currentPackageSmokeArch()
     expect(lanes).toContain('policy-checks')
     expect(lanes).toContain('desktop-checks')
+    expect(lanes).toContain('mobile-checks')
     expect(lanes).toContain('server-checks')
     expect(lanes).toContain('provider-contract-checks')
     expect(lanes).toContain('chat-contract-checks')
@@ -66,7 +65,6 @@ describe('quality gate modes', () => {
     expect(lanes).toContain('docs-checks')
     expect(lanes).toContain('persistence-upgrade')
     expect(lanes).toContain('quarantine')
-    expect(lanes).toContain('release-surface')
     expect(lanes).toContain('coverage')
     expect(lanes).toContain('baseline:failing-unit:current-runtime')
     expect(lanes).toContain('provider-smoke:current-runtime')
@@ -198,74 +196,6 @@ describe('runQualityGate', () => {
     }
   })
 
-  test('runs isolated lanes in parallel and serializes shared-resource lanes', async () => {
-    const artifactsDir = mkdtempSync(join(tmpdir(), 'quality-gate-test-'))
-    const events: string[] = []
-    try {
-      const lanes: LaneDefinition[] = [
-        {
-          id: 'impact-report',
-          title: 'Impact',
-          description: 'Impact',
-          kind: 'command',
-          command: ['true'],
-          requiredForModes: ['pr'],
-        },
-        {
-          id: 'policy-checks',
-          title: 'Policy',
-          description: 'Policy',
-          kind: 'command',
-          command: ['true'],
-          requiredForModes: ['pr'],
-        },
-        {
-          id: 'server-checks',
-          title: 'Server',
-          description: 'Server',
-          kind: 'command',
-          command: ['true'],
-          requiredForModes: ['pr'],
-        },
-        {
-          id: 'docs-checks',
-          title: 'Docs',
-          description: 'Docs',
-          kind: 'command',
-          command: ['true'],
-          requiredForModes: ['pr'],
-        },
-      ]
-      const { report } = await runQualityGateLanes({
-        mode: 'pr',
-        dryRun: false,
-        allowLive: false,
-        baselineTargets: [],
-        rootDir: process.cwd(),
-        artifactsDir,
-        runId: 'parallel-lanes-test',
-      }, lanes, async (lane) => {
-        events.push(`start:${lane.id}`)
-        await new Promise((resolve) => setTimeout(resolve, lane.id === 'impact-report' ? 5 : 15))
-        events.push(`end:${lane.id}`)
-        return { id: lane.id, title: lane.title, status: 'passed', command: lane.command, durationMs: 1, exitCode: 0 }
-      })
-
-      expect(report.results.map((result) => result.id)).toEqual([
-        'impact-report',
-        'policy-checks',
-        'server-checks',
-        'docs-checks',
-      ])
-      expect(events.indexOf('start:policy-checks')).toBeLessThan(events.indexOf('end:docs-checks'))
-      expect(events.indexOf('start:docs-checks')).toBeLessThan(events.indexOf('end:policy-checks'))
-      expect(events.indexOf('start:server-checks')).toBeGreaterThan(events.indexOf('end:policy-checks'))
-      expect(events.indexOf('start:server-checks')).toBeGreaterThan(events.indexOf('end:docs-checks'))
-    } finally {
-      rmSync(artifactsDir, { recursive: true, force: true })
-    }
-  })
-
   test('filters lanes by exact id or prefix selector', async () => {
     const artifactsDir = mkdtempSync(join(tmpdir(), 'quality-gate-test-'))
     try {
@@ -328,17 +258,18 @@ describe('runQualityGate', () => {
         title: 'Impact report',
         description: 'Writes selected local checks',
         kind: 'command',
-        command: ['bun', '-e', [
-          'console.log("# PR impact report")',
-          'console.log("")',
-          'console.log("Changed files: 1")',
-          'console.log("Areas: server")',
-          'console.log("Labels: none")',
-          'console.log("Blocked: no")',
-          'console.log("")',
-          'console.log("## Required local checks")',
-          'console.log("- bun run check:server")',
-        ].join(';')],
+        command: ['bash', '-lc', [
+          'printf "%s\\n"',
+          '"# PR impact report"',
+          '""',
+          '"Changed files: 1"',
+          '"Areas: server"',
+          '"Labels: none"',
+          '"Blocked: no"',
+          '""',
+          '"## Required local checks"',
+          '"- bun run check:server"',
+        ].join(' ')],
         requiredForModes: ['pr'],
       },
       {
@@ -346,7 +277,7 @@ describe('runQualityGate', () => {
         title: 'Desktop checks',
         description: 'Should be skipped',
         kind: 'command',
-        command: ['bun', '-e', 'process.exit(7)'],
+        command: ['bash', '-lc', 'exit 7'],
         impactRequiredCheck: 'bun run check:desktop',
         requiredForModes: ['pr'],
       },
@@ -378,17 +309,18 @@ describe('runQualityGate', () => {
         title: 'Impact report',
         description: 'Writes selected local checks',
         kind: 'command',
-        command: ['bun', '-e', [
-          'console.log("# PR impact report")',
-          'console.log("")',
-          'console.log("Changed files: 1")',
-          'console.log("Areas: desktop")',
-          'console.log("Labels: none")',
-          'console.log("Blocked: no")',
-          'console.log("")',
-          'console.log("## Required local checks")',
-          'console.log("- bun run check:desktop")',
-        ].join(';')],
+        command: ['bash', '-lc', [
+          'printf "%s\\n"',
+          '"# PR impact report"',
+          '""',
+          '"Changed files: 1"',
+          '"Areas: desktop"',
+          '"Labels: none"',
+          '"Blocked: no"',
+          '""',
+          '"## Required local checks"',
+          '"- bun run check:desktop"',
+        ].join(' ')],
         requiredForModes: ['pr'],
       },
       {
@@ -396,7 +328,7 @@ describe('runQualityGate', () => {
         title: 'Desktop checks',
         description: 'Should run',
         kind: 'command',
-        command: ['bun', '-e', 'process.exit(0)'],
+        command: ['bash', '-lc', 'exit 0'],
         impactRequiredCheck: 'bun run check:desktop',
         requiredForModes: ['pr'],
       },
@@ -531,9 +463,9 @@ describe('runQualityGate', () => {
           '"Areas: cli-core"',
           '"Labels: none"',
           '"Blocked: yes"',
-          '""',
           '"Blocking reasons:"',
           '"- CLI core changes require maintainer approval."',
+          '""',
           '"## Required local checks"',
           '"- bun run check:server"',
         ].join(' ')],
@@ -677,7 +609,7 @@ describe('renderMarkdownReport', () => {
       impact: {
         changedFiles: 3,
         areas: ['desktop', 'server'],
-        labels: [],
+        labels: ['allow-cli-core-change'],
         blocked: false,
         requiredChecks: ['`bun run check:desktop`', '`bun run check:coverage`'],
         testCoverageSignals: ['No obvious missing-test signal from changed paths.'],

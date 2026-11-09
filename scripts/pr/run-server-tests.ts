@@ -1,20 +1,26 @@
 #!/usr/bin/env bun
 
-import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
 import { loadQuarantineManifest, quarantinedPathSet } from '../quality-gate/quarantine'
 import { rootBunTestFilter } from './bun-test-filter'
+import { classifyFailedFiles, formatFlakeReport } from './server-test-flakes'
 import { createSandboxedTestEnvironment } from './test-environment'
+import { parseShardArg, selectShard } from './test-shard'
 
 const root = process.cwd()
 // The root runtime is wider than src/server: CLI commands, query handling,
-// shared services, tools, and utils all ship in the same Bun product. The
-// cross-module tests at the repository root exercise that same runtime.
-const roots = ['src', 'tests']
+// shared services, tools, and utils all ship in the same Bun product. Keeping a
+// single src root prevents approved CLI/core changes from receiving a green
+// server check without their existing tests ever being discovered.
+const roots = ['src']
 const excludedFiles = quarantinedPathSet(loadQuarantineManifest())
 const TEST_PROCESS_CONCURRENCY = 4
 const TEST_FILE_PATTERN = /\.test\.[cm]?[jt]sx?$/
+// CI splits the suite across runners with --shard=<index>/<total>; locally and in
+// the nightly sweep there is no flag and every file runs here.
+const shard = parseShardArg(process.argv.slice(2))
 
 function normalize(path: string) {
   return relative(root, path).split(sep).join('/')
@@ -52,6 +58,11 @@ if (testFiles.length === 0) {
   process.exit(0)
 }
 
+const selectedFiles = selectShard(testFiles, shard)
+if (shard) {
+  console.log(`[server-tests] shard ${shard.index}/${shard.total}: ${selectedFiles.length} of ${testFiles.length} files`)
+}
+
 type TestFileResult = {
   file: string
   exitCode: number
@@ -66,7 +77,7 @@ function summaryCount(output: string, label: 'pass' | 'fail') {
 }
 
 async function runTestFile(file: string): Promise<TestFileResult> {
-  const sandboxHome = mkdtempSync(join(tmpdir(), 'echoflow-code-server-test-'))
+  const sandboxHome = mkdtempSync(join(tmpdir(), 'cc-haha-server-test-'))
   try {
     const proc = Bun.spawn(
       [
@@ -120,8 +131,8 @@ async function runTestFile(file: string): Promise<TestFileResult> {
 let nextFile = 0
 const results: TestFileResult[] = []
 async function runWorker() {
-  while (nextFile < testFiles.length) {
-    const file = testFiles[nextFile]
+  while (nextFile < selectedFiles.length) {
+    const file = selectedFiles[nextFile]
     nextFile += 1
     results.push(await runTestFile(file))
   }
@@ -129,7 +140,7 @@ async function runWorker() {
 
 await Promise.all(
   Array.from(
-    { length: Math.min(TEST_PROCESS_CONCURRENCY, testFiles.length) },
+    { length: Math.min(TEST_PROCESS_CONCURRENCY, selectedFiles.length) },
     () => runWorker(),
   ),
 )
@@ -138,4 +149,16 @@ const failedFiles = results.filter((result) => !result.evidenceComplete)
 console.log(
   `[server-tests] summary: files=${results.length} passed-tests=${results.reduce((total, result) => total + result.passedTests, 0)} failed-tests=${results.reduce((total, result) => total + result.failedTests, 0)} failed-files=${failedFiles.length}`,
 )
-process.exit(failedFiles.length === 0 ? 0 : 1)
+// Re-run each failed file once, alone, to tell a race from a regression. The
+// exit code does not depend on the re-run.
+const flakeReport = await classifyFailedFiles(
+  failedFiles.map((result) => result.file).sort(),
+  async (file) => (await runTestFile(file)).evidenceComplete,
+)
+for (const line of formatFlakeReport(flakeReport)) console.log(line)
+if (flakeReport.verdicts.length > 0) {
+  const artifactDir = join(root, 'artifacts', 'server-tests')
+  mkdirSync(artifactDir, { recursive: true })
+  writeFileSync(join(artifactDir, 'flaky.json'), JSON.stringify(flakeReport, null, 2) + '\n')
+}
+process.exit(flakeReport.exitCode)

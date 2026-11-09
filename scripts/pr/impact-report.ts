@@ -33,6 +33,9 @@ function commandList(result: ReturnType<typeof evaluateChangePolicy>) {
   if (result.checks.desktop) {
     commands.push('bun run check:desktop')
   }
+  if (result.checks.mobile) {
+    commands.push('bun run check:mobile')
+  }
   if (result.checks.server) {
     commands.push('bun run check:server')
   }
@@ -45,11 +48,11 @@ function commandList(result: ReturnType<typeof evaluateChangePolicy>) {
   if (result.checks.agentFlow) {
     commands.push('bun run check:agent-flow')
   }
+  if (result.checks.agentE2e) {
+    commands.push('bun run check:agent-e2e')
+  }
   if (result.checks.adapters) {
     commands.push('bun run check:adapters')
-  }
-  if (result.checks.mobile) {
-    commands.push('bun run check:mobile')
   }
   if (result.checks.desktopNative) {
     commands.push('bun run check:native')
@@ -60,9 +63,6 @@ function commandList(result: ReturnType<typeof evaluateChangePolicy>) {
   if (result.checks.docs) {
     commands.push('bun run check:docs')
   }
-  if (result.checks.harness) {
-    commands.push('bun run check:harness')
-  }
   if (result.checks.coverage) {
     commands.push('bun run check:coverage')
   }
@@ -70,17 +70,52 @@ function commandList(result: ReturnType<typeof evaluateChangePolicy>) {
   return commands
 }
 
+function hasMatchingTest(files: string[], predicate: (file: string) => boolean) {
+  return files.some((file) => (
+    predicate(file) &&
+    (/\.test\.[cm]?[jt]sx?$/.test(file) || file.includes('/__tests__/'))
+  ))
+}
+
+function changedProductionFiles(files: string[], predicate: (file: string) => boolean) {
+  return files.filter((file) => (
+    predicate(file) &&
+    /\.[cm]?[jt]sx?$/.test(file) &&
+    !/\.test\.[cm]?[jt]sx?$/.test(file) &&
+    !file.includes('/__tests__/') &&
+    !file.includes('/fixtures/')
+  ))
+}
+
 function coverageWarnings(files: string[]) {
-  const agentRuntimeProd = files.some((file) => (
+  const warnings: string[] = []
+  const desktopProd = changedProductionFiles(files, (file) => file.startsWith('desktop/src/'))
+  const serverProd = changedProductionFiles(files, (file) => file.startsWith('src/server/'))
+  const adapterProd = changedProductionFiles(files, (file) => file.startsWith('adapters/'))
+  const agentRuntimeProd = changedProductionFiles(files, (file) => (
     file.startsWith('src/server/ws/') ||
     file.startsWith('src/server/services/conversation') ||
     file.startsWith('src/tools/') ||
     file.startsWith('src/utils/')
   ))
 
-  return agentRuntimeProd
-    ? ['Agent/model runtime path changed: prefer request-shape/mock tests in PR and maintainer live-model smoke before release.']
-    : []
+  if (desktopProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('desktop/src/'))) {
+    warnings.push('Desktop product files changed without a desktop test file in the PR.')
+  }
+
+  if (serverProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('src/server/'))) {
+    warnings.push('Server product files changed without a server test file in the PR.')
+  }
+
+  if (adapterProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('adapters/'))) {
+    warnings.push('Adapter product files changed without an adapter test file in the PR.')
+  }
+
+  if (agentRuntimeProd.length > 0) {
+    warnings.push('Agent/model runtime path changed: prefer request-shape/mock tests in PR and maintainer live-model smoke before release.')
+  }
+
+  return warnings
 }
 
 function riskNotes(files: string[]) {
@@ -99,9 +134,7 @@ function riskNotes(files: string[]) {
     notes.push('Provider/search behavior changed: PR gate uses mock tests; live-provider tests should stay maintainer-only.')
   }
   if (files.some((file) => file.startsWith('.github/workflows/') || file.startsWith('scripts/pr/'))) {
-    notes.push(
-      'CI/policy changed: `PR Quality / policy-enforcement` is the authoritative policy lane; inspect the workflow behavior itself, not just application tests.',
-    )
+    notes.push('CI/policy changed: inspect the PR workflow behavior itself, not just application tests.')
   }
 
   return notes
@@ -112,6 +145,9 @@ const labels = [
   ...(process.env.PR_LABELS?.split(',').map((label) => label.trim()).filter(Boolean) ?? []),
 ]
 
+if (process.env.ALLOW_CLI_CORE_CHANGE === '1') {
+  labels.push('allow-cli-core-change')
+}
 if (process.env.ALLOW_MISSING_TESTS === '1') {
   labels.push('allow-missing-tests')
 }
@@ -167,9 +203,10 @@ if (dependency.degraded) {
       const example = dependency.dependents.find((file) => (
         check === 'desktop' ? file.startsWith('desktop/src/')
           : check === 'desktopNative' ? file.startsWith('desktop/electron/') || file.startsWith('desktop/scripts/')
-            : check === 'adapters' ? file.startsWith('adapters/')
-              : check === 'server' ? file.startsWith('src/')
-                : true
+            : check === 'mobile' ? file.startsWith('mobile/')
+              : check === 'adapters' ? file.startsWith('adapters/')
+                : check === 'server' ? file.startsWith('src/')
+                  : true
       ))
       console.log(`- Selected \`${check}\` because a changed file is imported by \`${example ?? dependency.dependents[0]}\`.`)
     }

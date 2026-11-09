@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test'
 import path from 'node:path'
 import { evaluateSignedChainReport, fixtureSigningEnvironment, parseSignedChainArgs, planFixtureSigning, privateKeychainCommands, verifySignedChainReport } from './computer-use-signed-chain'
-import { CU_HELPER_PROTOCOL_VERSION } from '../../src/utils/computerUse/cuHelperDaemon.js'
 
 test('default signing plans use only the explicitly scoped private keychain', () => {
   const directory = path.resolve('/tmp/fixture')
@@ -10,9 +9,9 @@ test('default signing plans use only the explicitly scoped private keychain', ()
   expect(plan.mode).toBe('temporary')
   expect(plan.requiresPackagedInstall).toBe(false)
   expect(plan.setupCommands('password').every(command => command.args.includes(keychain))).toBe(true)
-  expect(plan.signCommand('/tmp/fixture/helper.app', 'dev.echoflow.cu-helper')).toEqual({
+  expect(plan.signCommand('/tmp/fixture/helper.app', 'dev.cchaha.cu-helper')).toEqual({
     command: path.join(directory, 'private-signer'),
-    args: [keychain, '/tmp/fixture/helper.app', 'dev.echoflow.cu-helper'],
+    args: [keychain, '/tmp/fixture/helper.app', 'dev.cchaha.cu-helper'],
   })
   expect(() => planFixtureSigning({ directory: 'relative' })).toThrow()
 })
@@ -47,7 +46,7 @@ test('an authorized signing keychain is explicit even when the test HOME is isol
   expect(parseSignedChainArgs(['--signing-identity', signingIdentity, '--signing-keychain', signingKeychain, 'report.json']))
     .toEqual({ signingIdentity, signingKeychain, output: 'report.json' })
   const plan = planFixtureSigning({ directory: '/tmp/fixture', signingIdentity, signingKeychain })
-  const command = plan.signCommand('/tmp/fixture/helper.app', 'dev.echoflow.cu-helper')
+  const command = plan.signCommand('/tmp/fixture/helper.app', 'dev.cchaha.cu-helper')
   expect(command.args).toContain('--keychain')
   expect(command.args[command.args.indexOf('--keychain') + 1]).toBe(signingKeychain)
   expect(plan.setupCommands('unused')).toEqual([])
@@ -88,7 +87,7 @@ test('private signing fixtures always address their explicit keychain and never 
 test('an authenticated permission denial cannot be reported as a native GUI replay pass', () => {
   const report = {
     result: {
-      ping: { protocolVersion: CU_HELPER_PROTOCOL_VERSION },
+      ping: { protocolVersion: 'CCHahaComputerUseIPC-2' },
       permissions: { accessibility: false, screenRecording: false },
       first: { content: [{ text: '1' }] }, second: { content: [{ text: '2' }] },
       nativeObservation: { isError: true },

@@ -6,11 +6,15 @@ name: Full Quality
 # select. This workflow closes them, without any model, provider, or repository
 # secret.
 #
-# Manual only, on purpose. It is here so the full sweep is one click away, not so
-# it runs on its own — deciding when to spend half an hour of CI is the
-# maintainer's call, not this file's.
+# Daily, plus one click away. The maintainer chose a daily sweep (2026-10) once
+# main was made green: a red main that nobody re-checks is what turned the PR gate
+# into noise. Daily rather than per push, because a full sweep takes about ninety
+# minutes and the per-push PR Quality run already covers what each merge touched.
 
 on:
+  schedule:
+    # 19:00 UTC = 03:00 Beijing, outside working hours.
+    - cron: '0 19 * * *'
   workflow_dispatch:
     inputs:
       skip_coverage:
@@ -26,155 +30,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  full-governance:
-    name: full-governance
+  full-deterministic:
+    name: full-deterministic
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-      - name: Cache root dependencies
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: bun-root-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-
-      - name: Install root dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Policy and gate regressions
-        run: bun run check:policy
-      - name: Quarantine governance
-        run: bun run check:quarantine
-
-  full-runtime:
-    name: full-runtime
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-      - name: Cache root dependencies
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: bun-root-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-
-      - name: Cache desktop dependencies
-        uses: actions/cache@v4
-        with:
-          path: desktop/node_modules
-          key: bun-desktop-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
-
-      - name: Cache adapter dependencies
-        uses: actions/cache@v4
-        with:
-          path: adapters/node_modules
-          key: bun-adapters-${{ runner.os }}-${{ hashFiles('adapters/bun.lock') }}
-
-      - name: Install root dependencies
-        run: bun install --frozen-lockfile
-      - name: Install desktop dependencies
-        working-directory: desktop
-        run: bun install --frozen-lockfile
-      - name: Install adapter dependencies
-        working-directory: adapters
-        run: bun install --frozen-lockfile
-
-      - name: Root runtime tests
-        run: bun run check:server
-      - name: Deterministic agent flow
-        run: bun run check:agent-flow
-      - name: Provider contracts
-        run: bun run check:provider-contract
-      - name: Desktop/server chat contracts
-        run: bun run check:chat-contract
-
-  full-desktop:
-    name: full-desktop
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-      - name: Cache root dependencies
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: bun-root-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-
-      - name: Cache desktop dependencies
-        uses: actions/cache@v4
-        with:
-          path: desktop/node_modules
-          key: bun-desktop-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
-
-      - name: Cache adapter dependencies
-        uses: actions/cache@v4
-        with:
-          path: adapters/node_modules
-          key: bun-adapters-${{ runner.os }}-${{ hashFiles('adapters/bun.lock') }}
-
-      - name: Install root dependencies
-        run: bun install --frozen-lockfile
-      - name: Install desktop dependencies
-        working-directory: desktop
-        run: bun install --frozen-lockfile
-      - name: Install adapter dependencies
-        working-directory: adapters
-        run: bun install --frozen-lockfile
-
-      - name: Desktop lint, tests, and build
-        run: bun run check:desktop
-      - name: Electron host checks
-        run: bun run check:electron
-      - name: Adapter tests
-        run: bun run check:adapters
-      - name: Persistence upgrade contracts
-        run: bun run check:persistence-upgrade
-
-  full-coverage:
-    name: full-coverage
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
-      - name: Cache root dependencies
-        uses: actions/cache@v4
+      - uses: actions/setup-node@v4
         with:
-          path: node_modules
-          key: bun-root-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-
-      - name: Cache desktop dependencies
-        uses: actions/cache@v4
-        with:
-          path: desktop/node_modules
-          key: bun-desktop-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
-
-      - name: Cache adapter dependencies
-        uses: actions/cache@v4
-        with:
-          path: adapters/node_modules
-          key: bun-adapters-${{ runner.os }}-${{ hashFiles('adapters/bun.lock') }}
-
+          node-version: 22
+      # Agent and skill discovery lists files through ripgrep; without it the
+      # runtime suites see every created agent as missing (HTTP 500).
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -184,6 +58,42 @@ jobs:
         working-directory: adapters
         run: bun install --frozen-lockfile
 
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: bun install --frozen-lockfile
+
+      # Every deterministic lane, unconditionally — no path routing, no dependency
+      # graph. This is the run that catches a check the router stopped selecting.
+      - name: Policy and gate regressions
+        run: bun run check:policy
+      - name: Deterministic agent flow
+        run: bun run check:agent-flow
+      - name: Agent loop against a mock LLM and recorded traffic
+        run: bun run check:agent-e2e
+      - name: Root runtime tests
+        run: bun run check:server
+      - name: Provider contracts
+        run: bun run check:provider-contract
+      - name: Desktop/server chat contracts
+        run: bun run check:chat-contract
+      - name: Adapter tests
+        run: bun run check:adapters
+      - name: Desktop lint, tests, and build
+        run: bun run check:desktop
+      - name: Mobile typecheck, lint, and tests
+        run: bun run check:mobile
+      - name: Setup native Computer Use Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Prepare native Computer Use dependencies
+        run: cargo +stable fetch --locked --manifest-path native/agent-desktop/Cargo.toml
+      - name: Native Computer Use deterministic checks
+        run: bun run check:agent-desktop
+      - name: Electron host checks
+        run: bun run check:electron
+      - name: Persistence upgrade contracts
+        run: bun run check:persistence-upgrade
+      - name: Quarantine governance
+        run: bun run check:quarantine
       - name: Coverage ratchet
         if: ${{ !inputs.skip_coverage }}
         env:
@@ -198,79 +108,28 @@ jobs:
 
       - name: Upload nightly artifacts
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: nightly-quality
           path: |
             artifacts/agent-flow/
+            artifacts/agent-e2e/
             artifacts/desktop-ui-smoke/
             artifacts/coverage/
           retention-days: 14
-
-  full-deterministic:
-    name: full-deterministic
-    needs:
-      - full-governance
-      - full-runtime
-      - full-desktop
-      - full-coverage
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Require all lanes to pass
-        run: |
-          failures=0
-          for entry in \
-            "full-governance:${{ needs.full-governance.result }}" \
-            "full-runtime:${{ needs.full-runtime.result }}" \
-            "full-desktop:${{ needs.full-desktop.result }}" \
-            "full-coverage:${{ needs.full-coverage.result }}"
-          do
-            name="${entry%%:*}" status="${entry#*:}"
-            if [ "$status" = "skipped" ]; then
-              echo "${name}: skipped"
-            elif [ "$status" != "success" ]; then
-              echo "::error::${name} ended with result: ${status}"
-              failures=$((failures + 1))
-            else
-              echo "${name}: success"
-            fi
-          done
-          if [ "$failures" -gt 0 ]; then
-            exit 1
-          fi
 
   selection-drift:
     name: selection-drift
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
-      - name: Cache root dependencies
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: bun-root-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-
-      - name: Cache desktop dependencies
-        uses: actions/cache@v4
-        with:
-          path: desktop/node_modules
-          key: bun-desktop-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
-
-      - name: Cache adapter dependencies
-        uses: actions/cache@v4
-        with:
-          path: adapters/node_modules
-          key: bun-adapters-${{ runner.os }}-${{ hashFiles('adapters/bun.lock') }}
-
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       # A dependency graph that silently stops resolving would quietly downgrade the
@@ -279,4 +138,4 @@ jobs:
       - name: Module graph health
         run: bun test ./scripts/pr/module-graph.test.ts
       - name: Impact report on the full tree
-        run: bun run check:impact --files "$(git ls-files 'src/*' 'desktop/*' 'adapters/*' | head -400 | tr '\n' ',')"
+        run: bun run check:impact --files "$(git ls-files 'src/*' 'desktop/*' 'adapters/*' 'mobile/*' | head -400 | tr '\n' ',')"

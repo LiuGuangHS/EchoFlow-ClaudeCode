@@ -13,12 +13,6 @@
 - Known risk / rollback:
   - <!-- remaining risk and how to revert safely -->
 
-## Tooling & Reproduction Evidence
-
-- Agent toolset used: <!-- e.g. /superpowers:write-plan, @code-reviewer, /ponytail-review; write N/A with a reason if unavailable -->
-- `bun run audit:harness`: <!-- result, or N/A with a reason -->
-- `.claude/` local state was not committed or used as a CI dependency.
-
 ## Verification
 
 - [ ] I ran the relevant local checks, or explained why they do not apply.
@@ -30,7 +24,7 @@
 
 ## Risk
 
-- [ ] This PR does not touch CLI core paths, or it has maintainer approval for `allow-cli-core-change`.
+- [ ] This PR does not touch CLI core paths, is authored by a CODEOWNER, or has maintainer approval for `allow-cli-core-change`.
 - [ ] Production code changes include matching tests, or have maintainer approval for `allow-missing-tests`.
 - [ ] Coverage baseline/threshold changes have maintainer approval for `allow-coverage-baseline-change`.
 - [ ] Any quarantine-policy change has maintainer approval; deterministic provider/chat contract tests were not quarantined.

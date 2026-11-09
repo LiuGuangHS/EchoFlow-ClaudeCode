@@ -33,44 +33,44 @@ describe('Windows installer recovery prerequisites', () => {
   test('skips PowerShell only for a proven default per-user installation', () => {
     const installerHook = readFileSync('desktop/build/installer.nsh', 'utf8')
     const fastPathStart = installerHook.indexOf(
-      'Function EchoFlowCanSkipLegacyRecovery',
+      'Function CcHahaCanSkipLegacyRecovery',
     )
     const recoveryCall = installerHook.indexOf(
-      'UAC_AsUser_Call Function EchoFlowRecoverLegacy',
+      'UAC_AsUser_Call Function CcHahaRecoverLegacy',
     )
 
     expect(fastPathStart).toBeGreaterThan(-1)
     expect(fastPathStart).toBeLessThan(recoveryCall)
     expect(installerHook).toMatch(
-      /Function EchoFlowCanSkipLegacyRecovery[\s\S]*\$8 != "trusted-user"/,
+      /Function CcHahaCanSkipLegacyRecovery[\s\S]*\$8 != "trusted-user"/,
     )
     expect(installerHook).toMatch(
-      /StrCpy \$8 "trusted-user"[\s\S]*UAC_IsAdmin[\s\S]*StrCpy \$8 "untrusted-elevated"[\s\S]*UAC_IsInnerInstance[\s\S]*StrCpy \$8 "trusted-uac-outer"[\s\S]*Call EchoFlowCanSkipLegacyRecovery/,
+      /StrCpy \$8 "trusted-user"[\s\S]*UAC_IsAdmin[\s\S]*StrCpy \$8 "untrusted-elevated"[\s\S]*UAC_IsInnerInstance[\s\S]*StrCpy \$8 "trusted-uac-outer"[\s\S]*Call CcHahaCanSkipLegacyRecovery/,
     )
     expect(installerHook).toContain(
-      '$echoFlowPerUserInstallLocation == ""',
+      '$ccHahaPerUserInstallLocation == ""',
     )
     expect(installerHook).toContain(
-      '$echoFlowPerMachineInstallLocation != ""',
+      '$ccHahaPerMachineInstallLocation != ""',
     )
     expect(installerHook).toContain(
-      '$echoFlowPerMachineUninstallString != ""',
+      '$ccHahaPerMachineUninstallString != ""',
     )
     expect(installerHook).toContain(
-      'StrCmp $echoFlowPerUserInstallLocation $INSTDIR',
+      'StrCmp $ccHahaPerUserInstallLocation $INSTDIR',
     )
     expect(installerHook).toContain('ReadEnvStr $R0 CLAUDE_CONFIG_DIR')
     expect(installerHook).toContain(
-      'IfFileExists "$echoFlowPerUserInstallLocation\\CLAUDE_CONFIG_DIR\\*.*"',
+      'IfFileExists "$ccHahaPerUserInstallLocation\\CLAUDE_CONFIG_DIR\\*.*"',
     )
     expect(installerHook).toContain(
-      'FileOpen $R2 "$R1\\EchoFlow Code\\app-mode.json" r',
+      'FileOpen $R2 "$R1\\Claude Code Haha\\app-mode.json" r',
     )
     expect(installerHook).toContain('StrCmp $R3 \'  "mode": "default",$\\n\'')
     expect(installerHook).toContain('StrCmp $R3 \'  "portable_dir": null$\\n\'')
     expect(installerHook).toContain('FileClose $R2')
     expect(installerHook).toMatch(
-      /Call EchoFlowCanSkipLegacyRecovery[\s\S]*No legacy data candidates found for the registered per-user installation[\s\S]*UAC_AsUser_Call Function EchoFlowRecoverLegacy/,
+      /Call CcHahaCanSkipLegacyRecovery[\s\S]*No legacy data candidates found for the registered per-user installation[\s\S]*UAC_AsUser_Call Function CcHahaRecoverLegacy/,
     )
   })
 

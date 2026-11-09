@@ -1,18 +1,16 @@
 #!/usr/bin/env bun
 
 import { existsSync, readFileSync, appendFileSync } from 'node:fs'
-import areaRoutingConfig from './area-routing.json'
 import { dependentFilesForChangeSet } from './module-graph'
 
 export type ChangeArea =
   | 'desktop'
+  | 'mobile'
   | 'server'
   | 'adapters'
   | 'docs'
   | 'release'
-  | 'mobile'
   | 'cli-core'
-  | 'harness'
 
 export type ChangePolicyResult = {
   files: string[]
@@ -23,52 +21,50 @@ export type ChangePolicyResult = {
   blockingReason: string | null
   blockingReasons: string[]
   cliCoreFiles: string[]
+  /** Why CLI core changes were allowed: the override label, or a PR authored by a CODEOWNER. */
+  cliCoreOverride: 'label' | 'codeowner-author' | null
   coveragePolicyFiles: string[]
   missingTestSignals: string[]
   checks: {
     desktop: boolean
+    mobile: boolean
     server: boolean
     adapters: boolean
-    mobile: boolean
     desktopNative: boolean
     providerContract: boolean
     chatContract: boolean
     agentFlow: boolean
+    agentE2e: boolean
     persistence: boolean
     policy: boolean
     docs: boolean
     coverage: boolean
-    harness: boolean
   }
 }
 
+const ALLOW_CLI_CORE_LABEL = 'allow-cli-core-change'
 const ALLOW_MISSING_TESTS_LABEL = 'allow-missing-tests'
 const ALLOW_COVERAGE_BASELINE_LABEL = 'allow-coverage-baseline-change'
 
 const areaLabels: Record<ChangeArea, string> = {
   desktop: 'area:desktop',
+  mobile: 'area:mobile',
   server: 'area:server',
   adapters: 'area:adapters',
   docs: 'area:docs',
   release: 'area:release',
-  mobile: 'area:mobile',
   'cli-core': 'area:cli-core',
-  harness: 'area:harness',
 }
 
-type AreaRule = {
-  prefixes?: string[]
-  exact?: string[]
-  excludePrefixes?: string[]
-}
-
-// Path-to-area routing is shared data: `pr-triage.yml` reads this same file
-// from the base revision through the GitHub API, so advisory labels cannot
-// drift into a second prefix graph. `desktop` includes the native helper,
-// `mobile` is its own Android shell, `server` includes shipped runtime helpers
-// and root tests, and `cli-core` excludes `src/server/`.
-const areaRules = areaRoutingConfig.areas as Record<ChangeArea, AreaRule>
-const cliCoreRule = areaRules['cli-core']
+const cliCorePrefixes = [
+  'bin/',
+  'src/entrypoints/',
+  'src/screens/',
+  'src/components/',
+  'src/commands/',
+  'src/tools/',
+  'src/utils/',
+]
 
 const desktopNativeExactPaths = new Set([
   'bun.lock',
@@ -76,7 +72,6 @@ const desktopNativeExactPaths = new Set([
   'desktop/bun.lock',
   'desktop/package.json',
   'desktop/package-lock.json',
-  'desktop/bunfig.toml',
   'desktop/electron/tsconfig.json',
   'desktop/scripts/build-macos-arm64.sh',
   'desktop/scripts/build-windows-x64.ps1',
@@ -133,6 +128,22 @@ const chatContractPrefixes = [
  * session lifecycle, WebSocket framing, tool permission round-trips, reconnect
  * replay, and the mock runtime that stands in for a provider.
  */
+/**
+ * Harness of the agent loop lane (scripted mock LLM plus recorded-traffic replay).
+ * Product code reaches it through the broader
+ * `src/` rule in the selector: that lane runs the real CLI, so any runtime change
+ * can break the agent loop it proves.
+ */
+const agentE2eHarnessPaths = [
+  'scripts/quality-gate/mock-llm/',
+  'scripts/quality-gate/replay/',
+  'scripts/quality-gate/agent-flow/',
+  'scripts/quality-gate/sandbox.ts',
+  'preload.ts',
+  'package.json',
+  'bun.lock',
+]
+
 const agentFlowPrefixes = [
   'src/server/api/sessions',
   'src/server/services/conversationService',
@@ -155,6 +166,8 @@ const agentFlowPrefixes = [
 ]
 
 const persistencePrefixes = [
+  'scripts/issue-router/',
+  '.agents/workflows/issue-router.md',
   'src/server/services/persistentStorageMigrations',
   'src/server/__tests__/persistence-upgrade',
   'src/server/services/desktopUiPreferencesService',
@@ -164,18 +177,7 @@ const persistencePrefixes = [
 ]
 
 const policyPrefixes = [
-  '.agents/',
   '.github/workflows/',
-  'bin/',
-  // Shipped helper content and cross-module tests must not fall through to a
-  // green PR with no lane. Runtime helpers are written to the user's disk by
-  // the server, and root tests exercise the same runtime as src/.
-  'runtime/',
-  'tests/',
-  // Test/compiler support outside the runtime source roots still changes how
-  // executable code is built or checked.
-  'fixtures/',
-  'stubs/',
   // `scripts/pr/dead-imports.ts` owns these three source roots — every root no
   // compiler checks for unreferenced imports. The lane is selected by prefix, and
   // that check reads its files rather than importing them, so the import graph
@@ -187,6 +189,8 @@ const policyPrefixes = [
 ]
 
 const policyExactPaths = new Set([
+  '.agents/workflows/issue-router.md',
+  '.easignore',
   '.github/CODEOWNERS',
   '.github/copilot-instructions.md',
   '.github/pull_request_template.md',
@@ -195,15 +199,35 @@ const policyExactPaths = new Set([
   'docs/en/internals/contributing.md',
   'docs/internals/contributing.md',
   'package.json',
-  'scripts/harness-audit.js',
-  'scripts/harness-audit.test.ts',
-  // Root test-harness configuration. `bunfig.toml` and the preload files it
-  // loads decide how every root test executes — a diff that changes them
-  // changes the behaviour of the whole root suite, so it must select the
-  // policy lane instead of falling through to no area and no check.
-  'bunfig.toml',
-  'preload.ts',
-  'test-preload.ts',
+])
+
+const docsExactPaths = new Set([
+  'README.md',
+  'README.en.md',
+  'README.zh-CN.md',
+  'package.json',
+  'package-lock.json',
+  '.github/workflows/deploy-docs.yml',
+])
+
+const releaseExactPaths = new Set([
+  '.easignore',
+  '.github/workflows/pr-quality.yml',
+  '.github/workflows/pr-triage.yml',
+  '.github/workflows/release-desktop.yml',
+  '.github/workflows/build-desktop-dev.yml',
+  'scripts/pr/change-policy.ts',
+  'scripts/pr/change-policy.test.ts',
+  'scripts/pr/check-pr.ts',
+  'scripts/pr/run-server-tests.ts',
+  'scripts/release.ts',
+  'scripts/mobile-release.ts',
+  'scripts/mobile-release.test.ts',
+  '.github/workflows/release-mobile.yml',
+  'desktop/electron/tsconfig.json',
+  'desktop/scripts/build-macos-arm64.sh',
+  'desktop/scripts/build-windows-x64.ps1',
+  'desktop/scripts/build-linux.sh',
 ])
 
 const coveragePolicyExactPaths = new Set([
@@ -220,8 +244,7 @@ function startsWithAny(path: string, prefixes: string[]) {
 }
 
 function isCliCorePath(path: string) {
-  return startsWithAny(path, cliCoreRule.prefixes ?? []) &&
-    !startsWithAny(path, cliCoreRule.excludePrefixes ?? [])
+  return startsWithAny(path, cliCorePrefixes)
 }
 
 function isAgentInstructionPath(path: string) {
@@ -235,13 +258,37 @@ function areasForPath(path: string): ChangeArea[] {
     return []
   }
 
-  for (const area of Object.keys(areaRules) as ChangeArea[]) {
-    const rule = areaRules[area]
-    const matches = startsWithAny(path, rule.prefixes ?? []) ||
-      (rule.exact ?? []).includes(path)
-    if (matches && !startsWithAny(path, rule.excludePrefixes ?? [])) {
-      areas.add(area)
-    }
+  if (path.startsWith('desktop/') || path.startsWith('native/')) {
+    areas.add('desktop')
+  }
+
+  if (path.startsWith('mobile/')) {
+    areas.add('mobile')
+  }
+
+  if (path.startsWith('src/server/')) {
+    areas.add('server')
+  }
+
+  if (path.startsWith('adapters/')) {
+    areas.add('adapters')
+  }
+
+  if (
+    path.startsWith('docs/') ||
+    path.startsWith('site/') ||
+    path.startsWith('release-notes/') ||
+    docsExactPaths.has(path)
+  ) {
+    areas.add('docs')
+  }
+
+  if (releaseExactPaths.has(path)) {
+    areas.add('release')
+  }
+
+  if (isCliCorePath(path)) {
+    areas.add('cli-core')
   }
 
   return [...areas]
@@ -268,31 +315,11 @@ function changedProductionFiles(files: string[], predicate: (file: string) => bo
   ))
 }
 
-function adapterPackageRoot(path: string) {
-  const rest = path.slice('adapters/'.length)
-  const separator = rest.indexOf('/')
-  return separator === -1 ? 'adapters/' : `adapters/${rest.slice(0, separator)}/`
-}
-
-export function adapterMissingTestSignals(files: string[]) {
-  const packages = new Set(
-    changedProductionFiles(files, (file) => file.startsWith('adapters/'))
-      .map(adapterPackageRoot),
-  )
-
-  return [...packages]
-    .sort()
-    .filter((root) => !hasMatchingTest(files, (file) => file.startsWith(root)))
-    .map((root) => (
-      `Adapter product files changed without a matching adapter test file in the PR: ${root.replace(/\/$/, '')}`
-    ))
-}
-
 function missingTestSignals(files: string[]) {
   const signals: string[] = []
   const desktopProd = changedProductionFiles(files, (file) => file.startsWith('desktop/src/'))
   const serverProd = changedProductionFiles(files, (file) => file.startsWith('src/server/'))
-  const mobileProd = changedProductionFiles(files, (file) => file.startsWith('mobile/'))
+  const adapterProd = changedProductionFiles(files, (file) => file.startsWith('adapters/'))
   const rootRuntimeProd = changedProductionFiles(files, (file) => (
     file.startsWith('src/') &&
     !file.startsWith('src/server/')
@@ -304,9 +331,8 @@ function missingTestSignals(files: string[]) {
   if (serverProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('src/server/'))) {
     signals.push('Server product files changed without a server test file in the PR.')
   }
-  signals.push(...adapterMissingTestSignals(files))
-  if (mobileProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('mobile/'))) {
-    signals.push('Mobile product files changed without a mobile test file in the PR.')
+  if (adapterProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('adapters/'))) {
+    signals.push('Adapter product files changed without an adapter test file in the PR.')
   }
   if (rootRuntimeProd.length > 0 && !hasMatchingTest(files, (file) => (
     file.startsWith('src/') &&
@@ -328,6 +354,7 @@ export function evaluateChangePolicy(
   inputFiles: string[],
   inputLabels: string[] = [],
   inputDependentFiles: string[] = [],
+  owners: { author?: string; codeOwners?: string[] } = {},
 ): ChangePolicyResult {
   const files = [...new Set(inputFiles.map(normalizePath).filter(Boolean))].sort()
   const labels = [...new Set(inputLabels.map((label) => label.trim()).filter(Boolean))].sort()
@@ -345,12 +372,25 @@ export function evaluateChangePolicy(
   }
 
   const cliCoreFiles = files.filter(isCliCorePath)
+  const hasCliCoreChange = cliCoreFiles.length > 0
+  // The label asks a maintainer to approve a CLI core change. A CODEOWNER (read
+  // from the base branch, never from the PR) is that maintainer already.
+  const author = owners.author?.trim().toLowerCase()
+  const cliCoreOverride = labels.includes(ALLOW_CLI_CORE_LABEL)
+    ? 'label'
+    : author && (owners.codeOwners ?? []).includes(author)
+      ? 'codeowner-author'
+      : null
+  const hasCliCoreOverride = cliCoreOverride !== null
   const coveragePolicyFiles = files.filter((file) => coveragePolicyExactPaths.has(file))
   const hasCoveragePolicyOverride = labels.includes(ALLOW_COVERAGE_BASELINE_LABEL)
   const missingTests = missingTestSignals(files)
   const hasMissingTestsOverride = labels.includes(ALLOW_MISSING_TESTS_LABEL)
   const blockingReasons: string[] = []
 
+  if (hasCliCoreChange && !hasCliCoreOverride) {
+    blockingReasons.push(`CLI core changes require the ${ALLOW_CLI_CORE_LABEL} label and maintainer approval.`)
+  }
   if (missingTests.length > 0 && !hasMissingTestsOverride) {
     blockingReasons.push(`Production code changes require matching tests or the ${ALLOW_MISSING_TESTS_LABEL} maintainer override.`)
   }
@@ -374,16 +414,13 @@ export function evaluateChangePolicy(
     file.startsWith('desktop/src-tauri/') ||
     desktopNativeExactPaths.has(file)
   ))
-  const touchesServer = areas.has('server')
-  // `mobile/` uses one prefix for both the area and the check, so the check
-  // reads area membership instead of repeating the predicate. A second copy of
-  // the rule can drift, and `areasForPath` already excludes agent instruction
-  // files — which `files.some(...)` would have pulled into this lane.
-  const touchesMobile = areas.has('mobile')
-  const touchesHarness = areas.has('harness')
   const touchesProviderContract = selectionFiles.some((file) => startsWithAny(file, providerContractPrefixes))
   const touchesChatContract = selectionFiles.some((file) => startsWithAny(file, chatContractPrefixes))
   const touchesAgentFlow = selectionFiles.some((file) => startsWithAny(file, agentFlowPrefixes))
+  const touchesAgentE2e = selectionFiles.some((file) => (
+    (file.startsWith('src/') && isExecutableSourcePath(file) && !isAgentInstructionPath(file)) ||
+    startsWithAny(file, agentE2eHarnessPaths)
+  ))
   const touchesPersistence = selectionFiles.some((file) => startsWithAny(file, persistencePrefixes))
   const touchesPolicy = files.some((file) => (
     startsWithAny(file, policyPrefixes) ||
@@ -391,7 +428,14 @@ export function evaluateChangePolicy(
     isAgentInstructionPath(file)
   ))
 
-  const touchesDocs = areas.has('docs')
+  const touchesDocs = files.some((file) => (
+    !isAgentInstructionPath(file) && (
+      file.startsWith('docs/') ||
+      file.startsWith('site/') ||
+      file.startsWith('release-notes/') ||
+      docsExactPaths.has(file)
+    )
+  ))
   const touchesCoverage = files.some((file) => (
     (isExecutableSourcePath(file) && (
       file.startsWith('desktop/src/') ||
@@ -415,26 +459,45 @@ export function evaluateChangePolicy(
     blockingReason: blockingReasons[0] ?? null,
     blockingReasons,
     cliCoreFiles,
+    cliCoreOverride: hasCliCoreChange ? cliCoreOverride : null,
     coveragePolicyFiles,
     missingTestSignals: missingTests,
     checks: {
       desktop: touchesDesktopWeb,
-      server: touchesServer || areas.has('cli-core') || selectionFiles.some((file) => (
-        (file.startsWith('src/') || file.startsWith('tests/')) && !isAgentInstructionPath(file)
+      mobile: selectionFiles.some((file) => (
+        (file.startsWith('mobile/') && !isAgentInstructionPath(file)) ||
+        file === '.easignore' ||
+        file === 'package.json' || file === 'bun.lock' ||
+        file === 'scripts/pr/run-mobile-checks.ts' ||
+        file === '.github/workflows/pr-quality.yml' ||
+        file === '.github/workflows/nightly-quality.yml'
       )),
+      server: selectionFiles.some((file) => file.startsWith('src/') && !isAgentInstructionPath(file)),
       adapters: selectionFiles.some((file) => file.startsWith('adapters/') && !isAgentInstructionPath(file)),
-      mobile: touchesMobile,
       desktopNative: touchesDesktopNative,
       providerContract: touchesProviderContract,
       chatContract: touchesChatContract,
       agentFlow: touchesAgentFlow,
+      agentE2e: touchesAgentE2e,
       persistence: touchesPersistence,
       policy: touchesPolicy,
       docs: touchesDocs,
       coverage: touchesCoverage,
-      harness: touchesHarness,
     },
   }
+}
+
+/** Individual `@login` owners in a CODEOWNERS file, lowercased. Team handles and emails never match an author. */
+export function codeOwnerLogins(codeowners: string) {
+  const logins = new Set<string>()
+  for (const line of codeowners.split(/\r?\n/)) {
+    const content = line.replace(/#.*$/, '').trim()
+    if (!content) continue
+    for (const token of content.split(/\s+/).slice(1)) {
+      if (/^@[A-Za-z0-9-]+$/.test(token)) logins.add(token.slice(1).toLowerCase())
+    }
+  }
+  return [...logins].sort()
 }
 
 function parseArgs(argv: string[]) {
@@ -469,13 +532,37 @@ function readListFile(path: string) {
     .filter(Boolean)
 }
 
+function readNullDelimitedGitPaths(path: string) {
+  let content: string
+  try {
+    content = new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(path))
+  } catch {
+    throw new Error('Invalid NUL-delimited Git paths: expected a readable UTF-8 file.')
+  }
+  if (content === '') return []
+  if (!content.endsWith('\0')) {
+    throw new Error('Invalid NUL-delimited Git paths: missing final NUL.')
+  }
+  const files = content.slice(0, -1).split('\0')
+  // Git uses repo-relative POSIX paths. Fail closed if legacy path normalization
+  // would rewrite a legal filename (for example a literal backslash or end space).
+  if (files.some(file => !file || normalizePath(file) !== file)) {
+    throw new Error('Invalid NUL-delimited Git paths: normalization would lose a filename.')
+  }
+  return files
+}
+
 function formatSummary(result: ChangePolicyResult) {
   const lines = [
     'PR change policy',
     `  Areas: ${result.areas.length ? result.areas.join(', ') : 'none'}`,
     `  Labels: ${result.labels.length ? result.labels.join(', ') : 'none'}`,
-    `  Checks: desktop=${result.checks.desktop}, server=${result.checks.server}, adapters=${result.checks.adapters}, mobile=${result.checks.mobile}, desktopNative=${result.checks.desktopNative}, providerContract=${result.checks.providerContract}, chatContract=${result.checks.chatContract}, agentFlow=${result.checks.agentFlow}, persistence=${result.checks.persistence}, policy=${result.checks.policy}, docs=${result.checks.docs}, coverage=${result.checks.coverage}, harness=${result.checks.harness}`,
+    `  Checks: desktop=${result.checks.desktop}, mobile=${result.checks.mobile}, server=${result.checks.server}, adapters=${result.checks.adapters}, desktopNative=${result.checks.desktopNative}, providerContract=${result.checks.providerContract}, chatContract=${result.checks.chatContract}, agentFlow=${result.checks.agentFlow}, agentE2e=${result.checks.agentE2e}, persistence=${result.checks.persistence}, policy=${result.checks.policy}, docs=${result.checks.docs}, coverage=${result.checks.coverage}`,
   ]
+
+  if (result.cliCoreOverride) {
+    lines.push(`  CLI core override: ${result.cliCoreOverride}`)
+  }
 
   if (result.cliCoreFiles.length > 0) {
     lines.push('  CLI core files:')
@@ -519,19 +606,20 @@ function writeGithubOutputs(result: ChangePolicyResult) {
     area_labels: result.areaLabels.join(','),
     blocked: String(result.blocked),
     blocking_reasons: result.blockingReasons.join(' | '),
+    cli_core_override: result.cliCoreOverride ?? '',
     desktop_checks: String(result.checks.desktop),
+    mobile_checks: String(result.checks.mobile),
     server_checks: String(result.checks.server),
     adapter_checks: String(result.checks.adapters),
-    mobile_checks: String(result.checks.mobile),
     desktop_native_checks: String(result.checks.desktopNative),
     provider_contract_checks: String(result.checks.providerContract),
     chat_contract_checks: String(result.checks.chatContract),
     agent_flow_checks: String(result.checks.agentFlow),
+    agent_e2e_checks: String(result.checks.agentE2e),
     persistence_checks: String(result.checks.persistence),
     policy_checks: String(result.checks.policy),
     docs_checks: String(result.checks.docs),
     coverage_checks: String(result.checks.coverage),
-    harness_checks: String(result.checks.harness),
   }
 
   appendFileSync(
@@ -545,15 +633,18 @@ function writeGithubOutputs(result: ChangePolicyResult) {
 if (import.meta.main) {
   const args = parseArgs(process.argv.slice(2))
   const filesPath = args.get('--files')
+  const files0Path = args.get('--files0')
   const labelsPath = args.get('--labels-file')
   const labelsArg = args.get('--labels')
+  const authorPath = args.get('--author-file')
+  const codeOwnersPath = args.get('--codeowners-file')
 
-  if (!filesPath) {
-    console.error('Usage: bun run scripts/pr/change-policy.ts --files <changed-files.txt> [--labels-file <labels.txt>]')
+  if ((!filesPath && !files0Path) || (filesPath && files0Path)) {
+    console.error('Usage: bun run scripts/pr/change-policy.ts (--files <changed-files.txt> | --files0 <changed-files.nul>) [--labels-file <labels.txt>] [--author-file <author.txt> --codeowners-file <base CODEOWNERS>]')
     process.exit(2)
   }
 
-  const files = readListFile(filesPath)
+  const files = files0Path ? readNullDelimitedGitPaths(files0Path) : readListFile(filesPath!)
   const labels = labelsPath
     ? readListFile(labelsPath)
     : labelsArg?.split(',').map((label) => label.trim()).filter(Boolean) ?? []
@@ -565,7 +656,10 @@ if (import.meta.main) {
     console.warn(`[change-policy] dependency graph unavailable (${resolution.reason}); selecting every surface check.`)
   }
 
-  const result = evaluateChangePolicy(files, labels, resolution.dependents)
+  // Both files are optional: a push, or a local run, has no PR author.
+  const author = authorPath && existsSync(authorPath) ? readFileSync(authorPath, 'utf8').trim() : undefined
+  const codeOwners = codeOwnersPath && existsSync(codeOwnersPath) ? codeOwnerLogins(readFileSync(codeOwnersPath, 'utf8')) : []
+  const result = evaluateChangePolicy(files, labels, resolution.dependents, { author, codeOwners })
   console.log(formatSummary(result))
   console.log(`  Dependent files: ${resolution.dependents.length}${resolution.degraded ? ' (degraded fallback)' : ''}`)
   writeGithubOutputs(result)
