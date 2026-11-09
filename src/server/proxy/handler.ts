@@ -62,8 +62,58 @@ import {
 import { resolveModelReasoningProfile } from '../../shared/modelReasoning.js'
 import { resolveModelApiBaseUrl, resolveModelApiRule } from '../../shared/modelApiFormats.js'
 import { applyUpstreamHeaders, resolveUpstreamHeaders } from './upstreamHeaders.js'
+import { randomBytes } from 'node:crypto'
+import { redactJson, restoreText } from './redaction.js'
+import { readLocalRedactionState, type LocalRedactionState } from '../../services/localRedactionGuard.js'
 
 const providerService = new ProviderService()
+
+// Every restore target is JSON text (a JSON body or an SSE `data:` payload), so
+// a restored value has to be escaped as a JSON string or it breaks the payload.
+const escapeJsonString = (value: string) => JSON.stringify(value).slice(1, -1)
+
+// Restore placeholders in a byte stream without ever emitting half a token.
+// Works for both SSE streams and finite (non-streaming) bodies.
+function restoreStream(
+  stream: ReadableStream<Uint8Array>,
+  values: Map<string, string>,
+): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  const keep = Math.max(40, ...[...values.keys()].map(token => token.length))
+  let pending = ''
+  return stream.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      const text = pending + decoder.decode(chunk, { stream: true })
+      let split = Math.max(0, text.length - keep)
+      // Never emit half a placeholder: a partly cut token can never be restored.
+      const cut = text.slice(0, split)
+      if (cut.lastIndexOf('{{') > cut.lastIndexOf('}}')) split = cut.lastIndexOf('{{')
+      // Never split a surrogate pair across chunks.
+      if (split > 0 && split < text.length && /[\uD800-\uDBFF]/.test(text[split - 1]) && /[\uDC00-\uDFFF]/.test(text[split])) split -= 1
+      controller.enqueue(encoder.encode(restoreText(text.slice(0, split), values, escapeJsonString)))
+      pending = text.slice(split)
+    },
+    flush(controller) {
+      pending += decoder.decode()
+      controller.enqueue(encoder.encode(restoreText(pending, values, escapeJsonString)))
+    },
+  }))
+}
+
+function restoreResponse(response: Response, values: Map<string, string>): Response {
+  if (!values.size || !response.body) return response
+  const headers = new Headers(response.headers)
+  // The restored body is plain UTF-8 text of a different length.
+  headers.delete('content-encoding')
+  headers.delete('content-length')
+  headers.delete('etag')
+  return new Response(restoreStream(response.body, values), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
 
 type ProxyFetchOptions = ReturnType<typeof getProxyFetchOptions>
 // `decompress` is a Bun fetch option absent from the DOM RequestInit type.
@@ -208,6 +258,57 @@ export function withStreamIdleTimeout(
 }
 
 export async function handleProxyRequest(req: Request, url: URL): Promise<Response> {
+  let state: LocalRedactionState
+  try {
+    state = readLocalRedactionState()
+  } catch {
+    // Fail closed: unreadable redaction settings must never produce a plaintext
+    // request to an upstream provider.
+    return Response.json(
+      {
+        type: 'error',
+        error: { type: 'api_error', message: 'Local redaction settings could not be loaded' },
+      },
+      { status: 503 },
+    )
+  }
+
+  if (!state.enabled) {
+    return await handleProxyRequestInner(req, url, false)
+  }
+
+  let redactedBody: AnthropicRequest
+  let redactionValues: Map<string, string>
+  try {
+    const parsed: unknown = await req.clone().json()
+    // A valid Anthropic Messages request is always a JSON object. Anything else
+    // is unredactable: fail closed instead of forwarding it to the upstream.
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return Response.json(
+        { type: 'error', error: { type: 'invalid_request_error', message: 'Invalid JSON in request body' } },
+        { status: 400 },
+      )
+    }
+    const redacted = redactJson(parsed, state.settings, randomBytes(32).toString('hex'))
+    redactedBody = JSON.parse(redacted.text) as AnthropicRequest
+    redactionValues = redacted.values
+  } catch {
+    return Response.json(
+      { type: 'error', error: { type: 'invalid_request_error', message: 'Invalid JSON in request body' } },
+      { status: 400 },
+    )
+  }
+
+  const response = await handleProxyRequestInner(req, url, true, redactedBody)
+  return restoreResponse(response, redactionValues)
+}
+
+async function handleProxyRequestInner(
+  req: Request,
+  url: URL,
+  redactionEnabled: boolean,
+  bodyOverride?: AnthropicRequest,
+): Promise<Response> {
   const providerMatch = url.pathname.match(/^\/proxy\/providers\/([^/]+)\/v1\/messages$/)
   const providerId = providerMatch ? decodeURIComponent(providerMatch[1]!) : undefined
   const isActiveProxyPath = url.pathname === '/proxy/v1/messages'
@@ -243,13 +344,17 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
   // Parse request body (needed by both the anthropic-compatible path and the
   // OpenAI-transforming paths).
   let body: AnthropicRequest
-  try {
-    body = (await req.json()) as AnthropicRequest
-  } catch {
-    return Response.json(
-      { type: 'error', error: { type: 'invalid_request_error', message: 'Invalid JSON in request body' } },
-      { status: 400 },
-    )
+  if (bodyOverride !== undefined) {
+    body = bodyOverride
+  } else {
+    try {
+      body = (await req.json()) as AnthropicRequest
+    } catch {
+      return Response.json(
+        { type: 'error', error: { type: 'invalid_request_error', message: 'Invalid JSON in request body' } },
+        { status: 400 },
+      )
+    }
   }
 
   body = {
@@ -289,7 +394,9 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
       // applies without a per-model override: an OpenAI-format provider whose
       // model routes to anthropic still reaches the proxy, and its upstream is a
       // native Messages endpoint that accepts nested media unchanged.
-      if (modelApiFormat === undefined && config.supportsNestedToolResultMedia) {
+      // A native anthropic endpoint normally bypasses the proxy. Local redaction
+      // needs the request to stay here so its body can be redacted and restored.
+      if (!redactionEnabled && modelApiFormat === undefined && config.supportsNestedToolResultMedia) {
         return Response.json(
           {
             type: 'error',

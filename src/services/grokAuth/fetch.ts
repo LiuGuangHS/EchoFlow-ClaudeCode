@@ -10,6 +10,7 @@ import {
   resolveGrokReasoningEffort,
 } from './models.js'
 import { getGrokOAuthTokens } from './storage.js'
+import { assertDirectTransportAllowed } from '../localRedactionGuard.js'
 
 export const GROK_CLI_BASE_URL = 'https://cli-chat-proxy.grok.com/v1'
 export const GROK_CLI_API_ENDPOINT = `${GROK_CLI_BASE_URL}/responses`
@@ -58,6 +59,9 @@ export function buildGrokFetch(
   const inner = fetchOverride ?? globalThis.fetch
 
   return async (input, init) => {
+    // Fail closed before ANY passthrough to `inner`. The old placement was
+    // after the non-messages early return, which left that path unguarded.
+    await assertDirectTransportAllowed()
     const url = input instanceof Request ? new URL(input.url) : new URL(String(input))
     if (!url.pathname.endsWith('/v1/messages')) return inner(input, init)
 

@@ -570,3 +570,53 @@ for (const savedMode of ['plan', undefined]) {
     }
   })
 }
+
+function legacyMember(sessionId: string) {
+  return { [sessionId]: { sessionId, rootSessionId: sessionId, parentSessionId: null, state: 'idle', stopped: false } }
+}
+
+test('adopts collaboration state recorded under the legacy directory', async () => {
+  const previous = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = directory
+  const legacy = join(directory, 'cc-haha', 'session-collaboration', 'state.json')
+  await mkdir(dirname(legacy), { recursive: true })
+  await writeFile(legacy, JSON.stringify({ revision: 7, members: legacyMember('worker'), messages: [] }))
+  let dispose = () => {}
+  try {
+    dispose = configureSessionCollaborationHost('127.0.0.1', 1234)
+    const service = await getSessionCollaborationService()
+    expect((await service.status()).revision).toBe(7)
+    const adopted = join(directory, 'echoflow-code', 'session-collaboration', 'state.json')
+    expect(await readFile(adopted, 'utf8')).toContain('"worker"')
+    // The old file stays in place: it is still a migration source.
+    expect(await readFile(legacy, 'utf8')).toContain('"worker"')
+  } finally {
+    dispose()
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previous
+  }
+})
+
+test('keeps the renamed state when both directories hold collaboration data', async () => {
+  const previous = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = directory
+  const legacy = join(directory, 'cc-haha', 'session-collaboration', 'state.json')
+  const adopted = join(directory, 'echoflow-code', 'session-collaboration', 'state.json')
+  await mkdir(dirname(legacy), { recursive: true })
+  await mkdir(dirname(adopted), { recursive: true })
+  await writeFile(legacy, JSON.stringify({ revision: 7, members: legacyMember('legacy'), messages: [] }))
+  await writeFile(adopted, JSON.stringify({ revision: 11, members: legacyMember('current'), messages: [] }))
+  let dispose = () => {}
+  try {
+    dispose = configureSessionCollaborationHost('127.0.0.1', 1234)
+    const service = await getSessionCollaborationService()
+    expect((await service.status()).revision).toBe(11)
+    // A conflict is preserved, not silently overwritten by the legacy copy.
+    expect(await readFile(adopted, 'utf8')).toContain('"current"')
+    expect(await readFile(legacy, 'utf8')).toContain('"legacy"')
+  } finally {
+    dispose()
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previous
+  }
+})

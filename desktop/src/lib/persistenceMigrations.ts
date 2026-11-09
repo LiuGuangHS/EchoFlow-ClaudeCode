@@ -30,6 +30,16 @@ const LIGHT_THEME_STORAGE_KEY = 'cc-haha-light-theme'
 const DARK_THEME_STORAGE_KEY = 'cc-haha-dark-theme'
 const LOCALE_STORAGE_KEY = 'cc-haha-locale'
 const ACTIVE_SETTINGS_TAB_STORAGE_KEY = 'cc-haha-active-settings-tab'
+// v0.7.4 and the builds that followed stored open tabs and per-session
+// runtime choices under the old product prefix. The key rename shipped
+// without a forward copy, so upgrading silently dropped both. `main.tsx`
+// runs these migrations synchronously before any store hydrates; copy only
+// when the current key is missing, never overwrite a newer value, and never
+// remove the legacy source so a downgrade can still read it.
+const LEGACY_STORAGE_RULES = [
+  { targetKey: TAB_STORAGE_KEY, sourceKeys: ['echoflow-code-open-tabs'] },
+  { targetKey: SESSION_RUNTIME_STORAGE_KEY, sourceKeys: ['echoflow-code-session-runtime'] },
+] as const
 // Schema 6 retired the standalone Trace page: its list tab, its per-session
 // tabs and its Settings rail entry. Per-session traces now live in the chat's
 // 轨迹 view, so a trace tab reopens as that session's chat tab.
@@ -90,6 +100,18 @@ function writeJson(storage: StorageLike, key: string, value: unknown): void {
   storage.setItem(key, JSON.stringify(value))
 }
 
+function copyLegacyStorage(storage: StorageLike, report: DesktopMigrationReport): void {
+  for (const rule of LEGACY_STORAGE_RULES) {
+    if (storage.getItem(rule.targetKey) !== null) continue
+    const sourceKey = rule.sourceKeys.find(key => storage.getItem(key) !== null)
+    if (!sourceKey) continue
+    const value = storage.getItem(sourceKey)
+    if (value === null) continue
+    storage.setItem(rule.targetKey, value)
+    report.migratedKeys.push(rule.targetKey)
+  }
+}
+
 function migrateTabs(storage: StorageLike, report: DesktopMigrationReport): void {
   const raw = storage.getItem(TAB_STORAGE_KEY)
   if (!raw) return
@@ -146,10 +168,14 @@ function migrateTabs(storage: StorageLike, report: DesktopMigrationReport): void
 }
 
 function migrateActiveSettingsTab(storage: StorageLike, report: DesktopMigrationReport): void {
-  // The Trace rail entry is gone; its capture toggle lives under General.
-  if (storage.getItem(ACTIVE_SETTINGS_TAB_STORAGE_KEY) !== 'trace') return
-  storage.setItem(ACTIVE_SETTINGS_TAB_STORAGE_KEY, 'general')
-  report.migratedKeys.push(ACTIVE_SETTINGS_TAB_STORAGE_KEY)
+  // Schema 6 rewrote a persisted 'trace' Settings selection to 'general' when
+  // the standalone Trace page was retired. The Trace section is restored and
+  // 'trace' is a valid SettingsTab again, so leave the stored value untouched —
+  // otherwise a user's chosen section is silently lost on every startup.
+  // The step keeps its slot (and its key/params) for older installs.
+  void storage
+  void report
+  void ACTIVE_SETTINGS_TAB_STORAGE_KEY
 }
 
 function migrateSessionRuntime(storage: StorageLike, report: DesktopMigrationReport): void {
@@ -353,6 +379,10 @@ export function runDesktopPersistenceMigrations(storage: StorageLike | null = ge
   const report: DesktopMigrationReport = { migratedKeys: [] }
   if (!storage) return report
 
+  // Forward-copy the pre-rename keys before any tab/runtime migration reads
+  // them, so the copy is normalized by the steps below exactly like a normal
+  // install.
+  runMigrationStep(report, TAB_STORAGE_KEY, () => copyLegacyStorage(storage, report))
   runMigrationStep(report, TAB_STORAGE_KEY, () => migrateTabs(storage, report))
   runMigrationStep(report, ACTIVE_SETTINGS_TAB_STORAGE_KEY, () => migrateActiveSettingsTab(storage, report))
   runMigrationStep(report, SESSION_RUNTIME_STORAGE_KEY, () => migrateSessionRuntime(storage, report))

@@ -69,6 +69,14 @@ test('internal docs never reach generated modules or static publication', async 
     assert.ok(!JSON.stringify(searchIndex).includes('UNPUBLISHED_INTERNAL_BODY'))
   })
 
+  for (const locale of ['', 'en/']) {
+    const source = path.join(root, `docs/${locale}internals/index.md`)
+    const image = path.join(root, `docs/${locale}internals/images/diagram.svg`)
+    await fs.mkdir(path.dirname(image), { recursive: true })
+    await fs.writeFile(image, '<svg xmlns="http://www.w3.org/2000/svg"/>')
+    await fs.appendFile(source, '\n![Diagram](./images/diagram.svg)\n')
+  }
+
   const shell = '<html lang="zh-CN"><head><title>Fixture</title><meta name="description" content="Fixture"></head><body></body></html>'
   await fs.writeFile(path.join(siteDir, 'index.html'), shell)
   await fs.writeFile(path.join(distDir, 'index.html'), shell)
@@ -83,9 +91,13 @@ test('internal docs never reach generated modules or static publication', async 
     for (const relative of internalDocs) {
       await assert.rejects(fs.access(path.join(distDir, relative.replace(/\.md$/, ''), 'index.html')), { code: 'ENOENT' })
     }
+    for (const locale of ['', 'en/']) {
+      const relative = `${locale}internals/images/diagram.svg`
+      assert.equal(await fs.readFile(path.join(distDir, relative), 'utf8'), await fs.readFile(path.join(root, 'docs', relative), 'utf8'))
+    }
     const sitemap = await fs.readFile(path.join(distDir, 'sitemap.xml'), 'utf8')
     const routes = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => new URL(match[1]).pathname)
-    assert.deepEqual(routes.sort(), ['/', '/en', ...expectedRoutes].sort())
+    assert.deepEqual(routes.sort(), ['/', '/en', '/download', '/en/download', ...expectedRoutes].sort())
   })
 
   await t.test('CRLF source frontmatter has the same metadata and body as LF', async () => {
@@ -155,5 +167,41 @@ test('internal docs never reach generated modules or static publication', async 
       }
     })
   }
+
+  await t.test('Computer Use summaries retain bilingual routes without publishing maintainer records', async () => {
+    const names = [
+      'computer-use-cef-injection', 'computer-use-codex-impl-blueprint',
+      'computer-use-codex-parity-review', 'computer-use-codex-redesign',
+      'computer-use-handoff', 'computer-use-native-manual-qa', 'computer-use-native-swift-design',
+    ]
+    const routes = []
+    for (const locale of ['', 'en/']) {
+      for (const name of names) {
+        const relative = `${locale}internals/${name}.md`
+        const target = path.join(root, 'docs', relative)
+        await fs.mkdir(path.dirname(target), { recursive: true })
+        await fs.copyFile(new URL(`../../../docs/${relative}`, import.meta.url), target)
+        routes.push(`/${relative.replace(/\.md$/, '')}`)
+      }
+    }
+    const internalQA = await fs.readFile(new URL('../../../docs/_internal/computer-use-native-manual-qa.md', import.meta.url), 'utf8')
+    for (const id of ['4.7', '4.8', '4.9', '4.10']) {
+      assert.ok(internalQA.includes(`| ${id} |`), `missing preserved QA case ${id}`)
+    }
+    await fs.writeFile(path.join(root, 'docs/_internal/computer-use-native-manual-qa.md'), internalQA)
+    await run(process.execPath, [path.join(scriptsDir, 'generate-docs-manifest.mjs')], { cwd: root })
+    const { docsIndex, docsContent } = await import(`${pathToFileURL(path.join(generatedDir, 'docs-index.js'))}?computer-use`)
+    const { default: searchIndex } = await import(`${pathToFileURL(path.join(generatedDir, 'search-index.js'))}?computer-use`)
+    for (const route of routes) {
+      const record = docsIndex.find((doc) => doc.path === route)
+      assert.ok(record, `missing public route ${route}`)
+      assert.ok(record.title && record.navTitle && record.description)
+      const { default: body } = await docsContent[route]()
+      assert.doesNotMatch(body, /\]\([^)]*_internal|\/Users\/|wf_32a4859d|quizzical-lehmann/)
+      assert.match(body, /\]\(computer-use\.md\)/)
+    }
+    assert.ok(!JSON.stringify(docsIndex).includes('_internal'))
+    assert.ok(!JSON.stringify(searchIndex).includes('focusSettleMs = 800'))
+  })
 
 })

@@ -121,7 +121,7 @@ function collectWorkflowEvidence(entry: Record<string, unknown>, state: CachedPr
   // Parse only bounded records; retain lifecycle evidence, never conversation bodies.
   // The existing service remains the structured interpreter for these candidates.
   const pending: unknown[] = [entry]
-  let relevant = entry.type === 'cc-haha-task-notification'
+  let relevant = entry.type === 'echoflow-code-task-notification' || entry.type === 'cc-haha-task-notification'
   let nodes = 0
   while (pending.length && !relevant && nodes++ < 16_384) {
     const value = pending.pop()

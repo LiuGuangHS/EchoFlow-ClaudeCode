@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, it } from 'node:test'
 import { runInNewContext } from 'node:vm'
 
-import { DEFAULT_LOCALE, normalizeStoredLocale, resolveBrowserLocale, resolveRootRedirect } from './locale.js'
+import { DEFAULT_LOCALE, normalizeStoredLocale, normalizeSitePath, resolveBrowserLocale, resolveRootRedirect } from './locale.js'
 
 const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8')
 const bootstrap = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
@@ -82,6 +82,19 @@ describe('resolveRootRedirect', () => {
   it('保存值无效时仍按浏览器语言处理', () => {
     assert.equal(resolveRootRedirect({ pathname: '/', stored: 'garbage', languages: ['zh-CN'] }), null)
     assert.equal(resolveRootRedirect({ pathname: '/', stored: '' }), '/en')
+  })
+})
+
+describe('normalizeSitePath', () => {
+  it('removes the GitHub Pages project base before routing', () => {
+    assert.equal(normalizeSitePath('/EchoFlow-ClaudeCode/', '/EchoFlow-ClaudeCode/'), '/')
+    assert.equal(normalizeSitePath('/EchoFlow-ClaudeCode/en/', '/EchoFlow-ClaudeCode/'), '/en')
+  })
+
+  it('preserves root deployments and unrelated paths', () => {
+    assert.equal(normalizeSitePath('/', '/'), '/')
+    assert.equal(normalizeSitePath('/start/', '/'), '/start')
+    assert.equal(normalizeSitePath('/elsewhere/', '/EchoFlow-ClaudeCode/'), '/elsewhere')
   })
 })
 

@@ -61,3 +61,31 @@ test('workflow reconstruction consumes projected evidence without a whole-file r
     expect(readAll).not.toHaveBeenCalled()
   } finally { readAll.mockRestore() }
 })
+
+test('retains persisted notifications recorded under the EchoFlow type', async () => {
+  const file = join(dir, 'echoflow-type.jsonl')
+  const terminal = { type: 'echoflow-code-task-notification', taskNotification: { taskId: 'task', status: 'completed' } }
+  await writeFile(file, JSON.stringify(terminal) + '\n')
+  expect((await readWorkflowTranscriptProjection(file)).messages).toEqual([terminal])
+})
+
+test('interprets EchoFlow-typed notifications as terminal evidence', async () => {
+  const file = join(dir, 'session.jsonl')
+  const terminal = { type: 'echoflow-code-task-notification', taskNotification: { taskId: 'task', status: 'completed', summary: 'done' } }
+  await writeFile(file, JSON.stringify(terminal) + '\n')
+  const lifecycle = await (workflowService as unknown as {
+    readSessionWorkflowLifecycle(id: string, dirs: Array<{ sessionId: string; dir: string }>): Promise<{ terminals: Array<{ taskId: string; status: string; summary?: string }> }>
+  }).readSessionWorkflowLifecycle('session', [{ sessionId: 'session', dir: join(dir, 'session') }])
+  expect(lifecycle.terminals).toMatchObject([{ taskId: 'task', status: 'completed', summary: 'done' }])
+})
+
+test('XML owner-agent-id takes precedence over the transcript owner', async () => {
+  const subagents = join(dir, 'session', 'subagents')
+  await fs.mkdir(subagents, { recursive: true })
+  const xmlText = '<task-notification><task-id>task</task-id><status>completed</status><owner-agent-id>xml-owner</owner-agent-id></task-notification>'
+  await writeFile(join(subagents, 'agent-transcript-owner.jsonl'), JSON.stringify({ message: { content: [{ type: 'text', text: xmlText }] } }) + '\n')
+  const lifecycle = await (workflowService as unknown as {
+    readSessionWorkflowLifecycle(id: string, dirs: Array<{ sessionId: string; dir: string }>): Promise<{ terminals: Array<{ taskId: string; ownerAgentId?: string }> }>
+  }).readSessionWorkflowLifecycle('session', [{ sessionId: 'session', dir: join(dir, 'session') }])
+  expect(lifecycle.terminals).toMatchObject([{ taskId: 'task', ownerAgentId: 'xml-owner' }])
+})

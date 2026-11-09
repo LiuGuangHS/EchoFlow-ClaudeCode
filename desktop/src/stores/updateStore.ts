@@ -18,10 +18,14 @@ export type UpdateStatus =
 type CheckOptions = {
   silent?: boolean
   autoDownload?: boolean
+  background?: boolean
 }
 
 const DISMISSED_UPDATE_VERSION_KEY = 'cc-haha-dismissed-update-version'
 const RELAUNCH_WATCHDOG_MS = 15_000
+const UPDATE_CHECK_INTERVAL_MS = 8 * 60 * 60 * 1_000
+const UPDATE_CHECK_MIN_INTERVAL_MS = 5 * 60 * 1_000
+const ONLINE_RECOVERY_HANDLER_KEY = '__echoflowUpdateNetworkRecoveryHandler__'
 
 type UpdateStore = {
   status: UpdateStatus
@@ -47,6 +51,8 @@ let downloadPromise: Promise<void> | null = null
 let downloadingProxyKey: string | null = null
 let startupCheckPromise: Promise<void> | null = null
 let relaunchWatchdog: ReturnType<typeof setTimeout> | null = null
+let periodicCheckTimer: ReturnType<typeof setInterval> | null = null
+let networkRecoveryListener: (() => void) | null = null
 
 function clearRelaunchWatchdog() {
   if (!relaunchWatchdog) return
@@ -143,6 +149,35 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
 
+function canRunBackgroundCheck(checkedAt: number | null): boolean {
+  if (checkedAt === null) return true
+  return Date.now() - checkedAt >= UPDATE_CHECK_MIN_INTERVAL_MS
+}
+
+function installAutomaticCheckScheduling(runCheck: () => void) {
+  if (!periodicCheckTimer) {
+    periodicCheckTimer = setInterval(() => {
+      if (!useSettingsStore.getState().autoUpdateEnabled) return
+      runCheck()
+    }, UPDATE_CHECK_INTERVAL_MS)
+    // Do not keep the Node process alive on the eight-hour handle.
+    ;(periodicCheckTimer as unknown as { unref?: () => void }).unref?.()
+  }
+  if (networkRecoveryListener || typeof window === 'undefined') return
+  const listener = () => {
+    if (!useSettingsStore.getState().autoUpdateEnabled) return
+    runCheck()
+  }
+  networkRecoveryListener = listener
+  // Re-importing this module (fresh store in tests) must not leave stale
+  // online handlers behind: replace any previously registered one first.
+  const target = window as unknown as Window & Record<string, unknown>
+  const previous = target[ONLINE_RECOVERY_HANDLER_KEY] as (() => void) | undefined
+  if (previous) window.removeEventListener('online', previous)
+  target[ONLINE_RECOVERY_HANDLER_KEY] = listener
+  window.addEventListener('online', listener)
+}
+
 function parseAppVersion(version: string | null | undefined) {
   const match = version?.trim().replace(/^v/i, '').match(/^(\d+)\.(\d+)\.(\d+)/)
   if (!match) return null
@@ -194,7 +229,14 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   shouldPrompt: false,
 
   initialize: async () => {
-    if (!getUpdateHost() || !useSettingsStore.getState().autoUpdateEnabled) return
+    if (!getUpdateHost()) return
+    // Restore the eight-hour periodic check and the online recovery check.
+    // Both are gated on autoUpdateEnabled and go through the five-minute
+    // background throttle, so they never override a manual/foreground check.
+    installAutomaticCheckScheduling(() => {
+      void get().checkForUpdates({ silent: true, background: true })
+    })
+    if (!useSettingsStore.getState().autoUpdateEnabled) return
     if (!startupCheckPromise) {
       startupCheckPromise = (async () => {
         await new Promise((resolve) => setTimeout(resolve, 5000))
@@ -207,10 +249,21 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     await startupCheckPromise
   },
 
-  checkForUpdates: async ({ silent = false, autoDownload = true } = {}) => {
+  checkForUpdates: async ({ silent = false, autoDownload = true, background = false } = {}) => {
     const host = getUpdateHost()
     if (!host) return null
     if (silent && !useSettingsStore.getState().autoUpdateEnabled) return null
+    // Background checks are best-effort: never interrupt an active download,
+    // install, or relaunch, and never run more often than every five minutes.
+    if (background) {
+      if (!canRunBackgroundCheck(get().checkedAt)) return pendingUpdate
+      if (downloadPromise && pendingUpdate) return pendingUpdate
+      const currentStatus = get().status
+      if (currentStatus === 'downloading' || currentStatus === 'downloaded'
+        || currentStatus === 'installing' || currentStatus === 'restarting') {
+        return pendingUpdate
+      }
+    }
     if (downloadPromise && get().status === 'downloading' && pendingUpdate) return pendingUpdate
     clearRelaunchWatchdog()
 

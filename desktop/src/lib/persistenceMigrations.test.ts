@@ -110,11 +110,13 @@ describe('desktop persistence migrations', () => {
     })
   })
 
-  test('upgrades a frozen schema-5 install with retired Trace tabs and Settings entry', () => {
+  test('upgrades a frozen schema-5 install, retiring per-session Trace tabs but preserving the restored Trace Settings entry', () => {
     // Exactly what a schema-5 build persisted with the Trace list open, two
     // per-session trace tabs (one of whose sessions also has a chat tab), and
-    // a trace tab focused. The Trace page is gone; traces live in the chat's
-    // 轨迹 view, so a trace tab must reopen as its session's chat tab.
+    // a trace tab focused. Per-session traces live in the chat's 轨迹 view, so
+    // those tabs must reopen as their session's chat tab. The standalone Trace
+    // Settings entry is restored, however, so a persisted 'trace' settings tab
+    // must survive untouched instead of being rewritten to 'general'.
     localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, '5')
     localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
       openTabs: [
@@ -139,8 +141,8 @@ describe('desktop persistence migrations', () => {
       activeTabId: 'session-b',
     }
     expect(JSON.parse(localStorage.getItem('cc-haha-open-tabs')!)).toEqual(expected)
-    expect(localStorage.getItem('cc-haha-active-settings-tab')).toBe('general')
-    expect(report.migratedKeys).toContain('cc-haha-active-settings-tab')
+    expect(localStorage.getItem('cc-haha-active-settings-tab')).toBe('trace')
+    expect(report.migratedKeys).not.toContain('cc-haha-active-settings-tab')
     expect(localStorage.getItem(DESKTOP_PERSISTENCE_VERSION_KEY)).toBe(String(CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION))
 
     // Idempotent: a second launch leaves both keys alone.
@@ -515,4 +517,87 @@ test('merges legacy connector and skill market tabs while preserving the active 
     { sessionId: '__market__', title: 'Skills', type: 'market' },
   ], activeTabId: '__market__' })
   expect(JSON.parse(localStorage.getItem('custom-user-state')!)).toEqual({ selectedSkill: 'my-skill' })
+})
+
+describe('v0.7.4 legacy key forward copy', () => {
+  // Frozen v0.7.4 fixture keys, before the product prefix rename.
+  const LEGACY_TAB_KEY = 'echoflow-code-open-tabs'
+  const LEGACY_SESSION_RUNTIME_KEY = 'echoflow-code-session-runtime'
+  const CURRENT_TAB_KEY = 'cc-haha-open-tabs'
+  const CURRENT_SESSION_RUNTIME_KEY = 'cc-haha-session-runtime'
+
+  const legacyTabs = JSON.stringify({
+    openTabs: [{ sessionId: 'session-legacy', title: 'Legacy tab' }],
+    activeTabId: 'session-legacy',
+  })
+  const legacyRuntimes = JSON.stringify({
+    'session-legacy': { providerId: null, modelId: 'claude' },
+  })
+
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+
+  test('copies v0.7.4 tab and session-runtime values forward only when the new keys are missing', () => {
+    window.localStorage.setItem(LEGACY_TAB_KEY, legacyTabs)
+    window.localStorage.setItem(LEGACY_SESSION_RUNTIME_KEY, legacyRuntimes)
+
+    const report = runDesktopPersistenceMigrations()
+
+    expect(JSON.parse(window.localStorage.getItem(CURRENT_TAB_KEY)!)).toEqual({
+      openTabs: [{ sessionId: 'session-legacy', title: 'Legacy tab', type: 'session' }],
+      activeTabId: 'session-legacy',
+    })
+    expect(JSON.parse(window.localStorage.getItem(CURRENT_SESSION_RUNTIME_KEY)!)).toEqual({
+      'session-legacy': { providerId: null, modelId: 'claude' },
+    })
+    // A downgrade must still find its data: never delete the legacy source.
+    expect(window.localStorage.getItem(LEGACY_TAB_KEY)).toBe(legacyTabs)
+    expect(window.localStorage.getItem(LEGACY_SESSION_RUNTIME_KEY)).toBe(legacyRuntimes)
+    expect(report.migratedKeys).toContain(CURRENT_TAB_KEY)
+    expect(report.migratedKeys).toContain(CURRENT_SESSION_RUNTIME_KEY)
+  })
+
+  test('prefers an existing new value and leaves the legacy value untouched', () => {
+    const currentTabs = JSON.stringify({
+      openTabs: [{ sessionId: 'session-new', title: 'New tab', type: 'session' }],
+      activeTabId: 'session-new',
+    })
+    const currentRuntimes = JSON.stringify({
+      'session-new': { providerId: null, modelId: 'gpt-5' },
+    })
+    window.localStorage.setItem(LEGACY_TAB_KEY, legacyTabs)
+    window.localStorage.setItem(LEGACY_SESSION_RUNTIME_KEY, legacyRuntimes)
+    window.localStorage.setItem(CURRENT_TAB_KEY, currentTabs)
+    window.localStorage.setItem(CURRENT_SESSION_RUNTIME_KEY, currentRuntimes)
+
+    runDesktopPersistenceMigrations()
+
+    expect(JSON.parse(window.localStorage.getItem(CURRENT_TAB_KEY)!)).toEqual({
+      openTabs: [{ sessionId: 'session-new', title: 'New tab', type: 'session' }],
+      activeTabId: 'session-new',
+    })
+    expect(JSON.parse(window.localStorage.getItem(CURRENT_SESSION_RUNTIME_KEY)!)).toEqual({
+      'session-new': { providerId: null, modelId: 'gpt-5' },
+    })
+    expect(window.localStorage.getItem(LEGACY_TAB_KEY)).toBe(legacyTabs)
+    expect(window.localStorage.getItem(LEGACY_SESSION_RUNTIME_KEY)).toBe(legacyRuntimes)
+  })
+
+  test('tolerates an invalid v0.7.4 legacy payload without losing unrelated state', () => {
+    window.localStorage.setItem(LEGACY_TAB_KEY, '{"openTabs":')
+    window.localStorage.setItem(LEGACY_SESSION_RUNTIME_KEY, 'not-json')
+    window.localStorage.setItem('custom-user-state', 'keep')
+
+    expect(() => runDesktopPersistenceMigrations()).not.toThrow()
+
+    expect(window.localStorage.getItem(CURRENT_TAB_KEY)).toBeNull()
+    expect(window.localStorage.getItem(CURRENT_SESSION_RUNTIME_KEY)).toBeNull()
+    expect(window.localStorage.getItem(LEGACY_TAB_KEY)).toBe('{"openTabs":')
+    expect(window.localStorage.getItem(LEGACY_SESSION_RUNTIME_KEY)).toBe('not-json')
+    expect(window.localStorage.getItem('custom-user-state')).toBe('keep')
+    expect(window.localStorage.getItem(DESKTOP_PERSISTENCE_VERSION_KEY)).toBe(
+      String(CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION),
+    )
+  })
 })

@@ -954,3 +954,108 @@ describe('updateStore', () => {
     expect(useUpdateStore.getState().shouldPrompt).toBe(true)
   })
 })
+
+// Regression coverage for the eight-hour periodic check, online recovery,
+// five-minute throttle, background state protection, and autoUpdateEnabled.
+describe('updateStore automatic check scheduling', () => {
+  async function freshEnabledStore() {
+    check.mockReset()
+    check.mockResolvedValue(null)
+    vi.resetModules()
+    const { useSettingsStore } = await import('./settingsStore')
+    useSettingsStore.setState({ autoUpdateEnabled: true })
+    const { useUpdateStore } = await import('./updateStore')
+    return useUpdateStore
+  }
+
+  it('rechecks for updates every eight hours while automatic updates are enabled', async () => {
+    vi.useFakeTimers()
+    try {
+      const useUpdateStore = await freshEnabledStore()
+      const startup = useUpdateStore.getState().initialize()
+      await vi.advanceTimersByTimeAsync(5000)
+      await startup
+      expect(check).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(8 * 60 * 60 * 1000)
+      expect(check).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
+  it('rechecks when the network comes back online after the throttle window', async () => {
+    vi.useFakeTimers()
+    try {
+      const useUpdateStore = await freshEnabledStore()
+      const startup = useUpdateStore.getState().initialize()
+      await vi.advanceTimersByTimeAsync(5000)
+      await startup
+      expect(check).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(6 * 60 * 1000)
+      window.dispatchEvent(new Event('online'))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(check).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
+  it('suppresses online recovery checks within the five minute throttle window', async () => {
+    vi.useFakeTimers()
+    try {
+      const useUpdateStore = await freshEnabledStore()
+      const startup = useUpdateStore.getState().initialize()
+      await vi.advanceTimersByTimeAsync(5000)
+      await startup
+      expect(check).toHaveBeenCalledTimes(1)
+
+      window.dispatchEvent(new Event('online'))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(check).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not run periodic or online checks while automatic updates are disabled', async () => {
+    vi.useFakeTimers()
+    try {
+      check.mockReset()
+      check.mockResolvedValue(null)
+      vi.resetModules()
+      const { useSettingsStore } = await import('./settingsStore')
+      useSettingsStore.setState({ autoUpdateEnabled: false })
+      const { useUpdateStore } = await import('./updateStore')
+
+      const startup = useUpdateStore.getState().initialize()
+      await vi.advanceTimersByTimeAsync(8 * 60 * 60 * 1000)
+      await startup
+      window.dispatchEvent(new Event('online'))
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(check).not.toHaveBeenCalled()
+    } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not let a background check interrupt an in-progress download', async () => {
+    check.mockReset()
+    check.mockResolvedValue(null)
+    vi.resetModules()
+    const { useSettingsStore } = await import('./settingsStore')
+    useSettingsStore.setState({ autoUpdateEnabled: true })
+    const { useUpdateStore } = await import('./updateStore')
+
+    useUpdateStore.setState({ status: 'downloading', checkedAt: null })
+    await useUpdateStore.getState().checkForUpdates({ silent: true, background: true })
+
+    expect(check).not.toHaveBeenCalled()
+  })
+})

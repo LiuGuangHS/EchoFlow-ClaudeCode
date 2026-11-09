@@ -43,6 +43,7 @@ import {
   CLAUDE_OFFICIAL_DEFAULT_MODELS,
 } from './claudeOfficialRuntime.js'
 import { SettingsService } from './settingsService.js'
+import { shouldForceProxyForRedaction } from '../../services/localRedactionGuard.js'
 import {
   fetchMagpieModels,
   isMagpieProvider,
@@ -631,10 +632,31 @@ export class ProviderService {
     provider: SavedProvider,
     options?: { proxyPath?: string },
   ): Record<string, string> {
-    return buildProviderManagedEnv(provider, {
-      proxyPath: options?.proxyPath,
-      serverPort: ProviderService.serverPort,
-    })
+    const proxyPath = options?.proxyPath ?? '/proxy'
+    const serverPort = ProviderService.serverPort
+    // Local redaction must never silently degrade into a plaintext direct
+    // connection. When it is enabled — or the settings cannot be read — every
+    // provider must go through the proxy, which owns the redact/restore protocol.
+    if (shouldForceProxyForRedaction()) {
+      // OAuth runtimes install a direct transport fetch that ignores the base
+      // URL, so they need a plain proxy env with no OAuth-only env flags.
+      if (provider.runtimeKind === 'openai_oauth' || provider.runtimeKind === 'grok_oauth') {
+        return {
+          ANTHROPIC_BASE_URL: `http://127.0.0.1:${serverPort}${proxyPath}`,
+          ANTHROPIC_API_KEY: 'proxy-managed',
+          ANTHROPIC_MODEL: provider.models.main,
+        }
+      }
+      // providerNeedsProxy() is true whenever nested tool-result media is
+      // unsupported. Reusing that existing seam yields the proxy-shaped env
+      // (loopback base URL + proxy-managed key, no upstream credential) without
+      // changing the out-of-scope runtime-env module.
+      return buildProviderManagedEnv(
+        { ...provider, supportsNestedToolResultMedia: false },
+        { proxyPath, serverPort },
+      )
+    }
+    return buildProviderManagedEnv(provider, { proxyPath, serverPort })
   }
 
   async getProviderRuntimeEnv(id: string): Promise<Record<string, string>> {

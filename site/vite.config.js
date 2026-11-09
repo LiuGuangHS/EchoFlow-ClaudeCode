@@ -61,6 +61,9 @@ function docsManifestPlugin() {
 
 export default defineConfig({
   resolve: { alias: { '@': path.resolve(import.meta.dirname, 'src') } },
+  // GitHub Pages serves this repo under /<repo>/, so the asset base has to be
+  // injected at build time. Defaults to '/' for local dev and custom domains.
+  base: process.env.DOCS_BASE || '/',
   plugins: [docsManifestPlugin()],
   build: {
     outDir: 'dist',

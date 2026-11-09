@@ -1003,8 +1003,10 @@ class WorkflowService {
       }
     }
 
-    const persisted = entry.type === 'cc-haha-task-notification' &&
-      isObjectRecord(entry.taskNotification)
+    const persisted = (
+      entry.type === 'echoflow-code-task-notification' ||
+      entry.type === 'cc-haha-task-notification'
+    ) && isObjectRecord(entry.taskNotification)
       ? entry.taskNotification
       : undefined
     if (persisted) {
@@ -1037,10 +1039,11 @@ class WorkflowService {
       const status = normalizePersistedStatus(xmlValue(text, 'status'))
       const taskId = xmlValue(text, 'task-id')
       if (!status || !taskId) continue
+      const ownerAgentId = xmlValue(text, 'owner-agent-id') ?? transcriptOwnerAgentId
       lifecycle.terminals.push({
         taskId,
         ...(xmlValue(text, 'tool-use-id') ? { toolUseId: xmlValue(text, 'tool-use-id') } : {}),
-        ...(transcriptOwnerAgentId ? { ownerAgentId: transcriptOwnerAgentId } : {}),
+        ...(ownerAgentId ? { ownerAgentId } : {}),
         status,
         ...(decodeXml(xmlValue(text, 'summary')) ? { summary: decodeXml(xmlValue(text, 'summary')) } : {}),
         ...(decodeXml(xmlValue(text, 'result')) ? { result: decodeXml(xmlValue(text, 'result')) } : {}),

@@ -662,8 +662,8 @@ describe('release desktop workflow', () => {
     expect(buildJob).toContain('builder_args: --linux AppImage deb rpm --arm64')
     expect(buildJob).toContain('EchoFlow-Code-${APP_VERSION}-win-arm64.exe')
     expect(buildJob).toContain('Upload release artifacts for final publish')
-    // Blockmaps stay on the runner for package-smoke; differential updates are disabled.
-    expect(extractStep(buildJob ?? '', 'Upload release artifacts for final publish')).not.toContain('*.blockmap')
+    // Blockmaps ship with installers so installed clients can use differential updates.
+    expect(extractStep(buildJob ?? '', 'Upload release artifacts for final publish')).toContain('desktop/build-artifacts/electron/*.blockmap')
     expect(buildJob).toContain('actions/upload-artifact@v4')
     expect(buildJob).toContain('name: desktop-release-artifacts-${{ matrix.label }}')
     expect(buildJob).not.toContain('softprops/action-gh-release@v2')
@@ -796,12 +796,12 @@ fi
           ...overrides,
         },
       })
-      return { code: result.exitCode, log: readFileSync(log, 'utf8'), output: readFileSync(output, 'utf8') }
+      return { code: result.exitCode, stderr: result.stderr.toString(), log: readFileSync(log, 'utf8'), output: readFileSync(output, 'utf8') }
     }
     try {
       const lookup = 'Verify existing release record'
       const found = run(lookup)
-      expect(found.code).toBe(0)
+      expect(found.code, found.stderr).toBe(0)
       expect(found.output).toBe('release_id=42\n')
       expect(found.log).toContain('--paginate --slurp')
       expect(run(lookup, { FAKE_RELEASE_PAGES: '[[]]' }).code).not.toBe(0)
@@ -809,7 +809,7 @@ fi
       const manualMissing = run(lookup, { OFFICIAL_RELEASE: 'false', FAKE_RELEASE_PAGES: '[[]]' })
       expect(manualMissing.code).toBe(0)
       expect(manualMissing.output).toBe('')
-      for (const record of [{ ...release, draft: false }, { ...release, id: null }]) {
+      for (const record of [{ ...release, draft: false }, ...[null, 0, -1, 1.5, 'invalid'].map(id => ({ ...release, id }))]) {
         expect(run(lookup, { FAKE_RELEASE_PAGES: JSON.stringify([[record]]) }).code).not.toBe(0)
       }
       expect(run(lookup, { FAKE_RELEASE_PAGES: JSON.stringify([[release], [release]]) }).code).not.toBe(0)
@@ -819,7 +819,7 @@ fi
       mkdirSync(assetsDir, { recursive: true })
       mkdirSync(metadataDir, { recursive: true })
       writeFileSync(join(assetsDir, 'EchoFlow-Code-1.2.3-win-x64.exe'), 'fixture installer')
-      writeFileSync(join(assetsDir, 'EchoFlow-Code-1.2.3-win-x64.exe.blockmap'), 'not a release asset')
+      writeFileSync(join(assetsDir, 'EchoFlow-Code-1.2.3-win-x64.exe.blockmap'), 'fixture blockmap')
       writeFileSync(join(metadataDir, 'latest.yml'), 'fixture metadata')
       const upload = 'Publish existing GitHub release by ID'
       const uploaded = run(upload)
@@ -828,7 +828,7 @@ fi
       expect(uploaded.log).toContain('--method DELETE repos/fixture/release/releases/assets/99')
       expect(uploaded.log).toContain('https://uploads.github.com/repos/fixture/release/releases/42/assets?name=EchoFlow-Code-1.2.3-win-x64.exe')
       expect(uploaded.log).toContain('assets?name=latest.yml')
-      expect(uploaded.log).not.toContain('.blockmap')
+      expect(uploaded.log).toContain('assets?name=EchoFlow-Code-1.2.3-win-x64.exe.blockmap')
       expect(uploaded.log).not.toContain('draft=false')
       expect(uploaded.log.indexOf('--method DELETE')).toBeLessThan(uploaded.log.indexOf('--method POST'))
 
@@ -854,7 +854,9 @@ fi
 
     expect(workflow).toContain('name: desktop-update-metadata-${{ matrix.label }}')
     expect(workflow).toContain('name: desktop-release-artifacts-${{ matrix.label }}')
-    expect(publishJob).toContain('needs: build')
+    expect(publishJob).toContain('needs:')
+    expect(publishJob).toContain('- build')
+    expect(publishJob).toContain('- release-verify-gate')
     expect(publishJob).toContain('actions/download-artifact@v4')
     expect(publishJob).toContain('pattern: desktop-release-artifacts-*')
     expect(publishJob).toContain('pattern: desktop-update-metadata-*')
@@ -869,9 +871,9 @@ fi
     expect(publishJob).toContain('artifacts/release-assets/**/*.deb')
     expect(publishJob).toContain('artifacts/release-assets/**/*.rpm')
     expect(publishJob).toContain('artifacts/update-metadata-standard/*.yml')
-    // Not release assets: differential updates are disabled, and releases are
-    // always Developer ID signed, so users never need the unsigned installer.
-    expect(publishJob).not.toContain('*.blockmap')
+    // Differential update blockmaps are release assets; the unsigned installer helper is not.
+    expect(publishJob).toContain('artifacts/release-assets/**/*.blockmap')
+    expect(publishJob).toContain('artifacts/release-assets/*.blockmap')
     expect(publishJob).not.toContain('install-macos-unsigned.sh')
     expect(publishJob).toContain('draft: true')
     expect(publishJob).toContain('Publish GitHub release after complete upload')
@@ -887,6 +889,69 @@ fi
     expect(publishJob).toContain('Load release notes')
     expect(publishJob.indexOf('Publish complete GitHub release')).toBeLessThan(publishJob.indexOf('Publish GitHub release after complete upload'))
     expect(workflow.indexOf('publish-release:')).toBeGreaterThan(workflow.indexOf('build:'))
+  })
+
+  test('official publication waits for the pre-release quality gate', () => {
+    const workflow = readReleaseWorkflow()
+    const jobs = (parse(workflow) as {
+      jobs: Record<string, {
+        needs?: string | string[]
+        if?: string
+        steps?: Array<{ uses?: string, with?: Record<string, unknown>, run?: string }>
+      }>
+    }).jobs
+    const lanes = ['verify-governance', 'verify-runtime', 'verify-desktop']
+    const packageScripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts as Record<string, string>
+
+    expect(jobs['publish-release'].needs).toEqual(['build', 'release-verify-gate'])
+
+    const gate = jobs['release-verify-gate']
+    expect(gate, 'release-verify-gate job').toBeDefined()
+    expect(gate.needs).toEqual(lanes)
+    expect(gate.if).toBe('always()')
+    const gateRun = (gate.steps ?? []).map((step) => step.run ?? '').join('\n')
+    for (const lane of lanes) {
+      expect(gateRun).toContain(lane + ':${{ needs.' + lane + '.result }}')
+    }
+    expect(gateRun).toContain('exit 1')
+
+    const laneChecks: Record<string, string[]> = {
+      'verify-governance': ['check:policy', 'check:upstream-content'],
+      'verify-runtime': ['check:server', 'check:agent-flow', 'check:adapters'],
+      'verify-desktop': ['check:desktop', 'check:persistence-upgrade'],
+    }
+    for (const lane of lanes) {
+      const job = jobs[lane]
+      expect(job, lane).toBeDefined()
+      expect([job.needs].flat()).toEqual(['release-contract'])
+      const runs = (job.steps ?? []).map((step) => step.run ?? '').join('\n')
+      const checks = [...runs.matchAll(/bun run (check:[A-Za-z0-9:_-]+)/g)].map((match) => match[1])
+      for (const check of checks) {
+        expect(packageScripts[check], lane + ' uses ' + check).toBeDefined()
+      }
+      for (const expected of laneChecks[lane]) {
+        expect(checks, lane + ' runs ' + expected).toContain(expected)
+      }
+    }
+  })
+
+  test('all release verification jobs are bound to the same immutable release SHA', () => {
+    const workflow = readReleaseWorkflow()
+    const releaseShaRef = 'ref: ${{ inputs.release_sha || github.sha }}'
+    for (const jobName of [
+      'verify-governance',
+      'verify-runtime',
+      'verify-desktop',
+      'build',
+      'publish-release',
+    ]) {
+      const job = extractJob(workflow, jobName)
+      expect(job, jobName).toContain(releaseShaRef)
+    }
+    const contract = extractJob(workflow, 'release-contract')
+    expect(contract).toContain('^{commit}')
+    expect(contract).toContain("if: github.event_name != 'workflow_dispatch' || inputs.release_tag != ''")
+    expect(contract).toContain('EXPECTED_SHA: ${{ inputs.release_sha || github.sha }}')
   })
 
   test('release workflow keeps updater-visible releases draft until every asset is uploaded', () => {
@@ -918,8 +983,9 @@ fi
       expect(row.builder_args.replace(/'[^']*'/g, ''), row.label).not.toContain('$')
       const assets = packagedAssetNames(row, version)
       const block = matrixStep.match(new RegExp(`${row.label}\\)\\n\\s+expected=\\(([\\s\\S]*?)\\)`))?.[1]
-      expect(listed(block).sort(), row.label).toEqual([...assets, RELEASE_CHANNELS[row.label]].sort())
-      releaseAssets.push(...assets)
+      const blockmaps = row.label.startsWith('Linux') ? [] : assets.map(asset => `${asset}.blockmap`)
+      expect(listed(block).sort(), row.label).toEqual([...assets, ...blockmaps, RELEASE_CHANNELS[row.label]].sort())
+      releaseAssets.push(...assets, ...blockmaps)
     }
 
     expect(releaseAssets.sort()).toEqual([
@@ -930,11 +996,17 @@ fi
       `EchoFlow-Code-${version}-linux-amd64.deb`,
       `EchoFlow-Code-${version}-linux-x86_64.rpm`,
       `EchoFlow-Code-${version}-win-arm64.exe`,
+      `EchoFlow-Code-${version}-win-arm64.exe.blockmap`,
       `EchoFlow-Code-${version}-win-x64.exe`,
+      `EchoFlow-Code-${version}-win-x64.exe.blockmap`,
       `EchoFlow-Code-${version}-mac-arm64.dmg`,
+      `EchoFlow-Code-${version}-mac-arm64.dmg.blockmap`,
       `EchoFlow-Code-${version}-mac-x64.dmg`,
+      `EchoFlow-Code-${version}-mac-x64.dmg.blockmap`,
       `EchoFlow-Code-${version}-mac-arm64.zip`,
+      `EchoFlow-Code-${version}-mac-arm64.zip.blockmap`,
       `EchoFlow-Code-${version}-mac-x64.zip`,
+      `EchoFlow-Code-${version}-mac-x64.zip.blockmap`,
     ].sort())
     expect(listed(publishStep.match(/expected=\(([\s\S]*?)\)/)?.[1]).sort()).toEqual([...releaseAssets].sort())
 
@@ -1000,8 +1072,8 @@ fi
       expect(publishJob).toContain(`artifacts/update-metadata-standard/$file`)
       expect(publishJob).toContain(metadata)
     }
-    expect(buildJob).not.toContain('.blockmap"')
-    expect(publishJob).not.toContain('.blockmap"')
+    expect(buildJob).toContain('.blockmap"')
+    expect(publishJob).toContain('.blockmap"')
     expect(buildJob).toContain('latest-linux-arm64.yml')
     expect(buildJob).toContain('Missing release assets for %s')
     expect(publishJob).toContain('Missing complete release assets')
@@ -1187,7 +1259,7 @@ fi
     expect(recoveryHelper).toContain('robocopy.exe')
     expect(recoveryHelper).not.toMatch(/\/XC|\/XN|\/XO/)
     expect(recoveryHelper).toContain('Multiple distinct legacy data sources')
-    expect(recoveryHelper).toContain('Active CLAUDE_CONFIG_DIR is managed outside Claude Code Haha')
+    expect(recoveryHelper).toContain('Active CLAUDE_CONFIG_DIR is managed outside EchoFlow Code')
     expect(recoveryHelper).toContain('Test-LexicalPathAtOrBelow')
     expect(recoveryHelper).toContain('-SharedInstallDirs @($PerMachineInstallDir)')
     expect(normalizedRecoveryHelper).toContain("function Invoke-LegacyRecovery {\n  param(\n    [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$InstallDirs")
@@ -1228,7 +1300,7 @@ fi
     expect(installerSmoke).toContain('$Stage completed successfully.')
     expect(installerSmoke).toContain('Fresh install did not create the application executable')
     expect(installerSmoke).toContain('Reinstall removed the application executable')
-    expect(installerSmoke).toContain("'中文 安装目录\\Claude Code Haha'")
+    expect(installerSmoke).toContain("'中文 安装目录\\EchoFlow Code'")
     expect(installerSmoke).toContain('Invoke-InstalledApplicationSmoke')
     expect(installerSmoke).toContain('CC_HAHA_ELECTRON_WINDOW_SMOKE_LOG')
     expect(installerSmoke).toContain('desktop-server-state.json')

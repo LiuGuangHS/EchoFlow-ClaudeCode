@@ -33,8 +33,11 @@ type RequestTiming = {
 }
 
 function getErrorMessage(status: number, body: unknown) {
-  if (body && typeof body === 'object' && 'message' in body && typeof body.message === 'string') {
-    return body.message
+  if (body && typeof body === 'object') {
+    // EchoFlow routes answer `{ error, detail }`; the detail is the upstream
+    // gateway's own words, which is the only part that explains the refusal.
+    if ('detail' in body && typeof body.detail === 'string' && body.detail.trim()) return body.detail
+    if ('message' in body && typeof body.message === 'string') return body.message
   }
 
   if (typeof body === 'string' && body.trim().length > 0) {
@@ -512,5 +515,5 @@ export const api = {
   post: <T>(path: string, body?: unknown, options?: ApiRequestOptions) => request<T>('POST', path, body, options),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
-  delete: <T>(path: string) => request<T>('DELETE', path),
+  delete: <T>(path: string, body?: unknown) => request<T>('DELETE', path, body),
 }

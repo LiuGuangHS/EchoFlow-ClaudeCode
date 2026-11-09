@@ -254,6 +254,137 @@ jobs:
             echo "windows_signed=true" >> "$GITHUB_OUTPUT"
           fi
 
+  verify-governance:
+    needs:
+      - release-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.release_sha || github.sha }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Policy and gate regressions
+        run: bun run check:policy
+
+      - name: Upstream content audit
+        run: bun run check:upstream-content
+
+  verify-runtime:
+    needs:
+      - release-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.release_sha || github.sha }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: bun install --frozen-lockfile
+
+      - name: Install adapter dependencies
+        working-directory: adapters
+        run: bun install --frozen-lockfile
+
+      - name: Root runtime tests
+        run: bun run check:server
+
+      - name: Deterministic agent flow
+        run: bun run check:agent-flow
+
+      - name: Adapter tests
+        run: bun run check:adapters
+
+  verify-desktop:
+    needs:
+      - release-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.release_sha || github.sha }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: bun install --frozen-lockfile
+
+      - name: Install adapter dependencies
+        working-directory: adapters
+        run: bun install --frozen-lockfile
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: bun install --frozen-lockfile
+
+      - name: Desktop lint, tests, and build
+        run: bun run check:desktop
+
+      - name: Persistence upgrade contracts
+        run: bun run check:persistence-upgrade
+
+  release-verify-gate:
+    name: release-verify-gate
+    needs:
+      - verify-governance
+      - verify-runtime
+      - verify-desktop
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all verification to pass
+        run: |
+          failures=0
+          for entry in \
+            "verify-governance:${{ needs.verify-governance.result }}" \
+            "verify-runtime:${{ needs.verify-runtime.result }}" \
+            "verify-desktop:${{ needs.verify-desktop.result }}"; do
+            lane="${entry%%:*}"
+            result="${entry#*:}"
+            if [ "$result" != "success" ]; then
+              echo "::error::Pre-release verification failed for ${lane}: ${result}"
+              failures=$((failures + 1))
+            fi
+          done
+          if [ "$failures" -ne 0 ]; then
+            exit 1
+          fi
+          echo "All pre-release verification lanes passed."
+
   build:
     needs:
       - signing-preflight
@@ -851,14 +982,18 @@ jobs:
             macOS-ARM64)
               expected=(
                 "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg"
+                "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg.blockmap"
                 "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip"
+                "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip.blockmap"
                 "latest-mac.yml"
               )
               ;;
             macOS-x64)
               expected=(
                 "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg"
+                "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg.blockmap"
                 "EchoFlow-Code-${APP_VERSION}-mac-x64.zip"
+                "EchoFlow-Code-${APP_VERSION}-mac-x64.zip.blockmap"
                 "latest-mac.yml"
               )
               ;;
@@ -881,12 +1016,14 @@ jobs:
             Windows-x64)
               expected=(
                 "EchoFlow-Code-${APP_VERSION}-win-x64.exe"
+                "EchoFlow-Code-${APP_VERSION}-win-x64.exe.blockmap"
                 "latest.yml"
               )
               ;;
             Windows-ARM64)
               expected=(
                 "EchoFlow-Code-${APP_VERSION}-win-arm64.exe"
+                "EchoFlow-Code-${APP_VERSION}-win-arm64.exe.blockmap"
                 "latest.yml"
               )
               ;;
@@ -943,12 +1080,15 @@ jobs:
             desktop/build-artifacts/electron/*.AppImage
             desktop/build-artifacts/electron/*.deb
             desktop/build-artifacts/electron/*.rpm
+            desktop/build-artifacts/electron/*.blockmap
             desktop/build-artifacts/electron/*.yml
           if-no-files-found: error
 
   publish-release:
     if: inputs.official_release == true || (github.event_name == 'workflow_dispatch' && inputs.draft == true && inputs.publish_draft_release == true)
-    needs: build
+    needs:
+      - build
+      - release-verify-gate
     runs-on: ubuntu-latest
     outputs:
       release_tag: v${{ steps.version.outputs.value }}
@@ -995,7 +1135,7 @@ jobs:
         run: |
           error_file="${RUNNER_TEMP}/release-view-error.txt"
           # The tag endpoint does not return drafts; Release Please creates a draft.
-          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '[.[] | select(.tag_name == env.RELEASE_TAG)] | .[0] // empty' 2>"$error_file") || {
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --slurp --jq '[.[][] | select(.tag_name == env.RELEASE_TAG)] | if length > 1 then error("Multiple releases match the requested tag") else .[0] // empty end' 2>"$error_file") || {
             cat "$error_file" >&2
             exit 1
           }
@@ -1008,7 +1148,7 @@ jobs:
           fi
           release_id=$(jq -r '.id' <<<"$release_json")
           is_draft=$(jq -r '.draft' <<<"$release_json")
-          if [ -z "$release_id" ] || [ "$release_id" = "null" ] || [ "$is_draft" != "true" ]; then
+          if [[ ! "$release_id" =~ ^[1-9][0-9]*$ ]] || [ "$is_draft" != "true" ]; then
             echo "::error::Release identity is invalid or the release is already public."
             exit 1
           fi
@@ -1052,9 +1192,13 @@ jobs:
         run: |
           expected=(
             "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg"
+            "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg.blockmap"
             "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip"
+            "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip.blockmap"
             "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg"
+            "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg.blockmap"
             "EchoFlow-Code-${APP_VERSION}-mac-x64.zip"
+            "EchoFlow-Code-${APP_VERSION}-mac-x64.zip.blockmap"
             "EchoFlow-Code-${APP_VERSION}-linux-x86_64.AppImage"
             "EchoFlow-Code-${APP_VERSION}-linux-amd64.deb"
             "EchoFlow-Code-${APP_VERSION}-linux-x86_64.rpm"
@@ -1062,7 +1206,9 @@ jobs:
             "EchoFlow-Code-${APP_VERSION}-linux-arm64.deb"
             "EchoFlow-Code-${APP_VERSION}-linux-aarch64.rpm"
             "EchoFlow-Code-${APP_VERSION}-win-x64.exe"
+            "EchoFlow-Code-${APP_VERSION}-win-x64.exe.blockmap"
             "EchoFlow-Code-${APP_VERSION}-win-arm64.exe"
+            "EchoFlow-Code-${APP_VERSION}-win-arm64.exe.blockmap"
           )
 
           missing=()
@@ -1130,6 +1276,7 @@ jobs:
             artifacts/release-assets/*.AppImage
             artifacts/release-assets/*.deb
             artifacts/release-assets/*.rpm
+            artifacts/release-assets/*.blockmap
             artifacts/update-metadata-standard/*.yml
           )
           for file in "${files[@]}"; do
@@ -1139,9 +1286,9 @@ jobs:
             if [ -n "$asset_id" ]; then
               gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" >/dev/null
             fi
-            gh api --hostname uploads.github.com --method POST \
+            gh api --method POST \
               -H 'Content-Type: application/octet-stream' --input "$file" \
-              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${asset_name}" >/dev/null
+              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${asset_name}" >/dev/null
           done
 
       - name: Publish complete GitHub release
@@ -1161,6 +1308,7 @@ jobs:
             artifacts/release-assets/**/*.AppImage
             artifacts/release-assets/**/*.deb
             artifacts/release-assets/**/*.rpm
+            artifacts/release-assets/**/*.blockmap
             artifacts/update-metadata-standard/*.yml
 
       - name: Publish GitHub release after complete upload
@@ -1169,9 +1317,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ steps.release.outputs.release_id }}
+          RELEASE_TAG: v${{ steps.version.outputs.value }}
         run: |
           if [ -z "$RELEASE_ID" ]; then
             echo "::error::Trusted release publication requires a verified release ID."
+            exit 1
+          fi
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")
+          current_id=$(jq -r '.id' <<<"$release_json")
+          current_tag=$(jq -r '.tag_name' <<<"$release_json")
+          is_draft=$(jq -r '.draft' <<<"$release_json")
+          if [ "$current_id" != "$RELEASE_ID" ] || [ "$current_tag" != "$RELEASE_TAG" ] || [ "$is_draft" != "true" ]; then
+            echo "::error::Verified release identity or draft state changed before publication."
             exit 1
           fi
           undrafted_id=$(gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" -F draft=false --jq 'select(.draft == false) | .id')

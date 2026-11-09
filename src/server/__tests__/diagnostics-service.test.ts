@@ -436,6 +436,59 @@ describe('DiagnosticsService', () => {
     expect(archiveText).not.toContain('provider-secret')
   })
 
+  test('includes bounded local-index state in the exported bundle', async () => {
+    const service = new DiagnosticsService()
+    const statusSpy = spyOn(service, 'getLocalIndexStatus').mockReturnValue({
+      mode: 'on',
+      state: 'degraded',
+      discovered: 12,
+      indexed: 10,
+      degradedSources: 2,
+      databaseBytes: 4096,
+      walBytes: 1024,
+      lastUpdatedAt: '2026-07-15T00:00:00.000Z',
+      lastErrorCode: 'SQLITE_BUSY',
+    })
+    try {
+      const bundle = await service.exportBundle()
+      const archiveText = gunzipSync(await fs.readFile(bundle.path)).toString('utf-8')
+      const localIndex = JSON.parse(readTarEntry(await fs.readFile(bundle.path), 'local-index-status.json'))
+
+      expect(localIndex).toEqual({
+        available: true,
+        mode: 'on',
+        state: 'degraded',
+        discovered: 12,
+        indexed: 10,
+        degradedSources: 2,
+        databaseBytes: 4096,
+        walBytes: 1024,
+        lastUpdatedAt: '2026-07-15T00:00:00.000Z',
+        lastErrorCode: 'SQLITE_BUSY',
+      })
+      expect(archiveText).toContain('local-index-status.json')
+      expect(JSON.stringify(localIndex)).not.toContain(tmpDir)
+    } finally {
+      statusSpy.mockRestore()
+    }
+  })
+
+  test('exports without local-index state when its status is unavailable', async () => {
+    const service = new DiagnosticsService()
+    const statusSpy = spyOn(service, 'getLocalIndexStatus').mockImplementation(() => {
+      throw new Error(`private index path: ${tmpDir}`)
+    })
+    try {
+      const bundle = await service.exportBundle()
+      const localIndex = JSON.parse(readTarEntry(await fs.readFile(bundle.path), 'local-index-status.json'))
+
+      expect(localIndex).toEqual({ available: false })
+      expect(JSON.stringify(localIndex)).not.toContain(tmpDir)
+    } finally {
+      statusSpy.mockRestore()
+    }
+  })
+
   test('redacts secret-bearing provider metadata from the exported summary', async () => {
     const service = new DiagnosticsService()
     await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })

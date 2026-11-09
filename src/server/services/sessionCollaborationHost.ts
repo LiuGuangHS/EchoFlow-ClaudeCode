@@ -1,5 +1,7 @@
-import { join } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import { listLeadTeamMemberIdentities } from '../../utils/swarm/teamHelpers.js'
 import { sessionService } from './sessionService.js'
 import { SearchService } from './searchService.js'
@@ -63,8 +65,30 @@ export function configureSessionCollaborationHost(serverHost: string, serverPort
   return () => { disposed = true; removeGuard(); unsubscribe?.(); unsubscribe = undefined; current = undefined }
 }
 
+/**
+ * Sessions recorded before the config directory was renamed still live under
+ * the legacy folder. Adopt them once into the renamed directory, but never
+ * overwrite state that already exists there: a conflict between the two
+ * directories is preserved and the renamed state wins.
+ */
+function resolveCollaborationStatePath(configDir: string): string {
+  const path = join(getEchoFlowInternalDir(configDir), 'session-collaboration', 'state.json')
+  const legacy = join(configDir, 'cc-haha', 'session-collaboration', 'state.json')
+  if (existsSync(path)) return path
+  if (!existsSync(legacy)) return path
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+    copyFileSync(legacy, path)
+    return path
+  } catch (error) {
+    console.error('[SessionCollaboration] Failed to adopt legacy state', error)
+    return legacy
+  }
+}
+
 function getSessionCollaborationOwner(): CollaborationOwner {
-  const path = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'cc-haha', 'session-collaboration', 'state.json')
+  const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
+  const path = resolveCollaborationStatePath(configDir)
   if (!current || current.path !== path) {
     const service = new SessionCollaborationService({
       statePath: path,

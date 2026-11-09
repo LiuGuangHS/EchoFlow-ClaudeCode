@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   api,
   apiGetBlob,
+  ApiError,
   ApiResponseParseError,
   getApiUrl,
   getDefaultBaseUrl,
@@ -468,5 +469,42 @@ describe('api diagnostics reporting', () => {
     const details = JSON.parse(String((diagnosticCall?.[1] as RequestInit | undefined)?.body)).details
     expect(details.readChars).toBe(truncated.length)
     expect(details.contentType).toBe('application/json')
+  })
+})
+
+describe('ApiError keeps the upstream failure reason', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    setBaseUrl(getDefaultBaseUrl())
+    setAuthToken(null)
+  })
+
+  it('surfaces a non-empty upstream detail ahead of message', () => {
+    const error = new ApiError(502, {
+      error: 'Bad Gateway',
+      detail: 'upstream model quota exhausted',
+      message: 'request failed',
+    })
+    expect(error.message).toBe('upstream model quota exhausted')
+  })
+
+  it('falls back to message when detail is missing or blank', () => {
+    expect(new ApiError(400, { message: 'invalid request' }).message).toBe('invalid request')
+    expect(new ApiError(400, { detail: '   ', message: 'invalid request' }).message).toBe('invalid request')
+  })
+
+  it('keeps a non-empty string body and a status-only fallback', () => {
+    expect(new ApiError(503, 'maintenance window').message).toBe('maintenance window')
+    expect(new ApiError(503, { detail: '' }).message).toBe('API error 503')
+  })
+
+  it('does not swallow the upstream detail when a request fails', async () => {
+    setBaseUrl('http://127.0.0.1:3456')
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+      JSON.stringify({ error: 'Bad Gateway', detail: 'gateway refused the model', message: 'request failed' }),
+      { status: 502, headers: { 'content-type': 'application/json' } },
+    ))
+
+    await expect(api.get('/api/sessions/session-1/messages')).rejects.toThrow('gateway refused the model')
   })
 })

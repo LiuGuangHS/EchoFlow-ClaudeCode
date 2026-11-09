@@ -182,7 +182,7 @@ function alternateFor(record, records) {
 
 async function writeSitemap(records) {
   const origin = `https://${expectedCustomDomain}`
-  const urls = ['/', '/en', ...records.map((record) => record.path)]
+  const urls = ['/', '/en', '/download', '/en/download', ...records.map((record) => record.path)]
   const body = urls
     .map((url) => `  <url><loc>${origin}${url}</loc><changefreq>weekly</changefreq></url>`)
     .join('\n')
@@ -194,7 +194,9 @@ async function writeSitemap(records) {
 
   await fs.writeFile(
     path.join(distDir, 'robots.txt'),
-    `User-agent: *\nAllow: /\n\nSitemap: ${origin}/sitemap.xml\n`
+    // /update/ 是应用消费的机器端点，不是页面：别花爬虫预算，也别让它和下载页的
+    // 版本信息打架。下载页的 manifest 同理。
+    `User-agent: *\nAllow: /\nDisallow: /update/\nDisallow: /download/manifest.json\n\nSitemap: ${origin}/sitemap.xml\n`
   )
 }
 
@@ -241,7 +243,23 @@ async function main() {
     alternate: '/',
     description: 'Parallel sessions, Agent Teams, Computer Use, and any model you like. Pair your phone to approve and start tasks away from your desk.',
     path: '/en',
-    title: 'EchoFlow Code — Claude Code on your desktop and in your pocket'
+    title: 'EchoFlow Code — One workspace, on your desktop and in your pocket'
+  })
+
+  // 下载页是产品动作页，不进 docs 路由树（无 frontmatter、不进侧边栏），
+  // 但要有自己的骨架和 canonical，否则直接访问 /download 会落到 SPA 的 404。
+  await createRouteEntry('/download', shell, {
+    alternate: '/en/download',
+    description: '下载 EchoFlow Code 的 macOS、Windows 与 Linux 安装包。',
+    path: '/download',
+    title: '下载 · EchoFlow Code'
+  })
+
+  await createRouteEntry('/en/download', shell, {
+    alternate: '/download',
+    description: 'Download EchoFlow Code for macOS, Windows and Linux.',
+    path: '/en/download',
+    title: 'Download · EchoFlow Code'
   })
 
   for (const legacy of legacyRoutes) {

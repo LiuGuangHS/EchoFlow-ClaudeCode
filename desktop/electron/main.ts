@@ -1,9 +1,26 @@
 import { PublicAccessManager, readPublicAccessControlResponse } from './services/publicAccess'
+import {
+  EchoFlowLoginSession,
+  ECHOFLOW_LOGIN_PROFILES,
+  readDedicatedCredential,
+  readPageIdentity,
+  siteCookieHeader,
+  type EchoFlowLoginCredential,
+  type EchoFlowLoginEndpoint,
+  type EchoFlowLoginVerification,
+  type EchoFlowLoginWindow,
+  type SiteCookie,
+} from './services/echoFlowLogin'
+import { resolveSiteIdentity, type EchoFlowLoginIdentity } from './services/echoFlowSiteIdentity'
+import { readStoredDedicatedCredential } from './services/echoFlowDedicatedRestore'
+import { readStoredSiteCredential } from './services/echoFlowSiteRestore'
+import { startSiteNetworkBridge, type SiteNetworkBridge } from './services/siteNetworkBridge'
 import { configureP2PSessionPermissions, P2P_PARTITION, p2pEndpointUrl, p2pHostWanted, P2PTerminator } from './services/p2pTerminator'
 import type { DesktopPublicAccessConfiguration, DesktopPublicAccessStatus } from '../src/lib/desktopHost/types'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, screen, session, systemPreferences, WebContentsView, webContents } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import path from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { ELECTRON_EVENT_CHANNELS, ELECTRON_INTERNAL_CHANNELS, ELECTRON_IPC_CHANNELS, type ElectronIpcChannel } from './ipc/channels'
 import {
@@ -12,12 +29,21 @@ import {
   validateElectronIpcPayload,
 } from './ipc/capabilities'
 import { ElectronServerRuntime } from './services/serverRuntime'
+import {
+  claudeCodeRuntimeConfigPath,
+  claudeCodeRuntimeStatus,
+  getClaudeCodeRuntimeConfig,
+  setClaudeCodeRuntimeConfig,
+  type ClaudeCodeRuntimeConfig,
+} from './services/claudeCodeRuntime'
+import { DeepSeekHarnessRuntime } from './services/deepseekHarnessRuntime'
+import { discoverRuntimes, probeRuntimePath } from './services/runtimeDiscovery'
 import { DataMigration } from './services/dataMigration'
 import { areStorageWritesFrozen, setStorageWritesFrozen } from './services/storageMaintenance'
 import { resolveRelocatedAttachmentPath } from '../../src/utils/storageRelocations'
 import { appendHostDiagnostic, electronHostDiagnosticsFile, sanitizeHostDiagnostic } from './services/sidecarManager'
 import { openDialog, saveDialog } from './services/dialogs'
-import { openExternalUrl, openSystemPath, openSystemSettingsUrl } from './services/shell'
+import { openExternalUrl, openSystemPath, openSystemSettingsUrl, showItemInFolder } from './services/shell'
 import {
   notificationPermissionState,
   requestNotificationPermission,
@@ -31,6 +57,7 @@ import { DeepLinkHandler, extractDeepLinkFromArgs } from './services/deepLinkHan
 import { acquireSingleInstanceLock } from './services/singleInstance'
 import { installTray, shouldInstallTray, type TrayController } from './services/tray'
 import { ElectronUpdaterService, updaterSessionProxyConfig } from './services/updater'
+import { resolveDifferentialDownloadRequest, resolveUpdateFeedConfig } from './services/updateFeed'
 import { createUpdateSmokeUpdaterFromEnv } from './services/updateSmoke'
 import { ElectronTerminalService, type TerminalSpawnInput } from './services/terminal'
 import { ElectronPreviewService, type PreviewBounds } from './services/preview'
@@ -62,7 +89,7 @@ import {
 import { installMacOsChromiumKeychainPromptGuard } from './services/keychain'
 import { installStdioWriteFailureGuards } from './services/stdioGuards'
 import { applyWindowsAppUserModelId, applyWindowsTaskbarIdentity, resolveWindowsWindowIcon } from './services/appIdentity'
-import { installMainWindowNavigationGuards, installPreviewNavigationGuards } from './services/navigationGuards'
+import { installMainWindowNavigationGuards, installPreviewNavigationGuards, isHttpUrl } from './services/navigationGuards'
 import { installPreviewCleanupOnRendererNavigation } from './services/previewLifecycle'
 import { logNotificationSmokeRendererAck, scheduleNotificationSmoke } from './services/notificationSmoke'
 import { normalizeZoomFactor } from './services/zoom'
@@ -93,6 +120,7 @@ import {
   writeLocalePreference,
 } from './services/localePreference'
 import { resolveSupportedLocale, type Locale } from '../src/i18n/locale'
+import { ECHOFLOW_SIHUB_NAME } from '../src/constants/brand'
 import {
   createCustomPetCatalogLoader,
   createCustomPetFromAtlas,
@@ -121,6 +149,10 @@ let mainWindow: BrowserWindow | null = null
 let serverRuntime: ElectronServerRuntime | null = null
 let dataMigration: DataMigration | null = null
 const hostOperations = new Set<Promise<unknown>>()
+let echoFlowLoginSession: EchoFlowLoginSession | null = null
+let siteNetworkBridge: SiteNetworkBridge | null = null
+let deepSeekHarnessRuntime: DeepSeekHarnessRuntime | null = null
+let deepSeekHarnessWindow: BrowserWindow | null = null
 let publicAccessManager: PublicAccessManager | null = null
 /** The WebRTC endpoint phones upgrade to; runs only while remote access is wanted (see p2pHostWanted). */
 let p2pTerminator: P2PTerminator | null = null
@@ -131,6 +163,7 @@ let previewService: ElectronPreviewService | null = null
 let workspaceBrowserService: ElectronWorkspaceBrowserService | null = null
 let workspaceBrowserSessionConfigured = false
 let petWindowController: PetWindowController | null = null
+const traceWindows = new Map<string, BrowserWindow>()
 let isQuitting = false
 let quitCleanupStarted = false
 let quitCleanupFinished = false
@@ -262,17 +295,375 @@ async function loadRendererEntry(
   }
 }
 
+async function openTraceWindow(sessionId: string) {
+  const existing = traceWindows.get(sessionId)
+  if (existing && !existing.isDestroyed()) {
+    showMainWindow(existing, app)
+    return
+  }
+
+  const traceWindow = new BrowserWindow({
+    width: 1180,
+    height: 780,
+    minWidth: 860,
+    minHeight: 560,
+    title: 'Trace',
+    autoHideMenuBar: true,
+    show: false,
+    backgroundColor: resolveStartupWindowBackground(),
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+  traceWindows.set(sessionId, traceWindow)
+  traceWindow.on('closed', () => {
+    traceWindows.delete(sessionId)
+  })
+  installMainWindowNavigationGuards(traceWindow.webContents, {
+    openExternal: openExternalUrl,
+    rendererEntry: rendererEntry(),
+  })
+  await loadRendererEntry(traceWindow, {
+    traceWindow: '1',
+    traceSessionId: sessionId,
+  })
+  showMainWindow(traceWindow, app)
+}
+
+/**
+ * The local server verifies site credentials through a request signed with this
+ * token. It reads the token from its own environment, so we keep it — and the
+ * other site-bridge values below — in an explicit sidecar environment object
+ * instead of the main process `process.env`: terminals and other child
+ * processes must not inherit these credentials.
+ */
+const serverSidecarEnv: NodeJS.ProcessEnv = {}
+const echoFlowSiteBridgeToken = randomBytes(32).toString('base64url')
+serverSidecarEnv.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = echoFlowSiteBridgeToken
+
+async function readEchoFlowSiteCookies(endpoint: EchoFlowLoginEndpoint): Promise<SiteCookie[]> {
+  const profile = ECHOFLOW_LOGIN_PROFILES[endpoint]
+  return await session.fromPartition(profile.partition).cookies.get({ url: profile.origin })
+}
+
+async function clearEchoFlowSiteCookies(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
+  const profile = ECHOFLOW_LOGIN_PROFILES[endpoint]
+  const cookies = session.fromPartition(profile.partition).cookies
+  const existing = await cookies.get({ url: profile.origin })
+  await Promise.all(existing.map(cookie => cookies.remove(
+    `${profile.origin}${cookie.path && cookie.path.startsWith('/') ? cookie.path : `/${cookie.path || ''}`}`,
+    cookie.name,
+  )))
+}
+
+async function clearEchoFlowSiteStorage(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
+  // The dedicated gateway keeps its JWT in localStorage, and Electron persists
+  // that partition to disk. Without this, signing out and signing in again
+  // would hand back the old account with no input.
+  const profile = ECHOFLOW_LOGIN_PROFILES[endpoint]
+  await session.fromPartition(profile.partition).clearStorageData({ storages: ['localstorage'] })
+}
+
+async function readStoredEchoFlowAccountIdentity(
+  endpoint: EchoFlowLoginEndpoint,
+): Promise<EchoFlowLoginIdentity | null> {
+  try {
+    const serverUrl = await getServerRuntime().getServerUrl()
+    const response = await fetch(`${serverUrl}/api/echoflow`, { signal: AbortSignal.timeout(10_000) })
+    if (!response.ok) return null
+    const body = await response.json() as {
+      accounts?: Record<string, { userId?: unknown; username?: unknown } | null>
+    }
+    const account = body.accounts?.[endpoint]
+    if (!account || typeof account.userId !== 'string') return null
+    return {
+      userId: account.userId,
+      username: typeof account.username === 'string' ? account.username : '',
+    }
+  } catch {
+    return null
+  }
+}
+
+async function readEchoFlowLoginCredential(
+  endpoint: EchoFlowLoginEndpoint,
+  window: EchoFlowLoginWindow | null,
+): Promise<EchoFlowLoginCredential | null> {
+  if (endpoint === 'dedicated') {
+    // The gateway keeps its JWT in page storage. We never copy it into the
+    // account file; sign-out wipes that storage (clearEchoFlowSiteStorage) so
+    // the next login cannot replay it.
+    const credential = window
+      ? await readDedicatedCredential(window, ECHOFLOW_LOGIN_PROFILES.dedicated.origin)
+      : await readStoredDedicatedCredential(
+          ECHOFLOW_LOGIN_PROFILES.dedicated.partition,
+          ECHOFLOW_LOGIN_PROFILES.dedicated.origin,
+        ).catch(() => null)
+    console.info('[echoFlowLogin] credential-read:', JSON.stringify({ endpoint, present: Boolean(credential) }))
+    return credential
+  }
+  const profile = ECHOFLOW_LOGIN_PROFILES.main
+  // The gateway binds the session to the client that created it and refuses to
+  // recognise it from any other one, so every identity probe leaves through the
+  // sign-in window's own partition; the restore after a restart has no window
+  // to fall back on.
+  if (!window) {
+    // The gateway account call needs New-Api-User — the identity itself — so the
+    // restore reads the identity the sign-in stored and keeps the network out of
+    // it; the verification in bootstrapEchoFlowAccount confirms the pair.
+    const identity = await readStoredEchoFlowAccountIdentity(endpoint)
+    return await readStoredSiteCredential(profile.partition, profile.origin, app.getLocale(), identity)
+  }
+  const cookies = await readEchoFlowSiteCookies(endpoint)
+  const cookie = siteCookieHeader(cookies)
+  if (!cookie) return null
+  const partitionFetch: typeof fetch = (input, init) =>
+    session.fromPartition(profile.partition).fetch(String(input), init)
+  let identity = await resolveSiteIdentity(cookie, partitionFetch, {
+    userAgent: session.fromPartition(profile.partition).getUserAgent(),
+    acceptLanguage: app.getLocale(),
+  })
+  if (!identity) identity = await readPageIdentity(window, profile.origin)
+  if (!identity) return null
+  return {
+    kind: 'session',
+    userId: identity.userId,
+    username: identity.username,
+    cookie,
+    userAgent: session.fromPartition(profile.partition).getUserAgent(),
+    acceptLanguage: app.getLocale(),
+  }
+}
+
+async function bootstrapEchoFlowAccount(
+  endpoint: EchoFlowLoginEndpoint,
+  credential: EchoFlowLoginCredential,
+): Promise<EchoFlowLoginVerification> {
+  // Each endpoint accepts exactly the credential its own page produces.
+  if (credential.kind === 'session' && endpoint !== 'main') return 'rejected'
+  if (credential.kind === 'bearer' && endpoint !== 'dedicated') return 'rejected'
+  try {
+    const runtime = getServerRuntime()
+    const serverUrl = await runtime.getServerUrl()
+    const bridgeToken = echoFlowSiteBridgeToken
+    console.info('[echoFlowLogin] credential-verify:', JSON.stringify({
+      endpoint,
+      kind: credential.kind,
+      serverUrl,
+      bridgeTokenPresent: Boolean(bridgeToken),
+    }))
+    // No server to ask yet: the credential is unverified, not rejected.
+    if (!bridgeToken) return 'unavailable'
+    const response = await fetch(`${serverUrl}/api/echoflow/account/credential`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-echoflow-site-session-bridge': bridgeToken,
+      },
+      body: JSON.stringify(credential.kind === 'session'
+        ? {
+            endpoint,
+            kind: 'session',
+            cookie: credential.cookie,
+            userId: credential.userId,
+            ...(credential.userAgent ? { userAgent: credential.userAgent } : {}),
+            ...(credential.acceptLanguage ? { acceptLanguage: credential.acceptLanguage } : {}),
+          }
+        : { endpoint, kind: 'bearer', accessToken: credential.accessToken, userId: credential.userId }),
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (response.ok) {
+      console.info('[echoFlowLogin] credential-verified:', JSON.stringify({ endpoint, kind: credential.kind }))
+      return 'ok'
+    }
+    const body = await response.json().catch(() => null) as { error?: unknown }
+    // Only the site saying the credential is bad is a verdict; a bridge or
+    // upstream failure is the server not answering and keeps the window open.
+    if (response.status === 400) {
+      if (body?.error === 'token_invalid') return 'rejected'
+    }
+    return 'unavailable'
+  } catch {
+    return 'unavailable'
+  }
+}
+
+function getEchoFlowLoginSession(): EchoFlowLoginSession {
+  echoFlowLoginSession ??= new EchoFlowLoginSession({
+    createWindow(partition): EchoFlowLoginWindow {
+      const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+      const loginWindow = new BrowserWindow({
+        title: `${ECHOFLOW_SIHUB_NAME} 账号登录`,
+        width: 520,
+        height: 720,
+        show: true,
+        autoHideMenuBar: true,
+        // The site login page is a heavy SPA bundle; without a background the
+        // window sits white and reads as hung while it downloads.
+        backgroundColor: resolveStartupWindowBackground(),
+        ...(parent ? { parent, modal: true } : {}),
+        webPreferences: {
+          partition,
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      })
+
+      // Electron exposes BrowserWindow.webContents as a getter-only accessor.
+      // Assigning to it (for example with Object.assign) throws after the
+      // window has already been shown, leaving an orphan modal window that
+      // never loads. The session reads the account from the site's own
+      // session, so the window needs no extra fields.
+      return loginWindow as unknown as EchoFlowLoginWindow
+    },
+    profiles: ECHOFLOW_LOGIN_PROFILES,
+    readCredential: readEchoFlowLoginCredential,
+    verifySession: bootstrapEchoFlowAccount,
+    clearCookies: clearEchoFlowSiteCookies,
+    clearStorage: clearEchoFlowSiteStorage,
+  })
+  return echoFlowLoginSession
+}
+
+const ECHOFLOW_LOGIN_ENDPOINTS: EchoFlowLoginEndpoint[] = ['main', 'dedicated']
+
+// The renderer reads the account list as soon as it mounts, which can be before
+// the restore has put the credential back into the server. Exposing the promise
+// lets the account card re-read the list once that answer exists instead of
+// showing a restored account as signed out.
+let echoFlowRestore: Promise<boolean> = Promise.resolve(false)
+
+async function rehydrateEchoFlowSiteSession(): Promise<boolean> {
+  const login = getEchoFlowLoginSession()
+  // Each line keeps its own partition and stored account, so one line failing
+  // to rehydrate must not stop the other from coming back.
+  const restored = await Promise.all(ECHOFLOW_LOGIN_ENDPOINTS.map(endpoint => login.rehydrate(endpoint)))
+  return restored.some(Boolean)
+}
+
+async function signOutEchoFlowSiteSession(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
+  const runtime = getServerRuntime()
+  const serverUrl = await runtime.getServerUrl()
+  const response = await fetch(`${serverUrl}/api/echoflow/account`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${runtime.getLocalAccessToken()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ endpoint }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok) throw new Error('Could not sign out of the EchoFlow account.')
+  // Clearing only this partition leaves the other endpoint signed in.
+  await getEchoFlowLoginSession().clear(endpoint)
+}
+
+function getDeepSeekHarnessRuntime() {
+  deepSeekHarnessRuntime ??= new DeepSeekHarnessRuntime({
+    userDataPath: app.getPath('userData'),
+  })
+  return deepSeekHarnessRuntime
+}
+
+async function openDeepSeekHarnessWindow() {
+  const runtime = getDeepSeekHarnessRuntime()
+  const status = await runtime.getStatus()
+  if (status.state !== 'running' || !status.url) {
+    throw new Error('Start DeepSeek Harness before opening it')
+  }
+  if (deepSeekHarnessWindow && !deepSeekHarnessWindow.isDestroyed()) {
+    deepSeekHarnessWindow.focus()
+    return
+  }
+
+  const targetUrl = runtime.getOpenUrl() ?? status.url
+  const serviceUrl = new URL(status.url)
+  const window = new BrowserWindow({
+    title: 'DeepSeek Harness',
+    width: 1280,
+    height: 860,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition: 'persist:deepseek-harness',
+    },
+  })
+  deepSeekHarnessWindow = window
+  window.on('closed', () => {
+    if (deepSeekHarnessWindow === window) deepSeekHarnessWindow = null
+  })
+  configurePreviewSessionPermissions(window.webContents.session)
+  const isHarnessUrl = (url: string) => {
+    try {
+      const candidate = new URL(url)
+      return candidate.origin === serviceUrl.origin && (candidate.pathname === serviceUrl.pathname || candidate.pathname.startsWith(`${serviceUrl.pathname}/`))
+    } catch {
+      return false
+    }
+  }
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isHttpUrl(url)) openExternalUrl(url)
+    return { action: 'deny' }
+  })
+  window.webContents.on('will-navigate', (event, url) => {
+    if (isHarnessUrl(url)) return
+    event.preventDefault()
+    if (isHttpUrl(url)) openExternalUrl(url)
+  })
+  window.webContents.on('will-redirect', (event, url) => {
+    if (isHarnessUrl(url)) return
+    event.preventDefault()
+    if (isHttpUrl(url)) openExternalUrl(url)
+  })
+  window.webContents.on('did-navigate', (_event, url) => {
+    if (isHarnessUrl(url) && !new URL(url).searchParams.has('token')) runtime.clearLaunchUrl()
+  })
+  try {
+    await window.loadURL(targetUrl)
+  } catch {
+    runtime.clearLaunchUrl()
+    window.close()
+    throw new Error('Could not open DeepSeek Harness. Restart it and try again.')
+  }
+}
+
+function getClaudeCodeRuntimeStatus() {
+  return claudeCodeRuntimeStatus(getClaudeCodeRuntimeConfig(app.getPath('userData')))
+}
+
+function setClaudeCodeRuntime(runtimeId: ClaudeCodeRuntimeConfig['defaultRuntimeId']) {
+  return claudeCodeRuntimeStatus(
+    setClaudeCodeRuntimeConfig(
+      app.getPath('userData'),
+      {
+        ...getClaudeCodeRuntimeConfig(app.getPath('userData')),
+        defaultRuntimeId: runtimeId,
+      },
+    ),
+  )
+}
+
 function getServerRuntime() {
+  // The server reads the configured Claude Code runtime from this file. Keep
+  // the path in the explicit sidecar environment, not the host-wide one.
+  serverSidecarEnv.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG ??= claudeCodeRuntimeConfigPath(app.getPath('userData'))
   serverRuntime ??= new ElectronServerRuntime({
     onServerUnavailable: () => { void publicAccessManager?.serverUnavailable() },
     onServerReady: () => {
       void publicAccessManager?.serverChanged()
       void p2pTerminator?.refresh()
+      echoFlowRestore = rehydrateEchoFlowSiteSession()
     },
     desktopRoot: unpackedRoot(),
     appRoot: appRoot(),
     h5DistDir: path.join(unpackedRoot(), 'dist'),
     diagnosticsFile: electronHostDiagnosticsFile(process.env),
+    sidecarEnv: serverSidecarEnv,
     resolveSystemProxy: (url) => session.defaultSession.resolveProxy(url),
   })
   return serverRuntime
@@ -392,6 +783,30 @@ function getUpdaterService() {
     },
   }, {
     updateConfigPath: !smokeUpdater && app.isPackaged ? path.join(process.resourcesPath, 'app-update.yml') : undefined,
+    // The self-hosted metadata mirror is tried first, then the GitHub feed,
+    // and the installer bytes are fetched from the download feed fallbacks.
+    // Differential downloads are enabled only for the verified direct feed.
+    ...(smokeUpdater
+      ? { feedUrls: [] }
+      : (() => {
+          const feedConfig = resolveUpdateFeedConfig(process.env)
+          const differentialDownload = resolveDifferentialDownloadRequest(
+            process.env,
+            feedConfig,
+            process.platform,
+            feedConfig.differentialDownloadFeedUrls[0],
+          )
+          return {
+            metadataFeedUrl: feedConfig.metadataUrl,
+            metadataFallbackUrls: feedConfig.metadataFallbackUrls,
+            downloadFeedUrls: feedConfig.downloadFeedUrls,
+            differentialDownload,
+            differentialDownloadFeedUrls: differentialDownload
+              ? feedConfig.differentialDownloadFeedUrls
+              : [],
+            differentialDownloadContracts: feedConfig.differentialDownloadContracts,
+          }
+        })()),
   })
   return updaterService
 }
@@ -547,6 +962,12 @@ function currentWindow(event: Electron.IpcMainInvokeEvent) {
   return window
 }
 
+function requireMainWindow(event: Electron.IpcMainInvokeEvent) {
+  if (currentWindow(event) !== mainWindow) {
+    throw new Error('This desktop host action requires the main application window')
+  }
+}
+
 function registerHandler<T>(
   channel: ElectronIpcChannel,
   handler: (event: Electron.IpcMainInvokeEvent, payload: unknown) => T | Promise<T>,
@@ -568,6 +989,9 @@ function registerHandler<T>(
     }
     if (channel.startsWith('desktop:public-access:') && (senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame)) {
       throw new Error('Public access management requires the main desktop window')
+    }
+    if (channel.startsWith('desktop:echoflow:') && (senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame)) {
+      throw new Error('EchoFlow account actions require the main desktop window')
     }
     if (
       petWindowController?.owns(senderWindow) &&
@@ -625,6 +1049,15 @@ async function handleCommandInvoke(payload: unknown): Promise<unknown> {
 }
 
 function registerIpcHandlers() {
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, async (_event, payload) => {
+    const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
+    return await getEchoFlowLoginSession().open(requested === 'dedicated' ? 'dedicated' : 'main')
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowSignOut, async (_event, payload) => {
+    const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
+    await signOutEchoFlowSiteSession(requested === 'dedicated' ? 'dedicated' : 'main')
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored, () => echoFlowRestore)
   registerHandler(ELECTRON_IPC_CHANNELS.configImportTake, event =>
     BrowserWindow.fromWebContents(event.sender) === mainWindow ? deepLinkHandler.take() : null)
   registerHandler(ELECTRON_IPC_CHANNELS.configImportAck, event => {
@@ -678,11 +1111,46 @@ function registerIpcHandlers() {
     ELECTRON_IPC_CHANNELS.runtimeGetPetAccessToken,
     () => getServerRuntime().getPetAccessToken(),
   )
+  registerHandler(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, (event, payload) => {
+    requireMainWindow(event)
+    return discoverRuntimes({
+      includeWsl: (payload as { includeWsl?: boolean } | undefined)?.includeWsl === true,
+      bundledVersion: app.getVersion(),
+    })
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath, async (event, payload) => {
+    requireMainWindow(event)
+    return probeRuntimePath(String(payload))
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode, (event) => {
+    requireMainWindow(event)
+    return getClaudeCodeRuntimeStatus()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode, async (event) => {
+    requireMainWindow(event)
+    const selectedPath = await openDialog(currentWindow(event), {
+      title: 'Choose Claude Code executable',
+      multiple: false,
+    })
+    if (typeof selectedPath !== 'string') return null
+    const current = getClaudeCodeRuntimeConfig(app.getPath('userData'))
+    return claudeCodeRuntimeStatus(setClaudeCodeRuntimeConfig(app.getPath('userData'), {
+      ...current,
+      defaultRuntimeId: 'installed',
+      installedPath: selectedPath,
+    }))
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode, (event, payload) => {
+    requireMainWindow(event)
+    return setClaudeCodeRuntime(payload as ClaudeCodeRuntimeConfig['defaultRuntimeId'])
+  })
   registerHandler(ELECTRON_IPC_CHANNELS.commandInvoke, (_event, payload) => handleCommandInvoke(payload))
   registerHandler(ELECTRON_IPC_CHANNELS.clipboardReadText, () => clipboard.readText())
   registerHandler(ELECTRON_IPC_CHANNELS.clipboardWriteText, (_event, payload) => clipboard.writeText(String(payload)))
   registerHandler(ELECTRON_IPC_CHANNELS.shellOpen, (_event, payload) => openExternalUrl(String(payload)))
   registerHandler(ELECTRON_IPC_CHANNELS.shellOpenPath, (_event, payload) => openSystemPath(resolveRelocatedAttachmentPath(String(payload))))
+  registerHandler(ELECTRON_IPC_CHANNELS.shellShowItemInFolder, (_event, payload) => showItemInFolder(String(payload)))
+  registerHandler(ELECTRON_IPC_CHANNELS.traceOpenWindow, (_event, payload) => openTraceWindow(String(payload)))
   registerHandler(ELECTRON_IPC_CHANNELS.petsList, () => listCustomPets())
   registerHandler(ELECTRON_IPC_CHANNELS.petsCreateFromImage, async (event, payload) => {
     const input = payload as {
@@ -986,6 +1454,30 @@ function registerIpcHandlers() {
     app.quit()
   })
   registerHandler(ELECTRON_IPC_CHANNELS.adaptersRestartSidecar, () => getServerRuntime().restartAdaptersSidecars())
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessGetStatus, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().getStatus()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessStart, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().start()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessStop, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().stop()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessRestart, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().restart()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessUpdate, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().update()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessOpen, async event => {
+    requireMainWindow(event)
+    await openDeepSeekHarnessWindow()
+  })
   registerHandler(ELECTRON_IPC_CHANNELS.zoomSet, (event, payload) => {
     const window = currentWindow(event)
     window.webContents.setZoomFactor(normalizeZoomFactor(payload))
@@ -1171,6 +1663,23 @@ app.whenReady().then(async () => {
       previewService?.refreshBounds()
     }
   })
+  // The site refuses a session used from any client but the one that created
+  // it, so session calls leave through Chromium instead of the server's fetch.
+  // It must start before the server sidecar so the child inherits the address.
+  try {
+    siteNetworkBridge = await startSiteNetworkBridge({
+      token: randomBytes(32).toString('base64url'),
+      allowedOrigins: [ECHOFLOW_LOGIN_PROFILES.main.origin, ECHOFLOW_LOGIN_PROFILES.dedicated.origin],
+      forward: (url, init) => {
+        const endpoint = new URL(url).origin === ECHOFLOW_LOGIN_PROFILES.dedicated.origin ? 'dedicated' : 'main'
+        return session.fromPartition(ECHOFLOW_LOGIN_PROFILES[endpoint].partition).fetch(url, init)
+      },
+    })
+      serverSidecarEnv.ECHOFLOW_SITE_NETWORK_BRIDGE_URL = siteNetworkBridge.url
+      serverSidecarEnv.ECHOFLOW_SITE_NETWORK_BRIDGE_TOKEN = siteNetworkBridge.token
+  } catch (error) {
+    console.error('[desktop] failed to start the site network bridge', error)
+  }
   try {
     await getServerRuntime().startServer()
     if (validation) {
@@ -1258,6 +1767,14 @@ app.on('before-quit', event => {
     preview: () => { previewService?.close() },
     workspaceBrowser: () => { workspaceBrowserService?.closeAll() },
     pet: () => { petWindowController?.dispose() },
+    deepSeekHarness: () => {
+      deepSeekHarnessWindow?.close()
+      deepSeekHarnessWindow = null
+    },
+    siteNetworkBridge: () => {
+      siteNetworkBridge?.close()
+      siteNetworkBridge = null
+    },
   }
   // A destroyed native view or PTY can throw during cleanup. Keep going so a
   // failed resource cannot leave every later quit blocked by cleanupStarted.

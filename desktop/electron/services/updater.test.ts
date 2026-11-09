@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { ElectronUpdaterService, normalizeUpdateInfo, updaterSessionProxyConfig, type ElectronUpdaterLike } from './updater'
+import { DIRECT_GITHUB_RELEASE_FEED_URL, resolveUpdateFeedConfig } from './updateFeed'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +11,7 @@ function fakeUpdater(): ElectronUpdaterLike & {
   checkForUpdates: ReturnType<typeof vi.fn>
   downloadUpdate: ReturnType<typeof vi.fn>
   quitAndInstall: ReturnType<typeof vi.fn>
+  setFeedURL: ReturnType<typeof vi.fn>
 } {
   let progressHandler: ((progress: { transferred?: number, total?: number }) => void) | null = null
   const updater = {
@@ -18,6 +20,7 @@ function fakeUpdater(): ElectronUpdaterLike & {
     checkForUpdates: vi.fn(),
     downloadUpdate: vi.fn(),
     quitAndInstall: vi.fn(),
+    setFeedURL: vi.fn(),
     on: vi.fn((_event, handler) => {
       progressHandler = handler
       return updater
@@ -34,6 +37,7 @@ function fakeUpdater(): ElectronUpdaterLike & {
     checkForUpdates: ReturnType<typeof vi.fn>
     downloadUpdate: ReturnType<typeof vi.fn>
     quitAndInstall: ReturnType<typeof vi.fn>
+    setFeedURL: ReturnType<typeof vi.fn>
   }
   return updater
 }
@@ -147,10 +151,38 @@ describe('Electron updater service', () => {
     expect(localUpdater.checkForUpdates).toHaveBeenCalledTimes(3)
   })
 
-  it('disables differential download so update downloads run at full bandwidth', () => {
+  it('disables differential downloads by default', () => {
     const localUpdater = fakeUpdater()
 
     void new ElectronUpdaterService(localUpdater)
+
+    expect(localUpdater.disableDifferentialDownload).toBe(true)
+  })
+
+  it('enables differential downloads for the verified direct release feed', () => {
+    const feedConfig = resolveUpdateFeedConfig({})
+    const localUpdater = fakeUpdater()
+
+    void new ElectronUpdaterService(localUpdater, undefined, {
+      downloadFeedUrls: [DIRECT_GITHUB_RELEASE_FEED_URL],
+      differentialDownload: true,
+      differentialDownloadFeedUrls: feedConfig.differentialDownloadFeedUrls,
+      differentialDownloadContracts: feedConfig.differentialDownloadContracts,
+    })
+
+    expect(localUpdater.disableDifferentialDownload).toBe(false)
+  })
+
+  it('keeps differential downloads disabled for an unverified feed', () => {
+    const feedConfig = resolveUpdateFeedConfig({})
+    const localUpdater = fakeUpdater()
+
+    void new ElectronUpdaterService(localUpdater, undefined, {
+      downloadFeedUrls: ['https://mirror.example.com/update/'],
+      differentialDownload: true,
+      differentialDownloadFeedUrls: feedConfig.differentialDownloadFeedUrls,
+      differentialDownloadContracts: feedConfig.differentialDownloadContracts,
+    })
 
     expect(localUpdater.disableDifferentialDownload).toBe(true)
   })
@@ -331,5 +363,248 @@ describe('Electron updater service', () => {
 
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
     expect(env).toEqual({ CLAUDE_CONFIG_DIR: 'E:\\external-data' })
+  })
+})
+
+const METADATA_FEED = 'https://code.echoflow.cn/update/'
+const FALLBACK_FEED = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'
+
+function channelMetadataMissing(feedUrl: string): Error {
+  return Object.assign(
+    new Error(`Cannot find latest-mac.yml in the latest release artifacts (${feedUrl}latest-mac.yml): HttpError: 404`),
+    { code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' },
+  )
+}
+
+// Regression coverage for the metadata/download multi-source fallback,
+// cross-source fingerprint consistency, and feed-attempt diagnostics.
+describe('Electron updater metadata fallback chain', () => {
+  it('falls back to the GitHub metadata feed when the own-domain mirror is missing', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockRejectedValueOnce(channelMetadataMissing(METADATA_FEED))
+      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0', body: 'Notes' } })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      metadataFallbackUrls: [FALLBACK_FEED],
+    })
+
+    const update = await service.checkForUpdates()
+
+    expect(update).toMatchObject({ version: '2.0.0', feedUrl: FALLBACK_FEED })
+    expect(localUpdater.setFeedURL.mock.calls).toEqual([[METADATA_FEED], [FALLBACK_FEED]])
+    expect(service.getLastFeedAttempts()).toEqual([
+      { feedUrl: METADATA_FEED, result: 'missing-metadata', error: expect.any(String) },
+      { feedUrl: FALLBACK_FEED, result: 'selected' },
+    ])
+  })
+
+  it('falls back after a plain network error on the primary feed instead of swallowing the check', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockRejectedValueOnce(new Error('feed unavailable'))
+      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      metadataFallbackUrls: [FALLBACK_FEED],
+    })
+
+    await expect(service.checkForUpdates()).resolves.toMatchObject({ version: '2.0.0', feedUrl: FALLBACK_FEED })
+    expect(service.getLastFeedAttempts()).toEqual([
+      { feedUrl: METADATA_FEED, result: 'error', error: 'feed unavailable' },
+      { feedUrl: FALLBACK_FEED, result: 'selected' },
+    ])
+  })
+
+  it('queries the fallback feed when the primary feed reports no update', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      metadataFallbackUrls: [FALLBACK_FEED],
+    })
+
+    await expect(service.checkForUpdates()).resolves.toMatchObject({ version: '2.0.0', feedUrl: FALLBACK_FEED })
+    expect(service.getLastFeedAttempts()).toEqual([
+      { feedUrl: METADATA_FEED, result: 'no-update' },
+      { feedUrl: FALLBACK_FEED, result: 'selected' },
+    ])
+  })
+
+  it('stays silent when every metadata feed is missing', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockRejectedValueOnce(channelMetadataMissing(METADATA_FEED))
+      .mockRejectedValueOnce(channelMetadataMissing(FALLBACK_FEED))
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      metadataFallbackUrls: [FALLBACK_FEED],
+    })
+
+    await expect(service.checkForUpdates()).resolves.toBeNull()
+    expect(service.getLastFeedAttempts().map(attempt => attempt.result)).toEqual([
+      'missing-metadata',
+      'missing-metadata',
+    ])
+  })
+
+  it('reports every attempted feed when all of them fail with plain errors', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockRejectedValueOnce(new Error('mirror down'))
+      .mockRejectedValueOnce(new Error('github down'))
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      metadataFallbackUrls: [FALLBACK_FEED],
+    })
+
+    const error = await service.checkForUpdates().then(() => null, (thrown: unknown) => thrown as Error)
+    expect(error).toBeInstanceOf(Error)
+    expect(error?.message).toContain('mirror down')
+    expect(error?.message).toContain('github down')
+    expect(service.getLastFeedAttempts().map(attempt => attempt.result)).toEqual(['error', 'error'])
+  })
+
+  it('rejects a download when every download feed serves mismatched metadata', async () => {
+    const localUpdater = fakeUpdater()
+    const updateInfo = { version: '2.0.0', files: [{ url: 'EchoFlow-Code-2.0.0-mac-arm64.dmg', sha512: 'meta-sha' }] }
+    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      downloadFeedUrls: ['https://dl1.test/feed/', 'https://dl2.test/feed/'],
+    })
+    await service.checkForUpdates()
+    localUpdater.checkForUpdates.mockResolvedValue({
+      updateInfo: { version: '2.0.0', files: [{ url: 'EchoFlow-Code-2.0.0-mac-arm64.dmg', sha512: 'other-sha' }] },
+    })
+
+    await expect(service.downloadUpdate(() => {})).rejects.toThrow('Update download failed')
+    expect(localUpdater.downloadUpdate).not.toHaveBeenCalled()
+    expect(service.getLastFeedAttempts().map(attempt => attempt.result)).toEqual([
+      'selected',
+      'mismatched-metadata',
+      'mismatched-metadata',
+    ])
+  })
+
+  it('tries the next download feed after the primary source fails', async () => {
+    const firstFeed = 'https://dl1.test/feed/'
+    const secondFeed = 'https://dl2.test/feed/'
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
+      .mockResolvedValue({ updateInfo: { version: '2.0.0' } })
+    localUpdater.downloadUpdate
+      .mockRejectedValueOnce(new Error('first source failed'))
+      .mockResolvedValueOnce(undefined)
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      downloadFeedUrls: [firstFeed, secondFeed],
+    })
+    await service.checkForUpdates()
+
+    await expect(service.downloadUpdate(() => {})).resolves.toBeUndefined()
+
+    expect(localUpdater.downloadUpdate).toHaveBeenCalledTimes(2)
+    expect(localUpdater.setFeedURL).toHaveBeenNthCalledWith(1, METADATA_FEED)
+    expect(localUpdater.setFeedURL).toHaveBeenNthCalledWith(2, firstFeed)
+    expect(localUpdater.setFeedURL).toHaveBeenNthCalledWith(3, secondFeed)
+    expect(service.hasDownloadedUpdate()).toBe(true)
+  })
+
+  it('reports every download source failure with feed diagnostics', async () => {
+    const firstFeed = 'https://dl1.test/feed/'
+    const secondFeed = 'https://dl2.test/feed/'
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
+      .mockResolvedValue({ updateInfo: { version: '2.0.0' } })
+    localUpdater.downloadUpdate
+      .mockRejectedValueOnce(new Error('first source failed'))
+      .mockRejectedValueOnce(new Error('second source failed'))
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      downloadFeedUrls: [firstFeed, secondFeed],
+    })
+    await service.checkForUpdates()
+
+    const error = await service.downloadUpdate(() => {}).then(() => null, thrown => thrown as Error)
+
+    expect(error).toBeInstanceOf(Error)
+    expect(error?.message).toContain(firstFeed)
+    expect(error?.message).toContain(secondFeed)
+    expect(service.hasDownloadedUpdate()).toBe(false)
+  })
+
+  it('hands out a copy of feed attempt diagnostics', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates.mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      metadataFallbackUrls: [FALLBACK_FEED],
+    })
+
+    await service.checkForUpdates()
+    const attempts = service.getLastFeedAttempts()
+    attempts.push({ feedUrl: 'https://tampered.test/', result: 'error', error: 'injected' })
+
+    expect(service.getLastFeedAttempts()).toEqual([
+      { feedUrl: METADATA_FEED, result: 'selected' },
+    ])
+  })
+
+  it('does not query a metadata feed twice when a fallback repeats the primary URL', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '2.0.0' } })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      metadataFallbackUrls: [METADATA_FEED, FALLBACK_FEED, FALLBACK_FEED],
+    })
+
+    await expect(service.checkForUpdates()).resolves.toMatchObject({ version: '2.0.0' })
+    expect(localUpdater.setFeedURL.mock.calls).toEqual([[METADATA_FEED]])
+    expect(service.getLastFeedAttempts()).toEqual([
+      { feedUrl: METADATA_FEED, result: 'selected' },
+    ])
+  })
+
+  it('surfaces feed-switching failures as feed diagnostics instead of a raw TypeError', async () => {
+    const localUpdater = fakeUpdater()
+    Object.assign(localUpdater, { setFeedURL: undefined })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      metadataFallbackUrls: [FALLBACK_FEED],
+    })
+
+    const error = await service.checkForUpdates().then(() => null, thrown => thrown as Error)
+
+    expect(error).toBeInstanceOf(Error)
+    expect(error?.message).toContain('does not support switching update feeds')
+    expect(error?.message).toContain(METADATA_FEED)
+    expect(error?.message).toContain(FALLBACK_FEED)
+    expect(service.getLastFeedAttempts().map(attempt => attempt.result)).toEqual(['error', 'error'])
+  })
+
+  it('keeps the packaged metadata-file guard on the multi-feed path', async () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'echoflow-updater-'))
+    try {
+      const localUpdater = fakeUpdater()
+      const service = new ElectronUpdaterService(localUpdater, undefined, {
+        updateConfigPath: join(configDir, 'app-update.yml'),
+        metadataFeedUrl: METADATA_FEED,
+        metadataFallbackUrls: [FALLBACK_FEED],
+      })
+
+      await expect(service.checkForUpdates()).resolves.toBeNull()
+      expect(localUpdater.checkForUpdates).not.toHaveBeenCalled()
+      expect(service.getLastFeedAttempts().map(attempt => attempt.result)).toEqual([
+        'no-update',
+        'no-update',
+      ])
+    } finally {
+      rmSync(configDir, { recursive: true, force: true })
+    }
   })
 })

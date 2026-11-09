@@ -696,6 +696,9 @@ function compareIndexedListRows(left: IndexedSessionRow, right: IndexedSessionRo
 
 const DEFAULT_SESSION_LIST_CACHE_MAX_ENTRIES = 16
 const DEFAULT_SESSION_LIST_SUMMARY_CACHE_MAX_ENTRIES = 20_000
+const SESSION_LIST_SUMMARY_CONCURRENCY = 2
+const SESSION_LIST_FALLBACK_SLOW_MS = 1_000
+const SESSION_LIST_FALLBACK_SLOW_COOLDOWN_MS = 60_000
 
 const VALID_SESSION_PERMISSION_MODES = new Set([
   'default',
@@ -866,6 +869,7 @@ export class SessionService {
   private observedSharedMutationEpoch: number
   private lastShadowComparisonSignature: string | null = null
   private lastShadowComparisonRecordedAt = Number.NEGATIVE_INFINITY
+  private lastSessionListFallbackSlowAt = Number.NEGATIVE_INFINITY
 
   private readonly sessionListCacheTtlMs = 5_000
   private readonly sessionListCacheMaxEntries: number
@@ -4288,15 +4292,27 @@ export class SessionService {
     sharedMutationEpoch: number,
     scope: string,
   ): Promise<{ sessions: SessionListItem[]; total: number }> {
+    const listStartedAt = this.now()
+    let indexMode = 'unknown'
+    let indexState = 'unknown'
+    try {
+      indexMode = this.localIndexGateway.getMode()
+      indexState = this.localIndexGateway.getPublicStatus().state
+    } catch {
+      // A failing index is exactly why a file fallback can happen.
+    }
+    const discoveryStartedAt = this.now()
     const archiveIds = readSessionArchives(scope).ids
     const sessionFiles = (await this.discoverSessionFiles(options?.project, scope))
       .filter(file => archiveIds.has(file.sessionId) === Boolean(options?.archived))
+    const discoveryMs = this.now() - discoveryStartedAt
     if (!options?.project && this.activeSessionListCacheScope === scope) {
       const discoveredPaths = new Set(sessionFiles.map(file => file.filePath))
       for (const filePath of this.sessionListSummaryCache.keys()) {
         if (!discoveredPaths.has(filePath)) this.sessionListSummaryCache.delete(filePath)
       }
     }
+    const statStartedAt = this.now()
     const filesWithStats = (await Promise.all(sessionFiles.map(async (sessionFile) => {
       try {
         return {
@@ -4307,7 +4323,9 @@ export class SessionService {
         return null
       }
     }))).filter((item): item is NonNullable<typeof item> => item !== null)
+    const statMs = this.now() - statStartedAt
 
+    const summaryStartedAt = this.now()
     const summarizedFiles: Array<{
       filePath: string
       projectDir: string
@@ -4315,14 +4333,23 @@ export class SessionService {
       stat: Stats
       summary: SessionListSummary
     }> = []
-    for (const item of filesWithStats) {
-      try {
-        const summary = await this.getCachedSessionListSummary(item.filePath, item.projectDir, item.stat, scope)
-        if (!summary.isTeamWorker) summarizedFiles.push({ ...item, summary })
-      } catch {
-        // Skip unreadable files
+    let nextFile = 0
+    const summarize = async () => {
+      while (nextFile < filesWithStats.length) {
+        const item = filesWithStats[nextFile++]
+        try {
+          const summary = await this.getCachedSessionListSummary(item.filePath, item.projectDir, item.stat, scope)
+          if (!summary.isTeamWorker) summarizedFiles.push({ ...item, summary })
+        } catch {
+          // Skip unreadable files
+        }
       }
     }
+    await Promise.all(Array.from(
+      { length: Math.min(SESSION_LIST_SUMMARY_CONCURRENCY, filesWithStats.length) },
+      summarize,
+    ))
+    const summaryMs = this.now() - summaryStartedAt
 
     summarizedFiles.sort((a, b) => {
       const modifiedAtDifference =
@@ -4396,6 +4423,32 @@ export class SessionService {
         result: this.cloneSessionListResult(result),
       })
       this.enforceSessionListCacheCapacity()
+    }
+    const totalMs = this.now() - listStartedAt
+    // The sidebar refreshes on every focus; a slow machine would otherwise
+    // write a diagnostic event on every poll. Keep only aggregate evidence
+    // (never session paths/ids) and rate-limit it so the log stays useful.
+    if (totalMs >= SESSION_LIST_FALLBACK_SLOW_MS
+      && this.now() > this.lastSessionListFallbackSlowAt + SESSION_LIST_FALLBACK_SLOW_COOLDOWN_MS) {
+      this.lastSessionListFallbackSlowAt = this.now()
+      void diagnosticsService.recordEvent({
+        type: 'session_list_fallback_slow',
+        severity: 'warn',
+        summary: 'Session list fell back to a slow file scan',
+        details: {
+          indexMode,
+          indexState,
+          discoveryMs,
+          statMs,
+          summaryMs,
+          totalMs,
+          discovered: sessionFiles.length,
+          included: total,
+          includedRatio: sessionFiles.length === 0
+            ? 0
+            : total / sessionFiles.length,
+        },
+      })
     }
     return result
   }

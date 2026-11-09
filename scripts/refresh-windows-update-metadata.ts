@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { gunzipSync } from 'node:zlib'
 import { basename, relative, resolve } from 'node:path'
 import { parse, stringify } from 'yaml'
 
@@ -118,18 +119,54 @@ function readMetadata(filePath: string): UpdateMetadata {
   return parsed as UpdateMetadata
 }
 
+function validateWindowsBlockmap(installerPath: string) {
+  const blockmapPath = `${installerPath}.blockmap`
+  if (!existsSync(installerPath)) throw new Error(`Windows installer does not exist: ${installerPath}`)
+  if (!existsSync(blockmapPath)) throw new Error(`Windows installer blockmap does not exist: ${blockmapPath}`)
+
+  let blockmap: unknown
+  try {
+    blockmap = JSON.parse(gunzipSync(readFileSync(blockmapPath)).toString('utf8'))
+  } catch (error) {
+    throw new Error(`Cannot parse Windows installer blockmap ${blockmapPath}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (!blockmap || typeof blockmap !== 'object' || Array.isArray(blockmap)) {
+    throw new Error(`Windows installer blockmap must be an object: ${blockmapPath}`)
+  }
+
+  const files = (blockmap as { version?: unknown, files?: unknown }).files
+  const version = (blockmap as { version?: unknown }).version
+  if ((version !== '1' && version !== '2') || !Array.isArray(files) || files.length !== 1) {
+    throw new Error(`Windows installer blockmap must contain one supported file entry: ${blockmapPath}`)
+  }
+  const entry = files[0] as { name?: unknown, offset?: unknown, sizes?: unknown, checksums?: unknown }
+  const installerSize = statSync(installerPath).size
+  if (entry.name !== basename(installerPath)
+    || entry.offset !== 0
+    || !Array.isArray(entry.sizes)
+    || !Array.isArray(entry.checksums)
+    || entry.sizes.length === 0
+    || entry.sizes.length !== entry.checksums.length
+    || entry.sizes.some(size => !Number.isSafeInteger(size) || size <= 0)
+    || entry.checksums.some(checksum => typeof checksum !== 'string' || !/^[a-f0-9]{64}$/i.test(checksum))
+    || entry.sizes.reduce((total, size) => total + size, 0) !== installerSize) {
+    throw new Error(`Windows installer blockmap does not match ${basename(installerPath)} (${installerSize} bytes): ${blockmapPath}`)
+  }
+}
+
 export async function refreshWindowsUpdateMetadata(
   options: RefreshWindowsUpdateMetadataOptions,
 ): Promise<RefreshWindowsUpdateMetadataResult> {
   const installerPath = resolve(options.installerPath)
   const metadataPath = resolve(options.metadataPath)
   const installerName = basename(installerPath)
+  validateWindowsBlockmap(installerPath)
   const metadata = readMetadata(metadataPath)
   const matchingFiles = Array.isArray(metadata.files)
     ? metadata.files.filter(file => file.url && fileNameFromUrl(file.url) === installerName)
     : []
 
-  if (matchingFiles.length !== 1) {
+  if (!Array.isArray(metadata.files) || metadata.files.length !== 1 || matchingFiles.length !== 1) {
     throw new Error(
       `Expected exactly one update file for ${installerName} in ${metadataPath}, found ${matchingFiles.length}`,
     )

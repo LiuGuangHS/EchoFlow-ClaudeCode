@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { ArrowUpRight, ArrowDown, X, Check, Copy, Plus, Minus, Pause, Play, Code2, MousePointer2, Download, Menu, FolderOpen, SlidersHorizontal, ScanEye, Monitor, Laptop, Command, UsersRound, Layers, PanelsTopLeft, Store, ShieldCheck, MessageCircleQuestion, Send, Smartphone, Wifi } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { DOWNLOAD_URL, GITHUB_URL } from '@/components/SiteHeader'
+import { GITHUB_URL } from '@/components/SiteHeader'
 import Icon from '@/components/icons'
 import ImageViewer from '@/components/ImageViewer'
 import { toSiteHref } from '@/content/docs'
 import { rememberLocale } from '@/lib/locale'
 import { setPageMeta } from '@/lib/meta'
 import { currentDesktopPlatform } from '@/lib/platform'
+import { downloadPagePath } from '@/lib/releaseDownload'
 import { landingContent, MOBILE_LINKS } from './landingContent'
 import type { FeatureId, LandingLocale, TaskCategory } from './landingContent'
 import AmbientScene from './AmbientScene'
@@ -87,7 +88,7 @@ function TaskPreview({ task, locale, onClose }: { task: Preview; locale: Landing
     <p className="wander-dialog__note">{en ? 'This is a workflow preview. Run your task in the desktop app with your own model.' : '这里预览工作流程。实际任务将在桌面端连接你的模型后执行。'}</p>
     <blockquote>{task.text}</blockquote>
     <ol>{taskSteps[locale][task.category].map((step, index) => <li key={step}><span>0{index + 1}</span>{step}</li>)}</ol>
-    <div className="wander-dialog__actions"><button className="wander-secondary" onClick={copy}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? (en ? 'Copied' : '已复制任务') : (en ? 'Copy task' : '复制任务')}</button><a className="wander-primary" href={DOWNLOAD_URL}>{en ? 'Get the desktop app' : '下载桌面端'}<ArrowUpRight size={18} /></a></div>
+    <div className="wander-dialog__actions"><button className="wander-secondary" onClick={copy}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? (en ? 'Copied' : '已复制任务') : (en ? 'Copy task' : '复制任务')}</button><a className="wander-primary" href={toSiteHref(downloadPagePath(locale))}>{en ? 'Get the desktop app' : '下载桌面端'}<ArrowUpRight size={18} /></a></div>
     <p role="status" className="wander-feedback">{error || (copied ? (en ? 'Task copied to clipboard.' : '任务已复制到剪贴板。') : '')}</p>
   </dialog>
 }
@@ -121,6 +122,7 @@ function Hero({ locale, paused, setPaused }: { locale: LandingLocale; paused: bo
   const en = locale === 'en'
   const [platform] = useState(currentDesktopPlatform)
   const download = platform ? (en ? `Download for ${platform}` : `下载 ${platform} 版`) : c.downloads.desktop
+  const downloadHref = toSiteHref(downloadPagePath(locale, platform))
   return <section className="wander-hero relative w-full overflow-hidden" aria-labelledby="wander-title">
     <AmbientScene src={VIDEO} poster={poster} paused={paused} className="wander-hero__scene" />
     <div className="wander-hero__wash" />
@@ -129,7 +131,7 @@ function Hero({ locale, paused, setPaused }: { locale: LandingLocale; paused: bo
         <span className="wander-eyebrow wander-hero__eyebrow"><i />{c.hero.eyebrow}</span>
         <h1 id="wander-title">{c.hero.headline[0]}<br />{c.hero.headline[1]}<em>{c.hero.accent}</em></h1>
         <p className="wander-hero__description">{c.hero.description.map(sentence => <span key={sentence}>{sentence}</span>)}</p>
-        <div className="wander-hero__actions"><a className="wander-primary" href={DOWNLOAD_URL}><Download size={17} />{download}</a><a className="wander-secondary" href={GITHUB_URL} target="_blank" rel="noreferrer"><Icon name="github" size={17} />GitHub</a></div>
+        <div className="wander-hero__actions"><a className="wander-primary" href={downloadHref}><Download size={17} />{download}</a><a className="wander-secondary" href={GITHUB_URL} target="_blank" rel="noreferrer"><Icon name="github" size={17} />GitHub</a></div>
         <p className="wander-hero__phone">{c.hero.phoneLabel}<a href={MOBILE_LINKS.android} aria-label={c.downloads.androidLabel}>{c.downloads.android}</a><span aria-hidden="true">·</span><a href={MOBILE_LINKS.testFlight} aria-label={c.downloads.iphoneLabel}>{c.downloads.iphone}</a></p>
       </div>
       <figure className="wander-hero__visual"><img className="wander-hero__desktop" src={heroDesktop} alt={c.hero.desktopAlt} width={DESKTOP_SHOT_SIZE.width} height={DESKTOP_SHOT_SIZE.height} fetchPriority="high" /><img className="wander-hero__phone-shot" src={phoneApproval} alt={c.hero.phoneAlt} width={PHONE_SHOT_SIZE.width} height={PHONE_SHOT_SIZE.height} /></figure>
@@ -187,16 +189,16 @@ function Film({ locale }: { locale: LandingLocale }) {
   const [started, setStarted] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   useEffect(() => { if (started) videoRef.current?.focus() }, [started])
-  const posterAlt = en ? 'Frame from the cc-haha film: an Agent Team with every task finished' : 'cc-haha 宣传片画面：Agent Teams 四项任务全部完成'
+  const posterAlt = en ? 'Frame from the EchoFlow Code film: an Agent Team with every task finished' : 'EchoFlow Code 宣传片画面：Agent Teams 四项任务全部完成'
   return <section className="wander-film wander-section" id="film" aria-labelledby="film-title">
     <div className="wander-film__teaser" data-playing={started}>
       <div className="wander-film__media">
         {started
-          ? <video ref={videoRef} src={FILM} poster={filmPoster} controls autoPlay playsInline preload="metadata" aria-label={en ? 'cc-haha film' : 'cc-haha 宣传片'} />
+          ? <video ref={videoRef} src={FILM} poster={filmPoster} controls autoPlay playsInline preload="metadata" aria-label={en ? 'EchoFlow Code film' : 'EchoFlow Code 宣传片'} />
           : <button className="wander-film__start" onClick={() => setStarted(true)} aria-label={en ? 'Play the 62-second film' : '播放 62 秒宣传片'}><img src={filmPoster} alt={posterAlt} width={1600} height={900} loading="lazy" /><span className="wander-film__play"><Play size={18} /></span></button>}
       </div>
       <div className="wander-film__copy">
-        <span className="wander-eyebrow">cc-haha / {en ? 'THE FILM · 1:02' : '62 秒短片'}</span>
+        <span className="wander-eyebrow">EchoFlow Code / {en ? 'THE FILM · 1:02' : '62 秒短片'}</span>
         <h2 id="film-title">{en ? 'Want to see it move?' : '想看它动起来？'}</h2>
         <p>{en ? 'A team splits the work, you mark up the page, it works on its own cursor, and every session keeps moving.' : '组队分工、边看边批注、用自己的光标操作应用，多个会话同时推进。'}</p>
         <p className="wander-film__note">{en ? 'No narration; music and sound effects only. Demo data; on-screen times are staged.' : '无旁白，有配乐。片中为演示数据，画面中的时间为演示设定。'}</p>
@@ -237,8 +239,9 @@ function Closing({ locale }: { locale: LandingLocale }) {
   const en = locale === 'en'
   const c = landingContent[locale]
   const [platform, setPlatform] = useState(() => currentDesktopPlatform() || 'macOS')
+  const downloadHref = toSiteHref(downloadPagePath(locale, platform))
   return <footer className="wander-closing" id="download"><img className="wander-landscape" src={landscape} alt="" loading="lazy" /><div className="wander-closing__content"><span className="wander-eyebrow">{en ? 'YOUR TIME. YOUR POSSIBILITIES.' : '你的时间，你的可能。'}</span><h2>{en ? <>Your next idea<br />starts <em>here.</em></> : <>下一件想做的事，<br /><em>从这里开始。</em></>}</h2><p>{c.closing.body}</p><div className="wander-closing__groups">
-      <div className="wander-closing__group" role="group" aria-labelledby="closing-desktop"><span className="wander-closing__label" id="closing-desktop"><Laptop size={14} />{en ? 'Desktop app' : '桌面端'}</span><div className="wander-platforms" aria-label={en ? 'Choose your operating system' : '选择你的操作系统'}>{['macOS', 'Windows', 'Linux'].map((name, index) => { const Symbol = [Command, Monitor, Laptop][index]; return <button key={name} aria-pressed={platform === name} onClick={() => setPlatform(name)}><Symbol size={15} />{name}</button> })}</div><a className="wander-primary wander-download" href={DOWNLOAD_URL}><Download size={18} />{en ? `Get EchoFlow Code for ${platform}` : `下载 ${platform} 版`}<ArrowUpRight size={18} /></a><span className="wander-closing__hint">{en ? 'Choose your architecture on GitHub Releases · See LICENSE for use terms' : '前往 GitHub Releases 选择对应架构 · 使用条款见 LICENSE'}</span></div>
+      <div className="wander-closing__group" role="group" aria-labelledby="closing-desktop"><span className="wander-closing__label" id="closing-desktop"><Laptop size={14} />{en ? 'Desktop app' : '桌面端'}</span><div className="wander-platforms" aria-label={en ? 'Choose your operating system' : '选择你的操作系统'}>{['macOS', 'Windows', 'Linux'].map((name, index) => { const Symbol = [Command, Monitor, Laptop][index]; return <button key={name} aria-pressed={platform === name} onClick={() => setPlatform(name)}><Symbol size={15} />{name}</button> })}</div><a className="wander-primary wander-download" href={downloadHref}><Download size={18} />{en ? `Get EchoFlow Code for ${platform}` : `下载 ${platform} 版`}<ArrowUpRight size={18} /></a><span className="wander-closing__hint">{en ? 'Choose your architecture on GitHub Releases · See LICENSE for use terms' : '前往 GitHub Releases 选择对应架构 · 使用条款见 LICENSE'}</span></div>
       <div className="wander-closing__group" role="group" aria-labelledby="closing-phone"><span className="wander-closing__label" id="closing-phone"><Smartphone size={14} />{en ? 'Phone app' : '手机 App'}</span><a className="wander-secondary wander-download" href={MOBILE_LINKS.android} aria-label={c.downloads.androidLabel}><Download size={18} />{c.downloads.android}<ArrowUpRight size={18} /></a><a className="wander-secondary wander-download" href={MOBILE_LINKS.testFlight} aria-label={c.downloads.iphoneLabel}><Smartphone size={18} />{c.downloads.iphone}<ArrowUpRight size={18} /></a><span className="wander-closing__hint">{c.downloads.requirement}</span></div>
     </div></div><div className="wander-footer"><a className="wander-wordmark" href="#wander-title">EchoFlow Code</a><span>{en ? 'A little more room for life.' : '给生活，多留一点空间。'}</span><nav aria-label={en ? 'Footer navigation' : '页脚导航'}><a href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Docs' : '文档'}</a><a href={GITHUB_URL} target="_blank" rel="noreferrer"><Code2 size={14} />GitHub</a><a href={toSiteHref(en ? '/en/start/privacy' : '/start/privacy')}>{en ? 'Privacy' : '隐私'}</a><a href={toSiteHref(en ? '/' : '/en')} onClick={() => rememberLocale(en ? 'zh' : 'en')}>{en ? '中文' : 'English'}</a></nav></div></footer>
 }
@@ -248,7 +251,7 @@ export default function HomePage({ locale = 'en' }: { locale?: LandingLocale }) 
   const [preview, setPreview] = useState<Preview | null>(null)
   const [enlargedImage, setEnlargedImage] = useState<EnlargedImage | null>(null)
   useEffect(() => {
-    setPageMeta({ alternate: locale === 'en' ? '/' : '/en', canonical: locale === 'en' ? '/en' : '/', description: landingContent[locale].hero.description.join(locale === 'en' ? ' ' : ''), lang: locale === 'en' ? 'en' : 'zh-CN', title: locale === 'en' ? 'EchoFlow Code — Claude Code on your desktop and in your pocket' : 'EchoFlow Code — 把 Claude Code 装进桌面，也装进口袋' })
+    setPageMeta({ alternate: locale === 'en' ? '/' : '/en', canonical: locale === 'en' ? '/en' : '/', description: landingContent[locale].hero.description.join(locale === 'en' ? ' ' : ''), lang: locale === 'en' ? 'en' : 'zh-CN', title: locale === 'en' ? 'EchoFlow Code — One workspace, on your desktop and in your pocket' : 'EchoFlow Code — 同一个工作台，在桌面，也在口袋' })
   }, [locale])
   return <div className="wander-page font-sans"><a className="u-skip" href="#main">{locale === 'en' ? 'Skip to content' : '跳到正文'}</a><main id="main" tabIndex={-1}><Hero locale={locale} paused={paused} setPaused={setPaused} /><Mobile locale={locale} onEnlarge={setEnlargedImage} /><Discover locale={locale} onEnlarge={setEnlargedImage} /><Journey locale={locale} /><Possibilities locale={locale} onPreview={setPreview} /><Faq locale={locale} /></main><Closing locale={locale} />{preview && <TaskPreview task={preview} locale={locale} onClose={() => setPreview(null)} />}{enlargedImage && <ImageViewer image={enlargedImage} locale={locale} onClose={() => setEnlargedImage(null)} />}</div>
 }

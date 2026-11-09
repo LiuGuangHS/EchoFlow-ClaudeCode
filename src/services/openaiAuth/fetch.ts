@@ -24,6 +24,7 @@ import { openaiResponsesStreamToAnthropic } from '../../server/proxy/streaming/o
 import { openaiResponsesStreamToAnthropicResponse } from '../../server/proxy/streaming/openaiResponsesStreamToAnthropicResponse.js'
 import type { AnthropicRequest } from '../../server/proxy/transform/types.js'
 import { logForDebugging } from '../../utils/debug.js'
+import { assertDirectTransportAllowed } from '../localRedactionGuard.js'
 import { OPENAI_CODEX_STREAM_MARKER_HEADER } from './streamPolicy.js'
 
 export const OPENAI_OAUTH_DUMMY_KEY = 'openai-oauth-dummy-key'
@@ -42,6 +43,9 @@ export function buildOpenAICodexFetch(
   const inner = fetchOverride ?? globalThis.fetch
 
   return async (input, init) => {
+    // Fail closed before ANY passthrough to `inner`. The old placement was
+    // after the non-messages early return, which left that path unguarded.
+    await assertDirectTransportAllowed()
     const url = input instanceof Request ? new URL(input.url) : new URL(String(input))
 
     if (!url.pathname.endsWith('/v1/messages')) {

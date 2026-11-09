@@ -112,7 +112,7 @@ export default function SiteHeader({ activeSection, locale = 'zh', localeHref })
             <a aria-label="GitHub" className="icon-btn" href={GITHUB_URL} rel="noreferrer" target="_blank">
               <Icon name="github" />
             </a>
-            <a className="btn btn--primary header-download" href={DOWNLOAD_URL}>
+            <a className="btn btn--primary header-download" href={toSiteHref(locale === 'en' ? '/en/download' : '/download')}>
               <Icon name="download" size={16} />
               {c.download}
             </a>

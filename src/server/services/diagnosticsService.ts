@@ -400,6 +400,10 @@ export class DiagnosticsService {
         name: 'sessions-summary.json',
         content: JSON.stringify(this.buildSessionsSummary(sharedEvents), null, 2) + '\n',
       },
+      {
+        name: 'local-index-status.json',
+        content: JSON.stringify(this.buildLocalIndexSummary(), null, 2) + '\n',
+      },
     ]
 
     const archive = this.createTarGz(files)
@@ -721,6 +725,7 @@ export class DiagnosticsService {
       '- electron-host.log: sanitized recent Electron host lifecycle diagnostics.',
       '- providers-summary.json: provider count, active id, base URL host, model ids, and API format without API keys.',
       '- sessions-summary.json: session ids observed in diagnostic events, without transcript content.',
+      '- local-index-status.json: local session index mode, state, counts, sizes, and last error code; marked unavailable if the status cannot be read.',
       '',
     ].join('\n')
   }
@@ -784,6 +789,26 @@ export class DiagnosticsService {
       uptimeSeconds: Math.round(process.uptime()),
       generatedAt: new Date().toISOString(),
     }) as Record<string, unknown>
+  }
+
+  private buildLocalIndexSummary(): Record<string, unknown> {
+    try {
+      const status = this.getLocalIndexStatus()
+      return {
+        available: true,
+        mode: status.mode,
+        state: status.state,
+        discovered: status.discovered,
+        indexed: status.indexed,
+        degradedSources: status.degradedSources,
+        databaseBytes: status.databaseBytes,
+        walBytes: status.walBytes,
+        lastUpdatedAt: status.lastUpdatedAt,
+        lastErrorCode: status.lastErrorCode,
+      }
+    } catch {
+      return { available: false }
+    }
   }
 
   private async buildProvidersSummary(): Promise<Record<string, unknown>> {
