@@ -1,12 +1,41 @@
-# 移动端说明
+This is an Expo/React Native mobile application. Prioritize mobile-first patterns, performance, and cross-platform compatibility.
 
-这些规则适用于 `mobile/` 下的改动，并叠加根目录规则。
+## Expo has changed — do not trust your training data
 
-`mobile/` 是自包含的 Kotlin Android 应用。它连接 EchoFlow server，验证 H5 token，并在 Android WebView 中渲染现有 H5 UI。业务功能保留在 H5 应用中；native 代码只用于设备集成和移动端特有的展示。优先使用 Android 平台 API。
+Expo ships breaking changes every SDK release. APIs you remember are likely renamed, moved, or removed. Before writing any code that touches an Expo, EAS, or React Native API:
 
-- 运行 `cd mobile && bun run check`；从仓库根目录运行同一门禁使用 `bun run check:mobile`。该检查验证移动端元数据和 Android 集成契约。在具备 JDK 25 和 Android SDK 时，使用 `cd mobile && bun run android` 构建。
-- 使用 Android Keystore AES-GCM 加密凭据。绝不记录 secrets。
-- 明文 HTTP 支持可信 LAN 使用。保持 `app.json` 与 Android manifest 中的明文支持一致；不要把 HTTP 描述成在不可信网络上安全。
-- `mobile/package.json` 和 `mobile/app.json` 都记录版本，移动端发布工作流会检查二者一致。升级版本时必须同时修改。
-- JDK 25 LTS、Android Gradle Plugin 9.4.0 和 Gradle 9.8.0 是固定的 Android 构建工具链。升级时保持这些版本兼容。
-- WebView 仍是聊天、工具和 session 的兼容层。逐步增加移动端特有流程，并保留 H5 导航和文件输入能力。
+1. Read the major version of the `expo` package in `package.json`.
+2. Fetch the matching versioned docs: `https://docs.expo.dev/versions/v<major>.0.0/`
+3. For anything else, fetch https://docs.expo.dev/llms.txt — an index of all Expo docs with corrections to common LLM misconceptions. Follow its links to the specific page you need; never answer from memory.
+
+## Commands
+
+Use `bunx` instead of `npx` if the project uses bun (`bun.lock` present).
+
+```bash
+npx expo install <package>  # ALWAYS use instead of npm/yarn/pnpm/bun add — resolves SDK-compatible versions
+npx expo start              # start the dev server
+npx expo lint               # lint
+npx tsc --noEmit            # typecheck
+npx expo-doctor             # diagnose dependency and config issues
+npx expo install --fix      # fix incompatible package versions
+```
+
+From the repository root, run `bun run check:mobile` for mobile changes. It runs typecheck, lint, tests, and the offline H5 export through `scripts/pr/run-mobile-checks.ts`; focused tests can be used during iteration. Missing dependencies or platform tools must be reported as blocked, not as a passing check. Native build and device evidence are separate from H5 and mock tests. Dependency installation, EAS builds/submissions/updates, signing, and publishing require explicit authorization.
+
+## Navigation & Routing
+
+- Use **Expo Router** for all navigation. Routes live in `src/app/` — every file there is a screen, `_layout.tsx` files define navigators. Keep non-route code (components, hooks, utils) outside `src/app/`.
+- Import `Link`, `router`, and `useLocalSearchParams` from `expo-router`.
+- Docs: https://docs.expo.dev/router/introduction.md
+
+## Building with EAS
+
+Use EAS to build, sign, and submit the app in the cloud (`eas build`, `eas submit`) and to ship over-the-air updates (`eas update`) — no local Xcode or Android Studio required. Run EAS CLI as `bunx eas-cli <command>` in Bun projects, or `npx eas-cli@latest <command>` otherwise; substitute that for bare `eas` in docs examples.
+Docs: https://docs.expo.dev/eas/index.md
+
+## Rules
+
+- If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.
+- Expo Go only includes its bundled native modules. After adding a library with native code, the app needs a development build: `npx expo run:ios|android` locally, or `eas build --profile development`.
+- Prefer recommended Expo modules over third-party libraries, and check your available skills before adding dependencies. Docs: https://docs.expo.dev/versions/latest/index.md
