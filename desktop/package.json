@@ -13,7 +13,12 @@
   "build": {
     "appId": "com.echoflow.code.desktop",
     "productName": "EchoFlow Code",
-    "protocols": { "name": "EchoFlow Code URL", "schemes": ["echoflowcode"] },
+    "protocols": {
+      "name": "EchoFlow Code URL",
+      "schemes": [
+        "echoflowcode"
+      ]
+    },
     "artifactName": "EchoFlow-Code-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
@@ -66,7 +71,10 @@
       "target": "nsis",
       "icon": "src-tauri/icons/icon.ico",
       "extraResources": [
-        { "from": "src-tauri/icons/icon.ico", "to": "app-icon.ico" }
+        {
+          "from": "src-tauri/icons/icon.ico",
+          "to": "app-icon.ico"
+        }
       ]
     },
     "nsis": {
