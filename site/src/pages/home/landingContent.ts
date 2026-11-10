@@ -62,11 +62,11 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
   zh: {
     hero: {
       eyebrow: '源码可查 · 使用条款见 LICENSE · macOS · Windows · Linux',
-      headline: ['把 Claude Code 装进桌面，', '也装进'],
+      headline: ['把 EchoFlow Code 装进桌面，', '也装进'],
       accent: '口袋。',
       description: ['多会话并行、Agent Teams、Computer Use，模型随你接。', '手机扫码连上电脑，离开工位也能审批、派任务。'],
-      desktopAlt: 'cc-haha 桌面端：「给官网加更新日志页」会话写完代码，正在请求运行 bun test && npm run build',
-      phoneAlt: 'cc-haha 手机 App 上的同一个请求：想运行命令 bun test && npm run build，可以拒绝或允许',
+      desktopAlt: 'EchoFlow Code 桌面端：「给官网加更新日志页」会话写完代码，正在请求运行 bun test && npm run build',
+      phoneAlt: 'EchoFlow Code 手机 App 上的同一个请求：想运行命令 bun test && npm run build，可以拒绝或允许',
       phoneLabel: '手机 App：'
     },
     downloads: {
@@ -84,7 +84,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
         { title: '回答提问', body: 'Agent 需要你拿主意时，选一个答案它就接着做。' },
         { title: '派新任务', body: '想到什么发一句话，电脑上开一个新会话去做。' }
       ],
-      connection: '同一 Wi-Fi 下直接连接，外出时走 Cloudflare。电脑需要开着，cc-haha 保持运行。',
+      connection: '同一 Wi-Fi 下直接连接，外出时走 Cloudflare。电脑需要开着，EchoFlow Code 保持运行。',
       docs: '了解手机连接',
       route: '/desktop/remote',
       screens: [
@@ -162,11 +162,11 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
   en: {
     hero: {
       eyebrow: 'Source available · See LICENSE · macOS · Windows · Linux',
-      headline: ['Claude Code on your desktop.', 'And in your '],
+      headline: ['EchoFlow Code on your desktop.', 'And in your '],
       accent: 'pocket.',
       description: ['Parallel sessions, Agent Teams, Computer Use, and any model you like.', 'Pair your phone to approve and start tasks away from your desk.'],
-      desktopAlt: 'cc-haha desktop (Chinese interface): a session that added a changelog page asks to run bun test && npm run build',
-      phoneAlt: 'The same request in the cc-haha phone app (Chinese interface), with Deny and Allow buttons',
+      desktopAlt: 'EchoFlow Code desktop (Chinese interface): a session that added a changelog page asks to run bun test && npm run build',
+      phoneAlt: 'The same request in the EchoFlow Code phone app (Chinese interface), with Deny and Allow buttons',
       phoneLabel: 'Phone app:'
     },
     downloads: {
@@ -184,7 +184,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
         { title: 'Answer questions', body: 'When the agent needs a decision, pick an answer and it carries on.' },
         { title: 'Start new tasks', body: 'Send one sentence and a new session starts on your computer.' }
       ],
-      connection: 'Connect directly on the same Wi-Fi, or through Cloudflare when you are away. Your computer stays on with cc-haha running.',
+      connection: 'Connect directly on the same Wi-Fi, or through Cloudflare when you are away. Your computer stays on with EchoFlow Code running.',
       docs: 'How phone pairing works',
       route: '/en/desktop/remote',
       screens: [

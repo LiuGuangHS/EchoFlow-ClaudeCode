@@ -1,11 +1,11 @@
 ---
-title: cc-haha 是什么
+title: EchoFlow Code 是什么
 nav_title: 这是什么
 description: 跑在你自己电脑上的 AI 编程工作台：模型自己接，改动你审阅。
 order: 0
 ---
 
-# cc-haha 是什么
+# EchoFlow Code 是什么
 
 它是一个装在你电脑上的应用。你把一个项目文件夹交给它，用大白话说出你想要什么，它去读代码、改文件、跑命令——每一处改动都摆在你眼前，等你点头才算数。
 
@@ -15,7 +15,7 @@ order: 0
 
 ## 和 Claude Code CLI 是什么关系
 
-Claude Code 是 Anthropic 出的命令行编程 Agent，跑在终端里。cc-haha 的内核就是从 Claude Code 源码修复而来的一份 CLI（仓库里叫 `claude-haha`），桌面端是包在它外面的图形界面。
+Claude Code 是 Anthropic 出的命令行编程 Agent，跑在终端里。EchoFlow Code 的内核就是从 Claude Code 源码修复而来的一份 CLI（仓库里叫 `claude-haha`），桌面端是包在它外面的图形界面。
 
 对你来说，这意味着两件事：
 
@@ -34,11 +34,11 @@ Claude Code 是 Anthropic 出的命令行编程 Agent，跑在终端里。cc-hah
 
 **定时跑。** 每天早上整理一次日志、每周跑一遍依赖检查——把任务设成定时的，到点它自己开工，跑完留一份记录。
 
-**手机上继续。** 装上 Android 或 iPhone 版的 cc-haha App，在桌面端「手机连接」里扫码配对，离开电脑也能审批命令、回答提问、派新任务；不想装 App 就用手机浏览器扫码连接。也可以把飞书、Telegram、微信这些聊天软件接上，在对话框里指挥它干活。详见 [手机 App 与远程连接](../desktop/remote.md)。
+**手机上继续。** 装上 Android 或 iPhone 版的 EchoFlow Code App，在桌面端「手机连接」里扫码配对，离开电脑也能审批命令、回答提问、派新任务；不想装 App 就用手机浏览器扫码连接。也可以把飞书、Telegram、微信这些聊天软件接上，在对话框里指挥它干活。详见 [手机 App 与远程连接](../desktop/remote.md)。
 
 ## 三条底线
 
-**本地优先。** 会话、设置、记忆、技能都存在你自己的机器上（默认在 `~/.claude` 下）。没有账号体系，没有云端同步，不上传你的代码。唯一的对外流量是你自己配的模型服务。
+**本地优先。** 会话、设置、记忆和技能主要保存在你的电脑上，具体目录取决于运行方式与配置。账号登录、模型调用、MCP、IM、远程连接及更新可能访问网络，并发送相应功能所需的数据；本地优先不代表完全离线。详见[隐私与联网说明](./privacy.md)。
 
 **模型自选。** 不绑定任何一家。Claude、ChatGPT、Grok 的官方账号可以直接登录；DeepSeek、Kimi、智谱 GLM 这些第三方 API 有现成预设；LM Studio、Ollama 跑的本地模型也接得上，一分钱不花。
 

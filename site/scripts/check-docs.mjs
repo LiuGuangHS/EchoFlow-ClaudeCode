@@ -252,7 +252,7 @@ async function checkLocaleRedirect() {
 
 /**
  * 首页文案里写死的文档路由和手机 App 下载地址。文档改名会让路由变成死链；
- * 下载地址以桌面端设置页的 mobileAppLinks.ts 为准，换 TestFlight 链接时两边要一起改。
+ * 已开放的下载渠道与桌面端保持一致；未开放的 TestFlight 只允许导航到本站已有文档。
  */
 async function checkLandingContent(routes) {
   const problems = []
@@ -291,6 +291,13 @@ async function checkLandingContent(routes) {
     const pattern = new RegExp(`\\b${key}:\\s*'([^']+)'`)
     const site = landing.match(pattern)?.[1]
     const app = appLinks.match(pattern)?.[1]
+    if (key === 'testFlight' && /\btestFlight:\s*null\b/.test(appLinks)) {
+      const docsOrigin = 'https://code.echoflow.cn'
+      if (!site?.startsWith(`${docsOrigin}/`) || !routes.has(site.slice(docsOrigin.length))) {
+        problems.push(`${landingPath}: 未开放的 testFlight 渠道必须指向本站已有文档`)
+      }
+      continue
+    }
     if (!site || !app) {
       problems.push(`${landingPath} / ${appLinksPath}: 读不出 ${key} 下载地址，防漂移校验失效`)
     } else if (site !== app) {
@@ -323,7 +330,7 @@ async function main() {
     ...records.map((record) => record.path),
   ])
   const problems = [...await checkLocaleRedirect()]
-  problems.push(...await checkLandingContent(routes))
+  problems.push(...await checkLandingContent(new Set(records.map((record) => record.path))))
   const documentationSources = [
     ...readmes,
     ...records.map((record) => ({
@@ -357,7 +364,9 @@ async function main() {
         : null
       const markdownRoute = normalizeRoute(path.relative(paths.docsDir, resolvedFile))
       const isReadme = !record.sourcePath.startsWith('docs/')
-      const publishedImage = image && resolvedFile.startsWith(`${path.join(paths.docsDir, 'images')}${path.sep}`)
+      const imageRelative = path.relative(paths.docsDir, resolvedFile)
+      const publishedImage = image && !path.isAbsolute(imageRelative)
+        && !imageRelative.split(path.sep).some((part) => ['..', '_internal', 'superpowers', 'ui-clone', 'public'].includes(part))
       const valid = ((isReadme || publishedImage) && await exists(resolvedFile))
         || publishedSources.has(resolvedFile)
         || (publicFile !== null && publicFile.startsWith(`${path.join(paths.docsDir, 'public')}${path.sep}`) && await exists(publicFile))

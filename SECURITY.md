@@ -1,21 +1,17 @@
-# Security policy / 安全政策
+# 安全政策
 
-## Reporting a vulnerability / 报告漏洞
+## 报告漏洞
 
-Please do **not** disclose security vulnerabilities, credentials, tokens, private URLs, or proof-of-concept exploit details in public Issues or Discussions.
+请不要在公开 Issue 或 Discussion 中披露安全漏洞、凭据、Token、私有 URL 或概念验证的利用细节。
 
-Use GitHub's **Private vulnerability reporting** for this repository when it is available. Include a minimal reproduction, affected version, impact, and any mitigation you have already applied. Remove secrets and personal data before sending.
+如果仓库已启用 GitHub 的 **Private vulnerability reporting（私密漏洞报告）**，请通过该入口私密报告。提供最小复现、受影响版本、影响及已采取的缓解措施；提交前移除密钥和个人数据。
 
-如果仓库已启用 GitHub 的 **Private vulnerability reporting**，请通过该入口私密报告漏洞。请不要在公开 Issue 或 Discussion 中披露漏洞、凭据、Token、私有 URL 或利用细节；提交前移除密钥和个人数据。
+## 范围
 
-## Scope / 范围
-
-Reports are relevant when they affect EchoFlow Code source, official release assets, the local server, desktop application, supported update paths, or project-controlled documentation and workflows.
+影响 EchoFlow Code 源码、官方发布产物、本地服务端、桌面应用、受支持的更新路径，以及项目控制的文档和工作流的问题，属于本项目报告范围。
 
 第三方 Provider、模型服务、操作系统或其他软件项目自身的问题，请优先向对应维护者报告；如果 EchoFlow Code 的集成方式扩大了影响，也请说明。
 
-## Handling / 处理方式
-
-Maintainers will acknowledge a valid private report, assess impact, coordinate a fix, and publish a disclosure only after users have a reasonable update path. Do not expect a bounty unless a separate public program says otherwise.
+## 处理方式
 
 维护者会确认有效的私密报告、评估影响、协调修复，并在用户具备合理升级路径后再披露。除非另有公开计划，否则不承诺漏洞奖励。

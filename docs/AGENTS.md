@@ -1,56 +1,56 @@
-# Documentation Instructions
+# 文档规范
 
-These rules apply to `docs/` changes in addition to the root instructions.
+这些规则适用于 `docs/` 改动，并叠加根目录规则。
 
-## Who the docs are for
+## 文档读者
 
-Two audiences, nothing else. If a page serves neither, it does not belong here.
+文档只面向两类读者：
 
-- **People using the app** — `start/`, `cases/`, `desktop/`, `mobile/`, `im/`. No prior code knowledge assumed.
-- **People reading the source** — `internals/`, `cli/`. Architecture, implementation, contributing.
+- **使用应用的人**：`start/`、`cases/`、`desktop/`、`mobile/`、`im/`。不预设代码知识。
+- **阅读源码的人**：`internals/`、`cli/`。包含架构、实现和贡献流程。
 
-## Where documentation lives
+## 文档放置
 
-Public pages explain the product or source; they are not task logs. Keep reusable architecture and boundary rules in `internals/`, contributor workflow in `internals/contributing.md`, and code-entry rules in the applicable `AGENTS.md`. State requirements separately from verified implementation; an audit finding, plan, or passing unit test is not proof that a whole feature works.
+公开页面解释产品或源码，不是任务日志。可复用的架构和边界规则放在 `internals/`，贡献流程放在 `internals/contributing.md`，代码入口规则放在适用的 `AGENTS.md`。分别记录要求与已验证实现；审计发现、计划或单元测试通过都不能证明整项功能可用。
 
-Maintainer-only migration lists, validation records, design proposals, and release runbooks belong in `docs/_internal/`, not public sections. The site generator must exclude `_internal` from every publication output. Do not link to it from public pages or treat it as a place to store secrets. Keep active records in its index; archive completed or superseded records under `_internal/archive/` after extracting durable guidance. Do not move or delete existing records as incidental cleanup.
+仅维护者使用的迁移清单、验证记录、设计提案和发布运行手册放在 `docs/_internal/`，不放入公开区。站点生成器必须在所有发布产物中排除 `_internal`。不要从公开页面链接这里，也不要把它作为秘密存储。活动记录放入索引；完成或被替代的记录在提取长期规则后归档到 `_internal/archive/`。不要把移动或删除既有记录当作顺手清理。
 
-## Structure
+## 结构
 
-Seven top-level sections: `start/`, `cases/`, `desktop/`, `mobile/`, `im/`, `cli/`, `internals/`. Register any added section in the `sections` array of `site/scripts/generate-docs-manifest.mjs`.
+顶层固定为七个区段：`start/`、`cases/`、`desktop/`、`mobile/`、`im/`、`cli/`、`internals/`。新增区段必须在 `site/scripts/generate-docs-manifest.mjs` 的 `sections` 数组中登记。
 
-`docs/en/` mirrors the Chinese tree file for file. Keep Chinese pages and their `docs/en/` counterparts aligned.
+`docs/en/` 与中文目录逐文件对应。存在英文页面时，保持中文页和 `docs/en/` 对应页内容结构一致；业务英文产品镜像不因本规范中文化任务翻译。
 
-## Frontmatter (required on every page)
+## Frontmatter（每页必需）
 
 ```yaml
 ---
 title: 连接模型服务
-nav_title: 连接模型      # sidebar label, ≤12 CJK characters
-description: 一句话说明这篇讲什么。       # feeds search and SEO meta
-order: 2                # position inside the section; index.md uses 0
+nav_title: 连接模型      # 侧栏标签，≤12 个中文字符
+description: 一句话说明这篇讲什么。       # 用于搜索和 SEO meta
+order: 2                # 区段内位置；index.md 使用 0
 ---
 ```
 
-The site renders the first paragraph after the H1 as a lede — write it as a normal paragraph, not a blockquote.
+站点会把 H1 后的第一段作为导语；请写普通段落，不要写成引用块。
 
-## Chinese typography
+## 中文排版
 
-Put a space between Chinese characters and adjacent Latin letters or digits: 「一枚 6 位码」, 「回填 App ID」. Nothing in the render pipeline inserts it for you, so it has to be in the source. Punctuation needs no space.
+中文字符与相邻的拉丁字母或数字之间留空格，例如「一枚 6 位码」「回填 App ID」。渲染流程不会自动补空格，源文件必须直接写入。标点前后不需要空格。
 
-## Screenshots
+## 截图
 
-Product screenshots live in `docs/images/app/` as WebP at 2000px wide, captured from a real build. Never ship a screenshot from an older UI generation; re-capture instead. Redact tokens, QR codes, API keys and paired account names before committing. Cap feature pages at roughly three screenshots.
+产品截图放在 `docs/images/app/`，使用宽度 2000px 的 WebP，并从真实构建版本截取。不要提交旧 UI 版本截图，应重新截取。提交前遮盖 token、二维码、API key 和配对账号名。功能页通常不超过约三张截图。
 
-Step-by-step setup walkthroughs are the exception: `docs/im/` embeds console screenshots from `docs/images/im/<platform>/` and needs one per step. Judge those by whether a reader could follow along without them.
+分步配置教程是例外：`docs/im/` 可从 `docs/images/im/<platform>/` 引用控制台截图，每一步一张；判断标准是读者是否没有截图就无法跟做。
 
-## Routes are file paths
+## 路由就是文件路径
 
-`docs/start/install.md` publishes to `/start/install`. Renaming a file changes a public URL, so add the old path to `LEGACY_ROUTES` in `site/src/content/docs.js` and to `legacyRoutes` in `site/scripts/prepare-static-output.mjs`.
+`docs/start/install.md` 发布为 `/start/install`。重命名文件会改变公开 URL，因此必须把旧路径加入 `site/src/content/docs.js` 的 `LEGACY_ROUTES`，并加入 `site/scripts/prepare-static-output.mjs` 的 `legacyRoutes`。
 
-`/im/` is linked from inside the desktop app (`desktop/src/pages/AdapterSettings.tsx`). That route cannot move.
+桌面应用内部会链接 `/im/`（`desktop/src/pages/AdapterSettings.tsx`）；该路由不可移动。
 
-## Checks
+## 检查
 
-- Run `bun run check:docs` when selected by `bun run check:impact`. It installs the isolated `site/` dependency tree, builds the React site, then validates every local link and image.
-- Release instructions must stay consistent with `scripts/release.ts`, `.github/workflows/release-desktop.yml`, and the versioned release-notes convention.
+- 如果 `bun run check:impact` 选中文档检查，运行 `bun run check:docs`。它会安装隔离的 `site/` 依赖树、构建 React 站点，并校验所有本地链接和图片。
+- 发布说明必须与 `scripts/release.ts`、`.github/workflows/release-desktop.yml` 以及版本化 `release-notes` 约定保持一致。

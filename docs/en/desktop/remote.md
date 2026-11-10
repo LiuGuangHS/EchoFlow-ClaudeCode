@@ -7,23 +7,23 @@ order: 9
 
 # Mobile App, H5, and IM
 
-A task is running on your computer and you want to check on it, or add one more instruction, from your phone. Open **Phone connection** in the desktop's left sidebar, or go to **Settings → Phone connection**. You can install the cc-haha mobile app, or connect with your phone's browser.
+A task is running on your computer and you want to check on it, or add one more instruction, from your phone. Open **Phone connection** in the desktop's left sidebar, or go to **Settings → Phone connection**. You can install the EchoFlow Code mobile app, or connect with your phone's browser.
 
-## cc-haha mobile app availability
+## EchoFlow Code mobile app availability
 
-| How to open cc-haha on your phone | Availability | How to get started |
+| How to open EchoFlow Code on your phone | Availability | How to get started |
 |---|---|---|
 | Android app | Check the EchoFlow release page for availability | Use artifacts actually listed in [EchoFlow Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest); upstream APKs are not an EchoFlow distribution channel |
 | iPhone / iPad app | No EchoFlow distribution channel verified | This page does not link the upstream TestFlight group; use the phone browser instead |
 | Phone browser (H5) | Available now | Select **Use phone browser**, then enable the connection and scan as described below |
 
-The mobile app works with desktop v0.7.6 or later. Its interface is currently Chinese only.
+Use the corresponding EchoFlow release notes to determine mobile and desktop compatibility. The upstream desktop v0.7.6 requirement is not an EchoFlow minimum-version commitment and does not establish whether v0.7.4 is compatible. See [Mobile overview](../mobile/index.md) for the mobile and H5 capability boundaries. The interface is currently Chinese only.
 
 **Use phone browser** selects **Same Wi-Fi**. You still need to read the notice and enable the connection yourself. Connect directly when your phone and computer share a trusted Wi-Fi network. Use **Cloudflare remote connection** below over cellular data or another Wi-Fi network. Neither method needs another VPN app on the phone.
 
-Keep the computer on, awake, and running cc-haha. Tasks always execute on the computer. Cloudflare Tunnel provides connectivity while away; the cc-haha mobile app and browser let you check tasks and respond to approvals.
+Keep the computer on, awake, and running EchoFlow Code. Tasks always execute on the computer. Cloudflare Tunnel provides connectivity while away; the EchoFlow Code mobile app and browser let you check tasks and respond to approvals.
 
-Approval, completion and error alerts after you leave the app need no setup on the computer. On iPhone, the Expo push service relays system notifications, so the computer must be able to reach `exp.host`. On Android, the persistent 「正在值守」 (on duty) notification keeps a direct connection to the computer without Google services; on Xiaomi, Huawei, OPPO, vivo and similar phones, also tap 「允许后台运行」 (allow background running) under the app's 设置 → 通知, and allow cc-haha to auto-start and stay locked in recent apps in the system settings.
+Approval, completion and error alerts after you leave the app need no setup on the computer. On iPhone, the Expo push service relays system notifications, so the computer must be able to reach `exp.host`. On Android, the persistent 「正在值守」 (on duty) notification keeps a direct connection to the computer without Google services; on Xiaomi, Huawei, OPPO, vivo and similar phones, also tap 「允许后台运行」 (allow background running) under the app's 设置 → 通知, and allow EchoFlow Code to auto-start and stay locked in recent apps in the system settings.
 
 To chat from WeChat, DingTalk, WhatsApp, Telegram, or Feishu, see **IM Adapters** at the end of this page.
 
@@ -40,7 +40,7 @@ If an older configuration has no saved token, click **Generate token** to show a
 
 The scanned link carries the server address and token. Scan with your phone camera and open it in your usual Safari, Chrome, or system browser. Successful verification stores the connection in that browser's localStorage and removes the token from the address bar. Scanning again or opening a bookmark reconnects automatically. Temporary network failures do not forget pairing; choose **Retry** to use the saved credential. A revoked or regenerated token requires a fresh QR code.
 
-![A conversation in a phone browser: the same interface as the cc-haha phone app (Chinese only)](../../images/app/en/h5-session.webp)
+![A conversation in a phone browser: the same interface as the EchoFlow Code phone app (Chinese only)](../../images/app/en/h5-session.webp)
 
 ### The token is the credential
 
@@ -72,7 +72,7 @@ Only when a task is idle *and* nothing is connected does the CLI process stop, a
 
 ### What works on a phone
 
-A phone or tablet browser opens the same interface as the cc-haha phone app: home lists tasks under Recent and by project, and new tasks, conversations, tool approvals, questions, plan review, Agent Teams (plan review, member progress and run logs), context usage, changes and file preview, scheduled tasks, background activity and this computer's defaults for new tasks all work as in the app. The interface is currently Chinese only.
+A phone or tablet browser opens the same interface as the EchoFlow Code phone app: home lists tasks under Recent and by project, and new tasks, conversations, tool approvals, questions, plan review, Agent Teams (plan review, member progress and run logs), context usage, changes and file preview, scheduled tasks, background activity and this computer's defaults for new tasks all work as in the app. The interface is currently Chinese only.
 
 Compared with the app, a browser has no push notifications, lock-screen live activities or system permission settings, and cannot add or switch to another computer: the page only connects to the computer that served it. **Download file** in the file preview saves the file to the phone instead of the app's share sheet. Voice input needs HTTPS, so it is unavailable on a LAN `http://` address but works over the remote connection. A computer driven by a mouse or trackpad, including a laptop with a touch screen, still gets the desktop interface in a wide window.
 
@@ -80,7 +80,7 @@ Providers and API keys, MCP, skills and plugins, and configuration import remain
 
 ## Cloudflare remote connection
 
-Away from home or the office, use **Cloudflare** to connect to this computer. The desktop manages the connector automatically; neither the phone app nor the browser needs another VPN app. Requests pass through Cloudflare to cc-haha's separate, restricted gateway. Your computer still handles pairing, access authorization, and task execution.
+Away from home or the office, use **Cloudflare** to connect to this computer. The desktop manages the connector automatically; neither the phone app nor the browser needs another VPN app. Requests pass through Cloudflare to EchoFlow Code's separate, restricted gateway. Your computer still handles pairing, access authorization, and task execution.
 
 **Phone connection** opens on **Away from home → Quick connection**. Selecting a method only shows its settings. Access stays off until you enable it and confirm the notice.
 
@@ -89,7 +89,7 @@ Away from home or the office, use **Cloudflare** to connect to this computer. Th
 1. Open **Phone connection** in the desktop sidebar and keep **Away from home → Quick connection** selected.
 2. Click **Enable connection**. Read and confirm the access notice the first time.
 3. Wait for preparation, connection, and the public-entry check. When **Connection ready** appears, a pairing QR code is shown automatically. No terminal command or address entry is needed.
-4. Scan with your phone camera or the cc-haha app. Browser users should open the link in their usual Safari, Chrome, or system browser.
+4. Scan with your phone camera or the EchoFlow Code app. Browser users should open the link in their usual Safari, Chrome, or system browser.
 5. Check and approve the phone on your computer. After pairing, view tasks and respond to approvals from the phone.
 
 Quick connection assigns a temporary `https://random-name.trycloudflare.com` address. **Each newly created tunnel gets a new address and requires a new scan.** Reconnecting the same tunnel after a brief network interruption does not itself require pairing again. Cloudflare positions Quick Tunnels for temporary development and testing, without an uptime guarantee. See the [official Quick Tunnel guide](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/). Use the fixed-domain method below to retain the address across restarts.
@@ -98,17 +98,17 @@ Quick connection assigns a temporary `https://random-name.trycloudflare.com` add
 
 ### Fixed domain: use a tunnel you create
 
-This method requires a Cloudflare account and a domain already added to Cloudflare. cc-haha runs the connector; you create the tunnel and its hostname route in Cloudflare.
+This method requires a Cloudflare account and a domain already added to Cloudflare. EchoFlow Code runs the connector; you create the tunnel and its hostname route in Cloudflare.
 
 1. In **Phone connection → Away from home**, choose **Fixed domain**.
-2. Click **Open Cloudflare**. Under **Networking → Tunnels**, create a tunnel. Cloudflare then shows install commands; copy any one of them. **Do not run these commands in a terminal**: cc-haha includes the connector, and `cloudflared service install` would add a system service that starts with the computer.
-3. Back in cc-haha, paste the copied command into **Tunnel Token**. The page takes the token out of the command and shows the tunnel ID it found, so you can compare it with the Tunnel ID in Cloudflare. Click **Enable connection**. The status changes to **Waiting for a Cloudflare route**, Cloudflare's Connection Status shows the tunnel as connected, and **Continue** becomes available.
-4. In Cloudflare, click **Continue** and add a **Published application**. Choose a hostname such as `phone.example.com`, and enter the local address shown in cc-haha as the **Service URL** exactly as shown, normally `http://127.0.0.1:17463`. Keep `http://`; do not change it to `https://` or add a path.
-5. Once it is saved, cc-haha picks up the hostname and checks the entry. When the check succeeds, scan with your phone and approve pairing on the computer.
+2. Click **Open Cloudflare**. Under **Networking → Tunnels**, create a tunnel. Cloudflare then shows install commands; copy any one of them. **Do not run these commands in a terminal**: EchoFlow Code includes the connector, and `cloudflared service install` would add a system service that starts with the computer.
+3. Back in EchoFlow Code, paste the copied command into **Tunnel Token**. The page takes the token out of the command and shows the tunnel ID it found, so you can compare it with the Tunnel ID in Cloudflare. Click **Enable connection**. The status changes to **Waiting for a Cloudflare route**, Cloudflare's Connection Status shows the tunnel as connected, and **Continue** becomes available.
+4. In Cloudflare, click **Continue** and add a **Published application**. Choose a hostname such as `phone.example.com`, and enter the local address shown in EchoFlow Code as the **Service URL** exactly as shown, normally `http://127.0.0.1:17463`. Keep `http://`; do not change it to `https://` or add a path.
+5. Once it is saved, EchoFlow Code picks up the hostname and checks the entry. When the check succeeds, scan with your phone and approve pairing on the computer.
 
-Cloudflare's setup wizard moves on to the hostname step only after it sees the connector online, so enable the connection in cc-haha first and configure the route in Cloudflare afterwards. You don't enter the hostname in cc-haha: it uses the hostname whose route sends traffic to the local address. If the tunnel has other routes but none of them reach the local address, the page asks you to check the Service URL. See the [official Cloudflare setup guide](https://developers.cloudflare.com/tunnel/get-started/) for the full steps.
+Cloudflare's setup wizard moves on to the hostname step only after it sees the connector online, so enable the connection in EchoFlow Code first and configure the route in Cloudflare afterwards. You don't enter the hostname in EchoFlow Code: it uses the hostname whose route sends traffic to the local address. If the tunnel has other routes but none of them reach the local address, the page asks you to check the Service URL. See the [official Cloudflare setup guide](https://developers.cloudflare.com/tunnel/get-started/) for the full steps.
 
-cc-haha saves only the token from the command and never runs the command. The token is saved only on this computer and is never returned to the settings field. Leave the field blank to keep a saved token, or paste a new command to replace it. If you have left Cloudflare's creation page, click **Add a replica** on the tunnel's page to copy a command again. With the hostname unchanged and the phone authorization still valid, the phone can reuse its saved connection after the desktop restarts and the tunnel resumes.
+EchoFlow Code saves only the token from the command and never runs the command. The token is saved only on this computer and is never returned to the settings field. Leave the field blank to keep a saved token, or paste a new command to replace it. If you have left Cloudflare's creation page, click **Add a replica** on the tunnel's page to copy a command again. With the hostname unchanged and the phone authorization still valid, the phone can reuse its saved connection after the desktop restarts and the tunnel resumes.
 
 ### Network proxy and connection failures
 
@@ -125,7 +125,7 @@ The computer's proxy handles its connection to Cloudflare; it does not enable a 
 | Connection keeps waiting or reports a network error | The computer's network, saved proxy mode, and proxy availability; restart the connection after changing settings |
 | Proxy connection failed | Proxy address, port, credentials, and whether it allows Cloudflare connections; provider-specific proxy settings are separate from the global network proxy |
 | Cloudflare rejected the Tunnel Token | The token belongs to another tunnel, was rotated, or the tunnel was deleted. Click **Add a replica** on the tunnel's page and paste the new command |
-| Stuck on Waiting for a Cloudflare route | Add a Published application in the tunnel's Routes whose Service URL matches the local address in cc-haha. Also check that you pasted the command for the same tunnel |
+| Stuck on Waiting for a Cloudflare route | Add a Published application in the tunnel's Routes whose Service URL matches the local address in EchoFlow Code. Also check that you pasted the command for the same tunnel |
 | Fixed domain fails | Whether DNS for the HTTPS hostname has taken effect, and whether the computer's network and proxy work |
 | Computer says ready but phone cannot open the entry | Test the hostname on cellular data, and confirm the computer is running, online, and awake |
 | An old quick address stops working after restart | Scan the new code on the desktop, or use a fixed domain to keep a long-lived address |
@@ -139,7 +139,7 @@ The phone app connects through Cloudflare first, then tries to set up a **direct
 
 - Direct connections are on by default. Turn off **Allow direct phone connections (P2P)** under **Phone connection → Away from home** to disable them. Only paired phones can use them, with exactly the same authorization and features as through Cloudflare.
 - Paired phones can see this computer's LAN and public IP addresses.
-- The connection details are exchanged through the Cloudflare gateway; cc-haha runs no relay server of its own. The data channel is encrypted by WebRTC (DTLS).
+- The connection details are exchanged through the Cloudflare gateway; EchoFlow Code runs no relay server of its own. The data channel is encrypted by WebRTC (DTLS).
 - To find a working public path, the computer and the phone ask the public STUN servers of Cloudflare (`stun.cloudflare.com`), Xiaomi (`stun.miwifi.com`), and Google (`stun.l.google.com`) for their own public addresses. These servers can see both ends' public IP addresses, but none of the session content. Turn direct connections off if you do not want that.
 - The status line under the switch shows how direct connections stand on the computer's side: **Direct connections are off** means the switch is off or remote connection is not turned on; **Preparing direct connections** means the direct-connection component is starting, which it does whenever the remote connection turns on or reconnects; **Direct connections are ready** means phones can switch to a direct connection at any time; **Direct connections could not start** means the computer's direct-connection component failed to start or stopped unexpectedly. It retries on its own and pauses after several failures in a row until the remote connection is turned on again or reconnects. Meanwhile phones keep working through Cloudflare.
 - Browsers always go through Cloudflare. Direct connections need a phone app version that includes the direct-connection module; older versions keep working through Cloudflare.

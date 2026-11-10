@@ -6,6 +6,8 @@ Source: [vercel-labs/agent-desktop](https://github.com/vercel-labs/agent-desktop
 
 ## Local changes
 
+- 2026-11-10：`AGENTS.md` 已等义中文化并显著标注修改，保留来源、版本、链接和技术标识符；补充 EchoFlow 根规范的适用与授权边界，以及用户要求、已发布行为、版本历史和测试冲突的调查规则。`src/cli/doc_literal_drift_tests.rs` 仅将命令计数断言的英文定位文案改为对应中文，仍校验总数与 macOS 可执行数；未改变产品行为或放宽数量要求。`LICENSE`、`NOTICE`、`THIRD-PARTY-NOTICES` 与 `UPSTREAM.json` 保留原文及原始摘要；原始摘要不表示本地修改后的文件必须仍与上游逐字一致。
+
 - `crates/core/src/cursor_overlay/product_cursor.rs` defines the seven-point arrow shared by Windows and X11. Its hotspot, 22-point reference height, notched tail, and 1.5-point outline follow the product's Swift helper. Its tests preserve the hotspot and shape across scaling.
 - `crates/windows/src/system/cursor_overlay/geometry.rs` uses that arrow and a 64-point click ripple. The corresponding geometry tests follow the product reference.
 - `crates/linux/src/system/overlay/cursor_overlay_draw.rs` uses the same arrow dimensions and outline width. Its window remains click-through and keeps the hotspot at the requested screen coordinate.

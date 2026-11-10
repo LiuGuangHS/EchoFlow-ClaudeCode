@@ -1,255 +1,140 @@
-# EchoFlow Code Desktop Design
+# EchoFlow Code 桌面设计规范
 
-This document defines the product-wide visual direction for the desktop app.
-It is a design decision record and review standard, not a second component API
-or a pixel-by-pixel specification.
+本文定义桌面应用的全产品视觉方向，是设计决策记录和评审标准，不是第二套组件 API，也不是逐像素规格。
 
-## Source of truth
+## 权威来源
 
-- `desktop/src/theme/globals.css` owns theme values and semantic design tokens.
-- `desktop/src/components/AGENTS.md` owns component selection, implementation,
-  accessibility, localization, and test contracts.
-- This file owns visual principles, page roles, and consistency decisions.
-- `desktop/docs/redesign-paper-ink-seal.md` is a historical design handoff.
-  Its old measurements and implementation checklist are not current authority.
+- `desktop/src/theme/globals.css` 负责主题值和语义设计 token。
+- `desktop/src/components/AGENTS.md` 负责组件选择、实现、无障碍、本地化和测试契约。
+- 本文件负责视觉原则、页面角色和一致性决策。
+- `desktop/docs/redesign-paper-ink-seal.md` 是历史设计交接，其旧尺寸与实现清单不是现行权威依据。
 
-When these documents appear to conflict, token values come from `globals.css`,
-implementation rules from the component guide, and product-level visual
-decisions from this file. Update the owning source rather than copying values.
+这些文档看似冲突时，主题值由 `globals.css` 负责，实现规则由组件指南负责，产品级视觉决策由本文件负责。应更新负责该事项的来源，而不是复制数值；涉及行为冲突时仍遵循根规范的调查规则。
 
-## Product character
+## 产品气质
 
-EchoFlow Code is a dense coding workspace used for sustained reading, editing,
-and operational control. Its visual language should feel calm, precise, and
-distinctive without reducing code, conversations, diffs, or settings to
-decoration.
+EchoFlow Code 是面向持续阅读、编辑和操作控制的高密度编程工作区。视觉语言应平静、精确且有辨识度，不能把代码、对话、差异或设置降格为装饰。
 
-The current direction is **Ink Workbench**: a paper desk where content stays
-stable, controls lift only when they are active, and a seal marks a meaningful
-decision. The identity is not a global transparency effect or a warm palette;
-it comes from the relationship between reading surfaces, action surfaces, and
-execution state.
+当前方向是 **Ink Workbench（墨色工作台）**：内容稳定地放在纸面桌台上，控件只在活跃时抬升，印章标示有意义的决策。辨识度不来自全局透明或暖色调，而来自阅读表面、操作表面和执行状态之间的关系。
 
-Use these material roles consistently across all six themes:
+六套主题统一使用以下材质角色：
 
-| Role | Use for | Non-negotiable rule |
+| 角色 | 用途 | 不可妥协的规则 |
 |---|---|---|
-| Paper | Chat, code, diff, terminal, trace detail, workspace, settings, dialogs | Opaque and readable; translucency never sits behind long-form content |
-| Ink | Sidebar, tabs, toolbar, activity chrome, compact tool summaries | Theme-tokenized control surface; active elements may lift, idle elements stay quiet |
-| Seal | Permission decisions, brand entry points, primary actions, completion feedback | Sparse semantic accent; never a substitute for warning, error, success, or focus |
-| Glass | Short-lived anchored menus, popovers, composer shell, glance overlays | Enhancement only; must fall back to an opaque theme surface |
+| 纸面（Paper） | 聊天、代码、差异、终端、追踪详情、工作区、设置、对话框 | 不透明且可读；长篇内容后面不放半透明背景 |
+| 墨面（Ink） | 侧栏、标签页、工具栏、活动区框架、紧凑工具摘要 | 使用主题 token 的控制表面；活跃元素可抬升，静止元素保持安静 |
+| 印章（Seal） | 权限决策、品牌入口、主要操作、完成反馈 | 稀疏的语义强调；不能替代警告、错误、成功或焦点 |
+| 玻璃（Glass） | 短暂的锚定菜单、弹出层、输入框外壳、速览浮层 | 只作增强；必须能退回不透明主题表面 |
 
-The **execution spine** is the shared visual relationship between a session's
-Tool rows, Activity, navigation markers, and permission surface. It is a
-presentation rule, not a second state store: when multiple signals coexist,
-waiting or permission takes precedence over error, error over running, and
-running over completed. Every state also needs text, an icon, or a semantic
-status marker; color, glow, or motion alone is never sufficient.
+**执行主线（execution spine）**是同一会话中工具行、活动、导航标记与权限表面的共享视觉关系。它是展示规则，不是第二套状态存储：多个信号并存时，等待或权限优先于错误，错误优先于运行中，运行中优先于已完成。每种状态还必须有文本、图标或语义状态标记，不能只靠颜色、发光或动效。
 
-Preserve this identity across all six themes; themes change the palette, not
-the information hierarchy or interaction language.
+六套主题都应保留这一辨识度；主题只改变配色，不改变信息层级或交互语言。
 
-## Design principles
+## 设计原则
 
-1. **Content stays legible.** Reading and editing surfaces use stable,
-   high-contrast fills. Do not place translucency behind long-form text,
-   code, diffs, terminal output, or forms.
-2. **Hierarchy comes from structure.** Use alignment, spacing, typography,
-   surface levels, and restrained borders before adding shadows or decorative
-   cards. A card is for a distinct item or genuinely framed tool, not a default
-   wrapper for every section.
-3. **One action, one visual meaning.** Primary actions, destructive actions,
-   selected states, and status colors keep the same semantic treatment across
-   the app. Do not use brand color as decoration where it competes with state.
-4. **Density follows the task.** Settings, trace inspection, and workspace
-   lists may be compact; onboarding and empty states may breathe. Compactness
-   is intentional when labels remain readable and controls remain usable.
-5. **Motion explains change.** Prefer short, user-triggered transitions.
-   Respect reduced-motion settings; avoid ambient movement and repeated
-   entrance effects.
-6. **Every theme is a first-class theme.** Use semantic tokens, preserve
-   contrast, and verify light and ink palettes. Avoid one-off color fixes that
-   only work in the default theme.
+1. **内容始终清晰。** 阅读和编辑表面使用稳定、高对比填充。长文本、代码、差异、终端输出和表单后面不放半透明背景。
+2. **用结构建立层级。** 优先使用对齐、间距、排版、表面层次和克制的边框，再考虑阴影或装饰卡片。卡片用于独立条目或确实需要框定的工具，不是每节的默认包装。
+3. **一个操作只有一种视觉含义。** 主要操作、破坏性操作、选中态和状态色在全应用保持相同语义。不要在与状态竞争的位置用品牌色装饰。
+4. **密度服从任务。** 设置、追踪检查和工作区列表可以紧凑；引导与空态可以留白。标签可读、控件可用时，紧凑是有意选择。
+5. **动效解释变化。** 优先短促、由用户触发的过渡。尊重减少动效设置，避免环境式持续运动和重复进场效果。
+6. **每套主题都是一等主题。** 使用语义 token，保留对比度，验证浅色与墨色配色。避免只对默认主题有效的一次性颜色修补。
 
-## Material and glass decision
+## 材质与玻璃决策
 
-Use **Ink Workbench**, not desktop-wallpaper transparency. Electron windows
-remain opaque; system vibrancy would introduce platform-specific behavior and
-make the workspace background less predictable.
+采用 **Ink Workbench**，不是桌面壁纸透明效果。Electron 窗口保持不透明；系统毛玻璃会引入平台特有行为，让工作区背景不可预测。
 
-Paper is the default for sustained reading and editing. Ink is the control
-layer that groups navigation and active work. Seal is reserved for a meaningful
-brand or decision moment. Glass is only a short-lived enhancement of an Ink
-surface, never a new content layer.
+纸面是持续阅读和编辑的默认材质；墨面是聚合导航与活跃工作的控制层；印章只用于有意义的品牌或决策时刻；玻璃只是墨面的短暂增强，不是新的内容层。
 
-Glass is allowed only for compact, temporary surfaces such as a small anchored
-menu, popover, composer shell, or glanceable overlay. It is not the default
-surface for the sidebar, title bar, chat transcript, code/diff/terminal,
-settings forms, permission or other dialogs, trace details, or workspace
-content. Large or scrollable surfaces must remain opaque. Glass must retain its
-theme fill and visible border, and must fall back to an opaque theme surface
-when `backdrop-filter` is unavailable, transparency is reduced, or forced
-colors are active. Long text and detailed previews inside a glass shell belong
-on an opaque inner surface.
+玻璃只允许用于紧凑、临时的表面，如小型锚定菜单、弹出层、输入框外壳或速览浮层。侧栏、标题栏、聊天记录、代码/差异/终端、设置表单、权限及其他对话框、追踪详情和工作区内容都不默认使用玻璃。大型或可滚动表面必须不透明。玻璃必须保留主题填充和可见边框；`backdrop-filter` 不可用、启用降低透明度或强制颜色时，应退回不透明主题表面。玻璃外壳内的长文本和详细预览必须置于不透明内层。
 
-Do not use the brand token as a waiting, success, error, or keyboard-focus
-substitute. Waiting and permission use their paired warning container tokens;
-errors use error tokens; focus uses the focus-border token. Each state keeps a
-non-color cue such as text, an icon, or a semantic status marker.
+不要用品牌 token 替代等待、成功、错误或键盘焦点。等待和权限使用成对的 warning 容器 token，错误用 error token，焦点用 focus-border token。每种状态保留文本、图标或语义状态标记等非颜色提示。
 
-Before expanding glass usage, inspect it in the component gallery against all
-six themes, with dense text behind it and with blur unavailable. A screenshot
-or rendered check is required for visual changes; source-level class counts do
-not prove that glass looks good.
+扩大玻璃使用前，应在组件 gallery 中检查六套主题，并验证背景有密集文字及模糊不可用的情况。视觉改动必须有截图或渲染检查，源码 class 数量不能证明玻璃效果好看。
 
-## Page roles
+## 页面角色
 
-Use a small set of page roles rather than forcing every route into one template:
+采用少量页面角色，不把每个路由强塞进同一个模板：
 
-| Role | Examples | Visual emphasis |
+| 角色 | 示例 | 视觉重点 |
 |---|---|---|
-| Work surface | Active session, workspace, terminal | Maximum reading area; quiet chrome; controls grouped near the work they affect |
-| Configuration | Desktop settings, provider/runtime settings | Clear page title, labelled sections, compact aligned fields, explicit save/apply state |
-| Mobile configuration | H5 settings | Touch-first navigation and controls; a focused subset of desktop configuration, not a squeezed desktop page |
-| Catalog | Market, extension/skill browsing | Search and filters before results; repeated entries optimized for comparison |
-| Inspection | Trace, activity, agent teams | Strong master/detail or timeline hierarchy; dense data remains scannable |
-| Focused dialog/task | Permission, confirmation, import | One decision or short task; opaque surface, clear consequence, concise actions |
+| 工作表面 | 活跃会话、工作区、终端 | 最大阅读面积、安静的界面框架；控件靠近其影响的工作 |
+| 配置 | 桌面设置、服务商/运行时设置 | 清晰页标题、有标签的分区、紧凑对齐字段、明确的保存/应用状态 |
+| 移动配置 | H5 设置 | 触摸优先的导航和控件；聚焦桌面配置的适用子集，不挤压桌面页面 |
+| 目录 | 市场、扩展/技能浏览 | 搜索和筛选先于结果；重复条目方便对比 |
+| 检查 | 追踪、活动、Agent Teams | 清楚的主从或时间线层级；密集数据仍可扫读 |
+| 聚焦对话框/任务 | 权限、确认、导入 | 一个决策或短任务；不透明表面、明确后果、简洁操作 |
 
-These roles guide composition, not new behavior. Do not remove existing
-capabilities or invent features to make a page fit a visual template.
+角色只指导组合，不引入新行为。不能为适配视觉模板删除已有能力或凭空创造功能。
 
-### Role-to-component boundary
+### 角色与组件边界
 
-Prefer the existing primitive for the generic part of a page, while keeping
-its domain-specific rows and state local:
+页面通用部分优先使用已有原语，领域专属行和状态留在本地：
 
-| Page role | Prefer existing primitives | Keep domain-owned |
+| 页面角色 | 优先使用的原语 | 由领域保留的内容 |
 |---|---|---|
-| Work surface | `Button`, `IconButton`, field primitives, `Badge`, `StatusDot`, `Dropdown` | Chat messages, tool blocks, permission blocks, workspace file/diff surfaces |
-| Configuration | `Input`, `TextArea`, `SelectField`, `SearchField`, `Button`, `ActionDialog` | Provider/runtime forms whose validation or persistence is feature-specific |
-| Catalog | `Input`, `SearchField`, `Button`, `Card`, `Badge` | Market cards, install flows, capability rows, comparison-specific layout |
-| Inspection | `Badge`, `StatusDot`, `Modal`, `Dropdown`, `Tooltip` | Trace trees/details, activity rows, agent-team and evidence structures |
-| Focused dialog/task | `Modal`, `ConfirmDialog`, `ActionDialog`, `MobileBottomSheet` | Permission and plan-mode actions whose consequences and payloads are domain-specific |
+| 工作表面 | `Button`、`IconButton`、字段原语、`Badge`、`StatusDot`、`Dropdown` | 聊天消息、工具块、权限块、工作区文件/差异表面 |
+| 配置 | `Input`、`TextArea`、`SelectField`、`SearchField`、`Button`、`ActionDialog` | 验证或持久化为功能专属的服务商/运行时表单 |
+| 目录 | `Input`、`SearchField`、`Button`、`Card`、`Badge` | 市场卡片、安装流程、能力行、专用于对比的布局 |
+| 检查 | `Badge`、`StatusDot`、`Modal`、`Dropdown`、`Tooltip` | 追踪树/详情、活动行、团队和证据结构 |
+| 聚焦对话框/任务 | `Modal`、`ConfirmDialog`、`ActionDialog`、`MobileBottomSheet` | 后果和载荷具有领域语义的权限及计划模式操作 |
 
-This table guides adoption; it does not require every native element to be
-replaced. Tabs, menus, trees, grids, task rows, window controls, and domain
-items keep their own semantics even when their markup resembles a shared
-primitive.
+此表指导采用，不要求替换每个原生元素。标签页、菜单、树、网格、任务行、窗口控件和领域条目即使标记结构类似共享原语，也保留自己的语义。
 
-A shared state mapping is valid only when the state type, lifecycle, visible
-meaning, and accessible cue are the same. Do not merge focus with waiting,
-brand with warning, or disclosure state with modal focus management. Preserve
-`disclosureMemory`, modal focus trap/restore, and `useDismissable` Escape and
-outside-dismiss behavior as separate contracts.
+只有状态类型、生命周期、可见含义和无障碍提示相同时，才可共享状态映射。不要合并焦点与等待、品牌与警告、展开状态与模态焦点管理。`disclosureMemory`、模态焦点限制/恢复，以及 `useDismissable` 的 Escape 和外部关闭行为，是独立契约，必须保留。
 
-Local stacking contexts, companion-pet glass treatment, and page-specific
-radius or surface exceptions may remain local when they have a documented
-reason and do not weaken readability or token ownership. Source counts are
-only audit signals; glass, six-theme contrast, dense text, and narrow-viewport
-behavior require rendered evidence.
+有明确理由且不削弱可读性或 token 所有权时，局部层叠上下文、桌宠玻璃效果，以及页面专属圆角或表面例外可以留在本地。源码计数只是审计信号；玻璃、六主题对比度、密集文本和窄视口行为需要渲染证据。
 
-## Type and spacing
+## 字体与间距
 
-The current font tokens resolve as follows: `--font-body` is the interface
-sans-serif; `--font-headline` currently aliases `--font-body` and is also
-sans-serif; `--font-serif` is an explicit editorial serif option; and
-`--font-mono` is for code and machine-shaped values. Use the serif role only
-where an editorial heading is an intentional design choice; do not assume
-`--font-headline` supplies it. Changing the token mapping is a separate design
-system decision. The current code contains many literal pixel sizes, including
-fractional values; those counts establish drift opportunity, not proof that
-every distinct size is visually wrong.
+当前字体 token：`--font-body` 为界面无衬线字体；`--font-headline` 当前指向 `--font-body`，也是无衬线；`--font-serif` 是明确选择的编辑型衬线字体；`--font-mono` 用于代码和机器格式值。只有明确采用编辑型标题时才使用衬线角色，不要假设 `--font-headline` 已提供衬线。改变 token 映射是独立的设计系统决策。当前代码有很多像素字面量，包括小数；计数说明存在收敛空间，不能证明每种不同字号都视觉错误。
 
-For new or substantially revised UI, choose from a compact semantic ladder:
+新增或大幅修改 UI 时，从紧凑语义阶梯中选择：
 
-| Role | Guidance |
+| 角色 | 指导 |
 |---|---|
-| Compact metadata | 11–12px; secondary information, never essential instructions |
-| Dense control text | 13–14px |
-| Body and form labels | 14–16px |
-| Section heading | 16–18px |
-| Page heading | 24–28px; current `--font-headline` is sans-serif, use `--font-serif` only for an intentional editorial treatment |
-| Large value | 21–26px, only when the value is the point of the view |
+| 紧凑元数据 | 11–12px；仅次要信息，不承载关键指令 |
+| 密集控件文字 | 13–14px |
+| 正文与表单标签 | 14–16px |
+| 分区标题 | 16–18px |
+| 页面标题 | 24–28px；当前 `--font-headline` 是无衬线，只有有意采用编辑型风格时才用 `--font-serif` |
+| 大数值 | 21–26px；仅在该数值是视图重点时使用 |
 
-This is a target for convergence, not an instruction to mechanically replace
-every existing size. Do not use fractional font sizes for new work unless a
-measured layout constraint requires one. Prefer existing spacing and radius
-tokens; retain exceptions that encode a real touch target, joined control,
-media crop, or page-specific layout.
+这是收敛目标，不要求机械替换所有已有尺寸。新工作不用小数字号，除非经过测量的布局约束确有需要。优先已有间距和圆角 token；对真实触摸目标、组合控件、媒体裁剪或页面专属布局有意义的例外应保留。
 
-## Surfaces and floating layers
+## 表面与浮层
 
-- Page sections are unframed layouts or full-width bands. Do not nest cards.
-- Use a card for an independently meaningful repeated item or framed tool.
-- Sustained reading surfaces use Paper. Do not make code, diffs, terminal output,
-  trace details, workspace content, settings forms, or long lists translucent.
-- Navigation and compact work controls use Ink semantics. Active items may have
-  a restrained lift; idle items do not accumulate decorative shadow.
-- Menus and popovers should share theme surface, border, elevation, focus,
-  dismissal, and keyboard behavior. Specialized content may change dimensions,
-  not the basic surface language. A glass shell never makes its detailed
-  content translucent.
-- Dialogs are opaque and use the dialog surface contract. A media viewer may
-  use its own content surface.
-- Bottom sheets are touch-specific dialog-like surfaces; their shape and
-  interaction may differ while preserving the same theme and focus standards.
-- Toasts communicate outcomes and should not imitate menus or cards.
-- Tool summaries may use a compact row when their content is short and
-  expandable; diffs, terminals, previews, long output, and error detail remain
-  framed opaque content. Do not convert every tool call to a row.
+- 页面分区使用无框布局或全宽带，不嵌套卡片。
+- 卡片用于独立有意义的重复条目或框定工具。
+- 持续阅读表面使用纸面。代码、差异、终端输出、追踪详情、工作区内容、设置表单和长列表不得半透明。
+- 导航和紧凑工作控件使用墨面语义。活跃项可克制抬升，静止项不积累装饰阴影。
+- 菜单与弹出层共享主题表面、边框、抬升、焦点、关闭和键盘行为。专用内容可以改变尺寸，不改变基本表面语言；玻璃外壳不能使详细内容也透明。
+- 对话框保持不透明，遵循对话框表面契约；媒体查看器可使用自己的内容表面。
+- 底部面板是触摸专用、类似对话框的表面，形状与交互可以不同，但保持相同主题和焦点标准。
+- Toast 用于传达结果，不模仿菜单或卡片。
+- 内容短且可展开时，工具摘要可用紧凑行；差异、终端、预览、长输出和错误详情仍为有框、不透明内容。不把所有工具调用都改为行。
 
-The current implementation has shared tokenized elevation and z-index scales,
-but menu-like surfaces still include both `.glass-panel` and independently
-assembled opaque panels with different radii and shadows. Consolidate these
-only when a behavior-focused change touches them; do not start a risky global
-rewrite solely to make class strings identical.
+当前实现已有共享且 token 化的抬升与 z-index 刻度，但类菜单表面仍同时存在 `.glass-panel` 和独立拼装、圆角与阴影不同的不透明面板。只有行为相关改动触及时才收敛，不为统一 class 字符串而发起高风险全局重写。
 
-## Controls and interaction
+## 控件与交互
 
-Use the shared UI primitives for generic controls. Hand-built buttons are
-appropriate for domain-specific rows, tabs, tree nodes, and window controls,
-but must preserve the same keyboard, focus, disabled, and theme semantics.
-Use semantic tokens rather than raw palette values. Focus must be visible;
-hover must not be the only indication of state. Honor reduced motion and keep
-touch targets appropriate for the H5 surface.
+通用控件使用共享 UI 原语。领域专属行、标签页、树节点和窗口控件可以手写按钮，但必须保留相同的键盘、焦点、禁用和主题语义。使用语义 token，不用原始调色板值。焦点必须可见，悬停不能是唯一状态提示。尊重减少动效设置，为 H5 保持合适的触摸目标。
 
-Extract a component only when at least two real consumers share the same
-semantic behavior, not merely similar markup. Verify the boundary against
-keyboard and focus behavior, Escape and outside dismissal, localization,
-theme states, touch targets, and business coupling. Keep one-off domain rows,
-tabs, trees, grids, and window controls local when their semantics differ.
-Existing primitives are preferred over new wrappers; a new abstraction must
-preserve current stores, APIs, routes, permission payloads, and state flow.
+只有至少两个真实调用方共享相同语义行为时才抽取组件，不能只因标记结构相似。核对键盘与焦点、Escape 与外部关闭、本地化、主题状态、触摸目标及业务耦合。语义不同的一次性领域行、标签页、树、网格和窗口控件留在本地。优先已有原语而非新包装；新抽象必须保留现有 store、API、路由、权限载荷及状态流。
 
-The source currently has 207 native button elements alongside 474 shared
-`Button`/`IconButton` usages, and 65 native input/select/textarea elements
-alongside 104 shared field usages (rough source counts, excluding tests).
-These figures indicate that shared primitives are not universal, but do not
-classify each native element as a defect: inspect its role and interaction
-before changing it.
+当前源码粗略计数（不含测试）为 207 个原生按钮与 474 处共享 `Button`/`IconButton`，以及 65 个原生 input/select/textarea 与 104 处共享字段。这说明共享原语并非无处不在，但不能把每个原生元素都判为缺陷：修改前先检查角色和交互。
 
-## Review checklist
+## 评审清单
 
-- Does the page communicate its role and primary task without adding chrome?
-- Are primary, secondary, destructive, selected, and status treatments
-  consistent with their meaning?
-- Are text and controls readable in all six themes and at the target density?
-- Are large reading/form surfaces opaque, and is glass restricted to suitable
-  short-lived surfaces?
-- Are generic controls using shared primitives, with exceptions justified by
-  their domain-specific behavior?
-- Are focus, keyboard operation, localization, and reduced motion preserved?
-- For visible changes, was the rendered UI checked in the relevant themes and
-  viewport sizes? If not, record that visual evidence is unavailable.
+- 页面是否无需增加界面框架便能表达其角色和主要任务？
+- 主要、次要、破坏性、选中及状态处理是否与含义一致？
+- 六套主题和目标密度下，文字与控件是否可读？
+- 大型阅读/表单表面是否不透明，玻璃是否限于合适的短暂表面？
+- 通用控件是否采用共享原语，例外是否有领域行为依据？
+- 焦点、键盘操作、本地化和减少动效是否保留？
+- 可见改动是否在相关主题及视口尺寸下检查过实际渲染？没有则记录缺少视觉证据。
 
-## Audit evidence and limits
+## 审计证据与局限
 
-The current audit directly inspected theme tokens/tests, representative shared
-components, page headers, and representative menu, dialog, sheet, and chat
-surfaces. It also counted source patterns such as literal font sizes, native
-controls, focus classes, and motion preferences. Those counts are exploratory
-signals, not a complete visual inventory.
+当前审计直接检查了主题 token/测试、代表性共享组件、页标题，以及代表性菜单、对话框、底部面板和聊天表面，也统计了字号字面量、原生控件、焦点 class、动效偏好等源码模式。计数只是探索信号，不是完整视觉清单。
 
-No rendered screenshot comparison was produced during this audit. In
-particular, global color exceptions, icon-family differences, and page-by-page
-spacing need rendered review before being treated as confirmed visual defects.
+本次审计没有生成渲染截图对比。特别是全局颜色例外、图标族差异和逐页间距，必须先经渲染评审，才能视为已确认视觉缺陷。

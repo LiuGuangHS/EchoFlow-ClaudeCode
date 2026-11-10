@@ -1,13 +1,13 @@
 ---
 title: Privacy and network access
 nav_title: Privacy
-description: What cc-haha stores locally, when it uses the network, and how to remove its data.
+description: What EchoFlow Code stores locally, when it uses the network, and what to check before removing data.
 order: 6
 ---
 
 # Privacy and network access
 
-cc-haha is a local-first, open-source development tool. The project itself does not operate a cloud backend that receives session content. The application is not fully offline: when you choose a model provider, MCP server, messaging integration, or update feature, relevant data is sent to the third-party service you selected or configured.
+EchoFlow Code is a local-first development workbench. Local first does not mean fully offline: account sign-in, model services, MCP, messaging, remote connections, and updates may send the data needed for an operation to the relevant service. Review the destination and its privacy policy before enabling a feature; local storage does not mean that all data stays on the device.
 
 ## Data stored locally
 
@@ -32,10 +32,10 @@ The project maintainers do not sell user data or place advertising based on pers
 
 ## Removing data
 
-Uninstalling the application does not automatically delete sessions and configuration under `~/.claude`. To remove local data completely, first back up anything you want to keep, then manually delete `~/.claude` and the cc-haha data in your operating system's application-data directory (installed versions may still use the legacy directory name `Claude Code Haha`). To remove data already sent to a third-party service, follow that provider's process.
+Uninstalling the application does not mean all local data has been removed. Before cleanup, confirm the active configuration directory, run mode, and ownership of the data, and back up the sessions and configuration you need to keep. Other tools may share `~/.claude`; do not delete the whole directory as if it belonged exclusively to EchoFlow Code. Older versions may use compatibility names such as `Claude Code Haha`; inspect their contents and remove only data confirmed to belong to this application. To remove data already sent to a third-party service, follow that provider's process.
 
 ## Contact
 
-For privacy or security questions, contact the maintainer through a [private GitHub security advisory](https://github.com/NanmiCoder/cc-haha/security/advisories/new) or at [relakkes@gmail.com](mailto:relakkes@gmail.com).
+For privacy or security questions, contact the maintainer through a [private GitHub security advisory](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/security/advisories/new). Do not send EchoFlow Code private logs or account information to the upstream project's contact addresses.
 
-Last updated: August 5, 2026.
+Last updated: November 10, 2026.

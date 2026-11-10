@@ -47,10 +47,10 @@ Get-AuthenticodeSignature ".\Claude-Code-Haha-<version>-Windows-x64-Setup.exe" |
   Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate
 ```
 
-只在 `Status` 为 `Valid`、产品与版本符合预期且文件来自本项目 [GitHub Releases](https://github.com/NanmiCoder/cc-haha/releases) 时继续安装。
+只在 `Status` 为 `Valid`、产品与版本符合预期且文件来自本项目 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases) 时继续安装。
 
 ## 安全事件与撤销
 
-如发现证书、签名账户、构建流程或发布产物可能被滥用，请通过 [GitHub 私密安全报告](https://github.com/NanmiCoder/cc-haha/security/advisories/new) 或发送邮件至 [relakkes@gmail.com](mailto:relakkes@gmail.com) 报告。维护者会暂停相关发布和签名请求、移除受影响的下载、调查来源，并在需要时联系 SignPath Foundation 撤销证书或签名。
+如发现证书、签名账户、构建流程或发布产物可能被滥用，请通过 [GitHub 私密安全报告](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/security/advisories/new) 或发送邮件至 [relakkes@gmail.com](mailto:relakkes@gmail.com) 报告。维护者会暂停相关发布和签名请求、移除受影响的下载、调查来源，并在需要时联系 SignPath Foundation 撤销证书或签名。
 
 软件联网与本地数据处理方式见[隐私与联网说明](./privacy.md)。

@@ -82,18 +82,52 @@ test('the docs CLI checks all README links and screenshot locales', async (t) =>
       }
     })
   }
+  await t.test('accepts localized document-relative images copied by static publication', async () => {
+    for (const locale of ['', 'en/']) {
+      const source = `docs/${locale}start/index.md`
+      const original = await fs.readFile(path.join(root, source), 'utf8')
+      await write(`docs/${locale}start/images/diagram.webp`, image)
+      await write(source, `${original}\n![Diagram](./images/diagram.webp)\n`)
+      try {
+        assert.match((await check()).stdout, /Documentation check passed/)
+      } finally {
+        await write(source, original)
+      }
+    }
+  })
+
+  await t.test('an unavailable desktop TestFlight channel may link to official public documentation', async () => {
+    await write('desktop/src/pages/settings/mobileAppLinks.ts', "android: 'https://example.test/app.apk', testFlight: null")
+    const landing = 'site/src/pages/home/landingContent.ts'
+    const original = await fs.readFile(path.join(root, landing), 'utf8')
+    try {
+      await write(landing, original.replace('https://example.test/ios', 'https://code.echoflow.cn/en/start'))
+      assert.match((await check()).stdout, /Documentation check passed/)
+      for (const target of ['https://testflight.apple.com/join/unverified', 'https://code.echoflow.cn/missing', 'https://code.echoflow.cn/en']) {
+        await write(landing, original.replace('https://example.test/ios', target))
+        await assert.rejects(check(), (error) => error.code === 1 && error.stderr.includes('testFlight'))
+      }
+    } finally {
+      await write(landing, original)
+      await write('desktop/src/pages/settings/mobileAppLinks.ts', downloads)
+    }
+  })
+
   for (const [target, fixture] of [
     ['../_internal/design.md', 'docs/_internal/design.md'],
     ['../../guide%20with%20spaces.md', 'guide with spaces.md'],
+    ['./images/missing.png', null],
+    ['../_internal/private.png', 'docs/_internal/private.png'],
+    ['../../private.png', 'private.png'],
   ]) {
     await t.test(`public docs reject unpublished local target ${target}`, async () => {
-      await write(fixture, '# Unpublished source\n')
+      if (fixture) await write(fixture, '# Unpublished source\n')
       const source = 'docs/start/index.md'
       const original = await fs.readFile(path.join(root, source), 'utf8')
       await write(source, `${original}\n[Unpublished](${target})\n`)
       try {
         await assert.rejects(check(), (error) => error.code === 1
-          && error.stderr.includes(`${source}: unresolved link ${target}`))
+          && error.stderr.includes(`${source}: unresolved ${target.endsWith('.png') ? 'image' : 'link'} ${target}`))
       } finally {
         await write(source, original)
       }

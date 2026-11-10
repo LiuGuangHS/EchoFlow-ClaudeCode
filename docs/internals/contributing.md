@@ -172,7 +172,7 @@ PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quali
 
 仓库技能的描述只写适用任务和必要的区分信息，操作细节放正文或引用文件。多工作流技能用短入口路由；避免为了覆盖更多关键词而扩大触发范围。模型默认值、工具格式和压缩行为属于产品实现，更新相关文档前应先核对源码。
 
-## Feature Quality Contract
+## 功能质量契约
 
 所有新功能、bugfix 和行为变化都必须带着可验证证据交付。这条规则同时约束人和 AI Coding Agent：
 
@@ -248,7 +248,7 @@ bun run check:coverage    # root、desktop、adapters 覆盖率报告和 ratchet
 
 如果只改了很窄的文件，先跑对应的定向测试即可；只有在声明 PR-ready/full validation 时才需要本地再跑 `bun run verify`，托管 CI 仍会执行所有被选中的必需 lane。
 
-可执行 JS/TS 生产代码改动必须带对应测试文件；同区域划分见上文 Feature Quality Contract 和 `scripts/pr/change-policy.ts`，缺失时会触发阻断。只有维护者确认不适合自动化测试时，才能使用 `allow-missing-tests`。覆盖率 baseline/threshold 变更同样需要维护者确认并加 `allow-coverage-baseline-change`。
+可执行 JS/TS 生产代码改动必须带对应测试文件；同区域划分见上文 功能质量契约 和 `scripts/pr/change-policy.ts`，缺失时会触发阻断。只有维护者确认不适合自动化测试时，才能使用 `allow-missing-tests`。覆盖率 baseline/threshold 变更同样需要维护者确认并加 `allow-coverage-baseline-change`。
 
 ## 真实模型 Baseline
 
@@ -359,7 +359,7 @@ Release workflow 先在各平台 matrix 里生成 `latest*.yml`，把同名 meta
 - Mac zip 名里，Apple 芯片的必须含 `arm64`，Intel 的不能含 `arm64`；否则 Apple 芯片的机器会被「更新」成 Intel 版。
 - 两个 Windows 安装包共用一份 `latest.yml`，updater 按名字里的 `x64` / `arm64` 选包；少了这两个词，ARM 设备会装上 x64 版。
 
-`.blockmap` 只在构建机上生成给 package-smoke 检查，不再发布：应用从 v0.4.7 起关闭了差分下载，更早的客户端找不到 blockmap 会自动改为完整下载。Release 也不再附 `install-macos-unsigned.sh`，正式版本的 Mac 包总是签名并公证过的。
+`.blockmap` 随安装包一起作为 Release 资产发布，供已安装客户端做差分下载；构建机上也会用它跑 package-smoke。应用从 v0.4.7 起把差分下载默认关闭，未启用差分的客户端会自动改为完整下载，启用条件与尚未完成的验收项见 `docs/_internal/release-windows.md`。Windows 安装包签名后由 `scripts/refresh-windows-update-metadata.ts` 重建 blockmap 并校验其结构与最终安装包一致，发布流程会核对各架构 blockmap 与 `latest*.yml` 的版本一致性。Release 不附 `install-macos-unsigned.sh`，正式版本的 Mac 包总是签名并公证过的。
 
 ### 签名 Secrets
 

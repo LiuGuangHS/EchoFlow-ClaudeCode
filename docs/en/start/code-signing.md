@@ -47,10 +47,10 @@ Get-AuthenticodeSignature ".\Claude-Code-Haha-<version>-Windows-x64-Setup.exe" |
   Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate
 ```
 
-Continue with installation only when `Status` is `Valid`, the product and version are expected, and the file came from this project's [GitHub Releases](https://github.com/NanmiCoder/cc-haha/releases).
+Continue with installation only when `Status` is `Valid`, the product and version are expected, and the file came from this project's [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases).
 
 ## Security incidents and revocation
 
-Report suspected misuse of the certificate, signing accounts, build process, or release artifacts through a [private GitHub security advisory](https://github.com/NanmiCoder/cc-haha/security/advisories/new) or by email to [relakkes@gmail.com](mailto:relakkes@gmail.com). The maintainer will pause affected releases and signing requests, remove affected downloads, investigate the source, and ask the SignPath Foundation to revoke the certificate or signature when necessary.
+Report suspected misuse of the certificate, signing accounts, build process, or release artifacts through a [private GitHub security advisory](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/security/advisories/new) or by email to [relakkes@gmail.com](mailto:relakkes@gmail.com). The maintainer will pause affected releases and signing requests, remove affected downloads, investigate the source, and ask the SignPath Foundation to revoke the certificate or signature when necessary.
 
 See [Privacy and network access](./privacy.md) for the software's network and local-data behavior.

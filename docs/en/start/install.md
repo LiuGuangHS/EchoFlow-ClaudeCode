@@ -7,9 +7,9 @@ order: 1
 
 # Download and install
 
-Install and go. You don't need Node.js, Python, or Claude Code — the CLI engine and the ripgrep binary used for file search are both bundled inside the installer.
+Install and go. You don't need Node.js, Python, or any external CLI tool — the CLI engine and the ripgrep binary used for file search are both bundled inside the installer.
 
-The product is now called **cc-haha**. Existing packages, installed apps, and system processes may still use the legacy name `Claude Code Haha`; filenames and commands below match those published packages.
+The product is now called **EchoFlow Code**. Existing packages, installed apps, and system processes may still use a legacy name; filenames and commands below match those published packages.
 
 ## Pick the right package
 
@@ -26,17 +26,17 @@ EchoFlow installers live on [GitHub Releases](https://github.com/LiuGuangHS/Echo
 
 Not sure which architecture you have? On macOS check the chip listed in "About This Mac"; on Windows check the system type under Settings → System → About. Don't guess from the brand of the machine.
 
-Files ending in `-update.zip` and the `latest*.yml` files are used by the app's own updater. You don't need to download them. v0.7.6 and earlier used older names such as `mac-arm64`, `win-x64` and `linux-x86_64`.
+Files ending in `-update.zip` and the `latest*.yml` files are used by the app's own updater. You don't need to download them. Platform and architecture labels can differ between releases; select files from the corresponding EchoFlow release page rather than inferring package names from upstream version numbers.
 
 ## macOS
 
 1. Open the DMG.
-2. Drag cc-haha into Applications.
+2. Drag the app into Applications.
 3. Launch it from Applications.
 
 ### If macOS says the app is damaged
 
-Nothing is actually damaged. macOS quarantines anything downloaded from the web and refuses to launch it without an Apple signature — but it words the error as "damaged", which is thoroughly misleading. Releases are signed and notarized and skip this entirely; if you have an unsigned development build, use one of the two routes below.
+A "damaged" warning can result from an incomplete download, signature verification, or a system security check; the message alone does not establish that a package is safe. First verify the download source, signing status, and integrity information in the corresponding release notes, and download the package again if needed. Historical releases, development builds, and current release requirements can differ. This page does not promise that every official package is signed and notarized, or that signed software can never be blocked. Consider the operations below only for a trusted unsigned build whose release notes explicitly call for them; do not bypass system checks when the source or integrity is uncertain.
 
 **Option 1: the script that ships with the build**
 
@@ -99,11 +99,11 @@ On ARM64 machines, use the corresponding `Linux-arm64` file.
 If you want to modify the code, debug the engine, or just use the CLI in a terminal:
 
 ```bash
-git clone https://github.com/NanmiCoder/cc-haha.git
-cd cc-haha
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git
+cd EchoFlow-ClaudeCode
 bun install
 cp .env.example .env
-./bin/claude-haha
+./bin/echoflow-code
 ```
 
 Requires [Bun](https://bun.sh) and Git. This runs the CLI only; for building the desktop app and configuring the local server, see [Command line](../cli/index.md).

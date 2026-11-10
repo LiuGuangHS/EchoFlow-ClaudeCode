@@ -75,6 +75,12 @@ bun run quality:smoke --provider-model <provider:model>
 
 引入或修改第三方代码时，保留原许可及版权通知，并说明来源。不要把已有第三方许可改成项目当前许可。
 
-## 更多
+## 规范入口与外部参考
 
-完整质量门禁、覆盖率、回归测试和跨边界安全规范见 [贡献指南](docs/internals/contributing.md) 与[执行、数据与信任边界](docs/internals/execution-boundaries.md)；`AGENTS.md` 仅保留 Agent 的高信号入口与路由。
+完整质量门禁、覆盖率、回归测试和跨边界安全规范见 [贡献指南](docs/internals/contributing.md) 与[执行、数据与信任边界](docs/internals/execution-boundaries.md)；`AGENTS.md` 仅保留 Agent 的高信号入口与路由。目录级规则从根 [AGENTS.md](AGENTS.md) 进入，再按改动区域阅读 `src/`、`desktop/`、`adapters/`、`mobile/`、`site/`、`docs/` 和 `.github/` 下的适用文件；Issue 路由流程见 [.agents/workflows/issue-router.md](.agents/workflows/issue-router.md)。
+
+外部代码、上游实现和示例按根规范学习、参考、合法复用并适配，必须核对来源、许可证、适配范围和回归证据，不默认通过 merge 同步外部仓库；项目内部正常分支集成仍允许。文档、代码和测试冲突时，应结合用户明确要求、已发布行为、版本历史和验证证据查明原因，不能仅以当前代码和测试一致作为正确依据。
+
+`native/agent-desktop/AGENTS.md` 是本仓维护的第三方模块开发指导，可在保留来源、归属、链接、标识符和许可证义务的前提下等义中文化；修改记录见其文件说明和 `native/agent-desktop/PATCHES.md`。Apache-2.0 第 2 条允许制作衍生作品，第 4 条要求随附许可证、显著标注修改并保留相关通知，并未要求开发指导永远保持英文。第三方原始许可证、NOTICE 和来源记录保留原文，不因指导文档翻译而改写。
+
+现行规范还包括[移动端发布](mobile/RELEASING.md)、[桌面组件规范](desktop/src/components/AGENTS.md)、[桌面设计规范](DESIGN.md)，以及 [Harness 开发与升级](harness/README.md)和[运行时层契约与扩展](src/server/runtime/README.md)中的适用约定；设计快照和历史审计不是默认现行规则。`docs/en/` 的英文产品镜像、历史发布资料和第三方许可证不属于规范中文化范围。

@@ -7,9 +7,9 @@ order: 1
 
 # 下载与安装
 
-装完就能用，不需要另外安装 Node.js、Python 或 Claude Code——CLI 内核和文件搜索用的 ripgrep 都已经打进安装包里了。
+装完就能用，不需要另外安装 Node.js、Python 或任何外部命令行工具——CLI 内核和文件搜索用的 ripgrep 都已经打进安装包里了。
 
-产品名称统一为 **cc-haha**。现有安装包、已安装的应用和系统进程可能仍显示旧名称 `Claude Code Haha`；下面的文件名和命令按实际发布包保留。
+产品名称统一为 **EchoFlow Code**。现有安装包、已安装的应用和系统进程可能仍显示旧名称；下面的文件名和命令按实际发布包保留。
 
 ## 挑对安装包
 
@@ -26,17 +26,17 @@ order: 1
 
 不确定自己是哪种架构：macOS 看「关于本机」里的芯片型号，Windows 看「设置 → 系统 → 系统信息」里的系统类型。别只凭机器牌子猜。
 
-名字以 `-update.zip` 结尾的文件和 `latest*.yml` 是应用自动更新用的，不用手动下载。v0.7.6 及更早的版本用的是 `mac-arm64`、`win-x64`、`linux-x86_64` 这类旧文件名。
+名字以 `-update.zip` 结尾的文件和 `latest*.yml` 是应用自动更新用的，不用手动下载。不同发布批次可能使用不同的系统与架构标记；按对应 EchoFlow 发布页选择文件，不使用上游版本号推断本站安装包名称。
 
 ## macOS
 
 1. 双击 DMG。
-2. 把 cc-haha 拖进「应用程序」。
+2. 把应用拖进「应用程序」。
 3. 从「应用程序」打开。
 
 ### 如果提示「已损坏，无法打开」
 
-这不是文件坏了。macOS 会给从网上下载的安装包打一个隔离标记（quarantine），遇到没有 Apple 签名的应用就直接拒绝启动，报错文案偏偏写成「已损坏」。Releases 里的正式版本都经过签名和公证，不会有这一步；如果你拿到的是未签名的开发构建，用下面两种办法之一放行。
+「已损坏」提示可能与下载不完整、签名验证或系统安全检查有关，不能仅凭提示判断安装包安全。先核对下载来源、对应发布说明中的签名状态和校验信息，必要时重新下载。历史发布、开发构建与当前发布流程的签名要求可能不同，本页不承诺所有正式包都已签名、公证，也不承诺已签名的应用绝不会被系统拦截。只有明确确认来源可信、且发布说明要求处理未签名构建时，才考虑下方操作；来源或完整性不明时不要绕过系统检查。
 
 **办法一：用构建附带的脚本**
 
@@ -99,11 +99,11 @@ ARM64 机器换成对应的 `Linux-arm64` 文件。
 想改代码、调试内核，或者只想在终端里用 CLI，可以从源码起：
 
 ```bash
-git clone https://github.com/NanmiCoder/cc-haha.git
-cd cc-haha
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git
+cd EchoFlow-ClaudeCode
 bun install
 cp .env.example .env
-./bin/claude-haha
+./bin/echoflow-code
 ```
 
 需要 [Bun](https://bun.sh) 和 Git。这条路只跑 CLI，桌面端的构建方式和本地服务参数见 [命令行](../cli/index.md)。
