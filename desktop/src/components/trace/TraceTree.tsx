@@ -183,11 +183,11 @@ function TurnGroup({
             {turnLabel}
           </span>
           {preview && preview !== turnLabel ? (
-            <span className="truncate text-[12.5px] text-[var(--color-text-tertiary)]">{preview}</span>
+            <span className="truncate text-[13px] text-[var(--color-text-tertiary)]">{preview}</span>
           ) : null}
         </button>
         {group.errorCount > 0 ? (
-          <span className="shrink-0 font-mono text-[11px] font-semibold text-[var(--color-error)]">
+          <span className="shrink-0 font-mono text-[11px] text-[var(--color-error)]">
             {group.errorCount}
           </span>
         ) : null}
@@ -229,22 +229,22 @@ function TreeRowButton({ row, selected, onSelect }: { row: TreeRow; selected: bo
       {selected ? <span className="absolute inset-y-0 left-0 w-[3px] bg-[var(--color-brand)]" aria-hidden="true" /> : null}
       <TypeIcon span={span} />
       <span className="flex min-w-0 flex-1 items-baseline gap-2">
-        <span className={`shrink-0 truncate text-[13.5px] font-semibold ${
+        <span className={`shrink-0 truncate text-[13px] font-semibold ${
           selected ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'
         }`}>
           {spanDisplayTitle(span, t)}
         </span>
         {preview ? (
-          <span className="truncate text-[12.5px] text-[var(--color-text-tertiary)]">{preview}</span>
+          <span className="truncate text-[13px] text-[var(--color-text-tertiary)]">{preview}</span>
         ) : null}
         {span.isSidechain ? (
-          <span className="shrink-0 rounded-[var(--radius-sm)] border border-[var(--color-border)] px-1 text-[10px] text-[var(--color-text-tertiary)]">
+          <span className="shrink-0 rounded-[var(--radius-sm)] border border-[var(--color-border)] px-1 text-[11px] text-[var(--color-text-tertiary)]">
             {t('trace.sidechain')}
           </span>
         ) : null}
       </span>
       {tokens ? (
-        <span className="shrink-0 font-mono text-[11.5px] text-[var(--color-text-tertiary)]">{tokens}</span>
+        <span className="shrink-0 font-mono text-[12px] text-[var(--color-text-tertiary)]">{tokens}</span>
       ) : null}
       {duration ? (
         <span className="shrink-0 font-mono text-[12px] text-[var(--color-text-tertiary)]">{duration}</span>

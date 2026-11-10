@@ -485,7 +485,7 @@ it.each(['Away from home', 'Same Wi-Fi'])('prepares the phone before desktop con
   render(<H5AccessSettings />)
   await waitFor(() => expect(enableButton()).not.toBeDisabled())
   fireEvent.click(screen.getByRole('tab', { name: method }))
-  const installation = screen.getByRole('heading', { name: 'Get cc-haha on your phone' })
+  const installation = screen.getByRole('heading', { name: 'Get EchoFlow Code on your phone' })
   const methods = screen.getByRole('tablist', { name: 'Connection method' })
   expect(installation.compareDocumentPosition(methods) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   const desktop = screen.getByRole('heading', { name: 'Then set up this computer' })

@@ -13,6 +13,35 @@ describe('desktop persistence migrations', () => {
     window.localStorage.clear()
   })
 
+  test('migrates legacy appearance keys to canonical keys without overwriting a newer preference', () => {
+    localStorage.setItem('cc-haha-theme', 'light')
+    localStorage.setItem('cc-haha-follow-system-theme', '0')
+    localStorage.setItem('cc-haha-light-theme', 'light')
+    localStorage.setItem('cc-haha-dark-theme', 'ink-blue')
+    localStorage.setItem('echoflow-code-dark-theme', 'dark')
+    runDesktopPersistenceMigrations()
+    expect(localStorage.getItem('echoflow-code-theme')).toBe('warm-classic')
+    expect(localStorage.getItem('echoflow-code-follow-system-theme')).toBe('0')
+    expect(localStorage.getItem('echoflow-code-light-theme')).toBe('warm-classic')
+    expect(localStorage.getItem('echoflow-code-dark-theme')).toBe('dark')
+    expect(localStorage.getItem('cc-haha-theme')).toBe('light')
+    expect(localStorage.getItem('cc-haha-light-theme')).toBe('light')
+    runDesktopPersistenceMigrations()
+    expect(localStorage.getItem('echoflow-code-dark-theme')).toBe('dark')
+  })
+
+  test('normalizes malformed canonical appearance without replacing it with a stale legacy value', () => {
+    localStorage.setItem('cc-haha-theme', 'dark')
+    localStorage.setItem('echoflow-code-theme', 'not-a-theme')
+    localStorage.setItem('echoflow-code-light-theme', 'light')
+    runDesktopPersistenceMigrations()
+    expect(localStorage.getItem('echoflow-code-theme')).toBeNull()
+    expect(localStorage.getItem('echoflow-code-light-theme')).toBe('warm-classic')
+    expect(localStorage.getItem('cc-haha-theme')).toBe('dark')
+    runDesktopPersistenceMigrations()
+    expect(localStorage.getItem('echoflow-code-theme')).toBeNull()
+  })
+
   test('upgrades a frozen schema-6 install with prevent sleep off and preserves existing preferences', () => {
     localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, '6')
     localStorage.setItem('cc-haha-theme', 'ink-blue')
@@ -227,9 +256,10 @@ describe('desktop persistence migrations', () => {
     const report = runDesktopPersistenceMigrations()
 
     expect(report.migratedKeys).toContain('cc-haha-open-tabs')
-    expect(report.migratedKeys).toContain('cc-haha-theme')
+    expect(report.migratedKeys).toContain('echoflow-code-theme')
     expect(window.localStorage.getItem('cc-haha-open-tabs')).toBeNull()
-    expect(window.localStorage.getItem('cc-haha-theme')).toBeNull()
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBeNull()
+    expect(window.localStorage.getItem('cc-haha-theme')).toBe('sepia')
   })
 
   test('preserves the pure white theme as a valid persisted theme', () => {
@@ -249,8 +279,9 @@ describe('desktop persistence migrations', () => {
 
     const report = runDesktopPersistenceMigrations()
 
-    expect(report.migratedKeys).toContain('cc-haha-theme')
-    expect(window.localStorage.getItem('cc-haha-theme')).toBe('warm-classic')
+    expect(report.migratedKeys).toContain('echoflow-code-theme')
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('warm-classic')
+    expect(window.localStorage.getItem('cc-haha-theme')).toBe('light')
   })
 
   test('applies the same rename to the light half of follow-the-system', () => {
@@ -260,8 +291,9 @@ describe('desktop persistence migrations', () => {
 
     const report = runDesktopPersistenceMigrations()
 
-    expect(report.migratedKeys).toContain('cc-haha-light-theme')
-    expect(window.localStorage.getItem('cc-haha-light-theme')).toBe('warm-classic')
+    expect(report.migratedKeys).toContain('echoflow-code-light-theme')
+    expect(window.localStorage.getItem('echoflow-code-light-theme')).toBe('warm-classic')
+    expect(window.localStorage.getItem('cc-haha-light-theme')).toBe('light')
   })
 
   test('preserves every palette introduced by the redesign', () => {
@@ -285,12 +317,15 @@ describe('desktop persistence migrations', () => {
 
     const report = runDesktopPersistenceMigrations()
 
-    expect(report.migratedKeys).toContain('cc-haha-follow-system-theme')
-    expect(report.migratedKeys).toContain('cc-haha-light-theme')
-    expect(report.migratedKeys).toContain('cc-haha-dark-theme')
-    expect(window.localStorage.getItem('cc-haha-follow-system-theme')).toBeNull()
-    expect(window.localStorage.getItem('cc-haha-light-theme')).toBeNull()
-    expect(window.localStorage.getItem('cc-haha-dark-theme')).toBeNull()
+    expect(report.migratedKeys).toContain('echoflow-code-follow-system-theme')
+    expect(report.migratedKeys).toContain('echoflow-code-light-theme')
+    expect(report.migratedKeys).toContain('echoflow-code-dark-theme')
+    expect(window.localStorage.getItem('echoflow-code-follow-system-theme')).toBeNull()
+    expect(window.localStorage.getItem('echoflow-code-light-theme')).toBeNull()
+    expect(window.localStorage.getItem('echoflow-code-dark-theme')).toBeNull()
+    expect(window.localStorage.getItem('cc-haha-follow-system-theme')).toBe('yes')
+    expect(window.localStorage.getItem('cc-haha-light-theme')).toBe('ink-blue')
+    expect(window.localStorage.getItem('cc-haha-dark-theme')).toBe('celadon')
   })
 
   test('preserves a valid follow-the-system flag and both ground preferences', () => {
@@ -382,7 +417,7 @@ describe('desktop persistence migrations', () => {
     expect(report.migratedKeys).toEqual(expect.arrayContaining([
       'cc-haha-open-tabs',
       'cc-haha-session-runtime',
-      'cc-haha-theme',
+      'echoflow-code-theme',
       'cc-haha-locale',
       'cc-haha-app-zoom',
       DESKTOP_PERSISTENCE_VERSION_KEY,

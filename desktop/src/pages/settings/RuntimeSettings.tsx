@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/Button'
-import { SettingsPageHeader, SettingsPill, SettingsSection } from '@/components/settings/SettingsSection'
+import { SettingsPageHeader, SettingsSection } from '@/components/settings/SettingsSection'
 import { getDesktopHost } from '@/lib/desktopHost'
 import type { DeepSeekHarnessStatus, RuntimeDiscoveryResult, RuntimeInstallation } from '@/lib/desktopHost/types'
 import { useTranslation } from '@/i18n'
 import { isDesktopRuntime } from '@/lib/desktopRuntime'
 import { RuntimeBehaviorSettings } from './RuntimeBehaviorSettings'
+import { AgentAutomationSettings } from '@/components/settings/AgentAutomationSettings'
+import { CliRuntimeSelector } from '@/components/controls/CliRuntimeSelector'
 
 type ClaudeCodeRuntimeId = 'bundled' | 'installed'
 
@@ -24,6 +26,7 @@ export function RuntimeSettings() {
     <div className="w-full min-w-0">
       <SettingsPageHeader title={t('settings.runtime.title')} description={t('settings.runtime.description')} />
       <RuntimeBehaviorSettings />
+      <AgentAutomationSettings />
       <RuntimeDiscoveryCard />
       <ClaudeCodeRuntimeCard />
       <DeepSeekHarnessCard />
@@ -198,12 +201,13 @@ function ClaudeCodeRuntimeCard() {
   return (
     <SettingsSection title={t('settings.runtime.claude.title')} description={t('settings.runtime.claude.description')}>
       <div className="flex flex-wrap gap-2">
-        <SettingsPill selected={runtime === 'bundled'} disabled={saving} onClick={() => void setChoice('bundled')}>
-          {t('settings.runtime.managed')}
-        </SettingsPill>
-        <SettingsPill selected={runtime === 'installed'} disabled={saving || !hasInstalledRuntime} onClick={() => void setChoice('installed')}>
-          {t('settings.runtime.external')}
-        </SettingsPill>
+        <CliRuntimeSelector
+          effectiveRuntime={runtime}
+          requestedRuntime={runtime}
+          status={saving ? 'pending' : error ? 'failed' : 'applied'}
+          hasInstalledRuntime={hasInstalledRuntime}
+          onChange={(next) => void setChoice(next)}
+        />
         <Button size="sm" variant="secondary" disabled={saving} loading={saving} onClick={() => void chooseInstalled()}>
           {t('settings.runtime.chooseExternal')}
         </Button>

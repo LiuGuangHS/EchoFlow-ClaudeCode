@@ -71,7 +71,7 @@ export function Section({
             strokeWidth={2}
             className={`shrink-0 text-[var(--color-text-tertiary)] transition-transform ${open ? 'rotate-90' : ''}`}
           />
-          <span className="truncate text-[14px] font-bold text-[var(--color-text-primary)]">
+          <span className="truncate text-[14px] font-semibold text-[var(--color-text-primary)]">
             {title}
           </span>
           {badge !== undefined ? (

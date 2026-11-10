@@ -44,6 +44,9 @@ function quitFixture(failingStep?: string, rejectServer = false, rejectPublicAcc
     petWindowController: { dispose: cleanup('pet') },
     p2pTerminator: { dispose: () => { cleanup('p2p')(); return p2pClosed } },
     workspaceBrowserService: null,
+    deepSeekHarnessWindow: null,
+    deepSeekHarnessRuntime: null,
+    siteNetworkBridge: null,
     publicAccessManager: {
       dispose: () => {
         cleanup('publicAccess')()

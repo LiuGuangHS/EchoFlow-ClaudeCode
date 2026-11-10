@@ -448,7 +448,7 @@ function TraceHeader({
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2.5">
             <h1
-              className="min-w-0 truncate text-[17px] font-bold tracking-tight text-[var(--color-text-primary)]"
+              className="min-w-0 truncate text-[18px] font-semibold tracking-tight text-[var(--color-text-primary)]"
               style={{ fontFamily: 'var(--font-headline)' }}
               title={title}
             >
@@ -457,7 +457,7 @@ function TraceHeader({
             <LiveBadge />
             {diagnosisStatus ? <DiagnosisDot status={diagnosisStatus} /> : null}
           </div>
-          <div className="mt-1 flex min-w-0 items-center gap-1.5 font-mono text-[12.5px] text-[var(--color-text-tertiary)]">
+          <div className="mt-1 flex min-w-0 items-center gap-1.5 font-mono text-[13px] text-[var(--color-text-tertiary)]">
             <span className="max-w-[280px] truncate">{sessionId}</span>
             {updatedAt ? (
               <>
@@ -555,7 +555,7 @@ function DiagnosisBanner({
   return (
     <section className={`flex shrink-0 items-center gap-2.5 border-b px-6 py-2 ${toneClass}`} data-testid="trace-diagnosis">
       <StatusPill status={diagnosis.status === 'blocked' ? 'error' : 'pending'} />
-      <span className="min-w-0 truncate text-[12.5px] font-semibold">
+      <span className="min-w-0 truncate text-[13px] font-semibold">
         {diagnosisReasonLabel(diagnosis.reason, t)}
       </span>
       {focusSpan ? (

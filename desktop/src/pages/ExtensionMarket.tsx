@@ -9,11 +9,13 @@ import { EXTENSION_PAGE_COLUMN } from '@/components/market/pageLayout'
 import { Connectors } from '@/pages/Connectors'
 import { Market } from '@/pages/Market'
 import { InstalledSkills } from '@/pages/InstalledSkills'
+import { MarketplaceBrowser } from '@/components/plugins/MarketplaceBrowser'
 
 export function ExtensionMarket() {
   const t = useTranslation()
   const [section, setSection] = useState<'plugins' | 'skills'>('plugins')
   const [managing, setManaging] = useState(false)
+  const [legacyMarketplace, setLegacyMarketplace] = useState(false)
   const [focusConnectorId, setFocusConnectorId] = useState<string>()
   const pendingTarget = useUIStore(state => state.pendingMarketTarget)
   // The composer's + menu opens the market at a section, or straight at one
@@ -22,6 +24,7 @@ export function ExtensionMarket() {
     if (!pendingTarget) return
     setSection(pendingTarget.section)
     setManaging(false)
+    setLegacyMarketplace(false)
     setFocusConnectorId(pendingTarget.connectorId)
     useUIStore.getState().setPendingMarketTarget(null)
   }, [pendingTarget])
@@ -40,7 +43,10 @@ export function ExtensionMarket() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <SegmentedControl label={t('extensions.sections')} value={section} onChange={setSection} items={[{ value: 'plugins', label: t('extensions.plugins') }, { value: 'skills', label: t('extensions.skills') }]} />
-          <Button size="base" variant="secondary" icon={managing ? <ArrowLeft size={14} strokeWidth={1.75} aria-hidden="true" /> : <PackageCheck size={14} strokeWidth={1.75} aria-hidden="true" />} onClick={() => setManaging(value => !value)}>
+          {!managing && section === 'plugins' && <Button size="base" variant="secondary" onClick={() => setLegacyMarketplace(value => !value)}>
+            {legacyMarketplace ? t('extensions.plugins') : t('settings.plugins.marketplacesTitle')}
+          </Button>}
+          <Button size="base" variant="secondary" icon={managing ? <ArrowLeft size={14} strokeWidth={1.75} aria-hidden="true" /> : <PackageCheck size={14} strokeWidth={1.75} aria-hidden="true" />} onClick={() => { setManaging(value => !value); setLegacyMarketplace(false) }}>
             {managing ? t('extensions.browse') : myLabel}
           </Button>
         </div>
@@ -52,7 +58,11 @@ export function ExtensionMarket() {
           previous featured row is a change to the skills branch below. */}
       {managing
         ? section === 'plugins' ? <Connectors key="installed" management /> : <InstalledSkills />
-        : section === 'plugins' ? <Connectors key="catalog" mode="plugins" focusConnectorId={focusConnectorId} onFocusHandled={() => setFocusConnectorId(undefined)} /> : <Market />}
+        : section === 'plugins'
+          ? legacyMarketplace
+            ? <MarketplaceBrowser />
+            : <Connectors key="catalog" mode="plugins" focusConnectorId={focusConnectorId} onFocusHandled={() => setFocusConnectorId(undefined)} />
+          : <Market />}
     </div>
   </section>
 }

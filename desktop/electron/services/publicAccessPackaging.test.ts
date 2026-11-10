@@ -40,13 +40,18 @@ describe('remote access packaging', () => {
   it.each(['release-desktop.yml', 'build-desktop-dev.yml'])('%s installs native addons for cross-architecture packages', workflow => {
     const source = parse(readFileSync(path.join(repositoryRoot, '.github', 'workflows', workflow), 'utf8'))
     const jobs = Object.values(source.jobs) as { steps?: { name?: string, run?: string, 'working-directory'?: string }[] }[]
-    const desktopInstalls = jobs.flatMap(job => job.steps ?? []).filter(step => step.name === 'Install desktop dependencies')
-    expect(desktopInstalls.length).toBeGreaterThan(0)
-    for (const step of desktopInstalls) {
-      expect(step['working-directory']).toBe('desktop')
-      // Cross-architecture packages still need their other native dependencies
-      // installed before packaging because npmRebuild is disabled.
-      expect(step.run).toContain('--cpu="*"')
+    // Runtime/UI verification jobs install only for the host architecture. The
+    // sidecar build jobs produce cross-architecture packages with npmRebuild off.
+    const packagingJobs = jobs.filter(job => job.steps?.some(step => step.name === 'Build sidecars'))
+    expect(packagingJobs.length).toBeGreaterThan(0)
+    for (const job of packagingJobs) {
+      const steps = job.steps ?? []
+      const install = steps.findIndex(step => step.name === 'Install desktop dependencies')
+      const build = steps.findIndex(step => step.name === 'Build sidecars')
+      expect(install).toBeGreaterThanOrEqual(0)
+      expect(install).toBeLessThan(build)
+      expect(steps[install]?.['working-directory']).toBe('desktop')
+      expect(steps[install]?.run).toContain('--cpu="*"')
     }
   })
 })

@@ -6,6 +6,7 @@ import { useUIStore } from '@/stores/uiStore'
 vi.mock('@/i18n', () => ({ useTranslation: () => (key: string) => key }))
 vi.mock('@/pages/Connectors', () => ({ Connectors: ({ mode, embedded, externalQuery, installedFilter, management, focusConnectorId }: { mode?: string, management?: boolean, embedded?: boolean, externalQuery?: string, installedFilter?: string, focusConnectorId?: string }) => <div data-testid={`catalog-${mode || "plugins"}`} data-management={management} data-embedded={embedded} data-query={externalQuery} data-filter={installedFilter} data-focus={focusConnectorId} /> }))
 vi.mock('@/pages/InstalledSkills', () => ({ InstalledSkills: () => <div data-testid="installed-skills" /> }))
+vi.mock('@/components/plugins/MarketplaceBrowser', () => ({ MarketplaceBrowser: () => <div data-testid="legacy-marketplace" /> }))
 vi.mock('@/pages/Market', () => ({ Market: ({ featured }: { featured: React.ReactNode }) => <div data-testid="existing-skill-market">{featured}</div> }))
 it('defaults to plugins and shows only the skill market on the skills tab', () => {
   render(<ExtensionMarket />)
@@ -20,6 +21,20 @@ it('defaults to plugins and shows only the skill market on the skills tab', () =
   expect(screen.queryByTestId('catalog-plugins')).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('radio', { name: 'extensions.plugins' }))
   expect(screen.getByTestId('catalog-plugins')).toBeInTheDocument()
+})
+
+it('保留连接器目录并让已注册市场浏览入口可达', () => {
+  render(<ExtensionMarket />)
+  expect(screen.getByTestId('catalog-plugins')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'settings.plugins.marketplacesTitle' }))
+  expect(screen.getByTestId('legacy-marketplace')).toBeInTheDocument()
+  expect(screen.queryByTestId('catalog-plugins')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'extensions.plugins' }))
+  expect(screen.getByTestId('catalog-plugins')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'settings.plugins.marketplacesTitle' }))
+  act(() => useUIStore.getState().setPendingMarketTarget({ section: 'plugins', connectorId: 'github' }))
+  expect(screen.queryByTestId('legacy-marketplace')).not.toBeInTheDocument()
+  expect(screen.getByTestId('catalog-plugins')).toHaveAttribute('data-focus', 'github')
 })
 
 it('opens installed management from the current section without adding another navigation row', () => {

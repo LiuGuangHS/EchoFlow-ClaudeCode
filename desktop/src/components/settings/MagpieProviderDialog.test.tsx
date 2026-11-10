@@ -111,7 +111,7 @@ describe('connecting Magpie', () => {
     expect(qwen).toHaveTextContent('Context unknown')
     expect(screen.queryByRole('note')).not.toBeInTheDocument()
     fireEvent.click(qwen)
-    expect(screen.getByRole('note')).toHaveTextContent('cc-haha assumes 200K')
+    expect(screen.getByRole('note')).toHaveTextContent('EchoFlow Code assumes 200K')
   })
 
   it('offers to open Magpie when it is not running, and says so plainly where it cannot', async () => {

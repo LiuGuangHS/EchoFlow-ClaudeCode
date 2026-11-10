@@ -3,7 +3,7 @@ import '@testing-library/jest-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TraceList } from './TraceList'
 import { tracesApi } from '../api/traces'
-import { SETTINGS_TAB_ID, useTabStore } from '../stores/tabStore'
+import { useTabStore } from '../stores/tabStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useUIStore } from '../stores/uiStore'
 import type { TraceSessionList } from '../types/trace'
@@ -224,7 +224,13 @@ describe('TraceList', () => {
       ...traceList,
       traces: [{
         ...traceList.traces[0]!,
-        session: { ...traceList.traces[0]!.session, title: 'New Session' },
+        session: {
+          ...(traceList.traces[0]!.session ?? {}),
+          id: traceList.traces[0]!.session?.id ?? '',
+          projectPath: traceList.traces[0]!.session?.projectPath ?? '',
+          workDir: traceList.traces[0]!.session?.workDir ?? null,
+          title: 'New Session',
+        },
       }],
     })
 

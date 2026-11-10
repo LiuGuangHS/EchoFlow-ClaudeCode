@@ -40,7 +40,7 @@ import { useOpenTargetStore } from '../../stores/openTargetStore'
 import { isDesktopRuntime } from '../../lib/desktopRuntime'
 import { getDesktopHost } from '../../lib/desktopHost'
 import { getDesktopNotificationPermission, notifyDesktop, getDesktopNotificationPlatform, openDesktopNotificationSettings, requestDesktopNotificationPermission, type DesktopNotificationPermission } from '../../lib/desktopNotifications'
-import { isValidHttpProxyUrl } from '../settings/shared'
+import { isValidHttpProxyUrl, WEB_SEARCH_MODE_VALUES, WEB_SEARCH_MODE_LABEL_KEYS } from '../settings/shared'
 import { isTouchH5Document } from '../../lib/touchH5'
 import { MODEL_REASONING_EFFORTS } from '../../../../src/shared/modelReasoning'
 import { AUTO_QUESTION_TIMEOUT_OPTIONS } from '../../../../src/shared/autoQuestionSettings'
@@ -353,14 +353,10 @@ export function GeneralSettings() {
   const LIGHT_THEMES = THEMES.filter(({ value }) => isLightThemeMode(value))
   const DARK_THEMES = THEMES.filter(({ value }) => isDarkThemeMode(value))
 
-  const WEB_SEARCH_MODES: Array<{ value: WebSearchMode; label: string }> = [
-    { value: 'auto', label: t('settings.general.webSearch.mode.auto') },
-    { value: 'tavily', label: t('settings.general.webSearch.mode.tavily') },
-    { value: 'brave', label: t('settings.general.webSearch.mode.brave') },
-    { value: 'deepseek', label: t('settings.general.webSearch.mode.deepseek') },
-    { value: 'anthropic', label: t('settings.general.webSearch.mode.anthropic') },
-    { value: 'disabled', label: t('settings.general.webSearch.mode.disabled') },
-  ]
+  const WEB_SEARCH_MODES: Array<{ value: WebSearchMode; label: string }> = WEB_SEARCH_MODE_VALUES.map((value) => ({
+    value,
+    label: t(WEB_SEARCH_MODE_LABEL_KEYS[value]),
+  }))
 
   const NETWORK_PROXY_MODES: Array<{ value: NetworkProxyMode; label: string; description: string }> = [
     {
@@ -510,7 +506,7 @@ export function GeneralSettings() {
   const networkProxyError =
     networkDraft.proxy.mode === 'manual' && !networkProxyUrl
       ? t('settings.general.networkProxyUrlRequired')
-      : networkDraft.proxy.mode === 'manual' && !isValidHttpProxyUrl(networkProxyUrl)
+      : networkDraft.proxy.mode === 'manual' && !isValidHttpProxyUrl(networkProxyUrl, true)
         ? t('settings.general.networkProxyUrlInvalid')
         : null
   const timeoutSeconds = Math.round(networkDraft.aiRequestTimeoutMs / 1000)

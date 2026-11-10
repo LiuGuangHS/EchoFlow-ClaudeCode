@@ -79,7 +79,7 @@ describe('VoiceVocabularySettings', () => {
     expect(title()).toHaveTextContent('Personal vocabulary · 0')
     expect(title()).toHaveTextContent('Takes effect once AI correction is on')
     expect(screen.getByText('No words yet')).toBeInTheDocument()
-    expect(screen.getByText(/such as a project name like cc-haha/)).toBeInTheDocument()
+    expect(screen.getByText(/such as a project name like EchoFlow Code/)).toBeInTheDocument()
     // The actions stay available before correction is on.
     expect(screen.getByRole('button', { name: 'Add' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Paste list' })).toBeEnabled()

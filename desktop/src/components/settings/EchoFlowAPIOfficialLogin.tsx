@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { ExternalLink, Eye, EyeOff, Plus, RefreshCw, Unlink } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { CirclePlus, ExternalLink, Eye, EyeOff, Plus, RefreshCw, Unlink } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import {
@@ -48,6 +48,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
   const t = useTranslation()
   const { providers } = useProviderStore()
   const [accounts, setAccounts] = useState<Accounts>(EMPTY_ACCOUNTS)
+  const accountVersions = useRef<Record<EchoFlowEndpoint, number>>({ main: 0, dedicated: 0 })
   const [selectedEndpoint, setSelectedEndpoint] = useState<EchoFlowEndpoint>('main')
   const [credentials, setCredentials] = useState<Record<EchoFlowEndpoint, Credentials>>({
     main: { userId: '', managementToken: '' },
@@ -86,6 +87,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
       // The restore refetch can overlap the initial read; only the newest read
       // may write state or a late first response would undo the signed-in card.
       const seq = ++loadSeq
+      const versions = { ...accountVersions.current }
       return echoflowApi.getAccounts()
         .then(({ account: legacyAccount, accounts: loadedAccounts }) => {
           if (!active || seq !== loadSeq) return
@@ -93,15 +95,19 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
             main: legacyAccount,
             dedicated: null,
           }
-          setAccounts(nextAccounts)
-          onBindingChange?.(Boolean(nextAccounts.main || nextAccounts.dedicated))
+          const mainUnchanged = versions.main === accountVersions.current.main
+          const dedicatedUnchanged = versions.dedicated === accountVersions.current.dedicated
+          setAccounts((current) => ({
+            main: mainUnchanged ? nextAccounts.main : current.main,
+            dedicated: dedicatedUnchanged ? nextAccounts.dedicated : current.dedicated,
+          }))
           setCredentials((current) => ({
             main: {
-              userId: nextAccounts.main?.userId ?? current.main.userId,
+              userId: (mainUnchanged && nextAccounts.main?.userId) || current.main.userId,
               managementToken: current.main.managementToken,
             },
             dedicated: {
-              userId: nextAccounts.dedicated?.userId ?? current.dedicated.userId,
+              userId: (dedicatedUnchanged && nextAccounts.dedicated?.userId) || current.dedicated.userId,
               managementToken: current.dedicated.managementToken,
             },
           }))
@@ -120,7 +126,11 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
       })
       .catch(() => {})
     return () => { active = false }
-  }, [onBindingChange])
+  }, [])
+
+  useEffect(() => {
+    onBindingChange?.(Boolean(accounts.main || accounts.dedicated))
+  }, [accounts, onBindingChange])
 
   const updateCredentials = (patch: Partial<Credentials>) => {
     setCredentials((current) => ({
@@ -139,8 +149,8 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
         currentCredentials.userId,
         currentCredentials.managementToken,
       )
+      accountVersions.current[selectedEndpoint]++
       setAccounts((current) => ({ ...current, [selectedEndpoint]: savedAccount }))
-      onBindingChange?.(true)
       setCredentials((current) => ({
         ...current,
         [selectedEndpoint]: { userId: savedAccount.userId, managementToken: '' },
@@ -164,8 +174,8 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
       const outcome = await getDesktopHost().echoFlow.openLogin(endpoint)
       if (outcome === 'authenticated') {
         const { account: signedIn } = await echoflowApi.refreshAccount(endpoint)
+        accountVersions.current[endpoint]++
         setAccounts((current) => ({ ...current, [endpoint]: signedIn }))
-        onBindingChange?.(true)
       } else if (outcome === 'failed') {
         setError(t('echoflowApiOfficialLogin.signInFailed'))
       }
@@ -182,6 +192,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
     setError(null)
     try {
       const { account: refreshedAccount } = await echoflowApi.refreshAccount(selectedEndpoint)
+      accountVersions.current[selectedEndpoint]++
       setAccounts((current) => ({ ...current, [selectedEndpoint]: refreshedAccount }))
     } catch (caught) {
       setError(withReason(t('echoflowApiOfficialLogin.refreshFailed'), caught))
@@ -209,11 +220,8 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
       } else {
         await echoflowApi.disconnectAccount(selectedEndpoint)
       }
-      setAccounts((current) => {
-        const next = { ...current, [selectedEndpoint]: null }
-        onBindingChange?.(Boolean(next.main || next.dedicated))
-        return next
-      })
+      accountVersions.current[selectedEndpoint]++
+      setAccounts((current) => ({ ...current, [selectedEndpoint]: null }))
       setCredentials((current) => ({
         ...current,
         [selectedEndpoint]: { userId: '', managementToken: '' },
@@ -234,6 +242,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
     setNotice(null)
     try {
       const { account: refreshed } = await echoflowApi.createToken(selectedEndpoint)
+      accountVersions.current[selectedEndpoint]++
       setAccounts((current) => ({ ...current, [selectedEndpoint]: refreshed }))
       setNotice(t('echoflowApiOfficialLogin.tokenCreated'))
     } catch (caught) {
@@ -440,7 +449,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
                     {alreadyAdded ? (
                       <span className="shrink-0 text-xs text-[var(--color-text-tertiary)]">{t('echoflowApiOfficialLogin.added')}</span>
                     ) : (
-                      <span className="material-symbols-outlined shrink-0 text-[18px] text-[var(--color-brand)]">add_circle</span>
+                      <CirclePlus size={18} strokeWidth={1.75} className="shrink-0 text-[var(--color-brand)]" aria-hidden="true" />
                     )}
                   </button>
                 )

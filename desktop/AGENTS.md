@@ -1,16 +1,16 @@
-# Desktop Instructions
+# 桌面端规范
 
-These rules apply to `desktop/` changes in addition to the root instructions.
+这些规则适用于 `desktop/` 改动，并叠加根目录规则。
 
-- Before adding or editing anything under `desktop/src/components/`, read `desktop/src/components/AGENTS.md`. It is the authoritative index of reusable components, the placement rules for new ones, and the required style/i18n/a11y/test conventions. Do not add a component that duplicates one listed there, and do not add new files to `components/shared/` or `components/common/`.
-- Reuse the existing desktop store/API patterns. Use `lucide-react` for common icons and keep operational UI dense, stable, and readable.
-- A new feature panel is its own module from the start. `Settings.tsx` reached 4639 lines holding seven unrelated panels before it was split into `pages/settings/*`; the four most-repeatedly-fixed files in the repository are also its four largest. Put a panel in its own file, and put anything two panels share in an explicit shared module rather than leaving it in the page that happens to host both.
-- Wire the component into its route in the same change that creates it. `src/__tests__/componentReachability.test.ts` fails on any `.tsx` no entry point can reach. Three components once lost their last import, and the coverage gate read "zero coverage" as "needs a test" — someone wrote suites for two of them, and a UI redesign then restyled all three.
-- Every translation key a component uses must be added to all five files in `src/i18n/locales/`, including keys chosen inside an expression (`t(count === 1 ? 'a' : 'b')`) — a literal-only scan misses those in both directions.
-- Add focused Vitest or Testing Library coverage for UI, store, or API behavior. Run it first, then follow `bun run check:impact`; desktop product changes normally select `bun run check:desktop`.
-- Chat transport, WebSocket lifecycle, first-turn runtime selection, reconnect, or session changes also require the offline `bun run check:chat-contract` when selected, plus `bun run check:agent-flow` for the end-to-end session/tool/permission/reconnect protocol.
-- Permission dialog, tool-call rendering, or approval-flow changes should also run `bun run check:desktop-ui-smoke`: it exercises the real dialog in a real browser against the mock runtime, with no provider.
-- `desktop/electron/**` is not covered by `desktop/tsconfig.json`, so `check:desktop` cannot prove it still compiles. Changing a `desktop/src/**` module that the Electron host imports selects `bun run check:native` through the import graph — run it.
-- Electron host, sidecar, packaging, or version changes require `bun run check:native` when selected.
-- Validate user-visible flows in a real browser/desktop session when unit tests cannot prove layout or cross-process behavior, and record the path exercised.
-- `localStorage` or native settings shape changes require a migration, an old fixture, and `bun run check:persistence-upgrade`.
+- 在 `desktop/src/components/` 下新增或编辑内容前，先阅读 `desktop/src/components/AGENTS.md`。它是可复用组件、放置规则以及 style/i18n/a11y/test 约定的权威索引。不要添加其中已列组件的重复实现，也不要向 `components/shared/` 或 `components/common/` 添加新文件。
+- 复用现有桌面 store/API 模式。通用图标使用 `lucide-react`，保持操作型 UI 紧凑、稳定且易读。
+- 新功能面板从一开始就应是独立模块。`Settings.tsx` 曾在 4639 行中承载七个无关面板，仓库中最常被修复的四个文件也正是最大的四个文件。将面板放入独立文件；两个面板共享的内容放入明确的 shared 模块，不要留在碰巧承载它们的页面中。
+- 创建组件的同一改动必须把它接入路由。`src/__tests__/componentReachability.test.ts` 会对任何没有入口可达的 `.tsx` 失败。曾有三个组件失去最后一个 import，覆盖率门禁把“零覆盖”当成“需要测试”，于是有人为其中两个写了套件，之后 UI 重设计又重做了三个。
+- 组件使用的每个翻译 key 都必须加入 `src/i18n/locales/` 的五个文件，包括表达式内选择的 key（`t(count === 1 ? 'a' : 'b')`）；仅扫描字面量会在两个方向上漏掉它们。
+- 为 UI、store 或 API 行为添加定向 Vitest 或 Testing Library 覆盖。先运行它，再执行 `bun run check:impact`；桌面产品改动通常会选中 `bun run check:desktop`。
+- 聊天传输、WebSocket 生命周期、首回合 runtime 选择、重连或 session 改动，在选中时还必须运行离线 `bun run check:chat-contract`，以及端到端 session/tool/permission/reconnect 协议检查 `bun run check:agent-flow`。
+- 权限对话框、工具调用渲染或审批流程改动还应运行 `bun run check:desktop-ui-smoke`：它在无 provider 的 mock runtime 上、真实浏览器中执行真实对话框。
+- `desktop/electron/**` 不在 `desktop/tsconfig.json` 覆盖范围内，因此 `check:desktop` 不能证明它仍可编译。修改被 Electron host 导入的 `desktop/src/**` 模块时，导入图会选择 `bun run check:native`；应运行它。
+- Electron host、sidecar、打包或版本改动在选中时需要 `bun run check:native`。
+- 单元测试无法证明布局或跨进程行为时，应在真实浏览器 / 桌面会话中验证用户可见流程，并记录实际路径。
+- `localStorage` 或原生设置形状变化需要迁移、旧 fixture 和 `bun run check:persistence-upgrade`。

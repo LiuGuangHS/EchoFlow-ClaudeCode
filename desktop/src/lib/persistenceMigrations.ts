@@ -12,8 +12,14 @@ import {
 
 import { CHAT_APPEARANCE_STORAGE_KEY, migrateChatAppearance } from './chatAppearance'
 import { PREVENT_SLEEP_STORAGE_KEY } from './preventSleepPreference'
+import {
+  THEME_STORAGE_KEY as CURRENT_THEME_STORAGE_KEY,
+  FOLLOW_SYSTEM_THEME_STORAGE_KEY as CURRENT_FOLLOW_SYSTEM_THEME_STORAGE_KEY,
+  LIGHT_THEME_STORAGE_KEY as CURRENT_LIGHT_THEME_STORAGE_KEY,
+  DARK_THEME_STORAGE_KEY as CURRENT_DARK_THEME_STORAGE_KEY,
+} from '../theme/systemAppearance'
 
-export const CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION = 7
+export const CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION = 8
 export const DESKTOP_PERSISTENCE_VERSION_KEY = 'cc-haha.persistence.schemaVersion'
 
 type DesktopMigrationReport = {
@@ -386,16 +392,26 @@ export function runDesktopPersistenceMigrations(storage: StorageLike | null = ge
   runMigrationStep(report, TAB_STORAGE_KEY, () => migrateTabs(storage, report))
   runMigrationStep(report, ACTIVE_SETTINGS_TAB_STORAGE_KEY, () => migrateActiveSettingsTab(storage, report))
   runMigrationStep(report, SESSION_RUNTIME_STORAGE_KEY, () => migrateSessionRuntime(storage, report))
-  runMigrationStep(report, THEME_STORAGE_KEY, () =>
-    migrateThemeKey(storage, THEME_STORAGE_KEY, THEME_MODES, report))
-  // A junk value here would otherwise be read as "never chosen", which is what
-  // tells a fresh install to follow the system.
-  runMigrationStep(report, FOLLOW_SYSTEM_THEME_STORAGE_KEY, () =>
-    normalizeEnumKey(storage, FOLLOW_SYSTEM_THEME_STORAGE_KEY, ['0', '1'], report))
-  runMigrationStep(report, LIGHT_THEME_STORAGE_KEY, () =>
-    migrateThemeKey(storage, LIGHT_THEME_STORAGE_KEY, LIGHT_THEME_MODES, report))
-  runMigrationStep(report, DARK_THEME_STORAGE_KEY, () =>
-    migrateThemeKey(storage, DARK_THEME_STORAGE_KEY, DARK_THEME_MODES, report))
+  // Copy legacy appearance values before normalizing only the current keys.
+  // Legacy bytes remain intact for downgrade and recovery.
+  for (const [legacyKey, currentKey, allowed] of [
+    [THEME_STORAGE_KEY, CURRENT_THEME_STORAGE_KEY, THEME_MODES],
+    [FOLLOW_SYSTEM_THEME_STORAGE_KEY, CURRENT_FOLLOW_SYSTEM_THEME_STORAGE_KEY, ['0', '1']],
+    [LIGHT_THEME_STORAGE_KEY, CURRENT_LIGHT_THEME_STORAGE_KEY, LIGHT_THEME_MODES],
+    [DARK_THEME_STORAGE_KEY, CURRENT_DARK_THEME_STORAGE_KEY, DARK_THEME_MODES],
+  ] as const) {
+    runMigrationStep(report, currentKey, () => {
+      const previousVersion = Number(storage.getItem(DESKTOP_PERSISTENCE_VERSION_KEY) ?? 0)
+      if (previousVersion < 8 && storage.getItem(currentKey) === null) {
+        const legacy = storage.getItem(legacyKey)
+        if (legacy !== null) {
+          storage.setItem(currentKey, legacy)
+          report.migratedKeys.push(currentKey)
+        }
+      }
+      migrateThemeKey(storage, currentKey, allowed, report)
+    })
+  }
   runMigrationStep(report, LOCALE_STORAGE_KEY, () => normalizeEnumKey(storage, LOCALE_STORAGE_KEY, SUPPORTED_LOCALES, report))
   runMigrationStep(report, APP_ZOOM_STORAGE_KEY, () => normalizeAppZoomKey(storage, report))
   runMigrationStep(report, WORKSPACE_STORAGE_KEY, () => migrateWorkspaceState(storage, report))

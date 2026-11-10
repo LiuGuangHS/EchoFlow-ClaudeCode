@@ -45,8 +45,11 @@ function getStoredSidebarWidth(): number {
 
 const SETTINGS_TABS = [
   'providers',
+  'runtime',
   'activity',
   'general',
+  'network',
+  'data',
   'voice',
   'h5Access',
   'adapters',
@@ -59,6 +62,7 @@ const SETTINGS_TABS = [
   'pets',
   'computerUse',
   'diagnostics',
+  'trace',
   'about',
 ] as const
 
@@ -109,9 +113,6 @@ function getStoredSettingsTab(): SettingsTab {
   try {
     const stored = localStorage.getItem(ACTIVE_SETTINGS_TAB_STORAGE_KEY)
     if (isSettingsTab(stored)) return stored
-    // The retired Trace entry; its capture toggle now lives under General.
-    // persistenceMigrations rewrites it at startup — this is the second guard.
-    if (stored === 'trace') return 'general'
   } catch { /* localStorage unavailable */ }
   return 'providers'
 }
@@ -256,7 +257,11 @@ export type SettingsTab =
   | 'plugins'
   | 'pets'
   | 'computerUse'
+  | 'network'
+  | 'runtime'
+  | 'data'
   | 'diagnostics'
+  | 'trace'
   | 'about'
 
 type ActiveView = 'code' | 'scheduled' | 'terminal' | 'history' | 'settings'

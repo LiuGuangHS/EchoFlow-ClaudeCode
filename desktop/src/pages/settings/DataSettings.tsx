@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
+import { FolderInput, Settings2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -256,7 +257,7 @@ export function DataSettings() {
       */}
       {!isTouchH5Document() && (
       <div className="mt-8 border-t border-[var(--color-border)] pt-8">
-        <h2 className="text-[16.5px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.sessionRetentionTitle')}</h2>
+        <h2 className="text-[18px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.sessionRetentionTitle')}</h2>
         <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.sessionRetentionDescription')}</p>
 
         <Card radius="xl" surface="low" padding="none" className="px-4 py-4">
@@ -329,7 +330,7 @@ export function DataSettings() {
 
       {isDesktopRuntime() && (
         <div className="mt-8 border-t border-[var(--color-border)] pt-8">
-          <h2 className="text-[16.5px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.storageTitle')}</h2>
+          <h2 className="text-[18px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.storageTitle')}</h2>
           <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.storageDescription')}</p>
 
           <Card radius="xl" surface="low" padding="none" className="px-4 py-4">
@@ -352,7 +353,7 @@ export function DataSettings() {
                     : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-focus)]'
                 }`}
               >
-                <span className="material-symbols-outlined mt-0.5 text-[20px] text-[var(--color-text-secondary)]">settings_applications</span>
+                <Settings2 size={20} strokeWidth={1.75} className="mt-0.5 shrink-0 text-[var(--color-text-secondary)]" aria-hidden="true" />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.general.storageSystemTitle')}</span>
                   <span className="mt-1 block text-xs leading-5 text-[var(--color-text-tertiary)]">{t('settings.general.storageSystemDescription')}</span>
@@ -367,7 +368,7 @@ export function DataSettings() {
                 }`}
               >
                 <div className="mb-3 flex items-start gap-3">
-                  <span className="material-symbols-outlined mt-0.5 text-[20px] text-[var(--color-text-secondary)]">drive_file_move</span>
+                  <FolderInput size={20} strokeWidth={1.75} className="mt-0.5 shrink-0 text-[var(--color-text-secondary)]" aria-hidden="true" />
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.general.storagePortableTitle')}</div>
                     <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">{t('settings.general.storagePortableDescription')}</div>
@@ -414,7 +415,7 @@ export function DataSettings() {
 
             {activeConfigDir && (
               <div className="mt-3 rounded-[var(--radius-lg)] border border-[var(--color-border-separator)] bg-[var(--color-surface)] px-3 py-2">
-                <div className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">{t('settings.general.storageActiveDir')}</div>
+                <div className="text-[11px] font-medium text-[var(--color-text-tertiary)]">{t('settings.general.storageActiveDir')}</div>
                 <div className="mt-1 break-all font-mono text-xs text-[var(--color-text-secondary)]">{activeConfigDir}</div>
               </div>
             )}
@@ -446,7 +447,7 @@ export function DataSettings() {
 
       {/* Confirm dialog for mode switch */}
       <div className="mt-8 border-t border-[var(--color-border)] pt-8">
-        <h2 className="text-[16.5px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.localRedactionTitle')}</h2>
+        <h2 className="text-[18px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.localRedactionTitle')}</h2>
         <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.localRedactionDescription')}</p>
         <Card radius="xl" surface="low" padding="none" className="px-4 py-4">
           <Switch label={t('settings.general.localRedactionEnabled')} description={t('settings.general.localRedactionEnabledHint')} checked={localRedaction.enabled} onChange={(enabled) => void handleLocalRedactionChange({ ...localRedaction, enabled })} />

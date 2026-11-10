@@ -173,6 +173,26 @@ describe('Electron updater service', () => {
     expect(localUpdater.disableDifferentialDownload).toBe(false)
   })
 
+  it('uses single-range provider objects through metadata and download feed switching', async () => {
+    const feedConfig = resolveUpdateFeedConfig({})
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '2.0.0', path: 'app.zip', sha2: 'a'.repeat(64) } })
+    localUpdater.downloadUpdate.mockResolvedValue([])
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: feedConfig.metadataUrl,
+      downloadFeedUrls: [DIRECT_GITHUB_RELEASE_FEED_URL],
+      differentialDownload: true,
+      differentialDownloadFeedUrls: feedConfig.differentialDownloadFeedUrls,
+      differentialDownloadContracts: feedConfig.differentialDownloadContracts,
+    })
+    await service.checkForUpdates()
+    await service.downloadUpdate(() => {})
+    expect(localUpdater.setFeedURL.mock.calls).toEqual([
+      [{ provider: 'generic', url: feedConfig.metadataUrl, useMultipleRangeRequest: false }],
+      [{ provider: 'generic', url: DIRECT_GITHUB_RELEASE_FEED_URL, useMultipleRangeRequest: false }],
+    ])
+  })
+
   it('keeps differential downloads disabled for an unverified feed', () => {
     const feedConfig = resolveUpdateFeedConfig({})
     const localUpdater = fakeUpdater()
@@ -185,6 +205,27 @@ describe('Electron updater service', () => {
     })
 
     expect(localUpdater.disableDifferentialDownload).toBe(true)
+  })
+
+  it('only enables differential downloads for each verified download feed', async () => {
+    const feedConfig = resolveUpdateFeedConfig({})
+    const localUpdater = fakeUpdater()
+    const states: Array<boolean | undefined> = []
+    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '2.0.0', path: 'app.zip', sha2: 'a'.repeat(64) } })
+    localUpdater.downloadUpdate.mockImplementation(async () => {
+      states.push(localUpdater.disableDifferentialDownload)
+      if (states.length === 1) throw new Error('mirror unavailable')
+    })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: feedConfig.metadataUrl,
+      downloadFeedUrls: ['https://mirror.example.com/update/', DIRECT_GITHUB_RELEASE_FEED_URL],
+      differentialDownload: true,
+      differentialDownloadFeedUrls: feedConfig.differentialDownloadFeedUrls,
+      differentialDownloadContracts: feedConfig.differentialDownloadContracts,
+    })
+    await service.checkForUpdates()
+    await service.downloadUpdate(() => {})
+    expect(states).toEqual([true, false])
   })
 
   it('maps proxy settings to the updater net session proxy config', () => {
@@ -467,9 +508,43 @@ describe('Electron updater metadata fallback chain', () => {
     expect(service.getLastFeedAttempts().map(attempt => attempt.result)).toEqual(['error', 'error'])
   })
 
+  it.each([
+    ['version only', { version: '2.0.0' }],
+    ['missing filename', { version: '2.0.0', files: [{ url: '', sha512: Buffer.alloc(64).toString('base64') }] }],
+    ['missing hash', { version: '2.0.0', files: [{ url: 'app.zip' }] }],
+    ['invalid hash', { version: '2.0.0', files: [{ url: 'app.zip', sha512: 'invalid' }] }],
+  ])('rejects cross-source downloads with %s metadata', async (_label, updateInfo) => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      downloadFeedUrls: [FALLBACK_FEED],
+    })
+    await service.checkForUpdates()
+
+    await expect(service.downloadUpdate(() => {})).rejects.toThrow()
+    expect(localUpdater.downloadUpdate).not.toHaveBeenCalled()
+  })
+
+  it('rejects incomplete download metadata even when the selected metadata is complete', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0', path: 'app.zip', sha2: 'a'.repeat(64) } })
+      .mockResolvedValue({ updateInfo: { version: '2.0.0', path: 'app.zip' } })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      downloadFeedUrls: [FALLBACK_FEED],
+    })
+    await service.checkForUpdates()
+
+    await expect(service.downloadUpdate(() => {})).rejects.toThrow()
+    expect(localUpdater.downloadUpdate).not.toHaveBeenCalled()
+    expect(service.getLastFeedAttempts().at(-1)?.result).toBe('mismatched-metadata')
+  })
+
   it('rejects a download when every download feed serves mismatched metadata', async () => {
     const localUpdater = fakeUpdater()
-    const updateInfo = { version: '2.0.0', files: [{ url: 'EchoFlow-Code-2.0.0-mac-arm64.dmg', sha512: 'meta-sha' }] }
+    const updateInfo = { version: '2.0.0', files: [{ url: 'EchoFlow-Code-2.0.0-mac-arm64.dmg', sha512: Buffer.alloc(64).toString('base64') }] }
     localUpdater.checkForUpdates.mockResolvedValue({ updateInfo })
     const service = new ElectronUpdaterService(localUpdater, undefined, {
       metadataFeedUrl: METADATA_FEED,
@@ -477,7 +552,7 @@ describe('Electron updater metadata fallback chain', () => {
     })
     await service.checkForUpdates()
     localUpdater.checkForUpdates.mockResolvedValue({
-      updateInfo: { version: '2.0.0', files: [{ url: 'EchoFlow-Code-2.0.0-mac-arm64.dmg', sha512: 'other-sha' }] },
+      updateInfo: { version: '2.0.0', files: [{ url: 'EchoFlow-Code-2.0.0-mac-arm64.dmg', sha512: Buffer.alloc(64, 1).toString('base64') }] },
     })
 
     await expect(service.downloadUpdate(() => {})).rejects.toThrow('Update download failed')
@@ -494,8 +569,8 @@ describe('Electron updater metadata fallback chain', () => {
     const secondFeed = 'https://dl2.test/feed/'
     const localUpdater = fakeUpdater()
     localUpdater.checkForUpdates
-      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
-      .mockResolvedValue({ updateInfo: { version: '2.0.0' } })
+      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0', files: [{ url: 'app.zip', sha512: Buffer.alloc(64).toString('base64') }] } })
+      .mockResolvedValue({ updateInfo: { version: '2.0.0', files: [{ url: 'app.zip', sha512: Buffer.alloc(64).toString('base64') }] } })
     localUpdater.downloadUpdate
       .mockRejectedValueOnce(new Error('first source failed'))
       .mockResolvedValueOnce(undefined)
@@ -519,8 +594,8 @@ describe('Electron updater metadata fallback chain', () => {
     const secondFeed = 'https://dl2.test/feed/'
     const localUpdater = fakeUpdater()
     localUpdater.checkForUpdates
-      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
-      .mockResolvedValue({ updateInfo: { version: '2.0.0' } })
+      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0', files: [{ url: 'app.zip', sha512: Buffer.alloc(64).toString('base64') }] } })
+      .mockResolvedValue({ updateInfo: { version: '2.0.0', files: [{ url: 'app.zip', sha512: Buffer.alloc(64).toString('base64') }] } })
     localUpdater.downloadUpdate
       .mockRejectedValueOnce(new Error('first source failed'))
       .mockRejectedValueOnce(new Error('second source failed'))

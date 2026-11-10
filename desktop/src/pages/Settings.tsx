@@ -6,11 +6,14 @@ import {
   Bot,
   Box,
   ChartNoAxesColumn,
+  Cpu,
+  Database,
   HeartPulse,
   Info,
   MessageSquare,
   Mic,
   MousePointer2,
+  Network,
   PawPrint,
   Plug,
   Puzzle,
@@ -18,6 +21,7 @@ import {
   Server,
   SlidersHorizontal,
   SquareTerminal,
+  Workflow,
   type LucideIcon,
 } from 'lucide-react'
 import { useTranslation, type TranslationKey } from '../i18n'
@@ -43,6 +47,10 @@ import { GeneralSettings } from './settings/GeneralSettings'
 import { VoiceInputSettings } from './settings/VoiceInputSettings'
 import { AboutSettings } from './settings/AboutSettings'
 import { ProviderSettings } from './settings/ProviderSettings'
+import { NetworkSettings } from './settings/NetworkSettings'
+import { RuntimeSettings } from './settings/RuntimeSettings'
+import { DataSettings } from './settings/DataSettings'
+import { TraceList } from './TraceList'
 
 export function Settings() {
   return getDesktopHost().isDesktop ? <DesktopSettings /> : <H5Settings />
@@ -52,7 +60,10 @@ type SettingsNavEntry = { tab: SettingsTab; icon: LucideIcon; label: Translation
 
 const SETTINGS_NAV: SettingsNavEntry[] = [
   { tab: 'providers', icon: Server, label: 'settings.tab.providers' },
+  { tab: 'runtime', icon: Cpu, label: 'settings.tab.runtime' },
   { tab: 'general', icon: SlidersHorizontal, label: 'settings.tab.general' },
+  { tab: 'network', icon: Network, label: 'settings.tab.network' },
+  { tab: 'data', icon: Database, label: 'settings.tab.data' },
   { tab: 'voice', icon: Mic, label: 'settings.tab.voice' },
   { tab: 'h5Access', icon: QrCode, label: 'settings.tab.h5Access' },
   { tab: 'adapters', icon: MessageSquare, label: 'settings.tab.adapters' },
@@ -65,6 +76,7 @@ const SETTINGS_NAV: SettingsNavEntry[] = [
   { tab: 'pets', icon: PawPrint, label: 'settings.tab.pets' },
   { tab: 'computerUse', icon: MousePointer2, label: 'settings.tab.computerUse' },
   { tab: 'activity', icon: ChartNoAxesColumn, label: 'settings.tab.activity' },
+  { tab: 'trace', icon: Workflow, label: 'settings.tab.trace' },
   { tab: 'diagnostics', icon: HeartPulse, label: 'settings.tab.diagnostics' },
 ]
 
@@ -120,8 +132,11 @@ export function DesktopSettings() {
         <div ref={contentRef} className="flex-1 min-w-0 overflow-y-auto [scrollbar-gutter:stable]">
           <div data-testid="settings-page-frame" className="mx-auto w-full max-w-[1120px] px-10 pt-9 pb-[72px]">
             {activeTab === 'providers' && <ProviderSettings />}
+            {activeTab === 'runtime' && <RuntimeSettings />}
             {activeTab === 'activity' && <ActivitySettings />}
             {activeTab === 'general' && <GeneralSettings />}
+            {activeTab === 'network' && <NetworkSettings />}
+            {activeTab === 'data' && <DataSettings />}
             {activeTab === 'voice' && <VoiceInputSettings />}
             {activeTab === 'h5Access' && <H5AccessSettings />}
             {activeTab === 'adapters' && <AdapterSettings />}
@@ -133,6 +148,7 @@ export function DesktopSettings() {
             {activeTab === 'plugins' && <PluginSettings />}
             {activeTab === 'pets' && <PetSettings />}
             {activeTab === 'computerUse' && <ComputerUseSettings />}
+            {activeTab === 'trace' && <TraceList />}
             {activeTab === 'diagnostics' && <DiagnosticsSettings />}
             {activeTab === 'about' && <AboutSettings />}
           </div>

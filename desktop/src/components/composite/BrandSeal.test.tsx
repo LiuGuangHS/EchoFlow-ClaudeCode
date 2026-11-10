@@ -1,10 +1,19 @@
 import { render } from '@testing-library/react'
 import '@testing-library/jest-dom'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { BrandSeal } from './BrandSeal'
+import { publicAssetPath } from '@/lib/publicAsset'
 
 const SIZES = ['sm', 'md', 'lg', 'xl'] as const
+const ASSET = 'app-icon.png'
+// desktop/src/components/composite/ -> desktop/public/app-icon.png
+// Built with join(...) rather than new URL(..., import.meta.url): Vite rewrites
+// the latter as a public asset URL, which no longer points at the source file.
+const assetOnDisk = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'public', ASSET)
 
 describe('BrandSeal', () => {
   it('is decorative and hidden from assistive tech', () => {
@@ -14,56 +23,50 @@ describe('BrandSeal', () => {
     expect(container.firstElementChild).toHaveAttribute('aria-hidden', 'true')
   })
 
-  it('draws the two C strokes at every size', () => {
-    // Whatever else is shed, the double C is the mark. If this count drops the
-    // remaining shape is no longer recognizable as the logo.
-    for (const size of SIZES) {
-      const { container, unmount } = render(<BrandSeal size={size} />)
-      const strokes = container.querySelectorAll('g[stroke="var(--color-text-primary)"] path')
-      expect(strokes).toHaveLength(3) // big C + the second C's two arcs
-      unmount()
-    }
+  it('renders the real self-owned app-icon asset, not the inline upstream CC geometry', () => {
+    const { container } = render(<BrandSeal />)
+    const img = container.querySelector('img')
+    expect(img).not.toBeNull()
+    expect(img).toHaveAttribute('src', publicAssetPath(ASSET))
+    expect(img).toHaveAttribute('alt', '')
+
+    // The upstream double-C was rebuilt from these inline paths / theme tokens.
+    // None of that geometry belongs in the mark any more.
+    expect(container.querySelector('svg')).toBeNull()
+    expect(container.innerHTML).not.toContain('437.75 695.01') // BIG_C
+    expect(container.innerHTML).not.toContain('var(--color-text-primary)')
+    expect(container.innerHTML).not.toContain('var(--color-brand)')
   })
 
-  it('paints from tokens so all six palettes recolor it', () => {
-    // This is why the vector replaced the raster app icon: a bitmap kept its
-    // own blue and orange under every theme while the chrome around it moved.
-    const { container } = render(<BrandSeal size="xl" />)
-    const svg = container.firstElementChild!
-    expect(svg.querySelector('[stroke="var(--color-text-primary)"]')).not.toBeNull()
-    expect(svg.querySelector('[stroke="var(--color-brand)"]')).not.toBeNull()
-    expect(svg.querySelector('[fill="var(--color-brand)"]')).not.toBeNull()
-    // No literal hex anywhere — that would survive a theme switch unchanged.
-    expect(svg.innerHTML).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+  it('points at an asset that actually ships, and it is the detailed self-owned icon', () => {
+    expect(existsSync(assetOnDisk)).toBe(true)
+    const bytes = readFileSync(assetOnDisk)
+    expect(bytes.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    // The upstream flat CC icon was only ~35 KB; the self-owned cloud mark is a
+    // detailed 1024px raster. Guards against re-substituting the upstream image.
+    expect(bytes.length).toBeGreaterThan(100_000)
   })
 
-  it('sheds parts as it shrinks instead of turning to mush', () => {
-    // At 38px a sparkle is under 2px across and reads as dirt; at 24px the
-    // cursor merges into the second C.
-    const count = (size: (typeof SIZES)[number]) => {
-      const { container, unmount } = render(<BrandSeal size={size} />)
-      const filled = container.querySelectorAll('path[fill="var(--color-brand)"]').length
-      unmount()
-      return filled
+  it('keeps a distinct, size-stable box for every size', () => {
+    const expectedHeight: Record<(typeof SIZES)[number], string> = {
+      sm: 'h-6',
+      md: 'h-8',
+      lg: 'h-[38px]',
+      xl: 'h-20',
     }
-    expect(count('xl')).toBe(3) // cursor + two sparkles
-    expect(count('lg')).toBe(1) // cursor only
-    expect(count('md')).toBe(1)
-    expect(count('sm')).toBe(0) // the C's and the bar
+    const classes = SIZES.map((size) => {
+      const { container, unmount } = render(<BrandSeal size={size} />)
+      const cls = container.firstElementChild!.getAttribute('class')!
+      expect(cls).toContain(expectedHeight[size])
+      expect(cls).toContain('object-contain')
+      unmount()
+      return cls
+    })
+    expect(new Set(classes).size).toBe(SIZES.length)
   })
 
-  it('crops the viewBox to the ink so the mark fills its box', () => {
-    // A full 0 0 1024 1024 viewBox would letterbox the mark to roughly half
-    // the height of its container at every size.
-    for (const size of SIZES) {
-      const { container, unmount } = render(<BrandSeal size={size} />)
-      const viewBox = container.firstElementChild!.getAttribute('viewBox')!
-      const [x, y, w, h] = viewBox.split(' ').map(Number)
-      expect(x).toBeGreaterThan(200)
-      expect(y).toBeGreaterThan(200)
-      expect(w).toBeLessThan(1024)
-      expect(h).toBeLessThan(1024)
-      unmount()
-    }
+  it('honours the className passthrough', () => {
+    const { container } = render(<BrandSeal className="custom" />)
+    expect(container.firstElementChild).toHaveClass('custom')
   })
 })

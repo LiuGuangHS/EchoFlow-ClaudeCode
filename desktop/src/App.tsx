@@ -13,11 +13,17 @@ import { isDesktopRuntime } from './lib/desktopRuntime'
 import { usePowerSettingsStore } from './stores/powerSettingsStore'
 import { useIdlePowerStore } from './stores/idlePowerStore'
 import { IdlePowerStatus } from './components/power/IdlePowerStatus'
+import { getTraceLaunchRequest } from '@/lib/traceLaunch'
+import { TraceSession } from '@/pages/TraceSession'
 
 export function App() {
-  return isPublicAccessRuntime()
-    ? <RemoteAccessGate><ConnectedApp /></RemoteAccessGate>
+  const launch = getTraceLaunchRequest()
+  const content = launch.windowMode && launch.sessionId
+    ? <div className="flex h-screen min-h-0 flex-col overflow-hidden"><TraceSession sessionId={launch.sessionId} standalone /></div>
     : <ConnectedApp />
+  return isPublicAccessRuntime()
+    ? <RemoteAccessGate>{content}</RemoteAccessGate>
+    : content
 }
 
 function ConnectedApp() {

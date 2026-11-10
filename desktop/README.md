@@ -1,4 +1,4 @@
-# Claude Code Haha Desktop
+# EchoFlow Code Desktop
 
 基于 Tauri 2 + React 的桌面客户端。
 

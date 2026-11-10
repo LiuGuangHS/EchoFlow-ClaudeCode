@@ -1,7 +1,11 @@
 import { api } from './client'
 import type {
+  MarketplaceDiscovery,
+  MarketplacePlugin,
+  MarketplacePreset,
   PluginDetail,
   PluginListResponse,
+  RegisteredMarketplace,
   PluginReloadSummary,
   PluginSessionReloadSummary,
   PluginScope,
@@ -15,6 +19,22 @@ type PluginActionPayload = {
 }
 
 export const pluginsApi = {
+  marketplacePresets: () =>
+    api.get<{ presets: MarketplacePreset[] }>('/api/plugins/marketplace/presets'),
+
+  registeredMarketplaces: () =>
+    api.get<{ marketplaces: RegisteredMarketplace[] }>('/api/plugins/marketplace/registered'),
+
+  discoverMarketplace: (marketplace: string) => {
+    const query = new URLSearchParams({ marketplace })
+    return api.get<MarketplaceDiscovery>(`/api/plugins/marketplace/discover?${query.toString()}`)
+  },
+
+  marketplacePluginDetail: (marketplace: string, plugin: string) => {
+    const query = new URLSearchParams({ marketplace, plugin })
+    return api.get<{ detail: MarketplacePlugin }>(`/api/plugins/marketplace/detail?${query.toString()}`)
+  },
+
   list: (cwd?: string) => {
     const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''
     return api.get<PluginListResponse>(`/api/plugins${query}`)

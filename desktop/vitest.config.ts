@@ -12,6 +12,7 @@ export default defineConfig({
   test: {
     // Packaged source snapshots are generated output, not the active test suite.
     exclude: [...configDefaults.exclude, '**/build-artifacts/**', '**/artifacts/**'],
+    maxWorkers: 4,
     environment: 'jsdom',
     globals: true,
     css: true,

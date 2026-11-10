@@ -349,7 +349,7 @@ function makeDesktopUiPreferencesResponse({
       projectDisplayNames,
       profile: {
         displayName: 'cc-haha',
-        subtitle: 'github.com/NanmiCoder/cc-haha',
+        subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
         avatarFile: null,
         avatarUpdatedAt: null,
       },
@@ -877,7 +877,7 @@ describe('Sidebar', () => {
 
     const region = screen.getByTestId('sidebar-title-region')
 
-    expect(region).toHaveTextContent('cc-haha')
+    expect(region).toHaveTextContent('EchoFlow Code')
     expect(region).not.toHaveTextContent('Claude Code')
   })
 
@@ -2594,12 +2594,14 @@ describe('Sidebar', () => {
   it('shows the brand mark only on the rail, where the wordmark is clamped away', async () => {
     render(<Sidebar />)
 
-    // Scope to the wordmark's own row — the GitHub link in the same header is
-    // also an svg and would answer a looser query.
-    const brandRow = () => screen.getByText('haha').closest('div')
+    // The mark is the self-owned app-icon asset, not an inline svg. Scope to the
+    // header title region and match that asset specifically — the GitHub link
+    // in the same header also carries an icon and would answer a looser query.
+    const brandMark = () =>
+      screen.getByTestId('sidebar-title-region').querySelector('img[src*="app-icon"]')
 
     // Expanded, the name carries the brand and the mark beside it is clutter.
-    expect(brandRow()?.querySelector('svg')).toBeNull()
+    expect(brandMark()).toBeNull()
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }))
@@ -2607,7 +2609,8 @@ describe('Sidebar', () => {
 
     // Collapsed, the copy is width-clamped to zero, so the mark is the only
     // thing left to identify the app.
-    expect(brandRow()?.querySelector('svg')).not.toBeNull()
+    expect(brandMark()).not.toBeNull()
+    expect(brandMark()).toHaveAttribute('aria-hidden', 'true')
   })
 
   it('renders search controls without the removed embedded project filter', () => {

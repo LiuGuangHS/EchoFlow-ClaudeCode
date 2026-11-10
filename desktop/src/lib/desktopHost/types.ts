@@ -17,6 +17,7 @@ export type DesktopHostKind = 'browser' | 'electron'
 
 export type DesktopHostCapability =
   | 'appMode'
+  | 'echoFlowAccount'
   | 'clipboard'
   | 'dialogs'
   | 'notifications'
@@ -104,9 +105,17 @@ export type DesktopUpdateDownloadEvent =
       event: 'Finished'
     }
 
+export type DesktopUpdateFeedAttempt = {
+  feedUrl: string | null
+  result: 'selected' | 'no-update' | 'missing-metadata' | 'mismatched-metadata' | 'error'
+  error?: string
+}
+
 export type DesktopUpdate = {
   version: string
   body?: string | null
+  feedUrl?: string | null
+  feedAttempts?: DesktopUpdateFeedAttempt[]
   download(onEvent?: (event: DesktopUpdateDownloadEvent) => void): Promise<void>
   install(): Promise<void>
   close(): Promise<void>
@@ -151,6 +160,47 @@ export type PreviewBounds = {
   width: number
   height: number
 }
+
+export type WorkspaceBrowserBounds = PreviewBounds
+
+/** An `echoflowcode://` import link received by the main process. */
+export type EchoFlowLoginEndpoint = 'main' | 'dedicated'
+
+export type DeepSeekHarnessState = 'unavailable' | 'installing' | 'starting' | 'running' | 'stopped' | 'error'
+
+export type DeepSeekHarnessStatus = {
+  state: DeepSeekHarnessState
+  version: string | null
+  url: string | null
+  error: string | null
+  nodeVersion: string | null
+  nodeSource: 'system' | 'managed' | null
+}
+
+export type ClaudeCodeRuntimeId = 'bundled' | 'installed'
+
+export type ClaudeCodeRuntimeStatus = {
+  defaultRuntimeId: ClaudeCodeRuntimeId
+  hasInstalledRuntime: boolean
+  /** The executable `installed` runs, when one is configured and usable. */
+  installedPath?: string | null
+}
+
+export type RuntimeProductId = 'echoflow-agent' | 'claude-code' | 'codex' | 'wsl'
+export type RuntimeSource = 'bundled' | 'current-system' | 'custom-path' | 'wsl'
+export type RuntimeInstallationStatus = 'available' | 'not-found' | 'error' | 'not-applicable'
+export type RuntimeInstallation = {
+  productId: RuntimeProductId
+  source: RuntimeSource
+  status: RuntimeInstallationStatus
+  version?: string
+  path?: string
+  distribution?: string
+  error?: 'probe-failed' | 'probe-timeout' | 'invalid-version'
+  /** Epoch ms of this probe. A version with no timestamp reads as unverified. */
+  probedAt?: number
+}
+export type RuntimeDiscoveryResult = { installations: RuntimeInstallation[] }
 
 export type PreviewEvent = {
   type: string
@@ -444,9 +494,22 @@ export type DesktopHost = {
   kind: DesktopHostKind
   isDesktop: boolean
   capabilities: DesktopHostCapabilities
+  echoFlow: {
+    openLogin(endpoint?: EchoFlowLoginEndpoint): Promise<'authenticated' | 'cancelled' | 'failed'>
+    signOut(endpoint?: EchoFlowLoginEndpoint): Promise<void>
+    /** Resolves once the startup restore has settled, reporting whether it signed an account back in. */
+    whenAccountRestored(): Promise<boolean>
+  }
+  runtimeDiscovery: {
+    list(options?: { includeWsl?: boolean }): Promise<RuntimeDiscoveryResult>
+    probePath(path: string): Promise<RuntimeInstallation>
+  }
   runtime: {
     getServerUrl(): Promise<string>
     getLocalAccessToken(): Promise<string | null>
+    getClaudeCode(): Promise<ClaudeCodeRuntimeStatus>
+    chooseClaudeCode(): Promise<ClaudeCodeRuntimeStatus | null>
+    setClaudeCode(runtimeId: ClaudeCodeRuntimeId): Promise<ClaudeCodeRuntimeStatus>
   }
   app: {
     getVersion(): Promise<string>
@@ -481,6 +544,19 @@ export type DesktopHost = {
   shell: {
     open(target: string): Promise<void>
     openPath(path: string): Promise<void>
+    /** Reveal a file in its folder without opening it. */
+    showItemInFolder(path: string): Promise<void>
+  }
+  trace?: {
+    openWindow(sessionId: string): Promise<void>
+  }
+  deepSeekHarness: {
+    getStatus(): Promise<DeepSeekHarnessStatus>
+    start(): Promise<DeepSeekHarnessStatus>
+    stop(): Promise<DeepSeekHarnessStatus>
+    restart(): Promise<DeepSeekHarnessStatus>
+    update(): Promise<DeepSeekHarnessStatus>
+    open(): Promise<void>
   }
   pets: {
     list(): Promise<DesktopPetListResult>
@@ -570,10 +646,12 @@ export type DesktopHost = {
     reload(tabId: string, options?: { ignoreCache?: boolean }): Promise<void>
     stop(tabId: string): Promise<void>
     setVisible(tabId: string, visible: boolean): Promise<void>
+    setBounds(tabId: string, bounds: WorkspaceBrowserBounds): Promise<void>
     setZoom(tabId: string, factor: number): Promise<void>
     find(tabId: string, text: string, options?: WorkspaceBrowserFindOptions): Promise<void>
     stopFind(tabId: string): Promise<void>
     capture(tabId: string, kind: WorkspaceBrowserCaptureKind): Promise<void>
+    snapshot(tabId: string): Promise<void>
     message(tabId: string, payload: PreviewHostMessage): Promise<void>
     printToPdf(tabId: string): Promise<void>
     close(tabId: string): Promise<void>

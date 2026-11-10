@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Brain, ChevronDown, Paintbrush } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Dropdown } from '@/components/ui/Dropdown'
@@ -115,7 +116,7 @@ export function RuntimeBehaviorSettings() {
   return (
     <>
       <div>
-        <h2 className="text-[16.5px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.outputStyleTitle')}</h2>
+        <h2 className="text-[18px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.outputStyleTitle')}</h2>
         <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.outputStyleDescription')}</p>
         <Card radius="xl" surface="low" padding="none" className="mb-8 px-4 py-4">
           <Dropdown<string>
@@ -133,7 +134,7 @@ export function RuntimeBehaviorSettings() {
                 className="h-auto min-h-10 gap-3 py-2"
                 aria-label={t('settings.general.outputStyleSelectLabel')}
                 disabled={outputStylesLoading}
-                icon={<span className="material-symbols-outlined flex-shrink-0 text-[18px] text-[var(--color-text-secondary)]">format_paint</span>}
+                icon={<Paintbrush size={18} strokeWidth={1.75} className="shrink-0 text-[var(--color-text-secondary)]" aria-hidden="true" />}
               >
                 <span className="min-w-0 flex-1 text-left">
                   <span className="block truncate font-medium">
@@ -145,7 +146,7 @@ export function RuntimeBehaviorSettings() {
                     </span>
                   )}
                 </span>
-                <span className="material-symbols-outlined flex-shrink-0 text-[18px] text-[var(--color-text-secondary)]">expand_more</span>
+                <ChevronDown size={18} strokeWidth={1.75} className="shrink-0 text-[var(--color-text-secondary)]" aria-hidden="true" />
               </Button>
             )}
           />
@@ -166,7 +167,7 @@ export function RuntimeBehaviorSettings() {
       </div>
 
       <div className="mt-8">
-        <h2 className="text-[16.5px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.defaultPermissionTitle')}</h2>
+        <h2 className="text-[18px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.defaultPermissionTitle')}</h2>
         <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.defaultPermissionDescription')}</p>
         <Card radius="xl" surface="low" padding="none" className="px-4 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -185,7 +186,7 @@ export function RuntimeBehaviorSettings() {
       </div>
 
       <div className="mt-8">
-        <h2 className="text-[16.5px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.effortTitle')}</h2>
+        <h2 className="text-[18px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.effortTitle')}</h2>
         <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.effortDescription')}</p>
         <Card radius="xl" surface="low" padding="none" className="px-4 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -203,11 +204,11 @@ export function RuntimeBehaviorSettings() {
               aria-label={selectedEffort ? t('settings.general.effortSelectLabel', { level: effortLabels[selectedEffort] }) : t('settings.general.effortUnavailable')}
               aria-expanded={selectedEffort ? effortOpen : undefined}
               onClick={() => setEffortOpen((open) => !open)}
-              icon={<span className="material-symbols-outlined text-[16px]" aria-hidden="true">neurology</span>}
+              icon={<Brain size={16} strokeWidth={1.75} aria-hidden="true" />}
               iconPosition="start"
             >
               {selectedEffort ? effortLabels[selectedEffort] : t('settings.general.effortUnavailable')}
-              <span className="material-symbols-outlined text-[14px]" aria-hidden="true">expand_more</span>
+              <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" />
             </Button>
           </div>
         </Card>
@@ -226,7 +227,7 @@ export function RuntimeBehaviorSettings() {
       </div>
 
       <div className="mt-8">
-        <h2 className="text-[16.5px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.thinkingTitle')}</h2>
+        <h2 className="text-[18px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.thinkingTitle')}</h2>
         <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.thinkingDescription')}</p>
         <label className="relative flex items-start gap-3 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-4 py-3 cursor-pointer hover:border-[var(--color-border-focus)] transition-colors">
           <input

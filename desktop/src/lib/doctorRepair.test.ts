@@ -42,6 +42,11 @@ describe('doctorRepair', () => {
       'cc-haha-theme',
       'cc-haha-follow-system-theme',
       'cc-haha-light-theme',
+      'cc-haha-dark-theme',
+      'echoflow-code-theme',
+      'echoflow-code-follow-system-theme',
+      'echoflow-code-light-theme',
+      'echoflow-code-dark-theme',
     ]))
   })
 

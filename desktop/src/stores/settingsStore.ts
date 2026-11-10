@@ -39,6 +39,7 @@ import {
   readStoredAppZoomLevel,
 } from '../lib/appZoom'
 import { useUIStore } from './uiStore'
+import { normalizeLocalRedactionSettings, type LocalRedactionSettings } from '../../../src/shared/localRedactionSettings'
 import {
   DEFAULT_AUTO_QUESTION_SETTINGS,
   normalizeAutoQuestionSettings,
@@ -74,6 +75,7 @@ type SettingsStore = {
   maxConcurrentSubagents: number | null
   autoDreamEnabled: boolean
   autoQuestion: AutoQuestionSettings
+  localRedaction: LocalRedactionSettings
   autoModeOptInAccepted: boolean
   availableModels: ModelInfo[]
   activeProviderName: string | null
@@ -124,6 +126,7 @@ type SettingsStore = {
   setMaxConcurrentSubagents: (value: number | null) => Promise<void>
   setAutoDreamEnabled: (enabled: boolean) => Promise<void>
   setAutoQuestion: (settings: AutoQuestionSettings) => Promise<void>
+  setLocalRedaction: (settings: LocalRedactionSettings) => Promise<void>
   acceptAutoModeOptIn: () => Promise<void>
   setLocale: (locale: Locale) => void
   setTheme: (theme: ThemeMode) => Promise<void>
@@ -174,6 +177,9 @@ const DEFAULT_DESKTOP_TERMINAL_SETTINGS: DesktopTerminalSettings = {
   fontFamily: '',
   fontSize: DEFAULT_TERMINAL_FONT_SIZE,
 }
+let localRedactionSaveQueue: Promise<void> = Promise.resolve()
+let localRedactionSaveVersion = 0
+let lastPersistedLocalRedaction = normalizeLocalRedactionSettings(null)
 let desktopTerminalSaveQueue: Promise<void> = Promise.resolve()
 let desktopTerminalSaveVersion = 0
 let lastPersistedDesktopTerminal = DEFAULT_DESKTOP_TERMINAL_SETTINGS
@@ -232,6 +238,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   maxConcurrentSubagents: null,
   autoDreamEnabled: false,
   autoQuestion: DEFAULT_AUTO_QUESTION_SETTINGS,
+  localRedaction: normalizeLocalRedactionSettings(null),
   autoModeOptInAccepted: false,
   availableModels: [],
   activeProviderName: null,
@@ -300,6 +307,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         loadTraceCaptureSettings(),
       ])
       const desktopTerminal = normalizeDesktopTerminalSettings(userSettings.desktopTerminal)
+      const localRedaction = normalizeLocalRedactionSettings(userSettings.localRedaction)
+      lastPersistedLocalRedaction = localRedaction
       lastPersistedDesktopTerminal = desktopTerminal
       // Read-time upgrade: existing settings keep automatic checks enabled
       // until the user explicitly saves the new preference.
@@ -330,6 +339,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           : null,
         autoDreamEnabled: userSettings.autoDreamEnabled === true,
         autoQuestion: normalizeAutoQuestionSettings(userSettings.autoQuestion),
+        localRedaction,
         autoModeOptInAccepted: userSettings.skipAutoPermissionPrompt === true,
         chatSendBehavior: normalizeChatSendBehavior(userSettings.chatSendBehavior),
         outputStyle: normalizeOutputStyle(userSettings.outputStyle),
@@ -677,6 +687,28 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     } finally {
       autoUpdatePendingSaves -= 1
     }
+  },
+
+  setLocalRedaction: async (settings) => {
+    const next = normalizeLocalRedactionSettings(settings)
+    const saveVersion = ++localRedactionSaveVersion
+    set({ localRedaction: next })
+    const save = localRedactionSaveQueue
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await settingsApi.updateUser({ localRedaction: next })
+          lastPersistedLocalRedaction = next
+        } catch (error) {
+          if (saveVersion === localRedactionSaveVersion) {
+            set({ localRedaction: lastPersistedLocalRedaction })
+          }
+          throw error
+        }
+      })
+
+    localRedactionSaveQueue = save
+    await save
   },
 
   setNetwork: async (settings) => {

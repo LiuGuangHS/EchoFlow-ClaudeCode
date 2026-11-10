@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
@@ -37,6 +37,16 @@ const sidecarMocks = {
  *  rather than a number that has to be edited whenever a platform is added. */
 const ADAPTER_COUNT = ADAPTER_FLAGS.length
 
+/** Site-bridge values are meant only for the server sidecar. None of them
+ *  should ever be published into the main process environment, where every
+ *  terminal and unrelated child process would inherit them. */
+const SITE_BRIDGE_ENV: NodeJS.ProcessEnv = {
+  ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN: 'session-bridge-token',
+  ECHOFLOW_SITE_NETWORK_BRIDGE_URL: 'http://127.0.0.1:49399',
+  ECHOFLOW_SITE_NETWORK_BRIDGE_TOKEN: 'network-bridge-token',
+  ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG: '/isolated/runtime.json',
+}
+
 let isolatedConfigDir = ''
 
 class FakeSidecarChild extends EventEmitter {
@@ -57,12 +67,14 @@ function createRuntime(options: {
   sleep?: (delayMs: number) => Promise<void>
   proxyBridge?: SystemProxyBridgeLike
   fetch?: typeof fetch
+  sidecarEnv?: NodeJS.ProcessEnv
 } = {}) {
   return new ElectronServerRuntime({
     desktopRoot: '/isolated/desktop',
     appRoot: options.appRoot,
     diagnosticsFile: options.diagnosticsFile,
     env: { CLAUDE_CONFIG_DIR: isolatedConfigDir, ...options.env },
+    sidecarEnv: options.sidecarEnv,
     resolveSystemProxy: options.resolveSystemProxy,
     deps: {
       ...(options.fetch ? { fetch: options.fetch } : {}),
@@ -265,6 +277,67 @@ describe('ElectronServerRuntime', () => {
 
   afterEach(() => {
     rmSync(isolatedConfigDir, { recursive: true, force: true })
+  })
+
+  it('shows that a main-process env write is inherited by unrelated child processes', () => {
+    const canaryKey = 'ECHOFLOW_BOUNDARY_CANARY'
+    const childScript = `process.stdout.write(process.env[${JSON.stringify(canaryKey)}] ?? '')`
+    // Electron 主进程使用 Node；在独立进程中写入 canary，避免污染测试 runner 的环境。
+    const result = spawnSync('node', ['-e', `
+      process.env[${JSON.stringify(canaryKey)}] = 'inherited-by-every-child'
+      const child = require('node:child_process').spawnSync(process.execPath, ['-e', ${JSON.stringify(childScript)}], { encoding: 'utf8' })
+      process.stdout.write(JSON.stringify({
+        status: child.status,
+        signal: child.signal,
+        error: child.error?.message ?? null,
+        stdout: child.stdout,
+        stderr: child.stderr,
+      }))
+    `], { encoding: 'utf8', timeout: 5_000 })
+    expect({
+      error: result.error?.message ?? null,
+      signal: result.signal,
+      status: result.status,
+      stderr: result.stderr,
+    }).toEqual({ error: null, signal: null, status: 0, stderr: '' })
+    expect(JSON.parse(result.stdout)).toEqual({
+      status: 0,
+      signal: null,
+      error: null,
+      stdout: 'inherited-by-every-child',
+      stderr: '',
+    })
+  })
+
+  it('carries an explicit env through createServerPlan into the server sidecar plan', async () => {
+    const runtime = createRuntime({
+      env: { CC_HAHA_MIGRATION_VALIDATION: '1', ...SITE_BRIDGE_ENV },
+    })
+
+    await runtime.startServer()
+
+    const serverEnv = sidecarMocks.serverPlans[0]!.env
+    for (const [key, value] of Object.entries(SITE_BRIDGE_ENV)) {
+      expect(serverEnv[key]).toBe(value)
+    }
+  })
+
+  it('injects only the server sidecar bridge env without publishing it to process.env', async () => {
+    const before = Object.fromEntries(
+      Object.keys(SITE_BRIDGE_ENV).map(key => [key, process.env[key]]),
+    )
+    const runtime = createRuntime({
+      env: { CC_HAHA_MIGRATION_VALIDATION: '1' },
+      sidecarEnv: { ...SITE_BRIDGE_ENV },
+    })
+
+    await runtime.startServer()
+
+    const serverEnv = sidecarMocks.serverPlans[0]!.env
+    for (const [key, value] of Object.entries(SITE_BRIDGE_ENV)) {
+      expect(serverEnv[key]).toBe(value)
+      expect(process.env[key]).toBe(before[key])
+    }
   })
 
   it('restarts after the active healthy server exits and ignores its late exit', async () => {

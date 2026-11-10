@@ -42,8 +42,9 @@ const LANGUAGE_NEUTRAL: Record<string, string[]> = {
   'components/agentTeams/AgentTeamsCanvas.tsx': ['zZ'], // a sleeping agent's glyph
   'components/chat/MermaidRenderer.tsx': ['mermaid'], // the diagram language, as a code block labels it
   'components/chat/ToolCallBlock.tsx': ['bash', 'powershell'], // shell names, as a code block labels them
+  'components/trace/detail/LlmCallDetail.tsx': ['stack'], // monospace label for a JS error stack, a technical term
   'components/layout/H5ConnectionView.tsx': ['https://chat.example.com'], // example URL
-  'components/layout/Sidebar.tsx': ['cc-', 'haha', 'GitHub'], // wordmark, brand
+  'components/layout/Sidebar.tsx': ['EchoFlow', 'Code', 'GitHub'], // wordmark, brand
   'components/market/FrontmatterPanel.tsx': ['true', 'false'], // YAML values, shown as written
   'components/market/InstallConfirmDialog.tsx': ['…/skills/'], // a path
   'components/market/MarketSkillDetail.tsx': ['SKILL.md'], // a file name
@@ -55,10 +56,11 @@ const LANGUAGE_NEUTRAL: Record<string, string[]> = {
   'components/search/GlobalSearchModal.tsx': ['esc'], // the key, as printed on its keycap
   'pages/MemorySettings.tsx': ['Markdown'], // file format
   'pages/settings/AboutSettings.tsx': [ // product, repository and author; example proxy
-    'Claude Code Haha', 'GitHub', 'NanmiCoder/cc-haha', '程序员阿江-Relakkes', 'http://127.0.0.1:7890',
+    'EchoFlow Code', 'EchoFlow AI', 'GitHub', 'LiuGuangHS/EchoFlow-ClaudeCode', 'http://127.0.0.1:7890',
   ],
   'pages/settings/ChatAppearanceSettings.tsx': ['px', '${}px'], // unit
   'pages/settings/GeneralSettings.tsx': ['http://127.0.0.1:7890', 'tvly-...'], // example proxy, key format
+  'pages/settings/NetworkSettings.tsx': ['http://127.0.0.1:7890', 'tvly-...'], // same example fields in the split-out network page
   'pages/settings/ProviderSettings.tsx': ['sk-...'], // key format
   'pages/settings/PublicAccessSettings.tsx': ['/remote'], // URL path
 }

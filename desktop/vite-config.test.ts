@@ -6,6 +6,14 @@ import { describe, expect, it } from 'vitest'
 const desktopRoot = dirname(fileURLToPath(import.meta.url))
 
 describe('desktop build compatibility', () => {
+  it('bounds test worker contention without changing timeouts or narrowing the suite', () => {
+    const config = readFileSync(join(desktopRoot, 'vitest.config.ts'), 'utf8')
+
+    expect(config).toMatch(/maxWorkers:\s*4\b/)
+    expect(config).not.toMatch(/\b(?:testTimeout|hookTimeout):/)
+    expect(config).not.toMatch(/^ {4}include:/m)
+  })
+
   it('keeps production bundles loadable in the macOS 12 Safari 15 WebView', () => {
     const config = readFileSync(join(desktopRoot, 'vite.config.ts'), 'utf8')
 

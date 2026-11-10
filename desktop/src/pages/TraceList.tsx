@@ -167,13 +167,13 @@ export function TraceList() {
         <header className="shrink-0 border-b border-[var(--color-border)] px-6 py-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
+              <div className="flex items-center gap-2 text-[11px] font-semibold text-[var(--color-text-tertiary)]">
                 <Workflow className="h-3.5 w-3.5" strokeWidth={1.6} aria-hidden="true" />
                 <span>{t('trace.list.eyebrow')}</span>
               </div>
               <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
                 <h1
-                  className="text-[24px] font-bold leading-tight tracking-tight text-[var(--color-text-primary)]"
+                  className="text-[26px] font-semibold leading-tight tracking-tight text-[var(--color-text-primary)]"
                   style={{ fontFamily: 'var(--font-headline)' }}
                 >
                   {t('trace.list.title')}
@@ -184,7 +184,7 @@ export function TraceList() {
                   </Badge>
                 )}
                 {state.status === 'ready' && (
-                  <span className="min-w-0 max-w-full truncate font-mono text-[12.5px] text-[var(--color-text-tertiary)]" title={state.data.storageDir}>
+                  <span className="min-w-0 max-w-full truncate font-mono text-[13px] text-[var(--color-text-tertiary)]" title={state.data.storageDir}>
                     {state.data.storageDir}
                   </span>
                 )}
@@ -453,7 +453,7 @@ function TraceRow({
 function MetricCell({ label, value }: { label: string; value: string }) {
   return (
     <div className="text-right">
-      <div className="font-mono text-[13px] font-semibold leading-5 text-[var(--color-text-primary)]">{value}</div>
+      <div className="font-mono text-[13px] leading-5 text-[var(--color-text-primary)]">{value}</div>
       <div className="truncate text-[11px] leading-4 text-[var(--color-text-tertiary)]" title={label}>{label}</div>
     </div>
   )

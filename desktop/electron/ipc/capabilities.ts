@@ -31,6 +31,22 @@ const migrationIdentity: Validator = value =>
   && value.id.length <= 200
   && /^[A-Za-z0-9._:-]+$/.test(value.id)
 
+const echoFlowLoginEndpoint: Validator = value =>
+  value === undefined
+  || (isRecord(value)
+    && hasOnlyKeys(value, ['endpoint'])
+    && (value.endpoint === 'main' || value.endpoint === 'dedicated'))
+const claudeCodeRuntimeId: Validator = value => value === 'bundled' || value === 'installed'
+const runtimeDiscoveryOptions: Validator = value => {
+  if (value === undefined) return true
+  return isRecord(value) && hasOnlyKeys(value, ['includeWsl']) && typeof value.includeWsl === 'boolean'
+}
+const runtimeDiscoveryPath: Validator = value => typeof value === 'string'
+  && value.length > 0
+  && value.length <= 4_096
+  && (value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value))
+  && !/[\u0000-\u001f\u007f]/.test(value)
+
 const MAX_TERMINAL_DIMENSION = 1_000
 const MAX_TERMINAL_CWD_LENGTH = 4_096
 const MAX_TERMINAL_WRITE_LENGTH = 1_048_576
@@ -261,6 +277,12 @@ const workspaceBrowserReload: Validator = value =>
   && isWorkspaceBrowserId(value.tabId)
   && (value.ignoreCache === undefined || typeof value.ignoreCache === 'boolean')
 
+const workspaceBrowserSetBounds: Validator = value =>
+  isRecord(value)
+  && hasOnlyKeys(value, ['tabId', 'bounds'])
+  && isWorkspaceBrowserId(value.tabId)
+  && boundsPayload(value.bounds)
+
 const workspaceBrowserSetVisible: Validator = value =>
   isRecord(value)
   && hasOnlyKeys(value, ['tabId', 'visible'])
@@ -425,6 +447,24 @@ export const ELECTRON_IPC_VALIDATORS = {
   [ELECTRON_IPC_CHANNELS.adaptersRestartSidecar]: noPayload,
   [ELECTRON_IPC_CHANNELS.zoomSet]: zoomPayload,
   [ELECTRON_IPC_CHANNELS.appearanceSetApplied]: appliedAppearance,
+  [ELECTRON_IPC_CHANNELS.echoFlowLoginOpen]: echoFlowLoginEndpoint,
+  [ELECTRON_IPC_CHANNELS.echoFlowSignOut]: echoFlowLoginEndpoint,
+  [ELECTRON_IPC_CHANNELS.echoFlowWhenRestored]: noPayload,
+  [ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode]: noPayload,
+  [ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode]: noPayload,
+  [ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode]: claudeCodeRuntimeId,
+  [ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet]: runtimeDiscoveryOptions,
+  [ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath]: runtimeDiscoveryPath,
+  [ELECTRON_IPC_CHANNELS.shellShowItemInFolder]: stringPayload,
+  [ELECTRON_IPC_CHANNELS.traceOpenWindow]: stringPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessGetStatus]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessStart]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessStop]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessRestart]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessUpdate]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessOpen]: noPayload,
+  [ELECTRON_IPC_CHANNELS.workspaceBrowserSetBounds]: workspaceBrowserSetBounds,
+  [ELECTRON_IPC_CHANNELS.workspaceBrowserSnapshot]: workspaceBrowserTab,
 } satisfies Record<ElectronIpcChannel, Validator>
 
 const allowedChannels = new Set<ElectronIpcChannel>(

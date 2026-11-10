@@ -106,18 +106,36 @@ it('opens the group QR in a dialog instead of pushing it below the fold', async 
   // is not racing a state update.
   await screen.findByText((_, node) => node?.tagName === 'SPAN' && node.textContent === '版本 0.1.0')
 
-  const entry = screen.getByRole('button', { name: /加入 cc-haha 交流群/ })
+  // Self-owned About copy. The old cc-haha assertions were upstream leftovers;
+  // updating them must never pull the UI back to the upstream brand.
+  const entry = screen.getByRole('button', { name: /加入 EchoFlow Code 交流群/ })
   expect(entry.compareDocumentPosition(screen.getByRole('button', { name: /反馈问题/ })) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
   expect(entry).toHaveAttribute('aria-haspopup', 'dialog')
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
   fireEvent.click(entry)
 
-  const dialog = screen.getByRole('dialog', { name: '加入 cc-haha 交流群' })
-  const qr = screen.getByRole('img', { name: 'cc-haha 企业微信用户群二维码' })
+  const dialog = screen.getByRole('dialog', { name: '加入 EchoFlow Code 交流群' })
+  const qr = screen.getByRole('img', { name: 'EchoFlow Code 企业微信用户群二维码' })
   expect(dialog).toContainElement(qr)
   expect(qr).toHaveAttribute('src', expect.stringContaining('icons/wechat-group-qr.png'))
 
   fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+})
+
+it('keeps the self-owned brand mark, repository and author/social links', async () => {
+  await renderAboutSettings()
+
+  // The identity block shows the real self-owned app-icon asset, not the
+  // upstream CC geometry that used to be inlined here.
+  const mark = document.querySelector('img[src*="app-icon.png"]')
+  expect(mark).not.toBeNull()
+  expect(document.querySelector('svg[viewBox^="252 "]')).toBeNull()
+
+  // Self-owned project identity must not be reverted to the upstream brand.
+  expect(screen.getByText(/EchoFlow-ClaudeCode/)).toBeInTheDocument()
+  expect(screen.getAllByText('EchoFlow AI').length).toBeGreaterThanOrEqual(3)
+  expect(screen.getByText('Bilibili')).toBeInTheDocument()
+  expect(screen.getByText('Douyin')).toBeInTheDocument()
 })

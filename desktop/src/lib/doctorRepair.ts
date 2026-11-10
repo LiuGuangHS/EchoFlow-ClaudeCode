@@ -2,6 +2,7 @@ import { doctorApi, type DoctorReport } from '../api/doctor'
 import {
   FOLLOW_SYSTEM_THEME_STORAGE_KEY,
   LIGHT_THEME_STORAGE_KEY,
+  DARK_THEME_STORAGE_KEY,
   THEME_STORAGE_KEY,
 } from '../theme/systemAppearance'
 import { APP_ZOOM_STORAGE_KEY, LEGACY_UI_ZOOM_STORAGE_KEY } from './appZoom'
@@ -12,11 +13,15 @@ export const SAFE_DOCTOR_STORAGE_KEYS = [
   'cc-haha-open-tabs',
   'cc-haha-session-runtime',
   THEME_STORAGE_KEY,
-  // The theme is three keys, not one: dropping only the applied theme would
-  // leave the switch and the light half behind, so a reset would not actually
-  // return the appearance to its out-of-the-box state.
+  // Clear both appearance halves and the legacy keys so a later migration
+  // cannot restore an old preference after an explicit reset.
   FOLLOW_SYSTEM_THEME_STORAGE_KEY,
   LIGHT_THEME_STORAGE_KEY,
+  DARK_THEME_STORAGE_KEY,
+  'cc-haha-theme',
+  'cc-haha-follow-system-theme',
+  'cc-haha-light-theme',
+  'cc-haha-dark-theme',
   'cc-haha-locale',
   APP_ZOOM_STORAGE_KEY,
   LEGACY_UI_ZOOM_STORAGE_KEY,

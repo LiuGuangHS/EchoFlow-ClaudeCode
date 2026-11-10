@@ -45,6 +45,15 @@ vi.mock('../../pages/SubagentRunPage', () => ({
   ),
 }))
 
+vi.mock('@/pages/TraceSession', () => ({
+  TraceSession: ({ sessionId, onBack }: { sessionId: string; onBack?: () => void }) => (
+    <div data-testid="trace-session" data-session-id={sessionId}>
+      <button onClick={onBack}>返回轨迹列表</button>
+    </div>
+  ),
+}))
+
+import { openTraceDetail } from '@/lib/traceNavigation'
 import { ContentRouter } from './ContentRouter'
 import { MARKET_TAB_ID, SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -124,6 +133,34 @@ describe('ContentRouter tab surfaces', () => {
     act(() => useTabStore.getState().setActiveTab(null))
     expect(screen.getByTestId('new-session-draft-panel')).not.toHaveAttribute('inert')
     expect(screen.getByLabelText('Draft text')).toHaveValue('unsent edits')
+  })
+
+  it('opens a trace detail from navigation and returns to the settings list without losing chat or draft', () => {
+    useTabStore.setState({ tabs: [{ sessionId: 'chat-1', title: 'Chat', type: 'session', status: 'idle' }], activeTabId: 'chat-1' })
+    useUIStore.getState().startNewSessionDraft('/workspace/project')
+    render(<ContentRouter />)
+    const conversation = screen.getByTestId('active-session')
+    const draft = screen.getByTestId('empty-session')
+
+    let traceTabId = ''
+    act(() => { traceTabId = openTraceDetail('trace-source', 'Trace source') })
+    expect(screen.getByTestId('trace-session')).toHaveAttribute('data-session-id', 'trace-source')
+    expect(screen.getByTestId('active-session')).toBe(conversation)
+    expect(screen.getByTestId('session-tab-panel')).toHaveAttribute('inert')
+    expect(screen.getByTestId('empty-session')).toBe(draft)
+
+    fireEvent.click(screen.getByRole('button', { name: '返回轨迹列表' }))
+    expect(screen.getByTestId('settings-page')).toBeInTheDocument()
+    expect(useUIStore.getState().pendingSettingsTab).toBe('trace')
+    expect(useTabStore.getState().tabs.some(tab => tab.sessionId === traceTabId)).toBe(false)
+    expect(useTabStore.getState().tabs.some(tab => tab.sessionId === 'chat-1')).toBe(true)
+  })
+
+  it('does not mount a trace detail for a tab without its source session', () => {
+    useTabStore.setState({ tabs: [{ sessionId: '__trace__broken', title: 'Trace', type: 'trace', status: 'idle' }], activeTabId: '__trace__broken' })
+    render(<ContentRouter />)
+    expect(screen.queryByTestId('trace-session')).not.toBeInTheDocument()
+    expect(screen.getByTestId('empty-session')).toBeInTheDocument()
   })
 
   it('renders the active terminal tab as main content', () => {

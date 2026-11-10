@@ -1,7 +1,7 @@
 {
   "name": "claude-code-desktop",
   "private": true,
-  "version": "0.7.4",
+  "version": "0.7.7",
   "description": "Desktop coding agent workbench for EchoFlow Code.",
   "homepage": "https://github.com/LiuGuangHS/EchoFlow-ClaudeCode",
   "author": {
@@ -40,7 +40,6 @@
       "package.json"
     ],
     "mac": {
-      "appId": "com.claude-code-haha.desktop",
       "category": "public.app-category.developer-tools",
       "target": [
         "dmg",
@@ -101,7 +100,7 @@
     "prepare:ripgrep": "bun run ./scripts/prepare-ripgrep.ts",
     "prepare:cloudflared": "bun run ./scripts/prepare-cloudflared.ts",
     "build:sidecars": "bun run ./scripts/build-sidecars.ts",
-    "test:compiled-sidecar-smoke": "CC_HAHA_RUN_COMPILED_SIDECAR_SMOKE=1 bun run test -- --run scripts/build-sidecars.test.ts scripts/image-processor-packaging.test.ts scripts/prepare-cloudflared.test.ts",
+    "test:compiled-sidecar-smoke": "ECHOFLOW_RUN_COMPILED_SIDECAR_SMOKE=1 bun run test -- --run scripts/build-sidecars.test.ts scripts/image-processor-packaging.test.ts scripts/prepare-cloudflared.test.ts",
     "clean:electron-output": "bun run ./scripts/clean-electron-output.ts",
     "build:macos-arm64": "bash ./scripts/build-macos-arm64.sh",
     "build:windows-x64": "powershell -ExecutionPolicy Bypass -File ./scripts/build-windows-x64.ps1",

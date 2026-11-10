@@ -8,6 +8,7 @@ import { BUNDLED_PROVIDER_PRESETS } from '../../config/providerPresets'
 import type { SavedProvider } from '../../types/provider'
 import { ProviderSettings } from './ProviderSettings'
 
+vi.mock('../../components/settings/EchoFlowAPIOfficialLogin', () => ({ EchoFlowAPIOfficialLogin: () => null }))
 vi.mock('../../components/settings/ClaudeOfficialLogin', () => ({ ClaudeOfficialLogin: () => null }))
 vi.mock('../../components/settings/ChatGPTOfficialLogin', () => ({ ChatGPTOfficialLogin: () => null }))
 vi.mock('../../components/settings/GrokOfficialLogin', () => ({ GrokOfficialLogin: () => null }))

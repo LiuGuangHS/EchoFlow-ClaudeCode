@@ -8,7 +8,7 @@ import {
   GitBranch,
   MessageSquareText,
   RadioTower,
-  Sparkles,
+  BrainCircuit,
   Wrench,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
@@ -40,7 +40,7 @@ function iconForSpan(span: TraceSpan, size: number): { icon: ReactNode; classNam
   const secondary = 'text-[var(--color-text-secondary)]'
   switch (span.kind) {
     case 'llm':
-      return { icon: <Sparkles size={size} strokeWidth={2} />, className: 'text-[var(--color-brand)]' }
+      return { icon: <BrainCircuit size={size} strokeWidth={1.75} />, className: 'text-[var(--color-brand)]' }
     case 'tool':
       return { icon: <Wrench size={size} strokeWidth={2} />, className: secondary }
     case 'tool_result':
@@ -100,11 +100,11 @@ export function MetaChip({
 }) {
   return (
     <span
-      className="inline-flex min-w-0 items-baseline gap-1.5 text-[12.5px]"
+      className="inline-flex min-w-0 items-baseline gap-1.5 text-[13px]"
       {...(title ? { title } : {})}
     >
       <span className="shrink-0 text-[var(--color-text-secondary)]">{label}</span>
-      <span className={`truncate font-mono font-semibold ${tone === 'danger' ? 'text-[var(--color-error)]' : 'text-[var(--color-text-primary)]'}`}>
+      <span className={`truncate font-mono ${tone === 'danger' ? 'text-[var(--color-error)]' : 'text-[var(--color-text-primary)]'}`}>
         {value}
       </span>
     </span>

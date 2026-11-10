@@ -45,7 +45,7 @@ export function MarketplaceBrowser() {
 
   return <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-5 lg:p-6">
     <section className="rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-      <h2 className="text-base font-semibold text-[var(--color-text-primary)]">{t('extensions.marketplacePresets')}</h2>
+      <h2 className="text-[15px] font-semibold text-[var(--color-text-primary)]">{t('extensions.marketplacePresets')}</h2>
       <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{t('extensions.marketplacePresetsHint')}</p>
       {marketplacePresets.length === 0
         ? <EmptyState size="sm" variant="plain" title={t('extensions.marketplacePresetsEmpty')} description={t('extensions.marketplacePresetsEmptyHint')} />
@@ -58,7 +58,7 @@ export function MarketplaceBrowser() {
     </section>
 
     <section className="rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-      <h2 className="text-base font-semibold text-[var(--color-text-primary)]">{t('extensions.registeredMarketplaces')}</h2>
+      <h2 className="text-[15px] font-semibold text-[var(--color-text-primary)]">{t('extensions.registeredMarketplaces')}</h2>
       {registeredMarketplaces.length === 0
         ? <EmptyState size="sm" variant="plain" title={t('extensions.noRegisteredMarketplaces')} description={t('extensions.noRegisteredMarketplacesHint')} />
         : <div className="mt-3 flex flex-wrap gap-2">{registeredMarketplaces.map(marketplace => <Button key={marketplace.name} size="sm" variant={selectedMarketplace === marketplace.name ? 'primary' : 'secondary'} onClick={() => openMarketplace(marketplace.name)}>{marketplace.name}</Button>)}</div>}

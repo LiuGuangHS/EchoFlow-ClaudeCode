@@ -29,11 +29,8 @@ import {
   Search,
   SearchX,
   Shrink,
-  Star,
   Wrench,
 } from 'lucide-react'
-import aruhubLogo from '../../../../docs/images/sponsors/aruhub-logo.png'
-import modelflareLogo from '../../../../docs/images/sponsors/modelflare-logo.png'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useProviderStore } from '../../stores/providerStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -70,6 +67,8 @@ import {
   type ProviderSearchField,
   type ProviderSearchMatch,
 } from './providerListSearch'
+import { EchoFlowAPIOfficialLogin } from '../../components/settings/EchoFlowAPIOfficialLogin'
+import { ECHOFLOW_BASE_URLS, echoflowApi, type EchoFlowTokenSource } from '../../api/echoflow'
 import { ClaudeOfficialLogin } from '../../components/settings/ClaudeOfficialLogin'
 import { ChatGPTOfficialLogin } from '../../components/settings/ChatGPTOfficialLogin'
 import { GrokOfficialLogin } from '../../components/settings/GrokOfficialLogin'
@@ -90,11 +89,6 @@ import { ApiError, getBaseUrl } from '../../api/client'
 import { getDesktopHost } from '../../lib/desktopHost'
 import { API_KEY_JSON_PLACEHOLDER, maskSettingsJsonSecrets, restoreSettingsJsonSecrets, stripProviderSettingsJsonEnv } from '../../lib/providerSettingsJson'
 import { cx } from '@/lib/cx'
-
-const SPONSOR_LOGOS: Record<string, string> = {
-  aruhub: aruhubLogo,
-  modelflare: modelflareLogo,
-}
 
 /** Section label inside the provider dialog — the same 13px label as a settings section. */
 const FORM_SECTION_LABEL = 'block text-[13px] font-semibold text-[var(--color-text-secondary)]'
@@ -291,6 +285,9 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
   const t = useTranslation()
   const [editingProvider, setEditingProvider] = useState<SavedProvider | null>(null)
+  /** A token picked from the EchoFlow account card; prefills a create dialog. */
+  const [echoFlowDraft, setEchoFlowDraft] = useState<EchoFlowTokenSource | null>(null)
+  const [echoFlowHasAccount, setEchoFlowHasAccount] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createPresetId, setCreatePresetId] = useState<string | undefined>(undefined)
   /** Connecting Magpie (no provider) or editing the saved one. */
@@ -443,6 +440,12 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
   }
   const showSearch = providerItems.length >= PROVIDER_SEARCH_MIN_ITEMS || query !== ''
 
+  const openEchoFlowProviderModal = (draft: EchoFlowTokenSource) => {
+    setEchoFlowDraft(draft)
+    setCreatePresetId(undefined)
+    setShowCreateModal(true)
+  }
+
   const openCreateModal = (presetId?: string) => {
     if (presetId === MAGPIE_PRESET_ID) {
       setMagpieDialog({})
@@ -583,6 +586,27 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
       />
 
       {(actionFailed || (browserMode && providerLoadError)) && <p role="alert" className="mt-4 text-[13px] text-[var(--color-error)]">{t('publicAccess.genericError')}</p>}
+      {!browserMode && (
+        <div
+          data-testid="echoflow-api-official-provider"
+          className="relative mt-5 flex flex-col rounded-[var(--radius-xl)] border border-[var(--color-primary-fixed-dim)] bg-[var(--color-surface-container-low)] shadow-[var(--shadow-card)]"
+        >
+          <div className="flex items-center gap-4 px-4 py-3.5">
+            <span data-testid="echoflow-account-status" className={`h-2.5 w-2.5 shrink-0 rounded-full ${echoFlowHasAccount ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.providers.echoflowAPIOfficialName')}</div>
+              <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">{t('settings.providers.echoflowAPIOfficialDesc')}</div>
+            </div>
+          </div>
+          <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">
+            <EchoFlowAPIOfficialLogin
+              onAddFromToken={openEchoFlowProviderModal}
+              onBindingChange={setEchoFlowHasAccount}
+            />
+            <p className="mt-3 text-xs leading-5 text-[var(--color-text-tertiary)]">{t('settings.providers.echoflowAPIOfficialDisclaimer')}</p>
+          </div>
+        </div>
+      )}
       <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
         <SegmentedControl
           as="tablist"
@@ -696,10 +720,14 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
         <ProviderFormModal
           browserMode={browserMode}
           open={true}
-          onClose={() => setShowCreateModal(false)}
+          onClose={() => {
+            setShowCreateModal(false)
+            setEchoFlowDraft(null)
+          }}
           mode="create"
           presets={presets}
           initialPresetId={createPresetId}
+          echoFlowDraft={echoFlowDraft}
           onPickMagpie={browserMode ? undefined : () => {
             setShowCreateModal(false)
             setMagpieDialog({})
@@ -971,6 +999,8 @@ type ProviderFormProps = {
   initialPresetId?: string
   /** Magpie is connected through its own dialog (catalog, no key). */
   onPickMagpie?: () => void
+  /** A token from the EchoFlow account card: the key is managed, not typed. */
+  echoFlowDraft?: EchoFlowTokenSource | null
 }
 
 function requirePreset(preset: ProviderPreset | undefined): ProviderPreset {
@@ -1419,7 +1449,7 @@ function openExternalUrl(url: string) {
     .catch(() => window.open(url, '_blank', 'noopener,noreferrer'))
 }
 
-function ProviderFormModal({ open, onClose, mode, provider, presets, initialPresetId, onPickMagpie, browserMode = false }: ProviderFormProps) {
+function ProviderFormModal({ open, onClose, mode, provider, presets, initialPresetId, onPickMagpie, echoFlowDraft, browserMode = false }: ProviderFormProps) {
   const { createProvider, updateProvider, testConfig, fetchModels } = useProviderStore()
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
   const addToast = useUIStore((s) => s.addToast)
@@ -1440,9 +1470,23 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
     () => presets.flatMap((preset) => Object.keys(preset.defaultEnv ?? {})),
     [presets],
   )
+  // A token from the account card has no catalog preset: model settings start
+  // empty so the user picks them, while the endpoint is fixed to the token's line.
+  const echoFlowPreset: ProviderPreset | undefined = echoFlowDraft
+    ? {
+        ...fallbackPreset,
+        id: 'echoflowai',
+        name: 'EchoFlow',
+        baseUrl: ECHOFLOW_BASE_URLS[echoFlowDraft.endpoint],
+        defaultModels: { main: '', fable: '', haiku: '', sonnet: '', opus: '' },
+      }
+    : undefined
   const initialPreset = provider
     ? availablePresets.find((p) => p.id === provider.presetId) ?? fallbackPreset
-    : selectablePresets.find((p) => p.id === initialPresetId) ?? selectablePresets[0] ?? fallbackPreset
+    : (echoFlowDraft && echoFlowPreset) ?? selectablePresets.find((p) => p.id === initialPresetId) ?? selectablePresets[0] ?? fallbackPreset
+  const echoFlowBaseUrl = echoFlowDraft
+    ? ECHOFLOW_BASE_URLS[echoFlowDraft.endpoint]
+    : initialPreset.baseUrl
   // The custom preset's catalog name is a bare English "Custom"; show a localized
   // label that says what it is for.
   const presetLabel = (preset: ProviderPreset) =>
@@ -1461,8 +1505,13 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
   )
 
   const [selectedPreset, setSelectedPreset] = useState<ProviderPreset>(initialPreset)
-  const [name, setName] = useState(provider?.name ?? presetLabel(initialPreset))
-  const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? initialPreset.baseUrl)
+  const [name, setName] = useState(
+    provider?.name ??
+    (echoFlowDraft
+      ? `${echoFlowDraft.endpoint === 'main' ? t('echoflowApiOfficialLogin.endpointMain') : t('echoflowApiOfficialLogin.endpointDedicated')} · ${echoFlowDraft.tokenName}`
+      : presetLabel(initialPreset)),
+  )
+  const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? echoFlowBaseUrl)
   // A preset that decides the protocol per model owns this field: the picked value
   // is only the fallback for models no rule matches, so a record carrying a stale
   // one (cc-switch import, a paste, an older save) must not override it.
@@ -1668,9 +1717,9 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
   const modelContextWindowErrorSlots = MODEL_SLOTS.filter((slot) => getModelContextWindowErrorKey(modelContextInputs[slot]))
   const compatibilityInvalid = invalidCompatibilityNumber(compatibility.maxOutputTokens)
     || (apiFormat !== 'anthropic' && invalidCompatibilityNumber(compatibility.outputTokenLimit))
-  const canSubmit = !compatibilityInvalid && !(!keepRemoteProxy && proxyMode === 'manual' && !isValidHttpProxyUrl(proxyUrl.trim())) && name.trim() && baseUrl.trim() && (mode === 'edit' || !requiresApiKey || apiKey.trim()) && models.main.trim() && (!imageGeneration.enabled || imageGeneration.model.trim()) && !settingsJsonError && !autoCompactWindowErrorKey && modelContextWindowErrorSlots.length === 0
+  const canSubmit = !compatibilityInvalid && !(!keepRemoteProxy && proxyMode === 'manual' && !isValidHttpProxyUrl(proxyUrl.trim())) && name.trim() && baseUrl.trim() && (mode === 'edit' || Boolean(echoFlowDraft) || !requiresApiKey || apiKey.trim()) && models.main.trim() && (!imageGeneration.enabled || imageGeneration.model.trim()) && !settingsJsonError && !autoCompactWindowErrorKey && modelContextWindowErrorSlots.length === 0
   const normalizedBaseUrl = normalizeProviderBaseUrl(baseUrl)
-  const isPresetDefaultEndpoint = normalizedBaseUrl === normalizeProviderBaseUrl(selectedPreset.baseUrl)
+  const isPresetDefaultEndpoint = normalizedBaseUrl === normalizeProviderBaseUrl(echoFlowDraft ? echoFlowBaseUrl : selectedPreset.baseUrl)
   const apiKeyUrl = isPresetDefaultEndpoint ? selectedPreset.apiKeyUrl?.trim() : undefined
   const promoText = isPresetDefaultEndpoint ? selectedPreset.promoText?.trim() : undefined
   const displayedSettingsJson = showApiKey
@@ -1899,7 +1948,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
   }
   const hasModelsBaseUrl = Boolean(baseUrl.trim())
   const hasModelsApiKey = Boolean(apiKey.trim())
-  const canFetchModels = hasModelsBaseUrl && hasModelsApiKey
+  const canFetchModels = Boolean(echoFlowDraft) || (hasModelsBaseUrl && hasModelsApiKey)
   const handleFetchModels = async () => {
     if (!canFetchModels || isFetchingModels) return
     const requestId = modelsRequestRef.current + 1
@@ -1916,7 +1965,12 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
         : proxyMode === 'manual' && isValidHttpProxyUrl(proxyUrl.trim())
           ? { mode: proxyMode, url: proxyUrl.trim() }
           : undefined
-      const result = await fetchModels({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), ...(probeProxy && { proxy: probeProxy }) })
+      const result = echoFlowDraft
+        ? await echoflowApi.fetchModelsFromToken({
+            endpoint: echoFlowDraft.endpoint,
+            tokenId: echoFlowDraft.tokenId,
+          })
+        : await fetchModels({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), ...(probeProxy && { proxy: probeProxy }) })
       // The form moved on while we were probing — this answer describes a base
       // URL or key the user no longer has typed in.
       if (modelsRequestRef.current !== requestId) return
@@ -1986,9 +2040,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
       selected={selectedPreset.id === preset.id}
       onClick={() => handlePresetChange(preset)}
     >
-      {SPONSOR_LOGOS[preset.id] && <img src={SPONSOR_LOGOS[preset.id]} alt="" className="size-4 rounded-[var(--radius-sm)] object-contain" />}
       {presetLabel(preset)}
-      {SPONSOR_LOGOS[preset.id] && <Star size={12} className="fill-[var(--color-warning)] text-[var(--color-warning)]" aria-label={t('settings.providers.sponsor')} />}
       {preset.isNew && (
         <Badge tone="warning" size="xs" className="absolute -right-1 -top-2">
           {t('settings.providers.new')}
@@ -2025,7 +2077,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
     try {
       // Write the edited cc-haha settings.json first so provider-specific model
       // settings never conflict with the user's global ~/.claude/settings.json.
-      if (!browserMode && settingsJson.trim()) {
+      if (!echoFlowDraft && !browserMode && settingsJson.trim()) {
         try {
           const parsed = restoreSettingsJsonSecrets(JSON.parse(settingsJson), settingsJson, apiKey)
           const { providersApi } = await import('../../api/providers')
@@ -2042,7 +2094,31 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
         }
       }
 
-      if (mode === 'create') {
+      if (mode === 'create' && echoFlowDraft) {
+        await echoflowApi.createProviderFromToken({
+          endpoint: echoFlowDraft.endpoint,
+          tokenId: echoFlowDraft.tokenId,
+          tokenName: echoFlowDraft.tokenName,
+          keyPreview: echoFlowDraft.keyPreview,
+          ...(echoFlowDraft.remainQuota !== undefined && { remainQuota: echoFlowDraft.remainQuota }),
+          ...(typeof echoFlowDraft.unlimitedQuota === 'boolean' && { unlimitedQuota: echoFlowDraft.unlimitedQuota }),
+          name: name.trim(),
+          authStrategy,
+          baseUrl: baseUrl.trim(),
+          apiFormat,
+          ...(storedCompatibility ? { requestCompatibility: storedCompatibility } : {}),
+          models: normalizedModels,
+          ...(storedModel1mSupport !== undefined && { model1mSupport: storedModel1mSupport }),
+          ...(parsedAutoCompactWindow !== undefined && { autoCompactWindow: parsedAutoCompactWindow }),
+          ...(Object.keys(parsedModelContextWindows).length > 0 && { modelContextWindows: parsedModelContextWindows }),
+          toolSearchEnabled,
+          ...(disableExperimentalBetas && { disableExperimentalBetas }),
+          supportsNestedToolResultMedia,
+          ...(storedImageGeneration !== undefined && { imageGeneration: storedImageGeneration }),
+          ...(storedProxy && { proxy: storedProxy }),
+          notes: notes.trim() || undefined,
+        })
+      } else if (mode === 'create') {
         await createProvider({
           presetId: selectedPreset.id,
           name: name.trim(),
@@ -2126,18 +2202,31 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
           modelId: models.main.trim(),
         })
       } else {
-        if (requiresApiKey && !apiKey.trim()) return
-        result = await testConfig({
-          baseUrl: baseUrl.trim(),
-          apiKey: apiKey.trim() || selectedPreset.defaultEnv?.ANTHROPIC_AUTH_TOKEN || 'local',
-          modelId: models.main.trim(),
-          authStrategy,
-          apiFormat,
-          supportsNestedToolResultMedia,
-          presetId: selectedPreset.id,
-          ...(proxyFormValue ? { proxy: proxyFormValue } : {}),
-          ...(formCompatibility ? { requestCompatibility: formCompatibility } : {}),
-        })
+        if (requiresApiKey && !apiKey.trim() && !echoFlowDraft) return
+        result = echoFlowDraft
+          ? (await echoflowApi.testProviderFromToken({
+              endpoint: echoFlowDraft.endpoint,
+              tokenId: echoFlowDraft.tokenId,
+              baseUrl: baseUrl.trim(),
+              modelId: models.main.trim(),
+              authStrategy,
+              apiFormat,
+              supportsNestedToolResultMedia,
+              presetId: selectedPreset.id,
+              ...(proxyFormValue ? { proxy: proxyFormValue } : {}),
+              ...(formCompatibility ? { requestCompatibility: formCompatibility } : {}),
+            })).result
+          : await testConfig({
+              baseUrl: baseUrl.trim(),
+              apiKey: apiKey.trim() || selectedPreset.defaultEnv?.ANTHROPIC_AUTH_TOKEN || 'local',
+              modelId: models.main.trim(),
+              authStrategy,
+              apiFormat,
+              supportsNestedToolResultMedia,
+              presetId: selectedPreset.id,
+              ...(proxyFormValue ? { proxy: proxyFormValue } : {}),
+              ...(formCompatibility ? { requestCompatibility: formCompatibility } : {}),
+            })
       }
       setTestResult(result)
     } catch {
@@ -2167,7 +2256,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
         {browserMode && <p className="text-xs leading-5 text-[var(--color-text-secondary)]">{t('h5Settings.providerPrivacy')}</p>}
         {saveFailed && <p role="alert" className="text-[13px] text-[var(--color-error)]">{t(credentialRequired ? 'h5Settings.credentialRequired' : 'publicAccess.genericError')}</p>}
         {/* Preset chips */}
-        {mode === 'create' && (
+        {mode === 'create' && !echoFlowDraft && (
           <div>
             <span className={cx(FORM_SECTION_LABEL, 'mb-2')}>{t('settings.providers.preset')}</span>
             <div className="flex flex-col gap-2">
@@ -2225,6 +2314,15 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
           <Input id={baseUrlInputId} required value={baseUrl} onChange={(e) => handleBaseUrlChange(e.target.value)} placeholder={t('settings.providers.baseUrlPlaceholder')} className="font-mono text-[13px]" />
         </div>
 
+        {echoFlowDraft ? (
+          <div className="flex flex-col gap-1">
+            <span className={FORM_FIELD_LABEL}>{t('settings.providers.apiKey')}</span>
+            <div className={cx(FIELD_BASE_CLASSES, FIELD_SIZE_CLASSES.lg, fieldStateClasses(false), 'flex items-center font-mono text-[13px] text-[var(--color-text-secondary)]')}>
+              {echoFlowDraft.keyPreview}
+            </div>
+            <p className="text-xs leading-5 text-[var(--color-text-tertiary)]">{t('settings.providers.tokenKeyManaged')}</p>
+          </div>
+        ) : (
         <div className="flex flex-col gap-1">
           <label htmlFor="provider-api-key" className={FORM_FIELD_LABEL}>
             {t('settings.providers.apiKey')}
@@ -2254,6 +2352,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
             />
           </div>
         </div>
+        )}
 
         {(apiKeyUrl || promoText) && (
           <div className="-mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">

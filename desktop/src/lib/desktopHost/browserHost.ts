@@ -6,9 +6,11 @@ import type {
   NotificationPermissionState,
 } from './types'
 import { readBrowserLanguages } from '../../i18n/locale'
+import { buildTraceWindowUrl } from '../traceLaunch'
 
 const browserCapabilities: DesktopHostCapabilities = {
   appMode: false,
+  echoFlowAccount: false,
   clipboard: false,
   dialogs: false,
   notifications: false,
@@ -53,12 +55,40 @@ export const browserHost: DesktopHost = {
   kind: 'browser',
   isDesktop: false,
   capabilities: browserCapabilities,
+  echoFlow: {
+    async openLogin() {
+      unsupported('EchoFlow site account login')
+    },
+    async signOut() {
+      unsupported('EchoFlow site account login')
+    },
+    async whenAccountRestored() {
+      return false
+    },
+  },
+  runtimeDiscovery: {
+    async list() {
+      unsupported('Runtime discovery')
+    },
+    async probePath() {
+      unsupported('Runtime discovery')
+    },
+  },
   runtime: {
     async getServerUrl() {
       unsupported('Resolving the bundled server URL')
     },
     async getLocalAccessToken() {
       unsupported('Resolving the bundled server access token')
+    },
+    async getClaudeCode() {
+      unsupported('Claude Code runtime settings')
+    },
+    async chooseClaudeCode() {
+      unsupported('Claude Code runtime settings')
+    },
+    async setClaudeCode() {
+      unsupported('Claude Code runtime settings')
     },
   },
   app: {
@@ -133,6 +163,38 @@ export const browserHost: DesktopHost = {
     },
     async openPath() {
       unsupported('Opening system file paths')
+    },
+    async showItemInFolder() {
+      unsupported('Showing a file in its folder')
+    },
+  },
+  trace: {
+    async openWindow(sessionId) {
+      if (typeof window !== 'undefined') {
+        window.open(buildTraceWindowUrl(sessionId), '_blank', 'noopener,noreferrer')
+        return
+      }
+      unsupported('Opening trace windows')
+    },
+  },
+  deepSeekHarness: {
+    async getStatus() {
+      unsupported('DeepSeek Harness')
+    },
+    async start() {
+      unsupported('DeepSeek Harness')
+    },
+    async stop() {
+      unsupported('DeepSeek Harness')
+    },
+    async restart() {
+      unsupported('DeepSeek Harness')
+    },
+    async update() {
+      unsupported('DeepSeek Harness')
+    },
+    async open() {
+      unsupported('DeepSeek Harness')
     },
   },
   pets: {
@@ -332,10 +394,12 @@ export const browserHost: DesktopHost = {
     async reload() {},
     async stop() {},
     async setVisible() {},
+    async setBounds() {},
     async setZoom() {},
     async find() {},
     async stopFind() {},
     async capture() {},
+    async snapshot() {},
     async message() {},
     async printToPdf() {},
     async showMenu() { return null },

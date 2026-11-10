@@ -752,7 +752,7 @@ export function spawnSidecar(plan: SidecarPlan, deps: SpawnSidecarDeps = {}): Si
     const code = (error as NodeJS.ErrnoException | null)?.code
     if (typeof code !== 'string' || !UNEXECUTABLE_SIDECAR_ERROR_CODES.has(code)) throw error
     throw new Error(
-      `Electron sidecar could not be executed (${code}): ${plan.command}. The file may be damaged, incomplete, or blocked by security software. Reinstall Claude Code Haha with the full installer, and allow its install directory in your security software if this keeps happening.`,
+      `Electron sidecar could not be executed (${code}): ${plan.command}. The file may be damaged, incomplete, or blocked by security software. Reinstall EchoFlow Code with the full installer, and allow its install directory in your security software if this keeps happening.`,
       { cause: error },
     )
   }

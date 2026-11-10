@@ -141,8 +141,43 @@ describe('DifferentialHttpExecutor', () => {
     const updater = { httpExecutor: fixtureValue.base as never }
 
     expect(wrapDifferentialHttpExecutor(updater)).toBe(true)
-    expect(wrapDifferentialHttpExecutor(updater)).toBe(false)
+    expect(wrapDifferentialHttpExecutor(updater)).toBe(true)
     expect(updater.httpExecutor).toBeInstanceOf(DifferentialHttpExecutor)
+  })
+
+  it.each([undefined, {}, { createRequest: true, addErrorAndTimeoutHandlers() {} }])('refuses an unusable executor', executor => {
+    expect(wrapDifferentialHttpExecutor({ httpExecutor: executor })).toBe(false)
+  })
+
+  it('fails closed when the executor cannot be replaced', () => {
+    const original = fixture().base
+    const updater = Object.freeze({ httpExecutor: original })
+    expect(wrapDifferentialHttpExecutor(updater)).toBe(false)
+    expect(updater.httpExecutor).toBe(original)
+  })
+
+  it.each(['aborted', 'error', 'close'])('rejects a response %s without reporting end', async event => {
+    const value = fixture()
+    const observed = observe(new DifferentialHttpExecutor(value.base), { range: 'bytes=32-63' })
+    const stream = response(206, {
+      'accept-ranges': 'bytes',
+      'content-range': 'bytes 32-63/96',
+      'content-length': '32',
+    })
+    value.base.createRequest.mock.calls[0]![1](stream)
+    stream.emit(event, new Error('transport failed'))
+    await expect(observed).rejects.toThrow()
+  })
+
+  it('preserves request identity and redirect events for Electron followRedirect', () => {
+    const value = fixture()
+    const followRedirect = vi.fn()
+    Object.assign(value.request, { followRedirect })
+    const request = new DifferentialHttpExecutor(value.base).createRequest({}, () => {})
+    expect(request).toBe(value.request)
+    value.request.on('redirect', () => (request as typeof value.request & { followRedirect(): void }).followRedirect())
+    value.request.emit('redirect', 302, 'GET', 'https://example.test/update')
+    expect(followRedirect).toHaveBeenCalledOnce()
   })
 
   it('delegates complete-package downloads to the original executor', async () => {

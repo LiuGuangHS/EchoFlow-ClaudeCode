@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { THEME_BACKGROUNDS } from '../theme/systemAppearance'
+import {
+  DARK_THEME_STORAGE_KEY,
+  FOLLOW_SYSTEM_THEME_STORAGE_KEY,
+  LIGHT_THEME_STORAGE_KEY,
+  THEME_BACKGROUNDS,
+  THEME_STORAGE_KEY,
+} from '../theme/systemAppearance'
 
 type Listener = (event: { matches: boolean }) => void
 
@@ -65,7 +71,7 @@ describe('uiStore theme handling', () => {
   })
 
   it('hydrates and applies the pure white theme as a light color scheme', async () => {
-    window.localStorage.setItem('cc-haha-theme', 'white')
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'white')
 
     const { initializeTheme, useUIStore } = await import('./uiStore')
 
@@ -154,13 +160,58 @@ describe('uiStore following the system appearance', () => {
   })
 
   it('leaves an existing install on its fixed theme', async () => {
-    window.localStorage.setItem('cc-haha-theme', 'white')
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'white')
     stubMatchMedia(true)
 
     const { useUIStore } = await import('./uiStore')
 
     expect(useUIStore.getState().followSystemTheme).toBe(false)
     expect(useUIStore.getState().theme).toBe('white')
+  })
+
+  it('preserves a v0.7.4 fixed palette through initialization and restart', async () => {
+    // 保留历史版本的字面量键，避免运行时和测试常量一起改名时掩盖数据丢失。
+    window.localStorage.setItem('echoflow-code-theme', 'celadon')
+    stubMatchMedia(true)
+
+    const first = await import('./uiStore')
+    expect(first.useUIStore.getState()).toMatchObject({
+      theme: 'celadon',
+      lightTheme: 'celadon',
+      followSystemTheme: false,
+    })
+    first.initializeTheme()
+    expect(document.documentElement.getAttribute('data-theme')).toBe('celadon')
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('celadon')
+    expect(window.localStorage.getItem('echoflow-code-follow-system-theme')).toBe('0')
+    first.teardownTheme()
+
+    vi.resetModules()
+    const recreated = await import('./uiStore')
+    expect(recreated.useUIStore.getState()).toMatchObject({ theme: 'celadon', followSystemTheme: false })
+  })
+
+  it('preserves both v0.7.4 ground preferences and its explicit system switch', async () => {
+    window.localStorage.setItem('echoflow-code-theme', 'warm-classic')
+    window.localStorage.setItem('echoflow-code-light-theme', 'warm-classic')
+    window.localStorage.setItem('echoflow-code-dark-theme', 'ink-blue')
+    window.localStorage.setItem('echoflow-code-follow-system-theme', '1')
+    const media = stubMatchMedia(true)
+
+    const { initializeTheme, useUIStore, teardownTheme } = await import('./uiStore')
+    expect(useUIStore.getState()).toMatchObject({
+      theme: 'ink-blue',
+      lightTheme: 'warm-classic',
+      darkTheme: 'ink-blue',
+      followSystemTheme: true,
+    })
+    initializeTheme()
+    media.emit(false)
+    expect(useUIStore.getState().theme).toBe('warm-classic')
+    expect(window.localStorage.getItem('echoflow-code-light-theme')).toBe('warm-classic')
+    expect(window.localStorage.getItem('echoflow-code-dark-theme')).toBe('ink-blue')
+    expect(window.localStorage.getItem('echoflow-code-follow-system-theme')).toBe('1')
+    teardownTheme()
   })
 
   it('repaints when the OS flips while the app is open', async () => {
@@ -203,8 +254,8 @@ describe('uiStore following the system appearance', () => {
 
     useUIStore.getState().setFollowSystemTheme(false)
     expect(useUIStore.getState().theme).toBe('dark')
-    expect(window.localStorage.getItem('cc-haha-theme')).toBe('dark')
-    expect(window.localStorage.getItem('cc-haha-follow-system-theme')).toBe('0')
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe('dark')
+    expect(window.localStorage.getItem(FOLLOW_SYSTEM_THEME_STORAGE_KEY)).toBe('0')
     teardownTheme()
   })
 
@@ -220,7 +271,7 @@ describe('uiStore following the system appearance', () => {
     // classic rather than pure white.
     expect(useUIStore.getState().theme).toBe('dark')
     expect(useUIStore.getState().lightTheme).toBe('warm-classic')
-    expect(window.localStorage.getItem('cc-haha-light-theme')).toBe('warm-classic')
+    expect(window.localStorage.getItem(LIGHT_THEME_STORAGE_KEY)).toBe('warm-classic')
     teardownTheme()
   })
 
@@ -235,7 +286,7 @@ describe('uiStore following the system appearance', () => {
 
     expect(useUIStore.getState().theme).toBe('white')
     expect(useUIStore.getState().darkTheme).toBe('ink-blue')
-    expect(window.localStorage.getItem('cc-haha-dark-theme')).toBe('ink-blue')
+    expect(window.localStorage.getItem(DARK_THEME_STORAGE_KEY)).toBe('ink-blue')
     teardownTheme()
   })
 
@@ -308,11 +359,11 @@ describe('uiStore following the system appearance', () => {
     expect(useUIStore.getState().followSystemTheme).toBe(true)
 
     // Another window opted out; only storage reflects it.
-    window.localStorage.setItem('cc-haha-follow-system-theme', '0')
+    window.localStorage.setItem(FOLLOW_SYSTEM_THEME_STORAGE_KEY, '0')
 
     media.emit(true)
 
-    expect(window.localStorage.getItem('cc-haha-follow-system-theme')).toBe('0')
+    expect(window.localStorage.getItem(FOLLOW_SYSTEM_THEME_STORAGE_KEY)).toBe('0')
     expect(useUIStore.getState().theme).toBe('white')
     teardownTheme()
   })
@@ -324,8 +375,8 @@ describe('uiStore following the system appearance', () => {
     initializeTheme()
     expect(useUIStore.getState().theme).toBe('dark')
 
-    window.localStorage.setItem('cc-haha-light-theme', 'celadon')
-    window.localStorage.setItem('cc-haha-dark-theme', 'ink-blue')
+    window.localStorage.setItem(LIGHT_THEME_STORAGE_KEY, 'celadon')
+    window.localStorage.setItem(DARK_THEME_STORAGE_KEY, 'ink-blue')
 
     media.emit(false)
     expect(useUIStore.getState().theme).toBe('celadon')
@@ -346,9 +397,9 @@ describe('uiStore following the system appearance', () => {
 
     // A storage event is what the browser delivers to the windows that did
     // not perform the write.
-    window.localStorage.setItem('cc-haha-theme', 'celadon')
-    window.localStorage.setItem('cc-haha-light-theme', 'celadon')
-    window.dispatchEvent(new StorageEvent('storage', { key: 'cc-haha-light-theme' }))
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'celadon')
+    window.localStorage.setItem(LIGHT_THEME_STORAGE_KEY, 'celadon')
+    window.dispatchEvent(new StorageEvent('storage', { key: LIGHT_THEME_STORAGE_KEY }))
 
     expect(useUIStore.getState().theme).toBe('celadon')
     expect(useUIStore.getState().lightTheme).toBe('celadon')
@@ -365,7 +416,7 @@ describe('uiStore following the system appearance', () => {
     const { initializeTheme, useUIStore, teardownTheme } = await import('./uiStore')
     initializeTheme()
 
-    window.localStorage.setItem('cc-haha-theme', 'celadon')
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'celadon')
     window.dispatchEvent(new StorageEvent('storage', { key: 'cc-haha-open-tabs' }))
 
     expect(useUIStore.getState().theme).toBe('white')
@@ -413,13 +464,18 @@ describe('uiStore settings tab persistence', () => {
     expect(useUIStore.getState().activeSettingsTab).toBe('providers')
   })
 
-  it('lands a stale persisted Trace entry on General, where the capture toggle moved', async () => {
-    window.localStorage.setItem('cc-haha-active-settings-tab', 'trace')
+  // The standalone Network/Runtime/Data/Trace sections were restored. A tab
+  // persisted by v0.7.4 (or by any build that still offered these sections)
+  // must reopen that same section, not silently fall back to General/providers.
+  for (const tab of ['network', 'runtime', 'data', 'trace'] as const) {
+    it(`restores a persisted ${tab} Settings tab to its own section`, async () => {
+      window.localStorage.setItem('cc-haha-active-settings-tab', tab)
 
-    const { useUIStore } = await import('./uiStore')
+      const { useUIStore } = await import('./uiStore')
 
-    expect(useUIStore.getState().activeSettingsTab).toBe('general')
-  })
+      expect(useUIStore.getState().activeSettingsTab).toBe(tab)
+    })
+  }
 })
 
 describe('uiStore new-session draft navigation', () => {

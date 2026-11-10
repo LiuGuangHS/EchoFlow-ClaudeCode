@@ -16,19 +16,23 @@ afterEach(() => {
   mobileAppLinks.testFlight = releasedTestFlight
 })
 
-it('sends Android users to the latest GitHub release that carries the APK', () => {
+it('sends Android users to the official EchoFlow mobile availability guide', () => {
   const { container } = render(<MobileAppInstall connectionMethodsId="connection-methods" onUseBrowser={vi.fn()} />)
-  expect(screen.getByRole('heading', { name: 'Get cc-haha on your phone' })).toBeVisible()
+  expect(screen.getByRole('heading', { name: 'Get EchoFlow Code on your phone' })).toBeVisible()
   expect(screen.getByText(/ships with every desktop release on GitHub Releases/)).toBeVisible()
   expect(screen.queryByText('Not released')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Download from GitHub' }))
   expect(mocks.open).toHaveBeenCalledTimes(1)
-  expect(mocks.open).toHaveBeenCalledWith('https://github.com/NanmiCoder/cc-haha/releases/latest')
+  expect(mocks.open).toHaveBeenCalledWith('https://code.echoflow.cn/desktop/remote')
   expect(container.querySelector('a, img')).toBeNull()
 })
 
-it('ships a TestFlight public join link for the iOS entry', () => {
-  expect(releasedTestFlight).toMatch(/^https:\/\/testflight\.apple\.com\/join\/\w+$/)
+it('does not advertise an unverified EchoFlow iOS distribution channel', () => {
+  expect(releasedTestFlight).toBeNull()
+  render(<MobileAppInstall connectionMethodsId="connection-methods" onUseBrowser={vi.fn()} />)
+  expect(screen.getByRole('button', { name: 'Join TestFlight beta' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Use phone browser' })).not.toBeDisabled()
+  expect(mocks.open).not.toHaveBeenCalled()
 })
 
 it('keeps the iOS entry closed until a TestFlight public link exists, then opens that link', () => {

@@ -1874,6 +1874,8 @@ describe('settingsStore theme persistence', () => {
 
   it('keeps the desktop theme independent from the Claude user theme', async () => {
     window.localStorage.setItem('cc-haha-theme', 'dark')
+    const { runDesktopPersistenceMigrations } = await import('../lib/persistenceMigrations')
+    runDesktopPersistenceMigrations()
     const updateUser = vi.fn()
     vi.doMock('../api/settings', () => ({
       settingsApi: {
@@ -1923,7 +1925,8 @@ describe('settingsStore theme persistence', () => {
 
     await useSettingsStore.getState().setTheme('warm-classic')
 
-    expect(window.localStorage.getItem('cc-haha-theme')).toBe('warm-classic')
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('warm-classic')
+    expect(window.localStorage.getItem('cc-haha-theme')).toBe('dark')
     expect(updateUser).not.toHaveBeenCalled()
     teardownTheme()
   })

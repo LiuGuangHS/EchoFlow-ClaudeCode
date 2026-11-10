@@ -148,7 +148,7 @@ export function LlmCallDetail({
             />
           }
         >
-          <pre className="max-h-[400px] overflow-y-auto whitespace-pre-wrap break-words text-[12.5px] leading-[1.7] text-[var(--color-text-secondary)]">
+          <pre className="max-h-[400px] overflow-y-auto whitespace-pre-wrap break-words text-[13px] leading-[1.7] text-[var(--color-text-secondary)]">
             {parsed.request.system}
           </pre>
         </Section>
@@ -162,7 +162,7 @@ export function LlmCallDetail({
 
       {paramEntries.length > 0 ? (
         <Section sectionKey="llm.parameters" title={t('trace.section.parameters')} badge={paramEntries.length}>
-          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[12.5px]">
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[13px]">
             {paramEntries.map(([key, value]) => (
               <ParamRow key={key} name={key} value={value} />
             ))}
@@ -203,7 +203,7 @@ function ResponseContent({
         data-testid="trace-call-error"
       >
         <div className="flex min-w-0 items-center gap-2">
-          <div className="text-[13px] font-bold text-[var(--color-error)]">{call.error.name}</div>
+          <div className="text-[13px] font-semibold text-[var(--color-error)]">{call.error.name}</div>
           {aborted ? (
             <Badge tone="danger" size="xs" pill={false} bordered data-testid="trace-call-aborted-badge">
               {t('trace.status.aborted')}
@@ -218,7 +218,7 @@ function ResponseContent({
         ) : null}
         {call.error.stack ? (
           <details className="mt-2">
-            <summary className="cursor-pointer font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
+            <summary className="cursor-pointer font-mono text-[11px] text-[var(--color-text-tertiary)]">
               stack
             </summary>
             <pre className="mt-1.5 max-h-[240px] overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-[1.6] text-[var(--color-text-tertiary)]">
@@ -278,7 +278,7 @@ function MessageList({ messages }: { messages: NormalizedMessage[] }) {
       <button
         type="button"
         onClick={() => setShowAll(true)}
-        className="rounded-[var(--radius-md)] border border-dashed border-[var(--color-border)] px-3 py-2 text-[12.5px] text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)] active:scale-[0.98]"
+        className="rounded-[var(--radius-md)] border border-dashed border-[var(--color-border)] px-3 py-2 text-[13px] text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)] active:scale-[0.98]"
       >
         {t('trace.detail.earlierMessages', { count: hiddenCount })}
       </button>
@@ -319,7 +319,7 @@ function ContextInjectionList({ injections }: { injections: LocatedInjection[] }
               <span className="shrink-0 rounded-full bg-[var(--color-surface-container)] px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)]">
                 {t(CONTEXT_KIND_LABEL[injection.kind])}
               </span>
-              <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--color-text-primary)]">
+              <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--color-text-primary)]">
                 {injection.label}
               </span>
               <span className="shrink-0 font-mono text-[11px] text-[var(--color-text-tertiary)]">
@@ -327,7 +327,7 @@ function ContextInjectionList({ injections }: { injections: LocatedInjection[] }
               </span>
             </button>
             {open ? (
-              <pre className="max-h-[320px] overflow-y-auto whitespace-pre-wrap break-words border-t border-[var(--color-border)] px-2.5 py-2 text-[12.5px] leading-[1.7] text-[var(--color-text-secondary)]">
+              <pre className="max-h-[320px] overflow-y-auto whitespace-pre-wrap break-words border-t border-[var(--color-border)] px-2.5 py-2 text-[13px] leading-[1.7] text-[var(--color-text-secondary)]">
                 {injection.text}
               </pre>
             ) : null}
@@ -351,7 +351,7 @@ function ToolDefinitions({ tools }: { tools: Array<{ name: string; description?:
             onClick={() => setExpanded((current) => current === tool.name ? null : tool.name)}
             aria-pressed={expanded === tool.name}
             {...(tool.description ? { title: tool.description } : {})}
-            className={`rounded-full border px-2.5 py-0.5 font-mono text-[11.5px] transition-colors ${
+            className={`rounded-full border px-2.5 py-0.5 font-mono text-[12px] transition-colors ${
               expanded === tool.name
                 ? 'border-[var(--color-primary-fixed-dim)] bg-[var(--color-brand-soft)] text-[var(--color-on-brand-soft)]'
                 : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-outline)] hover:text-[var(--color-text-primary)]'
@@ -364,7 +364,7 @@ function ToolDefinitions({ tools }: { tools: Array<{ name: string; description?:
       {active ? (
         <div className="mt-2.5">
           {active.description ? (
-            <p className="mb-2 text-[12.5px] leading-[1.6] text-[var(--color-text-secondary)]">{active.description}</p>
+            <p className="mb-2 text-[13px] leading-[1.6] text-[var(--color-text-secondary)]">{active.description}</p>
           ) : null}
           <CodeViewer code={formatTraceJson(active.schema ?? null)} language="json" maxLines={24} showLineNumbers />
         </div>
@@ -415,7 +415,7 @@ function RawBody({ title, body, maxLines }: { title: string; body: TraceBodySnap
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between gap-2">
-        <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">{title}</span>
+        <span className="font-mono text-[11px] text-[var(--color-text-tertiary)]">{title}</span>
         <span className="font-mono text-[11px] text-[var(--color-text-tertiary)]">
           {formatBytes(body.bytes)}{body.truncated ? ` · ${t('trace.truncatedShort')}` : ''}
         </span>
@@ -432,7 +432,7 @@ function RawBody({ title, body, maxLines }: { title: string; body: TraceBodySnap
 function RawHeaders({ title, headers }: { title: string; headers: Record<string, string> }) {
   return (
     <div>
-      <div className="mb-1.5 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">{title}</div>
+      <div className="mb-1.5 font-mono text-[11px] text-[var(--color-text-tertiary)]">{title}</div>
       <CodeViewer code={formatTraceJson(headers)} language="json" maxLines={20} showLineNumbers />
     </div>
   )
@@ -440,7 +440,7 @@ function RawHeaders({ title, headers }: { title: string; headers: Record<string,
 
 function NoticeBar({ text }: { text: string }) {
   return (
-    <div className="mx-6 mt-4 rounded-[var(--radius-md)] border border-[var(--color-warning)] bg-[var(--color-warning-container)] px-3.5 py-2 text-[12.5px] text-[var(--color-on-warning-container)]">
+    <div className="mx-6 mt-4 rounded-[var(--radius-md)] border border-[var(--color-warning)] bg-[var(--color-warning-container)] px-3.5 py-2 text-[13px] text-[var(--color-on-warning-container)]">
       {text}
     </div>
   )

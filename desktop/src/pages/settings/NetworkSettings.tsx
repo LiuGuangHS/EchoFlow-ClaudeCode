@@ -8,7 +8,7 @@ import { useTranslation } from '@/i18n'
 import { NETWORK_TIMEOUT_MAX_SECONDS, useSettingsStore } from '@/stores/settingsStore'
 import { useUIStore } from '@/stores/uiStore'
 import type { NetworkProxyMode, WebSearchMode } from '@/types/settings'
-import { SETTINGS_CHECKBOX_INPUT_CLASS, SettingsCheckboxMark, isValidHttpProxyUrl } from './shared'
+import { SETTINGS_CHECKBOX_INPUT_CLASS, SettingsCheckboxMark, isValidHttpProxyUrl, WEB_SEARCH_MODE_VALUES, WEB_SEARCH_MODE_LABEL_KEYS } from './shared'
 
 const NETWORK_TIMEOUT_MIN_SECONDS = 30
 const NETWORK_TIMEOUT_STEP_SECONDS = 30
@@ -51,13 +51,10 @@ export function NetworkSettings() {
 
   const webSearchDirty = JSON.stringify(webSearchDraft) !== JSON.stringify(webSearch)
 
-  const WEB_SEARCH_MODES: Array<{ value: WebSearchMode; label: string }> = [
-    { value: 'auto', label: t('settings.general.webSearch.mode.auto') },
-    { value: 'tavily', label: t('settings.general.webSearch.mode.tavily') },
-    { value: 'brave', label: t('settings.general.webSearch.mode.brave') },
-    { value: 'anthropic', label: t('settings.general.webSearch.mode.anthropic') },
-    { value: 'disabled', label: t('settings.general.webSearch.mode.disabled') },
-  ]
+  const WEB_SEARCH_MODES: Array<{ value: WebSearchMode; label: string }> = WEB_SEARCH_MODE_VALUES.map((value) => ({
+    value,
+    label: t(WEB_SEARCH_MODE_LABEL_KEYS[value]),
+  }))
 
   const NETWORK_PROXY_MODES: Array<{ value: NetworkProxyMode; label: string; description: string }> = [
     {
@@ -155,7 +152,7 @@ export function NetworkSettings() {
       <SettingsPageHeader title={t('settings.tab.network')} />
 
       <div>
-        <h2 className="text-[16.5px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.networkTitle')}</h2>
+        <h2 className="text-[18px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.networkTitle')}</h2>
         <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.networkDescription')}</p>
         <Card radius="xl" surface="low" padding="none" className="px-4 py-4">
           <div className="grid grid-cols-2 gap-2">
@@ -305,7 +302,7 @@ export function NetworkSettings() {
       </div>
 
       <div className="mt-8">
-        <h2 className="text-[16.5px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.webFetchPreflightTitle')}</h2>
+        <h2 className="text-[18px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.webFetchPreflightTitle')}</h2>
         <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.webFetchPreflightDescription')}</p>
         <label className="relative flex items-start gap-3 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-4 py-3 cursor-pointer hover:border-[var(--color-border-focus)] transition-colors">
           <input
@@ -328,10 +325,10 @@ export function NetworkSettings() {
       </div>
 
       <div className="mt-8">
-        <h2 className="text-[16.5px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.webSearchTitle')}</h2>
+        <h2 className="text-[18px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.webSearchTitle')}</h2>
         <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.webSearchDescription')}</p>
         <Card radius="xl" surface="low" padding="none" className="px-4 py-4">
-          <div className="grid grid-cols-5 gap-1.5 mb-4">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-4">
             {WEB_SEARCH_MODES.map(({ value, label }) => (
               <button
                 key={value}
@@ -395,6 +392,32 @@ export function NetworkSettings() {
                 target="_blank"
                 rel="noreferrer"
                 aria-label={t('settings.general.webSearchBraveApiKeyLink')}
+                className="font-medium text-[var(--color-brand)] hover:underline whitespace-nowrap"
+              >
+                {t('settings.general.webSearchGetApiKey')}
+              </a>
+            </div>
+            <Input
+              id="web-search-deepseek-key"
+              type="password"
+              label={t('settings.general.webSearchDeepSeekKey')}
+              value={webSearchDraft.deepseekApiKey ?? ''}
+              placeholder={t('settings.general.webSearchDeepSeekPlaceholder')}
+              autoComplete="off"
+              onChange={(event) =>
+                setWebSearchDraft({
+                  ...webSearchDraft,
+                  deepseekApiKey: event.target.value,
+                })
+              }
+            />
+            <div className="-mt-1 flex items-center justify-between gap-3 text-xs text-[var(--color-text-tertiary)]">
+              <span>{t('settings.general.webSearchDeepSeekHint')}</span>
+              <a
+                href="https://platform.deepseek.com/api_keys"
+                target="_blank"
+                rel="noreferrer"
+                aria-label={t('settings.general.webSearchDeepSeekApiKeyLink')}
                 className="font-medium text-[var(--color-brand)] hover:underline whitespace-nowrap"
               >
                 {t('settings.general.webSearchGetApiKey')}

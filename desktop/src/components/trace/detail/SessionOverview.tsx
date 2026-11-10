@@ -80,7 +80,7 @@ function SessionRequestHeader({
           title={t('trace.section.systemPrompt')}
           badge={t('trace.detail.chars', { count: header.system.length })}
         >
-          <pre className="max-h-[360px] overflow-y-auto whitespace-pre-wrap break-words text-[12.5px] leading-[1.7] text-[var(--color-text-secondary)]">
+          <pre className="max-h-[360px] overflow-y-auto whitespace-pre-wrap break-words text-[13px] leading-[1.7] text-[var(--color-text-secondary)]">
             {header.system}
           </pre>
         </Section>
@@ -164,7 +164,7 @@ export function SessionOverview({
 
       {children.length > 0 ? (
         <div className="mt-6">
-          <div className="mb-1.5 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
+          <div className="mb-1.5 font-mono text-[11px] text-[var(--color-text-tertiary)]">
             {t('trace.childSpans')}
           </div>
           <div className="divide-y divide-[var(--color-border)]">
@@ -176,7 +176,7 @@ export function SessionOverview({
                 className="flex h-[34px] w-full items-center gap-2 text-left transition-colors hover:bg-[var(--color-surface-hover)]"
               >
                 <TypeIcon span={child} />
-                <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-[var(--color-text-secondary)]">
+                <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text-secondary)]">
                   {spanDisplayTitle(child, t)}
                 </span>
                 {child.durationMs !== undefined ? (
@@ -197,8 +197,8 @@ export function SessionOverview({
 function Stat({ label, value, tone = 'default' }: { label: string; value: string; tone?: 'default' | 'danger' }) {
   return (
     <div className="min-w-0">
-      <div className="text-[11px] font-medium uppercase tracking-[0.1em] text-[var(--color-text-tertiary)]">{label}</div>
-      <div className={`mt-1 truncate font-mono text-[15px] font-semibold ${tone === 'danger' ? 'text-[var(--color-error)]' : 'text-[var(--color-text-primary)]'}`}>
+      <div className="text-[11px] font-medium text-[var(--color-text-tertiary)]">{label}</div>
+      <div className={`mt-1 truncate font-mono text-[15px] ${tone === 'danger' ? 'text-[var(--color-error)]' : 'text-[var(--color-text-primary)]'}`}>
         {value}
       </div>
     </div>

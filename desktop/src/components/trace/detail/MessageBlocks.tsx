@@ -46,7 +46,7 @@ export function MessageBlocks({ message }: { message: NormalizedMessage }) {
       className={`trace-message-cv rounded-[var(--radius-lg)] border-y border-r border-l-4 px-4 py-3 ${styles.container}`}
       data-testid={`trace-message-${message.role}`}
     >
-      <div className={`font-mono text-[11px] font-semibold uppercase tracking-[0.14em] ${styles.badge}`}>
+      <div className={`font-mono text-[11px] ${styles.badge}`}>
         {message.role}
       </div>
       <div className="mt-2.5 flex flex-col gap-2.5">
@@ -109,7 +109,7 @@ function ThinkingBlock({ thinking }: { thinking: string }) {
         {t('trace.detail.thinking')} · {t('trace.detail.chars', { count: thinking.length })}
       </button>
       {open ? (
-        <pre className="mt-2 max-h-[300px] overflow-y-auto whitespace-pre-wrap break-words text-[12.5px] italic leading-[1.7] text-[var(--color-text-tertiary)]">
+        <pre className="mt-2 max-h-[300px] overflow-y-auto whitespace-pre-wrap break-words text-[13px] leading-[1.7] text-[var(--color-text-tertiary)]">
           {thinking}
         </pre>
       ) : null}
@@ -120,10 +120,10 @@ function ThinkingBlock({ thinking }: { thinking: string }) {
 function ToolUseBlock({ id, name, input }: { id?: string; name: string; input: unknown }) {
   return (
     <div className="min-w-0">
-      <div className="flex min-w-0 items-center gap-2 text-[13px] font-bold text-[var(--color-text-primary)]">
+      <div className="flex min-w-0 items-center gap-2 text-[13px] font-semibold text-[var(--color-text-primary)]">
         <Wrench size={14} strokeWidth={1.8} className="shrink-0 text-[var(--color-brand)]" />
         <span className="truncate">{name}</span>
-        {id ? <span className="truncate font-mono text-[11.5px] font-normal text-[var(--color-text-tertiary)]">{id}</span> : null}
+        {id ? <span className="truncate font-mono text-[12px] font-normal text-[var(--color-text-tertiary)]">{id}</span> : null}
       </div>
       <div className="mt-2">
         <CodeViewer code={safeJson(input)} language="json" maxLines={24} showLineNumbers />
@@ -137,12 +137,12 @@ function ToolResultBlock({ toolUseId, content, isError }: { toolUseId?: string; 
   const text = extractPlainText(content)
   return (
     <div className={`min-w-0 ${isError ? 'rounded-[var(--radius-md)] border border-[var(--color-error)] p-2' : ''}`}>
-      <div className="flex min-w-0 items-center gap-2 text-[13px] font-bold text-[var(--color-text-primary)]">
+      <div className="flex min-w-0 items-center gap-2 text-[13px] font-semibold text-[var(--color-text-primary)]">
         <span className={isError ? 'text-[var(--color-error)]' : ''}>
           {isError ? t('trace.toolError') : t('trace.toolResult')}
         </span>
         {toolUseId ? (
-          <span className="truncate font-mono text-[11.5px] font-normal text-[var(--color-text-tertiary)]">{toolUseId}</span>
+          <span className="truncate font-mono text-[12px] font-normal text-[var(--color-text-tertiary)]">{toolUseId}</span>
         ) : null}
       </div>
       <div className="mt-2">

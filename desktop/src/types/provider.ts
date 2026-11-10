@@ -60,7 +60,15 @@ export type RequestCompatibility = {
   [key: string]: unknown
 }
 
+export type CredentialSource = {
+  kind: 'echoflow-token'
+  endpoint: 'main' | 'dedicated'
+  tokenId: string
+  tokenName?: string
+}
+
 export type SavedProvider = {
+  credentialSource?: CredentialSource
   id: string
   presetId: string
   name: string

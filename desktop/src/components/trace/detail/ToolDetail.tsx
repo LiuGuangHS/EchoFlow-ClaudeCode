@@ -32,7 +32,7 @@ export function ToolDetail({ span }: { span: TraceSpan }) {
       </Section>
 
       <Section sectionKey="tool.meta" title={t('trace.section.meta')}>
-        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[12.5px]">
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[13px]">
           {span.toolUseId ? (
             <MetaRow label={t('trace.detail.toolUseId')} value={span.toolUseId} />
           ) : null}

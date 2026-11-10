@@ -15,7 +15,7 @@ describe('electron desktop host', () => {
     await host.configImport.ack()
     const handler = vi.fn()
     expect(await host.configImport.onPending(handler)).toBe(unlisten)
-    subscribe.mock.calls[0][1]()
+    subscribe.mock.calls[0]![1]()
     expect(handler).toHaveBeenCalledOnce()
     expect(invoke.mock.calls).toEqual([
       [ELECTRON_IPC_CHANNELS.configImportTake, undefined],

@@ -11,6 +11,7 @@ import { BUNDLED_PROVIDER_PRESETS } from '../../config/providerPresets'
 import type { SavedProvider } from '../../types/provider'
 import { ProviderSettings } from './ProviderSettings'
 
+vi.mock('../../components/settings/EchoFlowAPIOfficialLogin', () => ({ EchoFlowAPIOfficialLogin: () => null }))
 vi.mock('../../components/settings/ClaudeOfficialLogin', () => ({ ClaudeOfficialLogin: () => null }))
 vi.mock('../../components/settings/ChatGPTOfficialLogin', () => ({ ChatGPTOfficialLogin: () => null }))
 vi.mock('../../components/settings/GrokOfficialLogin', () => ({ GrokOfficialLogin: () => null }))
@@ -134,7 +135,8 @@ describe('image generation protocol settings', () => {
     render(<ProviderSettings />)
     fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
     const dialog = within(screen.getByRole('dialog'))
-    fireEvent.click(dialog.getByRole('button', { name: 'AruHub' }))
+    // A bundled, neutral preset stands in for the removed sponsor preset.
+    fireEvent.click(dialog.getByRole('button', { name: 'DeepSeek' }))
     fireEvent.change(dialog.getAllByPlaceholderText('sk-...')[0]!, { target: { value: 'fake-new-key' } })
     fireEvent.click(dialog.getByRole('switch', { name: 'Enable image generation' }))
     fireEvent.change(dialog.getByRole('combobox', { name: 'Image API protocol' }), { target: { value: 'gemini_native' } })
@@ -145,18 +147,21 @@ describe('image generation protocol settings', () => {
     })))
   })
 
-  it('applies the selected preset image protocol and resets to the default when switching presets', async () => {
-    useProviderStore.setState({ presets: BUNDLED_PROVIDER_PRESETS.map((preset) => preset.id === 'aruhub'
-      ? { ...preset, defaultImageGeneration: { model: 'grok-image-fixture', protocol: 'xai_images' as const } }
-      : preset) })
+  it('resets a manually chosen image protocol when switching to another preset', async () => {
     render(<ProviderSettings />)
     fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
     const dialog = within(screen.getByRole('dialog'))
-    fireEvent.click(dialog.getByRole('button', { name: 'AruHub' }))
+    fireEvent.click(dialog.getByRole('button', { name: 'DeepSeek' }))
+    fireEvent.click(dialog.getByRole('switch', { name: 'Enable image generation' }))
+    fireEvent.change(dialog.getByRole('combobox', { name: 'Image API protocol' }), { target: { value: 'xai_images' } })
+    fireEvent.change(dialog.getByRole('textbox', { name: /Image model/ }), { target: { value: 'grok-image-fixture' } })
     expect(dialog.getByRole('combobox', { name: 'Image API protocol' })).toHaveValue('xai_images')
-    expect(dialog.getByRole('textbox', { name: /Image model/ })).toHaveValue('grok-image-fixture')
-    fireEvent.click(dialog.getByRole('button', { name: 'Atlas Cloud' }))
+
+    // No bundled preset owns a sponsor image protocol. handlePresetChange drops
+    // the manual choice and resets image generation to the built-in default.
+    fireEvent.click(dialog.getByRole('button', { name: 'Kimi' }))
     expect(dialog.getByRole('switch', { name: 'Enable image generation' })).not.toBeChecked()
+    expect(dialog.queryByDisplayValue('grok-image-fixture')).not.toBeInTheDocument()
     fireEvent.click(dialog.getByRole('switch', { name: 'Enable image generation' }))
     expect(dialog.getByRole('combobox', { name: 'Image API protocol' })).toHaveValue('openai_images')
   })
@@ -176,43 +181,32 @@ describe('active sponsor providers', () => {
     vi.restoreAllMocks()
   })
 
-  it('puts AruHub first in the sponsor row with badges and its signup offer', async () => {
-    const create = vi.spyOn(providersApi, 'create').mockImplementation(async (input) => ({
-      provider: { ...input, id: 'saved-aruhub', apiFormat: input.apiFormat ?? 'anthropic' },
-    }))
+  it('does not offer third-party sponsor presets, badges, defaults or signup offers', async () => {
     const open = vi.spyOn(getDesktopHost().shell, 'open').mockResolvedValue()
     render(<ProviderSettings />)
     fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
     const dialog = within(screen.getByRole('dialog'))
-    const sponsor = dialog.getByRole('button', { name: 'AruHub' })
-    expect(sponsor.parentElement?.firstElementChild).toBe(sponsor)
-    expect(sponsor.parentElement).toBe(dialog.getByRole('button', { name: 'Atlas Cloud' }).parentElement)
-    expect(within(sponsor).getByText('New')).toBeInTheDocument()
-    expect(within(sponsor).getByLabelText('Sponsor')).toBeInTheDocument()
-    expect(within(dialog.getByRole('button', { name: 'Atlas Cloud' })).queryByLabelText('Sponsor')).not.toBeInTheDocument()
-    fireEvent.click(sponsor)
-    expect(dialog.getByDisplayValue('https://agent.aruhub.com')).toBeInTheDocument()
-    expect(dialog.getAllByDisplayValue('claude-opus-5-5')).toHaveLength(2)
-    expect(dialog.getAllByDisplayValue('claude-sonnet-5-5')).toHaveLength(2)
-    const offer = dialog.getByRole('button', { name: /注册即送 1 美元全模型通用额度/ })
-    fireEvent.click(offer)
-    expect(open).toHaveBeenCalledWith('https://aruhub.com/sign-up?aff=Z54g')
+
+    // Product policy: upstream/third-party sponsorship, rebate and promotion
+    // entries are excluded. Assert their absence explicitly instead of deleting
+    // the old sponsor assertions.
+    for (const preset of useProviderStore.getState().presets) {
+      expect(preset.id).not.toMatch(/aruhub|modelflare|atlas|apismart|openrouter/i)
+    }
+    for (const name of ['AruHub', 'Modelflare', 'Atlas Cloud', 'ApiSmart', 'OpenRouter']) {
+      expect(dialog.queryByRole('button', { name })).not.toBeInTheDocument()
+    }
+    expect(document.querySelectorAll('[aria-label="Sponsor"]')).toHaveLength(0)
+    expect(document.querySelectorAll('img[src*="sponsors/"]')).toHaveLength(0)
+    expect(dialog.queryByDisplayValue('https://agent.aruhub.com')).not.toBeInTheDocument()
+    expect(dialog.queryByDisplayValue('https://modelflare.dev')).not.toBeInTheDocument()
+    expect(dialog.queryByText(/注册即送|sign-up\?aff=|utm_campaign/)).not.toBeInTheDocument()
+
+    // A bundled preset still exposes its own clean, no-rebate key page.
+    fireEvent.click(dialog.getByRole('button', { name: 'DeepSeek' }))
     fireEvent.click(dialog.getByRole('button', { name: /Get API Key/ }))
-    expect(open).toHaveBeenCalledTimes(2)
-    fireEvent.change(dialog.getAllByPlaceholderText('sk-...')[0]!, { target: { value: 'fake-aruhub-key' } })
-    expect(dialog.getByText(/注册即送 1 美元全模型通用额度/)).toBeInTheDocument()
-    fireEvent.change(dialog.getByDisplayValue('https://agent.aruhub.com'), { target: { value: 'https://other.invalid' } })
-    expect(dialog.queryByText(/注册即送 1 美元全模型通用额度/)).not.toBeInTheDocument()
-    fireEvent.change(dialog.getByDisplayValue('https://other.invalid'), { target: { value: 'https://agent.aruhub.com' } })
-    fireEvent.click(dialog.getByRole('button', { name: 'Add' }))
-    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
-      presetId: 'aruhub',
-      baseUrl: 'https://agent.aruhub.com',
-      apiFormat: 'anthropic',
-      authStrategy: 'api_key',
-      apiKey: 'fake-aruhub-key',
-      models: { main: 'claude-opus-5-5', haiku: 'claude-sonnet-5-5', sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5' },
-    })))
+    expect(open).toHaveBeenCalledWith('https://platform.deepseek.com/api_keys')
+    expect(open.mock.calls[0]?.[0]).not.toMatch(/[?&](utm_|ref|aff)/i)
   })
 
   it('fetches models through the proxy mode chosen in the form, not the global one', async () => {
@@ -224,85 +218,52 @@ describe('active sponsor providers', () => {
     render(<ProviderSettings />)
     fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
     const dialog = within(screen.getByRole('dialog'))
-    fireEvent.click(dialog.getByRole('button', { name: 'Modelflare' }))
+    // A bundled, neutral preset stands in for the removed sponsor preset.
+    fireEvent.click(dialog.getByRole('button', { name: 'DeepSeek' }))
     fireEvent.change(dialog.getAllByPlaceholderText('sk-...')[0]!, { target: { value: 'fake-modelflare-key' } })
     fireEvent.click(dialog.getByRole('radio', { name: 'Direct' }))
     fireEvent.click(dialog.getByRole('button', { name: 'Fetch models' }))
     await waitFor(() => expect(fetchModels).toHaveBeenCalledWith({
-      baseUrl: 'https://modelflare.dev', apiKey: 'fake-modelflare-key', proxy: { mode: 'direct' },
+      baseUrl: 'https://api.deepseek.com/anthropic', apiKey: 'fake-modelflare-key', proxy: { mode: 'direct' },
     }))
   })
 
-  it('adds Modelflare from the second sponsor pill with badges, model discovery and Claude 5.5 defaults', async () => {
-    const create = vi.spyOn(providersApi, 'create').mockImplementation(async (input) => ({
-      provider: { ...input, id: 'saved-modelflare', apiFormat: input.apiFormat ?? 'anthropic' },
-    }))
-    const fetchModels = vi.spyOn(providersApi, 'fetchModels').mockResolvedValue({
-      ok: true,
-      endpoint: 'https://modelflare.dev/v1/models',
-      models: [
-        { id: 'claude-opus-5-5', ownedBy: 'anthropic' },
-        { id: 'claude-sonnet-5-5', ownedBy: 'anthropic' },
-        { id: 'claude-haiku-5-5', ownedBy: 'anthropic' },
-      ],
-    })
+  it('does not offer Modelflare sponsor defaults, badges or signup campaigns', async () => {
     const open = vi.spyOn(getDesktopHost().shell, 'open').mockResolvedValue()
     render(<ProviderSettings />)
     fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
     const dialog = within(screen.getByRole('dialog'))
-    const sponsor = dialog.getByRole('button', { name: 'Modelflare' })
-    expect(sponsor.previousElementSibling).toBe(dialog.getByRole('button', { name: 'AruHub' }))
-    expect(sponsor.nextElementSibling).toBe(dialog.getByRole('button', { name: 'Atlas Cloud' }))
-    expect(within(sponsor).getByText('New')).toBeInTheDocument()
-    expect(within(sponsor).getByLabelText('Sponsor')).toBeInTheDocument()
-    expect(sponsor.querySelector('img')?.getAttribute('src')).toContain('modelflare-logo')
-    expect(dialog.getByRole('button', { name: 'AruHub' }).querySelector('img')?.getAttribute('src')).toContain('aruhub-logo')
-    expect(dialog.getByRole('button', { name: 'Atlas Cloud' }).querySelector('img')).toBeNull()
-    expect(dialog.queryByRole('button', { name: 'ApiSmart' })).not.toBeInTheDocument()
 
-    fireEvent.click(sponsor)
-    expect(dialog.getByDisplayValue('https://modelflare.dev')).toBeInTheDocument()
-    expect(dialog.getAllByDisplayValue('claude-opus-5-5')).toHaveLength(2)
-    expect(dialog.getByDisplayValue('claude-sonnet-5-5')).toBeInTheDocument()
-    expect(dialog.getByDisplayValue('claude-haiku-5-5')).toBeInTheDocument()
-    expect(dialog.getByRole('button', { name: 'Fetch models' })).toBeDisabled()
+    // Product policy: no third-party sponsor chips, badges, sponsor-owned
+    // defaults or campaign links. Assert the absence explicitly.
+    for (const name of ['Modelflare', 'AruHub', 'Atlas Cloud', 'ApiSmart']) {
+      expect(dialog.queryByRole('button', { name })).not.toBeInTheDocument()
+    }
+    expect(document.querySelectorAll('[aria-label="Sponsor"]')).toHaveLength(0)
+    expect(document.querySelectorAll('img[src*="modelflare-logo"], img[src*="aruhub-logo"]')).toHaveLength(0)
+    expect(dialog.queryByDisplayValue('https://modelflare.dev')).not.toBeInTheDocument()
+    expect(dialog.queryByText(/sign-up\?utm_source|utm_campaign=cchaha/)).not.toBeInTheDocument()
+    expect(useProviderStore.getState().presets.map((p) => p.id)).not.toContain('modelflare')
+
+    // The bundled catalogue still opens its own clean, no-rebate key page.
+    fireEvent.click(dialog.getByRole('button', { name: 'DeepSeek' }))
     fireEvent.click(dialog.getByRole('button', { name: /Get API Key/ }))
-    expect(open).toHaveBeenCalledWith('https://modelflare.dev/sign-up?utm_source=github&utm_campaign=cchaha')
-
-    fireEvent.change(dialog.getAllByPlaceholderText('sk-...')[0]!, { target: { value: 'fake-modelflare-key' } })
-    fireEvent.click(dialog.getByRole('button', { name: 'Fetch models' }))
-    await waitFor(() => expect(fetchModels).toHaveBeenCalledWith({
-      baseUrl: 'https://modelflare.dev', apiKey: 'fake-modelflare-key',
-    }))
-    await dialog.findByText(/Model list loaded \(3\)/)
-    fireEvent.click(dialog.getByRole('button', { name: 'Add' }))
-    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
-      presetId: 'modelflare',
-      baseUrl: 'https://modelflare.dev',
-      apiFormat: 'anthropic',
-      authStrategy: 'auth_token',
-      apiKey: 'fake-modelflare-key',
-      models: {
-        main: 'claude-opus-5-5', haiku: 'claude-haiku-5-5',
-        sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5',
-      },
-      modelContextWindows: {
-        'claude-opus-5-5': 1000000, 'claude-sonnet-5-5': 1000000, 'claude-haiku-5-5': 1000000,
-      },
-    })))
+    expect(open).toHaveBeenCalledWith('https://platform.deepseek.com/api_keys')
+    expect(open.mock.calls.every((call) => !/[?&](utm_|ref|aff)/i.test(String(call[0])))).toBe(true)
   })
 
   it('lets a preset switch protocol while the preset endpoint stays put', async () => {
     const create = vi.spyOn(providersApi, 'create').mockImplementation(async (input) => ({
-      provider: { ...input, id: 'saved-aruhub', apiFormat: input.apiFormat ?? 'anthropic' },
+      provider: { ...input, id: 'saved-deepseek', apiFormat: input.apiFormat ?? 'anthropic' },
     }))
     render(<ProviderSettings />)
     fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
     const dialog = within(screen.getByRole('dialog'))
-    fireEvent.click(dialog.getByRole('button', { name: 'AruHub' }))
+    // A bundled, neutral preset stands in for the removed sponsor preset.
+    fireEvent.click(dialog.getByRole('button', { name: 'DeepSeek' }))
 
-    // AruHub is an Anthropic-endpoint preset that also serves OpenAI, so the
-    // protocol starts on the preset's own value and is the user's to change.
+    // DeepSeek is an Anthropic-endpoint preset whose protocol the user may
+    // change, so it starts on the preset's own value.
     const formatTrigger = dialog.getByRole('button', { name: /Anthropic Messages \(native\)/ })
     expect(dialog.queryByText(/point the base URL at an endpoint that serves it/)).not.toBeInTheDocument()
 
@@ -311,13 +272,13 @@ describe('active sponsor providers', () => {
 
     expect(dialog.getByText(/point the base URL at an endpoint that serves it/)).toBeInTheDocument()
     // The address is the user's to replace, so switching must not rewrite it.
-    expect(dialog.getByDisplayValue('https://agent.aruhub.com')).toBeInTheDocument()
+    expect(dialog.getByDisplayValue('https://api.deepseek.com/anthropic')).toBeInTheDocument()
 
     fireEvent.change(dialog.getAllByPlaceholderText('sk-...')[0]!, { target: { value: 'fake-aruhub-key' } })
     fireEvent.click(dialog.getByRole('button', { name: 'Add' }))
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
-      presetId: 'aruhub',
-      baseUrl: 'https://agent.aruhub.com',
+      presetId: 'deepseek',
+      baseUrl: 'https://api.deepseek.com/anthropic',
       apiFormat: 'openai_chat',
       apiKey: 'fake-aruhub-key',
     })))
@@ -327,9 +288,12 @@ describe('active sponsor providers', () => {
     render(<ProviderSettings />)
     fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
     const dialog = within(screen.getByRole('dialog'))
-    fireEvent.click(dialog.getByRole('button', { name: 'Atlas Cloud' }))
+    // OpenCode Go is the only bundled preset that owns its per-model protocol;
+    // the removed sponsor preset used to be the fixture here.
+    fireEvent.click(dialog.getByRole('button', { name: 'OpenCode Go' }))
 
-    expect(dialog.getByRole('button', { name: /OpenAI Chat Completions \(proxy\)/ })).toBeInTheDocument()
+    expect(dialog.getByText('OpenAI Chat Completions (proxy)')).toBeInTheDocument()
+    expect(dialog.queryByRole('button', { name: /OpenAI Chat Completions \(proxy\)|Anthropic Messages/ })).toBeNull()
     expect(dialog.queryByText(/point the base URL at an endpoint that serves it/)).not.toBeInTheDocument()
   })
 
@@ -355,7 +319,8 @@ describe('active sponsor providers', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Add Model/ }))
     const dialog = within(screen.getByRole('dialog'))
-    expect(dialog.getByRole('button', { name: 'Atlas Cloud' })).toBeInTheDocument()
+    // A retired sponsor-linked preset stays editable but is never re-offered.
+    expect(dialog.getByRole('button', { name: 'DeepSeek' })).toBeInTheDocument()
     expect(dialog.queryByRole('button', { name: 'ApiSmart' })).not.toBeInTheDocument()
   })
 })
@@ -460,7 +425,8 @@ describe('retired sponsor providers', () => {
     for (const provider of savedProviders) {
       expect(dialog.queryByRole('button', { name: provider.name })).not.toBeInTheDocument()
     }
-    expect(dialog.getByRole('button', { name: 'Atlas Cloud' })).toBeInTheDocument()
+    // Retired sponsor-linked presets are not re-offered; bundled ones still are.
+    expect(dialog.getByRole('button', { name: 'DeepSeek' })).toBeInTheDocument()
     expect(dialog.getByRole('button', { name: 'Custom API' })).toBeInTheDocument()
   })
 
@@ -503,7 +469,11 @@ describe('retired sponsor providers', () => {
       apiFormat: provider.apiFormat,
       authStrategy: 'auth_token',
       models: provider.models,
-      modelContextWindows: { [provider.models.main]: 1000000 },
+      // A legacy sponsor-linked preset carries no context-window override; the
+      // current form clears it explicitly instead of inheriting a sponsor value.
+      modelContextWindows: null,
+      toolSearchEnabled: false,
+      supportsNestedToolResultMedia: true,
     })))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(useProviderStore.getState().providers.find((saved) => saved.id === provider.id))
@@ -643,7 +613,10 @@ describe('OpenCode Go provider', () => {
     fireEvent.change(key, { target: { value: 'fake-opencode-key' } })
     expect(fetch).toBeEnabled()
     fireEvent.click(dialog.getByRole('button', { name: /Get API Key/ }))
-    expect(open).toHaveBeenCalledWith('https://opencode.ai/go?ref=3RK0WVVCGD')
+    // Product policy: the key link is clean — no referral / campaign / affiliate
+    // parameters. The old assertion required `?ref=3RK0WVVCGD` (a rebate code).
+    expect(open).toHaveBeenCalledWith('https://opencode.ai/go')
+    expect(open.mock.calls.every((call) => !/[?&](utm_|ref|aff)/i.test(String(call[0])))).toBe(true)
     expect(screen.queryByText(/CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1/)).not.toBeInTheDocument()
     fireEvent.focus(dialog.getByRole('button', { name: 'Disable experimental beta headers' }))
     expect(await screen.findByRole('tooltip')).toHaveTextContent('CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1')
@@ -757,11 +730,12 @@ describe('OpenCode Go provider', () => {
 })
 
 /**
- * OpenRouter is a one-key aggregation gateway: the user pastes an sk-or- key and
- * the preset supplies the endpoint, the credential header and the Claude 5.5
- * defaults. Nothing here may require hand-entering an URL or a format.
+ * OpenRouter was a third-party one-key aggregation gateway preset. Verified:
+ * neither the current nor the v0.7.4 preset catalogue contains it, and no
+ * "add OpenRouter preset" commit exists — it was intentionally excluded from
+ * the product. These cases assert that exclusion instead of re-adding it.
  */
-describe('OpenRouter provider', () => {
+describe('third-party aggregation gateway exclusion', () => {
   beforeEach(() => {
     useSettingsStore.setState({ locale: 'en' })
     vi.spyOn(useSettingsStore.getState(), 'fetchAll').mockResolvedValue()
@@ -775,48 +749,49 @@ describe('OpenRouter provider', () => {
     vi.restoreAllMocks()
   })
 
-  it('is added with an API key alone, prefilled with the direct endpoint and Claude 5.5 slots', async () => {
+  it('does not offer the third-party OpenRouter aggregation preset', async () => {
     const create = vi.spyOn(providersApi, 'create').mockImplementation(async (input) => ({
-      provider: { ...input, id: 'saved-openrouter', apiFormat: input.apiFormat ?? 'anthropic' },
+      provider: { ...input, id: 'saved-deepseek', apiFormat: input.apiFormat ?? 'anthropic' },
     }))
     render(<ProviderSettings />)
     fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
     const dialog = within(screen.getByRole('dialog'))
-    fireEvent.click(dialog.getByRole('button', { name: 'OpenRouter' }))
 
-    // The root, not /api/v1 — the CLI appends /v1/messages itself.
-    expect(dialog.getByDisplayValue('https://openrouter.ai/api')).toBeInTheDocument()
-    // Main and Sonnet share the balanced default; Haiku and Opus stay distinct.
-    expect(dialog.getAllByDisplayValue('anthropic/claude-sonnet-5.5')).toHaveLength(2)
-    expect(dialog.getByDisplayValue('anthropic/claude-haiku-5.5')).toBeInTheDocument()
-    expect(dialog.getByDisplayValue('anthropic/claude-opus-5.5')).toBeInTheDocument()
+    // Product policy: no third-party one-key aggregation / promotion presets.
+    expect(dialog.queryByRole('button', { name: 'OpenRouter' })).not.toBeInTheDocument()
+    expect(dialog.queryByDisplayValue('https://openrouter.ai/api')).not.toBeInTheDocument()
+    for (const preset of useProviderStore.getState().presets) {
+      expect(preset.id).not.toMatch(/openrouter/i)
+    }
 
+    // A bundled preset still creates with its own endpoint, key and defaults.
+    fireEvent.click(dialog.getByRole('button', { name: 'DeepSeek' }))
     fireEvent.change(dialog.getAllByPlaceholderText('sk-...')[0]!, { target: { value: 'sk-or-v1-fake' } })
     fireEvent.click(dialog.getByRole('button', { name: 'Add' }))
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
-      presetId: 'openrouter',
-      baseUrl: 'https://openrouter.ai/api',
-      apiFormat: 'anthropic',
-      authStrategy: 'auth_token',
+      presetId: 'deepseek',
+      baseUrl: 'https://api.deepseek.com/anthropic',
       apiKey: 'sk-or-v1-fake',
-      models: {
-        main: 'anthropic/claude-sonnet-5.5',
-        haiku: 'anthropic/claude-haiku-5.5',
-        sonnet: 'anthropic/claude-sonnet-5.5',
-        opus: 'anthropic/claude-opus-5.5',
-      },
     })))
   })
 
-  it('links the key field to the OpenRouter key page', async () => {
+  it('does not link to the third-party OpenRouter key page', async () => {
     const open = vi.spyOn(getDesktopHost().shell, 'open').mockResolvedValue()
     render(<ProviderSettings />)
     fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
     const dialog = within(screen.getByRole('dialog'))
-    fireEvent.click(dialog.getByRole('button', { name: 'OpenRouter' }))
 
+    expect(dialog.queryByRole('button', { name: 'OpenRouter' })).not.toBeInTheDocument()
+    // No bundled preset advertises an openrouter.ai signup/key campaign.
+    for (const preset of useProviderStore.getState().presets) {
+      expect(String(preset.apiKeyUrl ?? '')).not.toMatch(/openrouter\.ai/i)
+      expect(String(preset.promoText ?? '')).not.toMatch(/openrouter\.ai/i)
+    }
+
+    fireEvent.click(dialog.getByRole('button', { name: 'DeepSeek' }))
     fireEvent.click(dialog.getByRole('button', { name: /Get API Key/ }))
-    expect(open).toHaveBeenCalledWith('https://openrouter.ai/settings/keys')
+    expect(open).toHaveBeenCalledWith('https://platform.deepseek.com/api_keys')
+    expect(open.mock.calls.every((call) => !/openrouter\.ai/i.test(String(call[0])))).toBe(true)
   })
 })
 
@@ -1035,13 +1010,20 @@ describe('Magpie on the provider list', () => {
     await waitFor(() => expect(open).toHaveBeenCalled())
   })
 
-  it('hands the add dialog\'s Magpie preset over to the connect dialog', async () => {
+  it('routes Magpie through the banner connect dialog, never an API-key preset', async () => {
     vi.spyOn(providersApi, 'list').mockResolvedValue({ providers: savedProviders, activeId: null })
     vi.spyOn(providersApi, 'magpie').mockResolvedValue(running)
     render(<ProviderSettings />)
 
+    // Magpie is a local gateway (magpieStore / MagpieProviderDialog /
+    // MagpieConnectBanner), not a third-party API-key preset chip.
+    expect(useProviderStore.getState().presets.some((p) => p.id === 'magpie')).toBe(false)
     fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Magpie' }))
+    expect(within(screen.getByRole('dialog')).queryByRole('button', { name: 'Magpie' })).not.toBeInTheDocument()
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+
+    const banner = await screen.findByTestId('magpie-connect-banner')
+    fireEvent.click(within(banner).getByRole('button', { name: 'Connect' }))
     expect(await screen.findByRole('dialog', { name: 'Connect Magpie' })).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: 'Add Model' })).not.toBeInTheDocument()
   })

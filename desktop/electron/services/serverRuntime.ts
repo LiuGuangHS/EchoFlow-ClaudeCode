@@ -41,6 +41,10 @@ type ServerRuntimeOptions = {
   h5DistDir?: string
   diagnosticsFile?: string
   env?: NodeJS.ProcessEnv
+  /** Values consumed only by the server sidecar. Merged into the server plan
+   *  env instead of being published to the main process environment, so
+   *  terminals and other child processes never inherit them. */
+  sidecarEnv?: NodeJS.ProcessEnv
   deps?: Partial<ServerRuntimeDeps>
   resolveSystemProxy?: (url: string) => Promise<string>
 }
@@ -145,6 +149,7 @@ export class ElectronServerRuntime {
   private readonly h5DistDir: string
   private readonly diagnosticsFile?: string
   private readonly baseEnv: NodeJS.ProcessEnv
+  private readonly sidecarEnv: NodeJS.ProcessEnv
   private readonly deps: ServerRuntimeDeps
   private readonly resolveSystemProxy?: (url: string) => Promise<string>
   private readonly localAccessToken = randomBytes(32).toString('base64url')
@@ -178,6 +183,7 @@ export class ElectronServerRuntime {
     this.h5DistDir = options.h5DistDir ?? path.join(options.desktopRoot, 'dist')
     this.diagnosticsFile = options.diagnosticsFile
     this.baseEnv = options.env ?? process.env
+    this.sidecarEnv = options.sidecarEnv ?? {}
     this.deps = { ...DEFAULT_SERVER_RUNTIME_DEPS, ...options.deps }
     this.resolveSystemProxy = options.resolveSystemProxy
   }
@@ -411,7 +417,10 @@ export class ElectronServerRuntime {
     )
     const url = `http://${SERVER_CONTROL_HOST}:${port}`
     const logs: string[] = []
-    const env = this.withServerAccessTokens(await this.resolveSidecarBaseEnv())
+    const env = this.withServerAccessTokens({
+      ...await this.resolveSidecarBaseEnv(),
+      ...this.sidecarEnv,
+    })
     this.assertCurrentGeneration(generation)
     const plan = createServerPlan({
       desktopRoot: this.desktopRoot,

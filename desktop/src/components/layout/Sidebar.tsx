@@ -1077,21 +1077,21 @@ export function Sidebar({
           {/* The mark only stands in for the wordmark on the rail. Expanded,
               the name says it better and the icon beside it is just clutter;
               collapsed, the copy is width-clamped to zero and the header would
-              otherwise be empty. `sm` is the cleanest cut of the mark — two C's
-              and the seal bar, no cursor or sparkles to turn to mush at 24px. */}
+              otherwise be empty. `sm` is the cleanest cut of the brand mark at 24px, with no cursor or
+              sparkles to turn to mush. */}
           {/* Expanded, `pl-2` lands the wordmark on the same 16px line as the
               nav icons, the search glyph and the settings gear below it.
               Collapsed, the mark is centered on the rail instead. */}
           <div className={`flex min-w-0 items-center ${expanded ? 'gap-2 pl-2' : 'justify-center'}`}>
             {!expanded ? <BrandSeal size="sm" /> : null}
-            {/* One form, at every width. The header used to carry "Claude Code
-                Haha" and swap to this below ~230px of title region, which meant
-                the app answered to two names depending on how the sidebar was
-                dragged. It goes by the short one. */}
+            {/* One form, at every width. The header used to carry a long product name and swap to this below
+                ~230px of title region, which meant the app answered to two
+                names depending on how the sidebar was dragged. It goes by
+                the short one. */}
             <span
               className={`sidebar-copy ${expanded ? 'sidebar-copy--visible' : 'sidebar-copy--hidden'} text-[15px] font-semibold leading-5 tracking-tight text-[var(--color-text-primary)]`}
             >
-              cc-<span className="text-[var(--color-brand)]">haha</span>
+              EchoFlow <span className="text-[var(--color-brand)]">Code</span>
             </span>
           </div>
           <div className={`flex items-center ${expanded ? 'gap-0.5' : 'flex-col gap-2'}`}>
@@ -1116,7 +1116,7 @@ export function Sidebar({
               />
             </span>
             <a
-              href="https://github.com/NanmiCoder/cc-haha"
+              href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode"
               target="_blank"
               rel="noopener noreferrer"
               className={`sidebar-copy ${expanded ? 'sidebar-copy--visible' : 'sidebar-copy--hidden'} inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-sidebar-item-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]`}

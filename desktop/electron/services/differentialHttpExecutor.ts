@@ -76,6 +76,14 @@ function validateResponseBodyLength(response: ResponseLike, expectedLength: numb
   })
   Object.assign(validator, { statusCode: response.statusCode, headers: response.headers })
   response.on('error', error => validator.destroy(error as Error))
+  response.on('aborted', () => validator.destroy(new Error('Differential response has been aborted')))
+  response.on('close', () => {
+    if (!response.readableEnded) validator.destroy(new Error('Differential response closed before completion'))
+  })
+  validator.on('close', () => {
+    response.unpipe(validator)
+    if (!response.destroyed) response.destroy()
+  })
   response.pipe(validator)
   return validator as unknown as ResponseLike
 }
@@ -133,10 +141,18 @@ export class DifferentialHttpExecutor extends HttpExecutor<any> {
 }
 
 export function wrapDifferentialHttpExecutor(updater: { httpExecutor?: unknown }): boolean {
-  const executor = updater.httpExecutor
-  if (!executor || executor instanceof DifferentialHttpExecutor) return false
-  if (typeof executor !== 'object' || executor === null) return false
-  if (!('createRequest' in executor) || !('addErrorAndTimeoutHandlers' in executor)) return false
-  updater.httpExecutor = new DifferentialHttpExecutor(executor as DifferentialExecutorDelegate)
-  return true
+  try {
+    const executor = updater.httpExecutor
+    if (executor instanceof DifferentialHttpExecutor) return true
+    if (typeof executor !== 'object' || executor === null) return false
+    if (!('createRequest' in executor) || typeof executor.createRequest !== 'function'
+      || !('addErrorAndTimeoutHandlers' in executor) || typeof executor.addErrorAndTimeoutHandlers !== 'function'
+      || !('download' in executor) || typeof executor.download !== 'function'
+      || !('downloadToBuffer' in executor) || typeof executor.downloadToBuffer !== 'function') return false
+    const wrapped = new DifferentialHttpExecutor(executor as DifferentialExecutorDelegate)
+    updater.httpExecutor = wrapped
+    return updater.httpExecutor === wrapped
+  } catch {
+    return false
+  }
 }

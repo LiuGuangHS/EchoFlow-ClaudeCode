@@ -60,7 +60,7 @@ describe('Settings section navigation', () => {
     const scroller = screen.getByTestId('settings-page-frame').parentElement!
     scroller.scrollTop = 900
     act(() => useUIStore.getState().setPendingSettingsTab('h5Access'))
-    await screen.findByRole('heading', { name: 'Get cc-haha on your phone' })
+    await screen.findByRole('heading', { name: 'Get EchoFlow Code on your phone' })
     expect(scroller.scrollTop).toBe(0)
     // Re-entering the current section must bring its installation card back too.
     scroller.scrollTop = 600
@@ -69,10 +69,10 @@ describe('Settings section navigation', () => {
     expect(useUIStore.getState().pendingSettingsTab).toBeNull()
   })
 
-  it('no longer offers a Trace section; per-session traces live in the chat', () => {
+  it('offers the restored Trace section again', () => {
     render(<Settings />)
 
-    expect(screen.queryByRole('button', { name: 'Trace' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Trace' })).toBeInTheDocument()
   })
 
   it('follows the selection when another section is picked', () => {

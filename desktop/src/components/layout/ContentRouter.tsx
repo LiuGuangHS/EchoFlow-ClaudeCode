@@ -10,6 +10,8 @@ import { TerminalSettings } from '../../pages/TerminalSettings'
 import { SubagentRunPage, TeamMemberRunPage } from '../../pages/SubagentRunPage'
 import { AgentTeamsWorkbenchTab } from '../agentTeams/AgentTeamsWorkbenchTab'
 import { WorkspaceBrowserGuestLayer } from '../workbench/WorkspaceBrowserGuestLayer'
+import { TraceSession } from '@/pages/TraceSession'
+import { returnToTraceList } from '@/lib/traceNavigation'
 
 type ContentRouterProps = {
   /**
@@ -67,6 +69,11 @@ export function ContentRouter({ homePage }: ContentRouterProps = {}) {
     page = draft ? null : homePage ?? <EmptySession />
   } else if (activeTabType === 'settings') {
     page = <Settings />
+  } else if (activeTabType === 'trace') {
+    const traceTab = tabs.find((tab) => tab.sessionId === activeTabId)
+    page = traceTab?.traceSessionId
+      ? <TraceSession key={traceTab.traceSessionId} sessionId={traceTab.traceSessionId} onBack={() => returnToTraceList(activeTabId)} />
+      : <EmptySession />
   } else if (activeTabType === 'scheduled') {
     page = <ScheduledTasks />
   } else if (activeTabType === 'connectors' || activeTabType === 'market') {

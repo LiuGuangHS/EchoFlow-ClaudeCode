@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 import { NodeHttpExecutor } from 'builder-util/out/nodeHttpExecutor'
 import { CancellationToken } from 'builder-util-runtime'
 import { GenericDifferentialDownloader } from 'electron-updater/out/differentialDownloader/GenericDifferentialDownloader'
+import { DifferentialHttpExecutor } from './differentialHttpExecutor'
 
 type Reply = (request: IncomingMessage, response: ServerResponse) => void
 
@@ -61,7 +62,7 @@ async function download(reply: Reply, options: { multipleRanges?: boolean } = {}
   try {
     const downloader = new GenericDifferentialDownloader(
       { size: newFile.length, sha512: createHash('sha512').update(newFile).digest('base64') },
-      new NodeHttpExecutor(),
+      new DifferentialHttpExecutor(new NodeHttpExecutor()),
       {
         oldFile: oldPath,
         newUrl: new URL(server.url),
@@ -110,8 +111,8 @@ describe('electron-updater differential Range contract', () => {
     })).rejects.toThrow()
   })
 
-  it('accepts a wrong Content-Range when the final SHA-512 still matches', async () => {
-    const bytes = await download((_request, response) => {
+  it('rejects a wrong Content-Range before assembling the artifact', async () => {
+    await expect(download((_request, response) => {
       const changed = Buffer.alloc(blockSize, 4)
       response.writeHead(206, {
         'Accept-Ranges': 'bytes',
@@ -119,19 +120,15 @@ describe('electron-updater differential Range contract', () => {
         'Content-Length': changed.length,
       })
       response.end(changed)
-    })
-
-    expect(bytes.subarray(blockSize, blockSize * 2)).toEqual(Buffer.alloc(blockSize, 4))
+    })).rejects.toThrow('Content-Range')
   })
 
-  it('accepts a 206 response without Accept-Ranges when the final SHA-512 still matches', async () => {
-    const bytes = await download((_request, response) => {
+  it('rejects a 206 response without Accept-Ranges before assembling the artifact', async () => {
+    await expect(download((_request, response) => {
       const changed = Buffer.alloc(blockSize, 4)
       response.writeHead(206, { 'Content-Range': 'bytes 32-63/96', 'Content-Length': changed.length })
       response.end(changed)
-    })
-
-    expect(bytes.subarray(blockSize, blockSize * 2)).toEqual(Buffer.alloc(blockSize, 4))
+    })).rejects.toThrow('Accept-Ranges')
   })
 
   it('rejects a full 200 response when it cannot produce the metadata fingerprint', async () => {
@@ -188,7 +185,7 @@ describe('electron-updater differential Range contract', () => {
       const newFile = Buffer.concat(newChunks)
       const downloader = new GenericDifferentialDownloader(
         { size: newFile.length, sha512: createHash('sha512').update(newFile).digest('base64') },
-        new NodeHttpExecutor(),
+        new DifferentialHttpExecutor(new NodeHttpExecutor()),
         {
           oldFile: oldPath,
           newUrl: new URL(server.url),
@@ -202,7 +199,7 @@ describe('electron-updater differential Range contract', () => {
       await expect(downloader.download(
         chunkMap('release.bin', oldChunks),
         chunkMap('release.bin', newChunks),
-      )).rejects.toThrow('multipart/byteranges')
+      )).rejects.toThrow('multiple ranges')
     } finally {
       await server.close()
       rmSync(tempDir, { recursive: true, force: true })

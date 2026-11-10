@@ -80,7 +80,8 @@ describe('installMainWindowNavigationGuards', () => {
     installMainWindowNavigationGuards(wc.contents, { openExternal, rendererEntry: DEV_ENTRY })
 
     expect(wc.navigate(url)).toHaveBeenCalledTimes(1)
-    expect(openExternal).toHaveBeenCalledExactlyOnceWith(url)
+    expect(openExternal).toHaveBeenCalledTimes(1)
+    expect(openExternal).toHaveBeenCalledWith(url)
   })
 
   it.each([
@@ -106,7 +107,8 @@ describe('installMainWindowNavigationGuards', () => {
     installMainWindowNavigationGuards(wc.contents, { openExternal, rendererEntry: PACKAGED_ENTRY })
 
     expect(wc.navigate(DEV_ENTRY)).toHaveBeenCalledTimes(1)
-    expect(openExternal).toHaveBeenCalledExactlyOnceWith(DEV_ENTRY)
+    expect(openExternal).toHaveBeenCalledTimes(1)
+    expect(openExternal).toHaveBeenCalledWith(DEV_ENTRY)
   })
 
   it.each([
@@ -133,7 +135,8 @@ describe('installMainWindowNavigationGuards', () => {
 
     expect(wc.navigate(`${DEV_ENTRY}/redirect`)).not.toHaveBeenCalled()
     expect(wc.redirect('http://localhost:9999/untrusted')).toHaveBeenCalledTimes(1)
-    expect(openExternal).toHaveBeenCalledExactlyOnceWith('http://localhost:9999/untrusted')
+    expect(openExternal).toHaveBeenCalledTimes(1)
+    expect(openExternal).toHaveBeenCalledWith('http://localhost:9999/untrusted')
     expect(wc.redirect('file:///tmp/untrusted.html')).toHaveBeenCalledTimes(1)
     expect(openExternal).toHaveBeenCalledTimes(1)
   })

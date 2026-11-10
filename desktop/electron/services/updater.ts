@@ -34,7 +34,7 @@ export type ElectronUpdaterLike = {
   autoInstallOnAppQuit: boolean
   disableDifferentialDownload?: boolean
   logger?: unknown
-  setFeedURL?(options: string): void
+  setFeedURL?(options: string | { provider: 'generic', url: string, useMultipleRangeRequest: false }): void
   checkForUpdates(): Promise<ElectronUpdateCheckResult>
   downloadUpdate(): Promise<unknown>
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void
@@ -181,8 +181,14 @@ function dedupeFeedUrls(urls: Array<string | undefined | null>): string[] {
 // all agree so a mixed/partial artifact from two different sources is refused.
 function updateMetadataFingerprint(update: ElectronUpdateMetadata | null): string | null {
   if (!update) return null
+  const validHash = (sha512?: string, sha2?: string) =>
+    (typeof sha512 === 'string' && (/^[a-f\d]{128}$/i.test(sha512) || /^[A-Za-z0-9+/]{85}[AQgw]==$/.test(sha512)))
+    || (typeof sha2 === 'string' && /^[a-f\d]{64}$/i.test(sha2))
+  const fileName = (url: unknown) => typeof url === 'string' ? url.split(/[?#]/, 1)[0]?.split('/').at(-1)?.trim() : ''
+  const entries = update.files?.length ? update.files : [{ url: update.path, sha512: update.sha512, sha2: update.sha2 }]
+  if (entries.some(file => !fileName(file.url) || !validHash(file.sha512, file.sha2))) return null
   const files = (update.files ?? []).map(file => ({
-    name: file.url.split(/[?#]/, 1)[0]?.split('/').at(-1) ?? file.url,
+    name: fileName(file.url),
     sha512: file.sha512 ?? null,
     sha2: file.sha2 ?? null,
     size: file.size ?? null,
@@ -204,6 +210,8 @@ export class ElectronUpdaterService {
   private readonly metadataFallbackUrls: string[]
   private readonly downloadFeedUrls: string[]
   private readonly hasConfiguredFeeds: boolean
+  private readonly differentialDownload: boolean
+  private readonly differentialFeedConfig: Pick<UpdateFeedConfig, 'differentialDownloadFeedUrls' | 'differentialDownloadContracts'>
   private pendingUpdate: ElectronUpdateMetadata | null = null
   private lastFeedAttempts: ElectronUpdateFeedAttempt[] = []
   private downloaded = false
@@ -235,6 +243,8 @@ export class ElectronUpdaterService {
     // for them AND the download feed carries a verified range contract.
     const differentialFeedUrls = runtimeOptions.differentialDownloadFeedUrls ?? []
     const differentialDownloadContracts = runtimeOptions.differentialDownloadContracts ?? {}
+    this.differentialDownload = runtimeOptions.differentialDownload === true
+    this.differentialFeedConfig = { differentialDownloadFeedUrls: differentialFeedUrls, differentialDownloadContracts }
     const verifiedFeed = this.downloadFeedUrls.find(feedUrl =>
       differentialFeedUrls.includes(feedUrl)
       && isVerifiedDifferentialDownloadFeed(feedUrl, {
@@ -265,7 +275,9 @@ export class ElectronUpdaterService {
     if (!setFeedURL) {
       throw new Error('Configured updater does not support switching update feeds')
     }
-    setFeedURL.call(this.updater, feedUrl)
+    setFeedURL.call(this.updater, this.updater.disableDifferentialDownload === false
+      ? { provider: 'generic', url: feedUrl, useMultipleRangeRequest: false }
+      : feedUrl)
   }
 
   private async checkForUpdatesOnCurrentFeed(): Promise<ElectronUpdateMetadata | null> {
@@ -392,13 +404,15 @@ export class ElectronUpdaterService {
       let lastError: unknown = null
       for (const feedUrl of this.downloadFeedUrls) {
         try {
+          this.updater.disableDifferentialDownload = !(this.differentialDownload
+            && isVerifiedDifferentialDownloadFeed(feedUrl, this.differentialFeedConfig))
           this.setFeedUrl(feedUrl)
           const candidate = await this.checkForUpdatesOnCurrentFeed()
           if (!candidate) {
             attempts.push({ feedUrl, result: 'no-update' })
             continue
           }
-          if (updateMetadataFingerprint(candidate) !== expectedFingerprint) {
+          if (!expectedFingerprint || updateMetadataFingerprint(candidate) !== expectedFingerprint) {
             attempts.push({ feedUrl, result: 'mismatched-metadata' })
             continue
           }

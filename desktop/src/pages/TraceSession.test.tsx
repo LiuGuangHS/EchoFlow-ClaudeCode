@@ -326,7 +326,7 @@ describe('TraceSession', () => {
 
     fireEvent.click(within(screen.getByTestId('trace-tree')).getByText('claude-sonnet-4-5'))
 
-    await waitFor(() => expect(sessionsApi.getTraceCall).toHaveBeenCalledWith(SESSION_ID, 'call-1'))
+    await waitFor(() => expect(sessionsApi.getTraceCall).toHaveBeenCalledWith(SESSION_ID, 'call-1', undefined))
     const detail = within(screen.getByTestId('trace-detail'))
     expect(await detail.findByText('Hi from the full record')).toBeInTheDocument()
 
@@ -921,7 +921,7 @@ describe('TraceSession', () => {
     expect(overview.getByText('Input → output')).toBeInTheDocument()
     expect(overview.getByText('107.6k → 11.4k')).toBeInTheDocument()
     expect(overview.getByText('Cache read → write')).toBeInTheDocument()
-    expect(overview.getByText('5m → 10k')).toBeInTheDocument()
+    expect(overview.getByText('5M → 10k')).toBeInTheDocument()
     expect(screen.getByText('Input + output')).toBeInTheDocument()
   })
 
@@ -937,7 +937,13 @@ describe('TraceSession', () => {
     useSessionStore.setState({ sessions: [], activeSessionId: null, isLoading: false, error: null })
     vi.mocked(sessionsApi.getTrace).mockResolvedValue({
       ...baseTrace,
-      session: { ...baseTrace.session, title: 'New Session' },
+      session: {
+        ...(baseTrace.session ?? {}),
+        id: baseTrace.session?.id ?? SESSION_ID,
+        projectPath: baseTrace.session?.projectPath ?? '',
+        workDir: baseTrace.session?.workDir ?? null,
+        title: 'New Session',
+      },
     })
 
     render(<TraceSession sessionId={SESSION_ID} standalone pollIntervalMs={60_000} />)
@@ -954,7 +960,13 @@ describe('TraceSession', () => {
     useSessionStore.setState({ sessions: [{ ...session, title: 'New Session' }] })
     vi.mocked(sessionsApi.getTrace).mockResolvedValue({
       ...baseTrace,
-      session: { ...baseTrace.session, title: 'Trace API title' },
+      session: {
+        ...(baseTrace.session ?? {}),
+        id: baseTrace.session?.id ?? SESSION_ID,
+        projectPath: baseTrace.session?.projectPath ?? '',
+        workDir: baseTrace.session?.workDir ?? null,
+        title: 'Trace API title',
+      },
     })
 
     render(<TraceSession sessionId={SESSION_ID} standalone pollIntervalMs={60_000} />)

@@ -188,6 +188,9 @@ describe('desktopRuntime browser H5 bootstrap', () => {
       runtime: {
         getServerUrl: vi.fn().mockResolvedValue(serverUrl),
         getLocalAccessToken: vi.fn().mockResolvedValue('desktop-local-token'),
+        getClaudeCode: vi.fn(),
+        chooseClaudeCode: vi.fn(),
+        setClaudeCode: vi.fn(),
       },
     }
     globalThis.fetch = vi.fn().mockResolvedValue(
@@ -196,7 +199,7 @@ describe('desktopRuntime browser H5 bootstrap', () => {
 
     await expect(initializeDesktopServerUrl()).resolves.toBe(serverUrl)
 
-    expect(window.desktopHost.runtime.getServerUrl).toHaveBeenCalledTimes(1)
+    expect(window.desktopHost!.runtime.getServerUrl).toHaveBeenCalledTimes(1)
     expect(clientMocks.setBaseUrl).toHaveBeenLastCalledWith(serverUrl)
     expect(clientMocks.setAuthToken).toHaveBeenLastCalledWith('desktop-local-token')
     expect(globalThis.fetch).toHaveBeenCalledWith(`${serverUrl}/health`, {
@@ -217,6 +220,9 @@ describe('desktopRuntime browser H5 bootstrap', () => {
       runtime: {
         getServerUrl: vi.fn().mockResolvedValue(serverUrl),
         getLocalAccessToken: vi.fn().mockRejectedValue(new Error('ipc channel missing')),
+        getClaudeCode: vi.fn(),
+        chooseClaudeCode: vi.fn(),
+        setClaudeCode: vi.fn(),
       },
     }
     globalThis.fetch = vi.fn().mockResolvedValue(
@@ -256,6 +262,9 @@ describe('desktopRuntime browser H5 bootstrap', () => {
       runtime: {
         getServerUrl: vi.fn().mockRejectedValue(error),
         getLocalAccessToken: vi.fn().mockResolvedValue('desktop-local-token'),
+        getClaudeCode: vi.fn(),
+        chooseClaudeCode: vi.fn(),
+        setClaudeCode: vi.fn(),
       },
     }
 

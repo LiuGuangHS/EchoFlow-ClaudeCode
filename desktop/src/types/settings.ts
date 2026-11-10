@@ -170,6 +170,7 @@ export type UserSettings = {
   maxConcurrentSubagents?: number | null
   autoDreamEnabled?: boolean
   autoQuestion?: import('../../../src/shared/autoQuestionSettings').AutoQuestionSettings
+  localRedaction?: import('../../../src/shared/localRedactionSettings').LocalRedactionSettings
   skipAutoPermissionPrompt?: boolean
   permissionMode?: PermissionMode
   theme?: ThemeMode

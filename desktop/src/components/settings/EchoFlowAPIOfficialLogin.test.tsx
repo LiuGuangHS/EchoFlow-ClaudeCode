@@ -132,6 +132,22 @@ describe('EchoFlowAPIOfficialLogin', () => {
     await waitFor(() => expect(hostMocks.openLogin).toHaveBeenLastCalledWith('dedicated'))
   })
 
+  it('does not let a late initial account read undo a completed login', async () => {
+    let resolveInitial: (value: Awaited<ReturnType<typeof echoflowApi.getAccounts>>) => void = () => {}
+    vi.mocked(echoflowApi.getAccounts).mockReturnValueOnce(new Promise((resolve) => { resolveInitial = resolve }))
+    hostMocks.openLogin.mockResolvedValue('authenticated')
+    vi.mocked(echoflowApi.refreshAccount).mockResolvedValue({ account: mainAccount })
+
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
+    expect(await screen.findByText(userIdSummary('main-user'))).toBeInTheDocument()
+
+    await act(async () => { resolveInitial({ account: null, accounts: { main: null, dedicated: dedicatedAccount } }) })
+    expect(screen.getByText(userIdSummary('main-user'))).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: endpointTab('dedicated') }))
+    expect(screen.getByText(userIdSummary('dedicated-user'))).toBeInTheDocument()
+  })
+
   it('keeps the manual token form available under the advanced section', async () => {
     mockAccounts(null, null)
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)

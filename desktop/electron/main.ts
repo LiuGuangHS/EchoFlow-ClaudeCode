@@ -57,7 +57,8 @@ import { DeepLinkHandler, extractDeepLinkFromArgs } from './services/deepLinkHan
 import { acquireSingleInstanceLock } from './services/singleInstance'
 import { installTray, shouldInstallTray, type TrayController } from './services/tray'
 import { ElectronUpdaterService, updaterSessionProxyConfig } from './services/updater'
-import { resolveDifferentialDownloadRequest, resolveUpdateFeedConfig } from './services/updateFeed'
+import { wrapDifferentialHttpExecutor } from './services/differentialHttpExecutor'
+import { resolveDifferentialDownloadRequest, resolveDownloadFeedUrls, resolveUpdateFeedConfig } from './services/updateFeed'
 import { createUpdateSmokeUpdaterFromEnv } from './services/updateSmoke'
 import { ElectronTerminalService, type TerminalSpawnInput } from './services/terminal'
 import { ElectronPreviewService, type PreviewBounds } from './services/preview'
@@ -790,20 +791,20 @@ function getUpdaterService() {
       ? { feedUrls: [] }
       : (() => {
           const feedConfig = resolveUpdateFeedConfig(process.env)
-          const differentialDownload = resolveDifferentialDownloadRequest(
+          const differentialRequested = resolveDifferentialDownloadRequest(
             process.env,
             feedConfig,
             process.platform,
             feedConfig.differentialDownloadFeedUrls[0],
           )
+          const differentialDownload = differentialRequested
+            && wrapDifferentialHttpExecutor(autoUpdater as typeof autoUpdater & { httpExecutor?: unknown })
           return {
             metadataFeedUrl: feedConfig.metadataUrl,
             metadataFallbackUrls: feedConfig.metadataFallbackUrls,
-            downloadFeedUrls: feedConfig.downloadFeedUrls,
+            downloadFeedUrls: resolveDownloadFeedUrls(feedConfig, differentialDownload),
             differentialDownload,
-            differentialDownloadFeedUrls: differentialDownload
-              ? feedConfig.differentialDownloadFeedUrls
-              : [],
+            differentialDownloadFeedUrls: feedConfig.differentialDownloadFeedUrls,
             differentialDownloadContracts: feedConfig.differentialDownloadContracts,
           }
         })()),

@@ -33,7 +33,7 @@ export function TraceDetail({
         <div className="flex min-w-0 items-center gap-2.5">
           <TypeIcon span={span} size={16} />
           <h2
-            className="min-w-0 truncate text-[17px] font-bold text-[var(--color-text-primary)]"
+            className="min-w-0 truncate text-[18px] font-semibold text-[var(--color-text-primary)]"
             style={{ fontFamily: 'var(--font-headline)' }}
           >
             {spanDisplayTitle(span, t)}
@@ -179,7 +179,7 @@ function EventDetail({ span }: { span: TraceSpan }) {
   return (
     <div data-testid="trace-event-detail">
       <Section sectionKey="event.detail" title={t('trace.section.event')} defaultOpen>
-        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[12.5px]">
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[13px]">
           <dt className="text-[var(--color-text-tertiary)]">{t('trace.detail.phase')}</dt>
           <dd className="min-w-0 truncate font-mono text-[var(--color-text-secondary)]">
             {traceEventPhaseLabel(event.phase, t)}

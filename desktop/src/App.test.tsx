@@ -1,17 +1,27 @@
-import { act, cleanup, render } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
+import '@testing-library/jest-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const uninstallHiddenSessionRelease = vi.hoisted(() => vi.fn())
 const installHiddenSessionRelease = vi.hoisted(() => vi.fn(() => uninstallHiddenSessionRelease))
 const shell = vi.hoisted(() => ({ layout: 'desktop' as 'desktop' | 'phone' | 'tablet' }))
 
-vi.mock('./components/layout/AppShell', () => ({ AppShell: () => null }))
+const runtime = vi.hoisted(() => ({ publicAccess: false }))
+vi.mock('./components/layout/AppShell', () => ({ AppShell: () => <div data-testid="app-shell" /> }))
+vi.mock('@/pages/TraceSession', () => ({
+  TraceSession: ({ sessionId, standalone }: { sessionId: string; standalone?: boolean }) => (
+    <div data-testid="trace-session" data-session-id={sessionId} data-standalone={String(standalone)} />
+  ),
+}))
+vi.mock('./pages/RemoteAccess', () => ({
+  RemoteAccessGate: () => <div data-testid="remote-access-gate" />,
+}))
 vi.mock('./components/mobile/mobileShellLayout', () => ({ useMobileShellLayout: () => shell.layout }))
 vi.mock('./hooks/useScheduledTaskDesktopNotifications', () => ({ useScheduledTaskDesktopNotifications: () => {} }))
 vi.mock('./lib/desktopNotificationNavigation', () => ({
   installDesktopNotificationNavigation: () => Promise.resolve(() => {}),
 }))
-vi.mock('./lib/publicAccessRuntime', () => ({ isPublicAccessRuntime: () => false }))
+vi.mock('./lib/publicAccessRuntime', () => ({ isPublicAccessRuntime: () => runtime.publicAccess }))
 vi.mock('./stores/hiddenSessionRelease', () => ({ installHiddenSessionRelease }))
 
 import { App } from './App'
@@ -23,10 +33,38 @@ describe('App', () => {
   afterEach(() => {
     cleanup()
     shell.layout = 'desktop'
+    runtime.publicAccess = false
+    window.history.replaceState(null, '', '/')
     installHiddenSessionRelease.mockClear()
     uninstallHiddenSessionRelease.mockClear()
     Reflect.deleteProperty(window, 'desktopHost')
     vi.restoreAllMocks()
+  })
+
+  it('mounts the requested standalone trace instead of the normal shell', () => {
+    window.history.replaceState(null, '', '/?traceWindow=1&traceSessionId=session%2Ftrace')
+    render(<App />)
+    expect(screen.getByTestId('trace-session')).toHaveAttribute('data-session-id', 'session/trace')
+    expect(screen.getByTestId('trace-session')).toHaveAttribute('data-standalone', 'true')
+    expect(screen.queryByTestId('app-shell')).not.toBeInTheDocument()
+    expect(installHiddenSessionRelease).not.toHaveBeenCalled()
+  })
+
+  it.each(['/', '/?traceSessionId=session-1', '/?traceWindow=1', '/?traceWindow=0&traceSessionId=session-1'])(
+    'keeps the normal shell for an ordinary or incomplete launch: %s', (url) => {
+      window.history.replaceState(null, '', url)
+      render(<App />)
+      expect(screen.getByTestId('app-shell')).toBeInTheDocument()
+      expect(screen.queryByTestId('trace-session')).not.toBeInTheDocument()
+    },
+  )
+
+  it('keeps standalone trace launches behind the public access gate', () => {
+    runtime.publicAccess = true
+    window.history.replaceState(null, '', '/?traceWindow=1&traceSessionId=session-1')
+    render(<App />)
+    expect(screen.getByTestId('remote-access-gate')).toBeInTheDocument()
+    expect(screen.queryByTestId('trace-session')).not.toBeInTheDocument()
   })
 
   it('restores the power preference when the desktop app starts without opening settings', async () => {
