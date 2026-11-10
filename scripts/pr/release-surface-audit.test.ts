@@ -60,12 +60,17 @@ describe('release note validation', () => {
     })).toEqual([])
   })
 
-  test('rejects a different version sharing the target version prefix', () => {
+  test.each(['0.5.60', '0.5.6-rc.1', '0.5.6+build'])('rejects a different version sharing the target version prefix: %s', version => {
     expect(auditReleaseSurface({
       ...valid,
-      releaseNote: '# EchoFlow Code v0.5.60\n',
+      releaseNote: `# EchoFlow Code v${version}\n`,
     })).toEqual(['release note title does not match EchoFlow v0.5.6'])
-    expect(auditReleaseSurface({ ...valid, releaseNote: '# EchoFlow Code v0.5.6\r\n' })).toEqual([])
+  })
+
+  test('accepts an exact title with CRLF or no trailing newline', () => {
+    for (const ending of ['\r\n', '']) {
+      expect(auditReleaseSurface({ ...valid, releaseNote: `# EchoFlow Code v0.5.6${ending}` })).toEqual([])
+    }
   })
 
   test('returns an actionable error when the release notes directory or target note is missing', () => {

@@ -1,4 +1,4 @@
-# Quality policy and required-check topology are maintainer-owned.
+# 质量策略与必需检查拓扑由维护者负责。
 /.github/workflows/ @LiuGuangHS
 /.github/CODEOWNERS @LiuGuangHS
 /.github/copilot-instructions.md @LiuGuangHS
@@ -11,7 +11,7 @@
 /scripts/pr/ @LiuGuangHS
 /scripts/quality-gate/ @LiuGuangHS
 
-# Cross-process and provider boundaries carry a wider blast radius.
+# 跨进程与服务商边界的影响面更广。
 /desktop/electron/ @LiuGuangHS
 /desktop/scripts/ @LiuGuangHS
 /desktop/src/api/providers* @LiuGuangHS

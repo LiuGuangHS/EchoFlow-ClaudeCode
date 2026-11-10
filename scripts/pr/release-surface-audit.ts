@@ -70,7 +70,7 @@ export function auditReleaseSurface(input: ReleaseAuditInput): string[] {
   if (!input.releaseNoteFiles.includes(expectedNote)) {
     errors.push(`missing release note: ${expectedNote}`)
   }
-  if (!new RegExp(`^# EchoFlow Code v${input.version.replaceAll('.', '\\.')}`, 'm').test(input.releaseNote)) {
+  if (!input.releaseNote.split(/\r?\n/).includes(`# EchoFlow Code v${input.version}`)) {
     errors.push(`release note title does not match EchoFlow v${input.version}`)
   }
 
@@ -97,11 +97,11 @@ export function runReleaseAudit(root: string): string[] {
     return ['desktop/package.json has no valid release version']
   }
   const releaseDir = path.join(root, 'release-notes')
-  const releaseNoteFiles = readdirSync(releaseDir)
+  const releaseNoteFiles = (existsSync(releaseDir) ? readdirSync(releaseDir) : [])
     .filter(file => file.endsWith('.md'))
     .map(file => `release-notes/${file}`)
   const releaseNotePath = path.join(root, `release-notes/v${packageJson.version}.md`)
-  const releaseNote = readFileSync(releaseNotePath, 'utf8')
+  const releaseNote = existsSync(releaseNotePath) ? readFileSync(releaseNotePath, 'utf8') : ''
   const brandFiles = BRAND_FILES.flatMap((file) => {
     const absolute = path.join(root, file)
     return existsSync(absolute) ? [{ path: file, content: readFileSync(absolute, 'utf8') }] : []

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildProviderManagedEnv } from '../../../src/server/services/providerRuntimeEnv'
+import { getEchoFlowInternalDir } from '../../../src/utils/echoFlowConfigRoot'
 import { createQualityGateSandbox } from '../sandbox'
 import { isExpectedRoutingCliExit } from './agentModelRouting'
 import { startMockLlmServer } from './server'
@@ -100,8 +101,8 @@ export async function runAgentProviderRoutingScenario(rootDir: string, artifactD
     const result: (typeof results)[number] = { id: testCase.id, status: 'failed', agentRequests }
 
     try {
-      mkdirSync(join(sandbox.configDir, 'cc-haha'), { recursive: true })
-      writeFileSync(join(sandbox.configDir, 'cc-haha', 'providers.json'), JSON.stringify({
+      mkdirSync(getEchoFlowInternalDir(sandbox.configDir), { recursive: true })
+      writeFileSync(join(getEchoFlowInternalDir(sandbox.configDir), 'providers.json'), JSON.stringify({
         schemaVersion: 4,
         activeId: null,
         providers: [{

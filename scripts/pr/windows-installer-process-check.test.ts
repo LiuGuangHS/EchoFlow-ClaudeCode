@@ -361,7 +361,7 @@ SectionEnd
     )
 
     expect(installerSmoke).toContain("$siblingDir = \"$installDir Tools\"")
-    expect(installerSmoke).toContain("$siblingProbe = Join-Path $siblingDir 'Claude Code Haha.exe'")
+    expect(installerSmoke).toContain("$siblingProbe = Join-Path $siblingDir 'EchoFlow Code.exe'")
     expect(installerSmoke).toContain('Sibling-prefix process remains running')
     expect(installerSmoke).toContain('Install-directory parent process detection')
     expect(installerSmoke).toContain('Install-directory process was not terminated')

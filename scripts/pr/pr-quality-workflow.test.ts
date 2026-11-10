@@ -15,6 +15,9 @@ type WorkflowJob = {
   strategy?: { 'fail-fast'?: boolean; matrix?: { shard?: number[] } }
   steps?: Array<{
     name?: string
+    id?: string
+    if?: string
+    'continue-on-error'?: boolean
     run?: string
     uses?: string
     with?: Record<string, unknown>
@@ -49,6 +52,34 @@ function policyTestPaths(command: string) {
 }
 
 describe('PR quality workflow', () => {
+  test('audits public product content on every PR and main push without scope gating', () => {
+    const workflow = readFileSync('.github/workflows/pr-quality.yml', 'utf8')
+    const jobs = workflowJobs(workflow)
+    const steps = jobs['policy-enforcement'].steps ?? []
+    const setupIndex = steps.findIndex(step => step.name === 'Setup Bun')
+    const auditIndex = steps.findIndex(step => step.name === 'Audit public product content')
+    const audit = steps[auditIndex]
+
+    expect(audit?.run).toBe('bun run check:upstream-content')
+    // No `if`: a scope plan that selects no policy lane must not skip identity.
+    expect(audit?.if).toBeUndefined()
+    expect(setupIndex).toBeGreaterThanOrEqual(0)
+    expect(setupIndex).toBeLessThan(auditIndex)
+    for (const name of ['Checkout policy sources', 'Setup Bun']) {
+      const step = steps.find(candidate => candidate.name === name)
+      expect(step, name).toBeDefined()
+      expect(step?.if, name).toBeUndefined()
+    }
+    // A failing audit fails this job, and the gate requires the job unconditionally.
+    expect(jobs['pr-quality-gate'].needs).toContain('policy-enforcement')
+    expect(jobs['pr-quality-gate'].steps?.[0]?.run).toContain('require_success "policy-enforcement"')
+    expect((parse(workflow) as { on: { push?: { branches?: string[] } } }).on.push?.branches).toEqual(['main'])
+
+    const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> }
+    expect(packageJson.scripts['check:upstream-content']).toBe('bun run scripts/pr/upstream-content-audit.ts')
+    expect(packageJson.scripts['check:policy']).toContain('./scripts/pr/upstream-content-audit.test.ts')
+  })
+
   test('uses packageManager as the single pinned Bun version source', () => {
     const workflow = readFileSync('.github/workflows/pr-quality.yml', 'utf8')
     const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as {
@@ -520,6 +551,48 @@ describe('PR quality workflow', () => {
 })
 
 describe('full quality workflow', () => {
+  test('runs the full public content audit in the nightly sweep', () => {
+    const workflow = readFileSync('.github/workflows/nightly-quality.yml', 'utf8')
+    const steps = workflowJobs(workflow)['full-deterministic'].steps ?? []
+    const audit = steps.findIndex(step => step.run === 'bun run check:upstream-content')
+    const install = steps.findIndex(step => step.run === 'bun install --frozen-lockfile')
+
+    expect(audit).toBeGreaterThanOrEqual(0)
+    expect(install).toBeGreaterThanOrEqual(0)
+    expect(install).toBeLessThan(audit)
+    expect(steps[audit].if).toBe("${{ !cancelled() && steps.dependencies.outcome == 'success' }}")
+  })
+
+  test('continues independent lanes after failures without masking their outcomes', () => {
+    const workflow = readFileSync('.github/workflows/nightly-quality.yml', 'utf8')
+    const job = workflowJobs(workflow)['full-deterministic']
+    const steps = job.steps ?? []
+    const ready = steps.findIndex(step => step.id === 'dependencies')
+    const checks = steps.filter(step => step.run?.startsWith('bun run check:'))
+
+    expect(ready).toBeGreaterThan(0)
+    expect(steps.slice(0, ready).some(step => step['working-directory'] === 'mobile')).toBe(true)
+    expect(checks.length).toBeGreaterThan(10)
+    expect(job['continue-on-error']).not.toBe(true)
+    for (const step of checks) {
+      expect(steps.indexOf(step), step.name).toBeGreaterThan(ready)
+      expect(step.id, step.name).toBeTruthy()
+      expect(step['continue-on-error'], step.name).toBeUndefined()
+      const prerequisite = step.id === 'native' ? 'native-dependencies' : 'dependencies'
+      const coverage = step.id === 'coverage' ? ' && !inputs.skip_coverage' : ''
+      expect(step.if, step.name).toBe(`\${{ !cancelled() && steps.${prerequisite}.outcome == 'success'${coverage} }}`)
+    }
+    const nativeSetup = steps.find(step => step.id === 'native-dependencies')
+    expect(nativeSetup?.if).toBe("${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}")
+    const summary = steps.find(step => step.name === 'Summarize every nightly lane')
+    expect(summary?.if).toBe('always()')
+    expect(summary?.run).toContain('step.outcome')
+    expect(summary?.run).toContain('GITHUB_STEP_SUMMARY')
+    const upload = steps.find(step => step.name === 'Upload nightly artifacts')
+    expect(upload?.if).toBe('always()')
+    expect(upload?.with?.path).toContain('artifacts/nightly-summary.json')
+  })
+
   test('runs every deterministic lane on demand without secrets or live providers', () => {
     const workflow = readFileSync('.github/workflows/nightly-quality.yml', 'utf8')
     const jobs = workflowJobs(workflow)
@@ -553,6 +626,25 @@ describe('full quality workflow', () => {
     expect(workflow.match(/persist-credentials: false/g)?.length).toBe(
       workflow.match(/uses: actions\/checkout@v4/g)?.length,
     )
+  })
+
+  test('installs the locked real Host harness and a supported Node before runtime and coverage suites', () => {
+    const harness = JSON.parse(readFileSync('harness/package.json', 'utf8'))
+    expect(harness.engines.node).toBe('>=24.9.0')
+    for (const file of ['pr-quality.yml', 'nightly-quality.yml', 'push-quality.yml', 'release-desktop.yml']) {
+      const jobs = workflowJobs(readFileSync(`.github/workflows/${file}`, 'utf8'))
+      for (const [name, job] of Object.entries(jobs)) {
+        const steps = job.steps ?? []
+        const check = steps.findIndex(step => /\bbun run check:(server|coverage)\b/.test(step.run ?? ''))
+        if (check < 0) continue
+        const install = steps.findIndex(step => step.run === 'npm --prefix harness ci')
+        const node = steps.findIndex(step => step.uses?.startsWith('actions/setup-node@')
+          && String(step.with?.['node-version']) === '24')
+        expect(node, `${file}/${name} must pin a supported Node`).toBeGreaterThanOrEqual(0)
+        expect(install, `${file}/${name} must install harness from its lockfile`).toBeGreaterThan(node)
+        expect(install, `${file}/${name} must install harness before tests`).toBeLessThan(check)
+      }
+    }
   })
 
   test('installs ripgrep before every runtime suite in every workflow', () => {

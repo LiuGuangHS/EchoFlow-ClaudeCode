@@ -1,17 +1,17 @@
-# CI and Repository Policy
+# CI 与仓库策略
 
-These rules apply to `.github/` changes in addition to the root instructions.
+这些规则适用于 `.github/` 改动，并叠加根目录规则。
 
-- Treat workflow changes as product changes. Run `bun run check:policy`; run `actionlint` when available.
-- `scripts/pr/change-policy.ts` is the source of truth for path-to-check routing. Do not duplicate the routing graph in advisory automation.
-- Routing is path prefixes plus the import graph from `scripts/pr/module-graph.ts`. Prefixes decide areas and every blocking rule; the graph only widens which surface checks run. When the graph cannot be built the run selects every surface rather than silently falling back to prefixes.
-- `nightly-quality.yml` runs every deterministic lane unconditionally and re-proves the module graph. It exists because per-PR selection can only ever cover what a diff reaches; do not move its jobs into the required PR gate. It runs daily at 19:00 UTC and on `workflow_dispatch`; the maintainer chose that cadence, `pr-quality-workflow.test.ts` pins it, and changing it is the maintainer's call. Every job that runs runtime suites must install ripgrep first (also pinned there): agent discovery lists files through it.
-- Keep `pr-quality-gate` as the stable required status. Selected jobs must succeed and unselected jobs must be explicitly skipped; never convert failures into success.
-- Advisory lanes (`coverage-checks`) stay out of the gate's `needs` so the required status never waits on them. Sharding (`--shard=<i>/<n>`) only cuts wall time: shards must together run the whole check, which `pr-quality-workflow.test.ts` pins. Do not shrink what a selected lane runs to make CI faster.
-- Required PR jobs must remain offline and must not receive provider credentials or depend on paid/live services.
-- A `pull_request_target` workflow may inspect PR metadata using trusted base code, but must never execute the PR head, install PR-controlled dependencies, or expose secrets to contributor code.
-- Keep Bun aligned with `package.json#packageManager` and use frozen lockfile installs in required jobs.
-- Do not weaken coverage, test routing, CODEOWNERS, or branch protections to make another change pass. Maintainer override labels require an explicit, documented decision.
-- A PR authored by an individual CODEOWNER needs no `allow-cli-core-change` label (maintainer decision, 2026-10). Both `scope-plan` and `pr-triage.yml` read CODEOWNERS from the base branch, never the PR head. The other override labels are unchanged.
-- Never retry a failed test into a pass. `check:server` re-runs each failed file once to label it `FLAKY` or `FAILED`, and still fails the gate either way; fix the race, or quarantine with a reason and owner only as a last resort.
-- Repository settings, rulesets, secrets, and required-check changes require explicit user authorization; editing workflow files alone does not grant it.
+- 将工作流改动视为产品改动。运行 `bun run check:policy`；有 `actionlint` 时运行它。
+- `scripts/pr/change-policy.ts` 是路径到检查路由的唯一事实来源。不要在提示性自动化中复制路由图。
+- 路由由路径前缀和 `scripts/pr/module-graph.ts` 的导入图组成。前缀决定区域和所有阻塞规则；导入图只扩大需要运行的界面检查。无法构建导入图时应选择所有界面，而不是静默退回前缀。
+- `nightly-quality.yml` 无条件运行每个确定性 lane 并重新证明模块图健康度。它存在是因为按 PR 选择只能覆盖 diff 触达的范围；不要把这些 job 移入必需的 PR 门禁。它每天 19:00 UTC 和 `workflow_dispatch` 运行；维护者已选定该频率，`pr-quality-workflow.test.ts` 固定了它，改频率须由维护者决定。每个运行 runtime 套件的 job 都必须先安装 ripgrep（该测试也固定此要求）：Agent 发现通过它列出文件。
+- 保持 `pr-quality-gate` 为稳定的必需状态。选中的 job 必须成功，未选中的必须明确跳过；绝不能把失败转换成成功。
+- 提示性 lane（`coverage-checks`）不得放进门禁的 `needs`，以免必需状态等待它们。分片（`--shard=<i>/<n>`）只缩短墙钟时间：所有分片合计必须运行完整检查，`pr-quality-workflow.test.ts` 会固定这一点。不要为了加快 CI 而缩小选中 lane 的范围。
+- 必需 PR job 必须保持离线，不得接收 provider 凭据或依赖付费 / 在线服务。
+- `pull_request_target` 工作流可以使用可信 base code 检查 PR 元数据，但绝不能执行 PR head、安装 PR 控制的依赖或向贡献者代码暴露 secrets。
+- Bun 必须与 `package.json#packageManager` 对齐，必需 job 使用 frozen lockfile 安装。
+- 不得削弱覆盖率、测试路由、CODEOWNERS 或分支保护来让其他改动通过。维护者 override label 必须有明确且留档的决定。
+- 个人 CODEOWNER 创建的 PR 不需要 `allow-cli-core-change` label（维护者决定，2026-10）。`scope-plan` 和 `pr-triage.yml` 都从 base branch 读取 CODEOWNERS，绝不读取 PR head；其他 override label 不变。
+- 绝不把失败测试重试成通过。`check:server` 会对每个失败文件重跑一次并标记 `FLAKY` 或 `FAILED`，但两者仍让门禁失败；应修复竞态，或仅在最后手段下带原因和 owner 隔离。
+- 仓库设置、ruleset、secrets 和必需检查变更需要用户明确授权；仅编辑工作流文件不等于获得授权。

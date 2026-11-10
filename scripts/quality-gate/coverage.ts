@@ -361,17 +361,35 @@ function isUsableLcovRecord(record: LcovRecord) {
 }
 
 export function parseBunTestFileCount(output: string) {
-  const match = output.match(/Ran \d+ tests? across (\d+) files?\./)
-  if (match) return Number(match[1])
+  const match = output.match(/^Ran \d+ tests? across (\d+) files?\./m)
+  return match ? Number(match[1]) : null
+}
 
-  const groupedTestFiles = new Set<string>()
-  for (const group of output.matchAll(/^::group::(.+):\r?$/gm)) {
+export function parseBunStartedTestFileCount(output: string) {
+  const startedTestFiles = new Set<string>()
+  for (const group of output.matchAll(/^(?:::group::)?(.+):\r?$/gm)) {
     const file = group[1]?.trim()
     if (file && TEST_FILE_PATTERN.test(file)) {
-      groupedTestFiles.add(file.replace(/\\/g, '/'))
+      startedTestFiles.add(file.replace(/\\/g, '/'))
     }
   }
-  return groupedTestFiles.size > 0 ? groupedTestFiles.size : null
+  return startedTestFiles.size
+}
+
+export function evaluateRootCoverage(output: string, expectedFiles: number, lcov: string, options: {
+  rootDir?: string
+  scope?: CoverageScope
+} = {}) {
+  const completedFiles = parseBunTestFileCount(output)
+  const startedFiles = parseBunStartedTestFileCount(output)
+  const error = completedFiles !== expectedFiles
+    ? `coverage command final test file summary ${completedFiles ?? 'unknown'}/${expectedFiles}; started ${startedFiles}/${expectedFiles} root test files`
+    : !hasUsableLcov(lcov, { rootDir: options.rootDir })
+      ? 'coverage command produced no usable LCOV records'
+      : options.scope && !hasUsableLcov(lcov, options)
+        ? `coverage command produced no LCOV records for ${options.scope.id}`
+        : undefined
+  return { completedFiles, startedFiles, available: error === undefined, error }
 }
 
 export function buildRootCoverageCommand(outputDir: string, serverFiles: string[], rootDir = ROOT_DIR) {
@@ -513,11 +531,21 @@ export async function runCommand(command: string[], cwd: string, logPath: string
     const output = readFileSync(capturePath, 'utf8')
     mkdirSync(dirname(logPath), { recursive: true })
     writeFileSync(logPath, `${header}${output}`)
-    return {
+    const diagnostics = {
+      command,
+      cwd,
       exitCode,
+      signalCode: proc.signalCode,
       durationMs: Date.now() - started,
-      output,
+      runnerRuntime: {
+        executable: process.execPath,
+        bunVersion: Bun.version,
+        platform: process.platform,
+        arch: process.arch,
+      },
     }
+    writeFileSync(`${logPath}.process.json`, JSON.stringify(diagnostics, null, 2) + '\n')
+    return { ...diagnostics, output }
   } finally {
     if (logFd !== undefined) closeSync(logFd)
     removeSandboxHome(sandboxHome)
@@ -921,9 +949,8 @@ export async function runCoverageGate(options: {
     ? readFileSync(rootLcovPath, 'utf8')
     : ''
   const rootRecords = parseLcovRecords(rootLcov, { rootDir }).filter(isUsableLcovRecord)
-  const rootTestFileCount = parseBunTestFileCount(rootResult.output)
-  const rootTestDiscoveryComplete = rootTestFileCount === serverFiles.length
-  const rootCoverageAvailable = hasUsableLcov(rootLcov, { rootDir }) && rootTestDiscoveryComplete
+  const rootCoverage = evaluateRootCoverage(rootResult.output, serverFiles.length, rootLcov, { rootDir })
+  const rootCoverageAvailable = rootCoverage.available
 
   if (rootResult.exitCode !== 0 && rootCoverageAvailable) {
     writeFileSync(
@@ -934,7 +961,8 @@ export async function runCoverageGate(options: {
 
   for (const scope of ROOT_COVERAGE_SCOPES) {
     const scopedRecords = rootRecords.filter((record) => matchesScope(record.file, scope))
-    const scopeCoverageAvailable = rootCoverageAvailable && scopedRecords.length > 0
+    const scopeCoverage = evaluateRootCoverage(rootResult.output, serverFiles.length, rootLcov, { rootDir, scope })
+    const scopeCoverageAvailable = scopeCoverage.available
     const summary = scopeCoverageAvailable
       ? summarizeLcovRecords(scopedRecords)
       : undefined
@@ -950,11 +978,7 @@ export async function runCoverageGate(options: {
         note: `instrumentation test process exited with ${rootResult.exitCode}; correctness is enforced by the required per-file server gate`,
       } : {}),
       ...(!scopeCoverageAvailable ? {
-        error: rootCoverageAvailable
-          ? `coverage command produced no LCOV records for ${scope.id}`
-          : !rootTestDiscoveryComplete
-            ? `coverage command discovered ${rootTestFileCount ?? 0}/${serverFiles.length} root test files`
-            : `coverage command exited with ${rootResult.exitCode} and produced no usable LCOV records`,
+        error: scopeCoverage.error,
       } : {}),
     })
     if (scopeCoverageAvailable) {
@@ -964,9 +988,9 @@ export async function runCoverageGate(options: {
     }
   }
 
-  const rootRuntimeRecords = rootRecords.filter((record) => (
+  const rootRuntimeRecords = rootCoverageAvailable ? rootRecords.filter((record) => (
     matchesScope(record.file, ROOT_RUNTIME_CHANGED_SCOPE)
-  ))
+  )) : []
   for (const [file, coverage] of lcovRecordLineCoverage(
     rootRuntimeRecords,
     ROOT_RUNTIME_CHANGED_SCOPE.id,

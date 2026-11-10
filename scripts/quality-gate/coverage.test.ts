@@ -10,6 +10,8 @@ import {
   CHANGED_LINE_SCOPES,
   evaluateChangedLineCoverage,
   evaluateThresholds,
+  evaluateRootCoverage,
+  parseBunStartedTestFileCount,
   hasUsableCoverageSummary,
   hasUsableLcov,
   parseBunTestFileCount,
@@ -146,7 +148,7 @@ describe('coverage gate helpers', () => {
     expect(parseBunTestFileCount('process terminated before summary')).toBeNull()
   })
 
-  test('recovers discovery from Bun CI file groups when a failed run has no summary', () => {
+  test('keeps started CI file groups separate from final summary counts', () => {
     const output = [
       '::group::src/server/a.test.ts:',
       '(pass) first test',
@@ -159,7 +161,8 @@ describe('coverage gate helpers', () => {
       '::group::src/not-a-test.ts:',
     ].join('\r\n')
 
-    expect(parseBunTestFileCount(output)).toBe(2)
+    expect(parseBunTestFileCount(output)).toBeNull()
+    expect(parseBunStartedTestFileCount(output)).toBe(2)
     expect(parseBunTestFileCount(`${output}\nRan 10 tests across 3 files.`)).toBe(3)
   })
 
@@ -167,9 +170,39 @@ describe('coverage gate helpers', () => {
     expect(parseBunTestFileCount('::group::Coverage report:\n::endgroup::')).toBeNull()
     expect(parseBunTestFileCount('diagnostic ::group::src/a.test.ts:\n')).toBeNull()
     const output = '::group::src/a.test.ts:\n::endgroup::\n'
-    expect(parseBunTestFileCount(output)).toBe(1)
-    expect(parseBunTestFileCount(output)).not.toBe(2)
+    expect(parseBunTestFileCount(output)).toBeNull()
+    expect(parseBunStartedTestFileCount(output)).toBe(1)
     expect(hasUsableLcov('')).toBe(false)
+  })
+
+  test('reports missing final summary as unknown with started progress, never zero completed', () => {
+    const result = evaluateRootCoverage('src/a.test.ts:\n::group::src/b.test.ts:\n', 3, '')
+    expect(result.available).toBe(false)
+    expect(result.error).toContain('unknown/3')
+    expect(result.error).toContain('started 2/3')
+    expect(result.completedFiles).toBeNull()
+  })
+
+  test.each([
+    ['Ran 0 tests across 0 files.', '', false, '0/2'],
+    ['Ran 1 test across 1 file.', 'SF:src/server/a.ts\nLF:1\nLH:1\nend_of_record', false, '1/2'],
+    ['::group::src/a.test.ts:\n::group::src/b.test.ts:', 'SF:src/server/a.ts\nLF:1\nLH:1\nend_of_record', false, 'unknown/2'],
+    ['Ran 2 tests across 2 files.', '', false, 'no usable LCOV'],
+    ['Ran 2 tests across 2 files.', 'SF:src/server/a.ts\nLF:1\nLH:1\nend_of_record', true, undefined],
+  ])('requires final summary and usable LCOV: %s', (output, lcov, available, error) => {
+    const result = evaluateRootCoverage(output, 2, lcov)
+    expect(result.available).toBe(available)
+    if (error) expect(result.error).toContain(error)
+    else expect(result.error).toBeUndefined()
+  })
+
+  test('requires measurable LCOV records in the requested scope', () => {
+    const result = evaluateRootCoverage('Ran 2 tests across 2 files.', 2,
+      'SF:src/utils/a.ts\nLF:1\nLH:1\nend_of_record', {
+        scope: { id: 'server-api', title: 'Server/API', includePrefixes: ['src/server/'] },
+      })
+    expect(result.available).toBe(false)
+    expect(result.error).toContain('no LCOV records for server-api')
   })
 
   test('rejects empty aggregate coverage summaries', () => {
@@ -533,6 +566,30 @@ describe('coverage gate helpers', () => {
 })
 
 describe('coverage subprocess output', () => {
+  test.skipIf(process.platform === 'win32')('persists actual process signal diagnostics separately from raw output', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-signal-'))
+    const logPath = join(root, 'coverage.log')
+    const command = [process.execPath, '--no-env-file', '-e', "process.kill(process.pid, 'SIGTERM')"]
+    try {
+      const result = await runCommand(command, root, logPath)
+      const diagnostics = JSON.parse(readFileSync(`${logPath}.process.json`, 'utf8'))
+      expect(result.signalCode).toBe('SIGTERM')
+      expect(diagnostics).toMatchObject({
+        command,
+        cwd: root,
+        exitCode: result.exitCode,
+        signalCode: 'SIGTERM',
+        durationMs: result.durationMs,
+        runnerRuntime: { executable: process.execPath, bunVersion: Bun.version },
+      })
+      expect(diagnostics.durationMs).toBeGreaterThanOrEqual(0)
+      expect(result.output).toBe('')
+      expect(readFileSync(logPath, 'utf8')).toBe(`$ ${command.join(' ')}\n`)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   test.each(['root', 'adapters'])('isolates %s globals and module caches while retaining coverage from every test file', async suite => {
     const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-isolation-'))
     const outputDir = join(root, 'coverage')
@@ -694,6 +751,14 @@ describe('coverage subprocess output', () => {
       const command = [process.execPath, '--no-env-file', script]
       const result = await runCommand(command, root, logPath)
       expect(result.exitCode).toBe(7)
+      expect(result.signalCode).toBeNull()
+      expect(JSON.parse(readFileSync(`${logPath}.process.json`, 'utf8'))).toMatchObject({
+        command,
+        cwd: root,
+        exitCode: 7,
+        signalCode: null,
+        durationMs: result.durationMs,
+      })
       expect(parseBunTestFileCount(result.output)).toBe(1)
       expect(result.output.length).toBe(rounds * chunkSize * 2 + summary.length)
       const expected = createHash('sha256')

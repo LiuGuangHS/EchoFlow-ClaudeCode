@@ -64,7 +64,7 @@ describe('Windows installer recovery prerequisites', () => {
       'IfFileExists "$ccHahaPerUserInstallLocation\\CLAUDE_CONFIG_DIR\\*.*"',
     )
     expect(installerHook).toContain(
-      'FileOpen $R2 "$R1\\Claude Code Haha\\app-mode.json" r',
+      'FileOpen $R2 "$R1\\EchoFlow Code\\app-mode.json" r',
     )
     expect(installerHook).toContain('StrCmp $R3 \'  "mode": "default",$\\n\'')
     expect(installerHook).toContain('StrCmp $R3 \'  "portable_dir": null$\\n\'')

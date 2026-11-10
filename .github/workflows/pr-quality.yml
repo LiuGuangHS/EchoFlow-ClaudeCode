@@ -93,17 +93,22 @@ jobs:
     if: ${{ always() && needs.scope-plan.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
+      # The public content audit runs on every PR and every main push, not only
+      # when the scope plan selects a policy lane. It uses built-in modules, so
+      # checkout and Bun are unconditional here too. A push to main can report a
+      # regression but cannot replace branch protection on the PR.
       - name: Checkout policy sources
-        if: needs.scope-plan.outputs.policy_checks == 'true'
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
       - name: Setup Bun
-        if: needs.scope-plan.outputs.policy_checks == 'true'
         uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+
+      - name: Audit public product content
+        run: bun run check:upstream-content
 
       - name: Install root dependencies
         if: needs.scope-plan.outputs.policy_checks == 'true'
@@ -220,6 +225,14 @@ jobs:
       - name: Install adapter dependencies
         working-directory: adapters
         run: bun install --frozen-lockfile
+      # The real Host regression uses harness's locked packages and Node >=24.9.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: harness/package-lock.json
+      - name: Install harness dependencies
+        run: npm --prefix harness ci
       - name: Run root runtime checks
         run: bun run check:server --shard=${{ matrix.shard }}/3
 
@@ -456,6 +469,13 @@ jobs:
       - name: Install adapter dependencies
         working-directory: adapters
         run: bun install --frozen-lockfile
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: harness/package-lock.json
+      - name: Install harness dependencies
+        run: npm --prefix harness ci
       - name: Run coverage checks
         env:
           COVERAGE_BASE_REF: origin/${{ github.base_ref }}

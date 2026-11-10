@@ -1,52 +1,36 @@
 # @echoflow/egress-guard
 
-EchoFlow's own dsh bundle. It is not part of dsh and carries no dsh code: it is
-the first entry in EchoFlow's differentiation layer, and it exists because the
-profile's patch file alone cannot stop a later layer from re-opening a row.
+这是 EchoFlow 自有的 dsh bundle，不属于 dsh，也不包含 dsh 代码。它是 EchoFlow 差异化层的首个组件，因为仅靠配置的补丁文件无法阻止后续层重新启用条目。
 
-## What it guarantees
+## 提供的保证
 
-The profile's `cordis.patch.yml` disables every plugin and route listed in
-`harness/egress-blocklist.json`. That file is a static layer. A user home patch
-(`$DSH_HOME/cordis.patch.yml`), a `--patch` overlay, or a future reloader is
-applied *after* it, so the effective configuration has to be judged by what the
-Loader actually runs, not by reading the profile's own patch file.
+配置的 `cordis.patch.yml` 禁用 `harness/egress-blocklist.json` 列出的所有插件和路由。它只是静态层。用户目录补丁（`$DSH_HOME/cordis.patch.yml`）、`--patch` 覆盖或未来重载器在其后应用，因此必须根据 Loader 实际运行的有效配置判断，不能只读配置自身的补丁文件。
 
-The guard checks three moments:
+守卫在三个时点检查：
 
-| Moment | Owner | Behaviour on violation |
+| 时点 | 负责人 | 违规行为 |
 | --- | --- | --- |
-| Before `boot()` | EchoFlow launcher | refuses to start |
-| After `boot()` settles | EchoFlow launcher | refuses to serve |
-| After `app-boot/config-reload` | this bundle | rejects the reload and exits non-zero |
+| `boot()` 前 | EchoFlow 启动器 | 拒绝启动 |
+| `boot()` 完成后 | EchoFlow 启动器 | 拒绝提供服务 |
+| `app-boot/config-reload` 后 | 本 bundle | 拒绝重载并以非零码退出 |
 
-Every check reads structured Loader state — entry ids, effective config, and
-`Entry.disabled` (which evaluates `!!js` expressions and accounts for a
-disabled parent group). Nothing here parses YAML text or guesses row
-boundaries.
+每次检查都读取结构化 Loader 状态：条目 ID、有效配置和 `Entry.disabled`（会计算 `!!js` 表达式并考虑被禁用的父分组）。这里不解析 YAML 文本，也不猜测条目边界。
 
-Rules:
+规则：
 
-- Every blocklisted id must exist **and** be effectively disabled. A missing id
-  means an upstream rename escaped the audit, which is a violation, not a pass.
-- Every id in `requiredPlugins` must exist and stay enabled — the guard cannot
-  be switched off by a later layer.
-- No enabled entry's config may name a blocked host or route.
+- 每个阻止清单 ID 必须存在且有效禁用。缺失 ID 意味着上游改名逃过审计，属于违规，不算通过。
+- `requiredPlugins` 中每个 ID 必须存在且保持启用，守卫不能被后续层关闭。
+- 任何启用条目的配置都不能引用被阻止的主机或路由。
 
-## What it does not guarantee
+## 不提供的保证
 
-This is a policy check over the plugins EchoFlow declares, not an operating
-system network firewall. Code that opens a socket on its own — a stray script,
-a dependency with its own telemetry, a browser — is outside its reach. Treat it
-as one layer of a defence that also includes review of the pinned dependency
-tree and the desktop's own outbound policy.
+这是对 EchoFlow 声明插件的策略检查，不是操作系统网络防火墙。自行打开 socket 的代码，例如独立脚本、自带遥测的依赖或浏览器，不在其控制范围内。它只是防护的一层，还需评审锁定依赖树及桌面自身的外发策略。
 
-## Usage
+## 使用
 
-The bundle is a normal dsh bundle: it ships `cordis.patch.yml`, which inserts
-the `egress-guard` row, and the profile lists it in `dsh.profile.bundles`.
+它是普通 dsh bundle：随附 `cordis.patch.yml` 插入 `egress-guard` 条目，配置在 `dsh.profile.bundles` 中列出它。
 
-The pure rule set is exported for tests and for the launcher:
+纯规则集导出供测试和启动器使用：
 
 ```js
 import { verifyEffectiveConfig, snapshotLoaderTree } from '@echoflow/egress-guard/verify'

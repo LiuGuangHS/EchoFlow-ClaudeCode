@@ -9,7 +9,6 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-import { PROVIDER_PRESETS } from '../../../src/server/config/providerPresets'
 import type { LiveScenarioRunner } from '../agent-flow/live'
 import { LIVE_AGENT_FLOW_SCENARIOS } from '../agent-flow/liveScenarios'
 import { MOCK_IMAGE_PNG_BASE64, type MockLlmServer, type RecordedRequest } from './server'
@@ -258,7 +257,17 @@ export function createMockOnlyRunners(
       } finally { socket.close() }
     },
     async 'mock-openrouter-required-thinking'(ctx) {
-      const preset = PROVIDER_PRESETS.find(candidate => candidate.id === 'openrouter')!
+      const preset = {
+        id: 'custom',
+        apiFormat: 'anthropic',
+        authStrategy: 'api_key',
+        defaultModels: {
+          main: 'anthropic/claude-sonnet-5.5',
+          sonnet: 'anthropic/claude-sonnet-5.5',
+          opus: 'anthropic/claude-opus-5.5',
+          haiku: 'anthropic/claude-haiku-5.5',
+        },
+      }
       const settingsUrl = `${ctx.baseUrl}/api/settings/user`
       const original = await (await fetch(settingsUrl)).json() as { alwaysThinkingEnabled?: boolean }
       const updateThinking = async (enabled: boolean) => {

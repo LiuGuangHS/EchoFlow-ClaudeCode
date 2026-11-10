@@ -1,81 +1,57 @@
-# Harness — the dsh execution seam
+# Harness：dsh 执行接缝
 
-This directory holds EchoFlow's seam to [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-(dsh). dsh is the execution runtime; EchoFlow keeps its own product shell, UI,
-session store, and provider routing.
+本目录保存 EchoFlow 与 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）的接缝。dsh 负责执行运行时；EchoFlow 保留自己的产品外壳、UI、会话存储和服务商路由。
 
-Nothing in this directory is vendored dsh source. dsh is consumed as pinned npm
-packages, and every line under this directory is EchoFlow's own code.
+本目录没有复制的 dsh 源码。dsh 通过固定版本的 npm 包使用，本目录每一行都是 EchoFlow 自有代码。
 
-## What lives here
+## 目录内容
 
-| Path | Role |
+| 路径 | 职责 |
 | --- | --- |
-| `profile/` | The `echoflow` dsh profile: bundles, patches, and the zero-egress overrides |
-| `bundles/` | EchoFlow-owned dsh plugins that dsh does not ship (currently `egress-guard`) |
-| `src/` | The boot sequence (`boot.js`) and the ACP seam client that drives dsh |
-| `egress-blocklist.json` | The plugins and hosts the profile must never use |
-| `test/` | The `check:harness` lane |
+| `profile/` | `echoflow` dsh 配置：bundle、补丁和禁止外发的覆盖配置 |
+| `bundles/` | dsh 未自带、由 EchoFlow 维护的插件（目前为 `egress-guard`） |
+| `src/` | 启动顺序（`boot.js`）和驱动 dsh 的 ACP 接缝客户端 |
+| `egress-blocklist.json` | 此配置绝不能使用的插件和主机 |
+| `test/` | `check:harness` 检查通道 |
 
-## Toolchain
+## 工具链
 
-This directory uses npm and Node, not bun. The root repository uses bun; the two
-trees do not share a dependency install, and a root `bun install` never reaches
-into `harness/`.
+本目录使用 npm 和 Node，不使用 Bun。仓库根目录使用 Bun；两棵目录树不共享依赖安装，根目录 `bun install` 不会进入 `harness/`。
 
-dsh requires Node `>= 24.9.0` and its own packages assume a modern Node. The
-root repository's own Node floor is lower, so the two floors differ on purpose.
+dsh 要求 Node `>= 24.9.0`，其包也假定现代 Node 环境。根仓库自身的 Node 最低要求较低，两者有意不同。
 
 ```bash
-npm --prefix harness ci      # install exactly the locked tree
-npm --prefix harness test    # the check:harness lane
+npm --prefix harness ci      # 严格安装锁定依赖树
+npm --prefix harness test    # check:harness 检查通道
 npm --prefix harness run preview
 ```
 
-`preview` boots the real launcher with a temporary `HOME`/`DSH_HOME` and points
-the model provider at a loopback gateway on `127.0.0.1`. It needs no
-credentials and no network, so it is the quickest way to see a full turn:
-handshake, `session/new`, one streamed prompt, and a bounded exit.
+`preview` 使用临时 `HOME`/`DSH_HOME` 启动真实启动器，并将模型服务指向 `127.0.0.1` 回环网关。不需要凭据或网络，可快速观察一个完整回合：握手、`session/new`、一次流式提示及有界退出。
 
-## Why the versions are pinned exactly
+## 为什么精确锁定版本
 
-dsh is a developer preview, and its npm `latest` tag points at `0.1.0-rc.6` —
-older than the newest published release. A caret or tilde range would silently
-resolve to that older build and produce failures that look like dsh bugs.
+本页记录的 dsh 开发预览状态中，npm `latest` 标签指向 `0.1.0-rc.6`，比最新已发布版本更旧。使用脱字符或波浪号范围会悄悄解析到旧构建，产生看似 dsh 缺陷的失败。
 
-Every `@deepseek-ai/*` dependency is therefore pinned to an exact version.
+因此，所有 `@deepseek-ai/*` 依赖都锁定精确版本。
 
-### Upgrade procedure
+### 升级流程
 
-dsh's upgrade guide warns that preview releases can carry breaking changes, so
-an upgrade is a deliberate, reviewed step — never an automatic one.
+dsh 升级指南提醒预览版本可能包含破坏性变更，所以升级必须有意进行并经评审，不能自动升级。
 
-1. Edit the exact versions in `package.json`.
-2. Run `npm --prefix harness install` to refresh `package-lock.json`.
-3. Run `npm --prefix harness test`.
-4. **Review `egress-blocklist.json` by hand.** dsh may add a new outbound
-   plugin or rename an existing one. A `cordis.patch.yml` entry for a plugin id
-   that no longer exists is not an error — it is silently ignored, with only a
-   line in the log to show for it. This is the one failure mode the automated
-   lane cannot catch, so a human reads the dsh release notes against the
-   blocklist on every upgrade.
-5. Record the upgrade in the commit message.
+1. 修改 `package.json` 中的精确版本。
+2. 运行 `npm --prefix harness install` 更新 `package-lock.json`。
+3. 运行 `npm --prefix harness test`。
+4. **人工评审 `egress-blocklist.json`。** dsh 可能新增外发插件或重命名旧插件。`cordis.patch.yml` 中已不存在的插件 ID 不会报错，而是悄悄忽略，只留一行日志。自动检查无法发现这一失败模式，因此每次升级都要人工对照 dsh 发布说明与阻止清单。
+5. 在提交信息中记录升级。
 
-## Wave handoff
+## 阶段交接记录
 
-The next plan is `docs/superpowers/plans/2026-10-29-dsh-wave1-runtime-contract-driver.md`:
-it builds the runtime contract and the dsh ACP driver in `src/server/runtime/`. It
-does **not** swap the desktop's `npx` sidecar for this seam. That sidecar serves a
-dsh web UI window, which an ACP driver deliberately does not provide; it stays as
-the transitional implementation until the readiness work and the optional
-native-dsh engine decide its fate.
+本节记录既有分阶段计划，不因翻译而授权迁移或证明当前产品已接入。
 
-Three things carry into later waves:
+后续计划位于 `docs/superpowers/plans/2026-10-29-dsh-wave1-runtime-contract-driver.md`：在 `src/server/runtime/` 建立运行时契约和 dsh ACP 驱动。它**不会**把桌面的 `npx` sidecar 替换为此接缝。该 sidecar 提供 dsh 网页 UI 窗口，而 ACP 驱动有意不提供；在就绪工作和可选原生 dsh 引擎决定其去向前，它仍是过渡实现。
 
-- `desktop/electron/services/nodeRuntime.ts` raises the desktop Node floor to
-  `24.9.0` and uses `checkNodeFloor` from `src/nodeFloor.js`. The readiness wave
-  owns that switch.
-- The driver takes its launcher command from
-  `RuntimeInstallation.executablePath`, so where the launcher ships from is a
-  packaging decision for the release wave, not a driver change.
-- The desktop's own product analytics joins `egress-blocklist.json`.
+三项工作交给后续阶段：
+
+- `desktop/electron/services/nodeRuntime.ts` 将桌面 Node 最低要求提高到 `24.9.0`，并使用 `src/nodeFloor.js` 的 `checkNodeFloor`；此切换由就绪阶段负责。
+- 驱动从 `RuntimeInstallation.executablePath` 读取启动命令，启动器的分发位置由发布阶段决定，不属于驱动改动。
+- 将桌面自身的产品分析加入 `egress-blocklist.json`。

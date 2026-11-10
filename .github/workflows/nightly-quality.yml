@@ -44,7 +44,9 @@ jobs:
           bun-version-file: package.json
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
+          cache: npm
+          cache-dependency-path: harness/package-lock.json
       # Agent and skill discovery lists files through ripgrep; without it the
       # runtime suites see every created agent as missing (HTTP 500).
       - name: Install ripgrep
@@ -62,40 +64,83 @@ jobs:
         working-directory: mobile
         run: bun install --frozen-lockfile
 
-      # Every deterministic lane, unconditionally — no path routing, no dependency
-      # graph. This is the run that catches a check the router stopped selecting.
+      - name: Install harness dependencies
+        run: npm --prefix harness ci
+
+      - name: Mark dependencies ready
+        id: dependencies
+        run: 'true'
+
+      # No path routing: after setup succeeds, independent checks still run when
+      # an earlier lane fails. Do not continue-on-error: any failure keeps the job red.
+      # A cancelled run stops rather than starting more expensive checks.
       - name: Policy and gate regressions
+        id: policy
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:policy
+      - name: Public product content audit
+        id: public-content
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: bun run check:upstream-content
       - name: Deterministic agent flow
+        id: agent-flow
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:agent-flow
       - name: Agent loop against a mock LLM and recorded traffic
+        id: agent-e2e
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:agent-e2e
       - name: Root runtime tests
+        id: server
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:server
       - name: Provider contracts
+        id: provider-contract
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:provider-contract
       - name: Desktop/server chat contracts
+        id: chat-contract
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:chat-contract
       - name: Adapter tests
+        id: adapters
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:adapters
       - name: Desktop lint, tests, and build
+        id: desktop
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:desktop
       - name: Mobile typecheck, lint, and tests
+        id: mobile
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:mobile
       - name: Setup native Computer Use Rust toolchain
+        id: rust-toolchain
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         uses: dtolnay/rust-toolchain@stable
       - name: Prepare native Computer Use dependencies
+        id: native-dependencies
+        if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
         run: cargo +stable fetch --locked --manifest-path native/agent-desktop/Cargo.toml
       - name: Native Computer Use deterministic checks
+        id: native
+        if: ${{ !cancelled() && steps.native-dependencies.outcome == 'success' }}
         run: bun run check:agent-desktop
       - name: Electron host checks
+        id: electron
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:electron
       - name: Persistence upgrade contracts
+        id: persistence
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:persistence-upgrade
       - name: Quarantine governance
+        id: quarantine
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:quarantine
       - name: Coverage ratchet
-        if: ${{ !inputs.skip_coverage }}
+        id: coverage
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && !inputs.skip_coverage }}
         env:
           COVERAGE_BASE_REF: origin/main
         run: bun run check:coverage
@@ -104,7 +149,25 @@ jobs:
       # reason when agent-browser is unavailable on the runner rather than failing
       # the whole nightly run.
       - name: Deterministic desktop UI smoke
+        id: desktop-ui-smoke
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:desktop-ui-smoke
+
+      - name: Summarize every nightly lane
+        if: always()
+        env:
+          LANE_RESULTS: ${{ toJSON(steps) }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
+          const steps = JSON.parse(process.env.LANE_RESULTS)
+          const results = Object.entries(steps).map(([id, step]) => ({ id, outcome: step.outcome }))
+          mkdirSync('artifacts', { recursive: true })
+          writeFileSync('artifacts/nightly-summary.json', JSON.stringify(results, null, 2) + '\n')
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+            '## Nightly check outcomes\n\n| Check | Outcome |\n| --- | --- |\n' +
+            results.map(({ id, outcome }) => `| ${id} | ${outcome} |`).join('\n') + '\n')
+          NODE
 
       - name: Upload nightly artifacts
         if: always()
@@ -112,6 +175,7 @@ jobs:
         with:
           name: nightly-quality
           path: |
+            artifacts/nightly-summary.json
             artifacts/agent-flow/
             artifacts/agent-e2e/
             artifacts/desktop-ui-smoke/
