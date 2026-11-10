@@ -13,7 +13,6 @@ import {
   getBundledSkills,
 } from '../bundledSkills.js'
 import { registerImagegenSkill } from './imagegen.js'
-import { PROVIDER_PRESETS } from '../../server/config/providerPresets.js'
 import { buildProviderManagedEnv } from '../../server/services/providerRuntimeEnv.js'
 import { ImageGenTool, ImageEditTool } from '../../tools/ImageGenTool/ImageGenTool.js'
 
@@ -38,12 +37,12 @@ afterEach(() => {
 })
 
 describe('bundled imagegen skill', () => {
-  test('enables the skill and native tools from the ApiSmart preset without exposing its key', async () => {
-    const preset = PROVIDER_PRESETS.find(p => p.id === 'apismart')!
+  test('enables the skill and native tools from a custom image provider without exposing its key', async () => {
     const env = buildProviderManagedEnv({
-      id: 'apismart-test', presetId: preset.id, name: preset.name,
-      baseUrl: preset.baseUrl, apiKey: 'fake-apismart-image-key', apiFormat: preset.apiFormat,
-      models: preset.defaultModels, imageGeneration: preset.defaultImageGeneration,
+      id: 'apismart-test', presetId: 'custom', name: 'Custom ApiSmart',
+      baseUrl: 'https://gw.apismart.ai/v1', apiKey: 'fake-apismart-image-key', apiFormat: 'openai',
+      models: { main: 'test-model', haiku: 'test-model', sonnet: 'test-model', opus: 'test-model' },
+      imageGeneration: { model: 'doubao-seedream-5-0', protocol: 'openai_images' },
     })
     for (const key of ENV_KEYS) process.env[key] = env[key]
     registerImagegenSkill()

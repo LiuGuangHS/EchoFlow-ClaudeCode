@@ -126,7 +126,9 @@ export function ensureThreadGoalHookFromTranscript(
 }
 
 export function isGoalPromptHookCommand(command: string | undefined): boolean {
-  return typeof command === 'string' && command.includes(GOAL_HOOK_MARKER)
+  return typeof command === 'string' && (
+    command.includes(GOAL_HOOK_MARKER) || command.includes('<echoflow-code-goal-hook>')
+  )
 }
 
 export function goalObjectiveFromHookCommand(command: string | undefined): string | null {

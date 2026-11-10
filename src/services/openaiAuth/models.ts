@@ -228,11 +228,19 @@ export function resolveOpenAIReasoningEffortWithPriority(
   return entry?.defaultReasoningEffort ?? 'medium'
 }
 
+export function shouldForceOpenAICodexProvider(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return isEnvTruthy(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER ?? env.CC_HAHA_OPENAI_OAUTH_PROVIDER)
+}
+
 export function isOpenAIResponsesModel(model: string): boolean {
   // The official runtime selects the transport even for newly published IDs
   // and Claude tier aliases, so capability checks must follow that same route.
-  return isEnvTruthy(readProviderEnv('CC_HAHA_OPENAI_OAUTH_PROVIDER')) ||
-    isOpenAIReasoningModel(model)
+  return shouldForceOpenAICodexProvider({
+    ECHOFLOW_OPENAI_OAUTH_PROVIDER: readProviderEnv('ECHOFLOW_OPENAI_OAUTH_PROVIDER'),
+    CC_HAHA_OPENAI_OAUTH_PROVIDER: readProviderEnv('CC_HAHA_OPENAI_OAUTH_PROVIDER'),
+  }) || isOpenAIReasoningModel(model)
 }
 
 export function resolveOpenAICodexModel(model: string): string {

@@ -28,6 +28,12 @@ import { handleProxyRequest } from './proxy/handler.js'
 import { ProviderService } from './services/providerService.js'
 import { handleHahaOAuthCallback } from './api/haha-oauth.js'
 import { handleHahaOpenAIOAuthCallback } from './api/haha-openai-oauth.js'
+import { handleEchoFlowOAuthCallback } from './api/echoflow-oauth.js'
+import { handleEchoFlowOpenAIOAuthCallback } from './api/echoflow-openai-oauth.js'
+import { echoFlowOAuthService } from './services/echoFlowOAuthService.js'
+import { echoFlowOpenAIOAuthService } from './services/echoFlowOpenAIOAuthService.js'
+import { hahaOAuthService } from './services/hahaOAuthService.js'
+import { hahaOpenAIOAuthService } from './services/hahaOpenAIOAuthService.js'
 import { handlePreviewFs } from './api/previewFs.js'
 import { handleLocalFile } from './api/localFile.js'
 import { sessionService } from './services/sessionService.js'
@@ -607,6 +613,13 @@ export function startServer(port = PORT, host = HOST) {
         }
 
         if (url.pathname === '/callback') {
+          const state = url.searchParams.get('state')
+          if (state && echoFlowOAuthService.getSession(state)) {
+            return handleEchoFlowOAuthCallback(url)
+          }
+          if (state && !hahaOAuthService.getSession(state)) {
+            return new Response('OAuth session not found or expired', { status: 400 })
+          }
           return handleHahaOAuthCallback(url)
         }
 
@@ -614,6 +627,13 @@ export function startServer(port = PORT, host = HOST) {
           url.pathname === OPENAI_CODEX_REDIRECT_PATH ||
           url.pathname === '/callback/openai'
         ) {
+          const state = url.searchParams.get('state')
+          if (state && echoFlowOpenAIOAuthService.getSession(state)) {
+            return handleEchoFlowOpenAIOAuthCallback(url)
+          }
+          if (state && !hahaOpenAIOAuthService.getSession(state)) {
+            return new Response('OAuth session not found or expired', { status: 400 })
+          }
           return handleHahaOpenAIOAuthCallback(url)
         }
 

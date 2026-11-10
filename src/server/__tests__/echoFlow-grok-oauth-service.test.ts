@@ -6,14 +6,14 @@ import {
   EchoFlowGrokOAuthService,
   getEchoFlowGrokOAuthFilePath,
 } from '../services/echoFlowGrokOAuthService.js'
-import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
+import { SYSTEM_PROXY_URL_ENV } from '../services/networkSettings.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 
 let tempDir: string
 let previousConfigDir: string | undefined
 let previousFetch: typeof globalThis.fetch
 let service: EchoFlowGrokOAuthService
-const originalSystemProxyUrl = process.env.ECHOFLOW_SYSTEM_PROXY_URL
+const originalSystemProxyUrl = process.env[SYSTEM_PROXY_URL_ENV]
 const originalHttpProxy = process.env.HTTP_PROXY
 const originalHttpsProxy = process.env.HTTPS_PROXY
 const originalLowerHttpProxy = process.env.http_proxy
@@ -38,7 +38,7 @@ afterEach(async () => {
   globalThis.fetch = previousFetch
   if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
   else process.env.CLAUDE_CONFIG_DIR = previousConfigDir
-  restoreEnv('ECHOFLOW_SYSTEM_PROXY_URL', originalSystemProxyUrl)
+  restoreEnv(SYSTEM_PROXY_URL_ENV, originalSystemProxyUrl)
   restoreEnv('HTTP_PROXY', originalHttpProxy)
   restoreEnv('HTTPS_PROXY', originalHttpsProxy)
   restoreEnv('http_proxy', originalLowerHttpProxy)
@@ -107,7 +107,7 @@ describe('EchoFlowGrokOAuthService', () => {
   })
 
   test('uses direct, system, and manual network settings for token refresh', async () => {
-    process.env.ECHOFLOW_SYSTEM_PROXY_URL = 'http://127.0.0.1:7897'
+    process.env[SYSTEM_PROXY_URL_ENV] = 'http://127.0.0.1:7897'
     process.env.HTTP_PROXY = 'http://stale-parent.example:8080'
     process.env.HTTPS_PROXY = 'http://stale-parent.example:8080'
     process.env.http_proxy = 'http://stale-parent.example:8080'
@@ -120,9 +120,8 @@ describe('EchoFlowGrokOAuthService', () => {
     ] as const
 
     for (const testCase of cases) {
-      await fs.mkdir(getEchoFlowInternalDir(tempDir), { recursive: true })
       await fs.writeFile(
-        path.join(getEchoFlowInternalDir(tempDir), 'settings.json'),
+        path.join(tempDir, 'settings.json'),
         JSON.stringify({
           network: {
             aiRequestTimeoutMs: 45_000,

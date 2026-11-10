@@ -67,6 +67,9 @@ test.each([
           }
           ${script}
         `, { eval: true, workerData: { gate: gate.buffer, stage, project } })
+        const terminate = worker.terminate.bind(worker)
+        let termination: Promise<number> | undefined
+        worker.terminate = () => termination ??= terminate()
         workers.push(worker)
         return worker
       }, 750)

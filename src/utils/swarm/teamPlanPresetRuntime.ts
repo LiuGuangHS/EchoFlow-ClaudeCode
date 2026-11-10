@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { TeamPlanRuntime } from '../../shared/teamPlan.js'
-import { getClaudeConfigHomeDir } from '../envUtils.js'
+import { getEchoFlowInternalDir } from '../echoFlowConfigRoot.js'
 
 type PresetSnapshot = { model?: string; provider?: string; effortLevel?: string }
 
@@ -16,7 +16,7 @@ type SavedProviderModels = {
 // modules; only saved API providers can be a member's runtime here.
 function readSavedProviderModels(providerId: string): SavedProviderModels | undefined {
   try {
-    const index = JSON.parse(readFileSync(join(getClaudeConfigHomeDir(), 'cc-haha', 'providers.json'), 'utf8')) as { providers?: unknown }
+    const index = JSON.parse(readFileSync(join(getEchoFlowInternalDir(), 'providers.json'), 'utf8')) as { providers?: unknown }
     if (!Array.isArray(index.providers)) return undefined
     const provider = index.providers.find(entry =>
       !!entry && typeof entry === 'object' &&

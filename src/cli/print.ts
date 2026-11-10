@@ -489,6 +489,9 @@ export async function takeLeadMailboxBatch(
   const { teamName, hasActiveTeammates } = options
   if (state.held) return { kind: 'held' }
   const unread = await readUnreadMessages(TEAM_LEAD_NAME, teamName)
+  // Stop can arrive while disk I/O is pending. Leave this batch unread and
+  // preserve the hold rather than claiming mail or resetting the poll state.
+  if (state.held) return { kind: 'held' }
 
   if (!hasActiveTeammates) {
     if (

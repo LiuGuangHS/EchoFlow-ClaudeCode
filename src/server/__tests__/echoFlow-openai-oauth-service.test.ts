@@ -12,14 +12,14 @@ import {
   getEchoFlowOpenAIOAuthFilePath,
   type StoredOpenAIOAuthTokens,
 } from '../services/echoFlowOpenAIOAuthService.js'
-import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
+import { SYSTEM_PROXY_URL_ENV } from '../services/networkSettings.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
 let service: EchoFlowOpenAIOAuthService
 let callbackPort: number
-const originalSystemProxyUrl = process.env.ECHOFLOW_SYSTEM_PROXY_URL
+const originalSystemProxyUrl = process.env[SYSTEM_PROXY_URL_ENV]
 const originalHttpProxy = process.env.HTTP_PROXY
 const originalHttpsProxy = process.env.HTTPS_PROXY
 const originalLowerHttpProxy = process.env.http_proxy
@@ -94,7 +94,7 @@ async function teardown() {
   } else {
     process.env.CLAUDE_CONFIG_DIR = originalConfigDir
   }
-  restoreEnv('ECHOFLOW_SYSTEM_PROXY_URL', originalSystemProxyUrl)
+  restoreEnv(SYSTEM_PROXY_URL_ENV, originalSystemProxyUrl)
   restoreEnv('HTTP_PROXY', originalHttpProxy)
   restoreEnv('HTTPS_PROXY', originalHttpsProxy)
   restoreEnv('http_proxy', originalLowerHttpProxy)
@@ -271,10 +271,8 @@ describe('EchoFlowOpenAIOAuthService — session management', () => {
 
   test('callback listener uses saved manual network proxy for token exchange', async () => {
     const originalFetch = globalThis.fetch
-    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
-    await fs.mkdir(echoFlowDir, { recursive: true })
     await fs.writeFile(
-      path.join(echoFlowDir, 'settings.json'),
+      path.join(tmpDir, 'settings.json'),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 45_000,
@@ -320,7 +318,7 @@ describe('EchoFlowOpenAIOAuthService — session management', () => {
 
   test('callback listener uses the captured system proxy instead of inherited proxy env', async () => {
     const originalFetch = globalThis.fetch
-    process.env.ECHOFLOW_SYSTEM_PROXY_URL = 'http://127.0.0.1:7897'
+    process.env[SYSTEM_PROXY_URL_ENV] = 'http://127.0.0.1:7897'
     process.env.HTTP_PROXY = 'http://stale-parent.example:8080'
     process.env.HTTPS_PROXY = 'http://stale-parent.example:8080'
     process.env.http_proxy = 'http://stale-parent.example:8080'
@@ -364,14 +362,13 @@ describe('EchoFlowOpenAIOAuthService — session management', () => {
 
   test('callback listener disables inherited proxy env in direct mode', async () => {
     const originalFetch = globalThis.fetch
-    process.env.ECHOFLOW_SYSTEM_PROXY_URL = 'http://127.0.0.1:7897'
+    process.env[SYSTEM_PROXY_URL_ENV] = 'http://127.0.0.1:7897'
     process.env.HTTP_PROXY = 'http://stale-parent.example:8080'
     process.env.HTTPS_PROXY = 'http://stale-parent.example:8080'
     process.env.http_proxy = 'http://stale-parent.example:8080'
     process.env.https_proxy = 'http://stale-parent.example:8080'
-    await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
     await fs.writeFile(
-      path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
+      path.join(tmpDir, 'settings.json'),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 45_000,

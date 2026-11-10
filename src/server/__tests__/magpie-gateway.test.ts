@@ -16,6 +16,7 @@ import {
   readMagpiePort,
 } from '../services/magpieGateway.js'
 import { ProviderService } from '../services/providerService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { buildSessionModelCatalog } from '../services/sessionModelCatalog.js'
 
 // The shape Magpie's GET /v1/models serves (internal/gateway/gateway.go modelObject).
@@ -199,7 +200,7 @@ describe('Saved Magpie providers follow the running gateway', () => {
       expect(JSON.parse(env.CLAUDE_CODE_MODEL_MAX_OUTPUT_TOKENS!)).toMatchObject({ 'kimi/kimi-k3': 32_768 })
 
       // The default provider's copy in settings.json is rewritten too.
-      const settings = JSON.parse(await fs.readFile(path.join(tmpDir, 'claude', 'cc-haha', 'settings.json'), 'utf8')) as { env: Record<string, string> }
+      const settings = JSON.parse(await fs.readFile(path.join(getEchoFlowInternalDir(path.join(tmpDir, 'claude')), 'settings.json'), 'utf8')) as { env: Record<string, string> }
       expect(settings.env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${gateway.port}`)
       expect(JSON.parse(settings.env.CLAUDE_CODE_MODEL_MAX_OUTPUT_TOKENS!)).toMatchObject({ 'claude/claude-opus-5-5': 128_000 })
     } finally {

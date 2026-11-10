@@ -8,7 +8,7 @@
  * process boundaries, and everything between them is the code under test.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -627,17 +627,28 @@ describe('ImChatRuntime server stream', () => {
         'base64',
       ),
     )
-    const { runtime, images } = createRuntime({ workDir })
-
-    await inbound(runtime, 'draw me something')
-    await runtime.handleServerMessage(CHAT_ID, {
-      type: 'content_delta',
-      text: `![inside](${insidePath}) ![outside](/etc/hosts)`,
-    })
-    await runtime.handleServerMessage(CHAT_ID, { type: 'message_complete' })
-    // The upload is dispatched without blocking the stream.
-    await new Promise((resolve) => setTimeout(resolve, 20))
-
+    const { runtime, port, images, responses } = createRuntime({ workDir })
+    let release!: () => void
+    const upload = new Promise<void>(resolve => { release = resolve })
+    const send = port.sendImage!
+    port.sendImage = async (...args) => { await upload; await send(...args) }
+    const dispatch = spyOn(runtime as any, 'dispatchOutboundImage')
+    try {
+      await inbound(runtime, 'draw me something')
+      await runtime.handleServerMessage(CHAT_ID, {
+        type: 'content_delta',
+        text: `![inside](${insidePath}) ![outside](/etc/hosts)`,
+      })
+      await runtime.handleServerMessage(CHAT_ID, { type: 'message_complete' })
+      // Completing the text stream must not wait for the image transport.
+      expect(responses[0]?.finished).toBe(1)
+      expect(images).toEqual([])
+      expect(dispatch).toHaveBeenCalledTimes(2)
+    } finally {
+      release()
+      await Promise.all(dispatch.mock.results.map(result => result.value))
+      dispatch.mockRestore()
+    }
     expect(images).toEqual([{ mime: 'image/png', alt: 'inside' }])
   })
 })

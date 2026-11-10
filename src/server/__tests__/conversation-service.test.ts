@@ -8,6 +8,7 @@ import {
   DESKTOP_CLI_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
 } from '../services/conversationService.js'
 import { diagnosticsService } from '../services/diagnosticsService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { hahaOAuthService } from '../services/hahaOAuthService.js'
 import { ProviderService } from '../services/providerService.js'
 import { sessionService } from '../services/sessionService.js'
@@ -392,7 +393,7 @@ describe('ConversationService', () => {
   )
 
   test('strips inherited provider env when desktop provider config exists', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    const ccHahaDir = getEchoFlowInternalDir(tmpDir)
     await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
       path.join(ccHahaDir, 'providers.json'),
@@ -412,8 +413,8 @@ describe('ConversationService', () => {
     for (const { settingsFile, setting, preference } of [
       { settingsFile: 'settings.json', setting: undefined, preference: undefined },
       { settingsFile: 'settings.json', setting: '0', preference: undefined },
-      { settingsFile: 'cc-haha/settings.json', setting: 'false', preference: undefined },
-      { settingsFile: 'cc-haha/settings.json', setting: 'false', preference: true },
+      { settingsFile: path.join(getEchoFlowInternalDir(''), 'settings.json'), setting: 'false', preference: undefined },
+      { settingsFile: path.join(getEchoFlowInternalDir(''), 'settings.json'), setting: 'false', preference: true },
       { settingsFile: 'settings.json', setting: '1', preference: false },
     ]) {
       test(`desktop team tools survive child startup (${entrypoint}, ${settingsFile}=${setting ?? 'unset'}, preference=${preference ?? 'unset'})`, async () => {
@@ -643,7 +644,7 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv injects CLAUDE_CODE_OAUTH_TOKEN when official mode + haha oauth token exists', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    const ccHahaDir = getEchoFlowInternalDir(tmpDir)
     await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
       path.join(ccHahaDir, 'settings.json'),
@@ -674,7 +675,7 @@ describe('ConversationService', () => {
     const originalAccountUuid = process.env.CLAUDE_CODE_ACCOUNT_UUID
     process.env.CLAUDE_CODE_ACCOUNT_UUID = 'inherited-parent-account'
     try {
-      const ccHahaDir = path.join(tmpDir, 'cc-haha')
+      const ccHahaDir = getEchoFlowInternalDir(tmpDir)
       await fs.mkdir(ccHahaDir, { recursive: true })
       await fs.writeFile(
         path.join(ccHahaDir, 'settings.json'),
@@ -1081,7 +1082,7 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv does NOT inject CLAUDE_CODE_OAUTH_TOKEN when not official mode', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    const ccHahaDir = getEchoFlowInternalDir(tmpDir)
     await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
       path.join(ccHahaDir, 'settings.json'),
@@ -1332,7 +1333,7 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv can force official auth even when a custom default provider exists', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    const ccHahaDir = getEchoFlowInternalDir(tmpDir)
     await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
       path.join(ccHahaDir, 'settings.json'),
@@ -1515,7 +1516,7 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv builds the DeepSeek account env for a session-scoped selection over another active provider', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    const ccHahaDir = getEchoFlowInternalDir(tmpDir)
     await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
       path.join(ccHahaDir, 'providers.json'),
@@ -1571,7 +1572,7 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv does not leak inherited CLAUDE_CODE_OAUTH_TOKEN when official token is unavailable', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    const ccHahaDir = getEchoFlowInternalDir(tmpDir)
     await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
       path.join(ccHahaDir, 'settings.json'),

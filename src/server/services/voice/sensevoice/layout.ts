@@ -1,10 +1,10 @@
 import { join } from 'node:path'
-import { getEchoFlowCodeDir } from '../../../../utils/envUtils.js'
+import { getClaudeConfigHomeDir } from '../../../../utils/envUtils.js'
 import { SHERPA_VERSION, type InstallItem } from './assets.js'
 
 /** `<CLAUDE_CONFIG_DIR>/echoflow-code/voice`, resolved lazily so tests can redirect the config dir. */
 export function defaultVoiceDataRoot(): string {
-  return join(getEchoFlowCodeDir(), 'voice')
+  return join(getClaudeConfigHomeDir(), 'echoflow-code', 'voice')
 }
 
 export interface SenseVoiceLayout {

@@ -3656,6 +3656,11 @@ describe('TeamService', () => {
         summary: 'Indexed command killed',
       },
       timestamp: '2026-01-01T00:02:00.000Z',
+    }, {
+      type: 'echoflow-code-task-notification',
+      isMeta: true,
+      taskNotification: { taskId: 'legacy-task', toolUseId: 'legacy-bash', status: 'completed' },
+      timestamp: '2026-01-01T00:03:00.000Z',
     }]
     const filePath = await writeTranscriptFile(
       '-tmp-project',
@@ -3691,6 +3696,7 @@ describe('TeamService', () => {
         entries: [
           { ordinal: 0, jsonlLine: 1, byteStart: 0, byteLength: lineLengths[0]!, entryType: 'user', messageId: 'u1', role: 'user', timestamp: '2026-01-01T00:01:00.000Z', parentToolUseId: null },
           { ordinal: 1, jsonlLine: 2, byteStart: lineLengths[0]!, byteLength: lineLengths[1]!, entryType: 'cc-haha-task-notification', messageId: null, role: null, timestamp: '2026-01-01T00:02:00.000Z', parentToolUseId: null },
+          { ordinal: 2, jsonlLine: 3, byteStart: lineLengths[0]! + lineLengths[1]!, byteLength: lineLengths[2]!, entryType: 'echoflow-code-task-notification', messageId: null, role: null, timestamp: '2026-01-01T00:03:00.000Z', parentToolUseId: null },
         ],
       }),
       async rebuild() { return this.getPublicStatus() },
@@ -3702,7 +3708,7 @@ describe('TeamService', () => {
       targetedEntryReader: async (options) => {
         selectedBytes = options.page.entries.reduce((sum, entry) => sum + entry.byteLength, 0)
         return {
-          entries: transcriptEntries,
+          entries: options.page.entries.map(entry => transcriptEntries[entry.ordinal]!),
           bytesRead: selectedBytes,
           rangesRead: 1,
         }
@@ -3718,9 +3724,38 @@ describe('TeamService', () => {
       status: 'stopped',
       summary: 'Indexed command killed',
       timestamp: '2026-01-01T00:02:00.000Z',
+    }, {
+      taskId: 'legacy-task',
+      toolUseId: 'legacy-bash',
+      status: 'completed',
+      timestamp: '2026-01-01T00:03:00.000Z',
     }])
-    expect(page.afterOrdinal).toBe(1)
+    expect(page.afterOrdinal).toBe(2)
     expect(selectedBytes).toBe(stat.size)
+    const fallbackService = new TeamService({
+      sessionLocator: { findSessionFile: async () => ({ filePath, projectDir: '-tmp-project' }) },
+      localIndexGateway: { ...gateway, getMode: () => 'off' },
+    })
+    const fallbackPage = await fallbackService.getMemberTranscriptPage('indexed-team', 'agent-lead')
+    expect(fallbackPage.taskNotifications).toEqual(page.taskNotifications)
+    const unchanged = await indexedService.getMemberTranscriptPage('indexed-team', 'agent-lead', {
+      signature: page.signature,
+      cursor: page.cursor,
+      afterOrdinal: page.afterOrdinal,
+    })
+    expect(unchanged.reset).toBeUndefined()
+    expect(unchanged.messages).toEqual([])
+    expect(unchanged.taskNotifications).toEqual([])
+    expect(selectedBytes).toBe(0)
+
+    const rejectedReadService = new TeamService({
+      sessionLocator: { findSessionFile: async () => ({ filePath, projectDir: '-tmp-project' }) },
+      localIndexGateway: gateway,
+      targetedEntryReader: async () => null,
+    })
+    const rejectedReadPage = await rejectedReadService.getMemberTranscriptPage('indexed-team', 'agent-lead')
+    expect(rejectedReadPage.messages).toEqual(fallbackPage.messages)
+    expect(rejectedReadPage.taskNotifications).toEqual(fallbackPage.taskNotifications)
   })
 
   it('rejects an indexed page changed during an empty targeted read and resets from canonical data', async () => {
@@ -4513,6 +4548,104 @@ describe('TeamService', () => {
 // ============================================================================
 // Teams API integration tests
 // ============================================================================
+
+describe('TeamService archive compatibility', () => {
+  beforeEach(async () => {
+    await setupTmpConfigDir()
+    service = new TeamService()
+  })
+
+  afterEach(cleanupTmpDir)
+
+  it('does not replace an unreadable current archive with a legacy fallback', async () => {
+    const sessionId = 'invalid-current-archive'
+    const archiveFile = crypto.createHash('sha256').update(sessionId).digest('hex') + '.json'
+    const currentPath = path.join(tmpDir, 'cc-haha', 'agent-teams', archiveFile)
+    await fs.mkdir(path.dirname(currentPath), { recursive: true })
+    await fs.writeFile(currentPath, '{invalid', 'utf8')
+    await expect(service.getWorkbenchForSession(sessionId)).rejects.toThrow()
+    expect(await fs.readFile(currentPath, 'utf8')).toBe('{invalid')
+  })
+
+  it('reads legacy archives and rejects divergent current archives without modifying either', async () => {
+    const sessionId = 'legacy-archive-session'
+    const team = {
+      name: 'legacy-team',
+      description: 'legacy',
+      createdAt: 1700000000000,
+      incarnationId: teamIncarnationId({ name: 'legacy-team', createdAt: 1700000000000, leadSessionId: sessionId }),
+      memberCount: 1,
+      activeMemberCount: 0,
+      leadAgentId: 'team-lead@legacy-team',
+      leadSessionId: sessionId,
+      members: [{
+        agentId: 'team-lead@legacy-team',
+        name: 'team-lead',
+        status: 'completed' as const,
+        activity: 'exited' as const,
+        joinedAt: 1700000000000,
+        cwd: '/tmp',
+        sessionId,
+      }],
+    }
+    const snapshot = {
+      version: 'legacy-version',
+      generatedAt: '2023-11-14T22:13:20.000Z',
+      team,
+      tasks: [],
+      messages: [],
+    }
+    const archive = {
+      schemaVersion: 1,
+      sessionId,
+      updatedAt: snapshot.generatedAt,
+      teams: [{
+        teamName: team.name,
+        incarnationId: team.incarnationId,
+        updatedAt: snapshot.generatedAt,
+        snapshots: [snapshot],
+      }],
+    }
+    const archiveFile = crypto.createHash('sha256').update(sessionId).digest('hex') + '.json'
+    const legacyPath = path.join(tmpDir, 'echoflow-code', 'agent-teams', archiveFile)
+    await fs.mkdir(path.dirname(legacyPath), { recursive: true })
+    await fs.writeFile(legacyPath, JSON.stringify(archive), 'utf8')
+
+    const legacy = await service.getWorkbenchForSession(sessionId, { teamName: team.name })
+    expect(legacy?.source).toBe('archive')
+    expect(legacy?.snapshots[0]?.version).toBe('legacy-version')
+
+    await Promise.all([service.archiveWorkbenchSnapshot(snapshot), service.archiveWorkbenchSnapshot(snapshot)])
+    expect((await service.getWorkbenchForSession(sessionId, { teamName: team.name }))?.snapshots[0]?.version).toBe('legacy-version')
+    const beforeWriteError = await fs.readFile(legacyPath, 'utf8')
+    const currentPath = path.join(tmpDir, 'cc-haha', 'agent-teams', archiveFile)
+    const originalWriteFile = fs.writeFile
+    const writeSpy = spyOn(fs, 'writeFile').mockImplementation((...args) => {
+      if (String(args[0]).startsWith(`${legacyPath}.tmp.`)) {
+        return Promise.reject(Object.assign(new Error('injected write failure'), { code: 'EACCES' }))
+      }
+      return originalWriteFile(...args)
+    })
+    try {
+      await expect(service.archiveWorkbenchSnapshot(snapshot)).rejects.toThrow('injected write failure')
+    } finally {
+      writeSpy.mockRestore()
+    }
+    expect(await fs.readFile(legacyPath, 'utf8')).toBe(beforeWriteError)
+    expect(await fs.stat(currentPath).then(() => true, () => false)).toBe(false)
+    await fs.mkdir(path.dirname(currentPath), { recursive: true })
+    await fs.writeFile(currentPath, JSON.stringify({
+      ...archive,
+      teams: [{ ...archive.teams[0], snapshots: [{ ...snapshot, version: 'current-version' }] }],
+    }), 'utf8')
+    const legacyBefore = await fs.readFile(legacyPath, 'utf8')
+    const currentBefore = await fs.readFile(currentPath, 'utf8')
+    await expect(service.getWorkbenchForSession(sessionId, { teamName: team.name })).rejects.toThrow('Conflicting current and legacy')
+    await expect(service.archiveWorkbenchSnapshot(snapshot)).rejects.toThrow('Conflicting current and legacy')
+    expect(await fs.readFile(legacyPath, 'utf8')).toBe(legacyBefore)
+    expect(await fs.readFile(currentPath, 'utf8')).toBe(currentBefore)
+  })
+})
 
 describe('Teams API', () => {
   let baseUrl: string

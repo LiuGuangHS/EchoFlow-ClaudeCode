@@ -130,8 +130,8 @@ const source = sources.join('\n')
 function declaredContainers(): string[] {
   return sources
     .flatMap((text) => [
-      // The clock owns a private map behind the same delete/clear lifecycle.
-      ...text.matchAll(/^(?:export )?const ([a-zA-Z][a-zA-Z0-9]*) = new (?:Map|Set|WeakMap|WeakSet|MobileActivityClock)\b/gm),
+      // Ownership and clock wrappers expose the same delete/clear lifecycle.
+      ...text.matchAll(/^(?:export )?const ([a-zA-Z][a-zA-Z0-9]*) = new (?:Map|Set|WeakMap|WeakSet|MobileActivityClock|SessionTurnOwnership)\b/gm),
     ])
     .map((match) => match[1])
     .sort()

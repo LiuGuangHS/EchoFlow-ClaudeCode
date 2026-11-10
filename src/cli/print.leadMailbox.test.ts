@@ -68,6 +68,38 @@ describe('print-mode team lead mailbox poll', () => {
     expect(await unreadTexts()).toEqual(['failed: provider stream ended'])
   })
 
+  test.each([true, false])('preserves a host pause arriving during mailbox read (active=%s)', async hasActiveTeammates => {
+    await send('worker', 'held report', 1)
+    const state = createLeadMailboxPollState()
+    const readUnread = mailbox.readUnreadMessages
+    const read = spyOn(mailbox, 'readUnreadMessages').mockImplementation(async (agentName, teamName) => {
+      const batch = await readUnread(agentName, teamName)
+      state.held = true
+      return batch
+    })
+    try {
+      expect(await takeLeadMailboxBatch(state, { teamName: TEAM, hasActiveTeammates })).toEqual({ kind: 'held' })
+      expect(state.held).toBe(true)
+    } finally {
+      read.mockRestore()
+    }
+    expect(await unreadTexts()).toEqual(['held report'])
+  })
+
+  test('does not clear a host pause when the final mailbox read is empty', async () => {
+    const state = createLeadMailboxPollState()
+    const read = spyOn(mailbox, 'readUnreadMessages').mockImplementation(async () => {
+      state.held = true
+      return []
+    })
+    try {
+      expect(await takeLeadMailboxBatch(state, { teamName: TEAM, hasActiveTeammates: false })).toEqual({ kind: 'held' })
+      expect(state.held).toBe(true)
+    } finally {
+      read.mockRestore()
+    }
+  })
+
   test('keeps polling quietly while teammates work and nothing is unread', async () => {
     expect(
       await takeLeadMailboxBatch(createLeadMailboxPollState(), {

@@ -18,6 +18,7 @@ let dispose: (() => void) | undefined
 const previousConfig = process.env.CLAUDE_CONFIG_DIR
 const previousIndex = process.env.CC_HAHA_LOCAL_INDEX
 const originalReadFile = fs.readFile.bind(fs)
+const originalWriteFile = fs.writeFile.bind(fs)
 beforeEach(async () => {
   directory = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-session-test-'))
   process.env.CLAUDE_CONFIG_DIR = directory
@@ -53,9 +54,11 @@ function gateFirstRunLogRead() {
   let enter!: () => void
   let release!: () => void
   let gated = false
+  let readCount = 0
   const entered = new Promise<void>(resolve => { enter = resolve })
   const gate = new Promise<void>(resolve => { release = resolve })
   const read = spyOn(fs, 'readFile').mockImplementation(async (...args: any[]) => {
+    if (String(args[0]).endsWith('scheduled_tasks_log.json')) readCount++
     const result = await (originalReadFile as any)(...args)
     if (!gated && String(args[0]).endsWith('scheduled_tasks_log.json')) {
       gated = true
@@ -64,7 +67,7 @@ function gateFirstRunLogRead() {
     }
     return result as never
   })
-  return { entered, release, restore: () => read.mockRestore() }
+  return { entered, release, readCount: () => readCount, restore: () => read.mockRestore() }
 }
 
 test('power ownership spans scheduled admission and receipt/history finalization', async () => {
@@ -314,28 +317,32 @@ describe('session execution', () => {
     let cleanup: Promise<void> | undefined
     let execution: Promise<unknown> | undefined
     let executionCompleted = false
-    let lastFired!: () => void
-    const fired = new Promise<void>(resolve => { lastFired = resolve })
-    const originalUpdateLastFired = service.updateLastFired.bind(service)
-    const updateLastFired = spyOn(service, 'updateLastFired').mockImplementation(async (...args) => {
-      const result = await originalUpdateLastFired(...args)
-      lastFired()
-      return result
+    let claimed!: () => void
+    const claim = new Promise<void>(resolve => { claimed = resolve })
+    const write = spyOn(fs, 'writeFile').mockImplementation(async (...args: any[]) => {
+      const result = await (originalWriteFile as any)(...args)
+      // Let claim's continuation enqueue appendRun before observing the blocked log.
+      if (path.dirname(String(args[0])) === scheduledTaskReceiptsDir() && args[2]?.flag === 'wx') setImmediate(claimed)
+      return result as never
     })
+    const spawn = spyOn(Bun, 'spawn').mockImplementation(() => { throw new Error('Unexpected standalone CLI launch') })
     try {
       cleanup = (scheduler as unknown as { cleanupStaleRuns: () => Promise<void> }).cleanupStaleRuns()
       await gate.entered
-      execution = scheduler.executeTask({ ...created, execution: undefined }).then(value => { executionCompleted = true; return value })
-      await fired
-      expect((await service.getTask(created.id))?.lastFiredAt).toBeDefined()
+      execution = scheduler.executeTask(created).then(value => { executionCompleted = true; return value })
+      await claim
+      expect(gate.readCount()).toBe(1)
+      expect((await service.getTask(created.id))?.lastFiredAt).toBeUndefined()
       expect(executionCompleted).toBe(false)
     } finally {
       gate.release()
       await Promise.allSettled([cleanup, execution].filter((work): work is Promise<unknown> => !!work))
       await migrationMaintenance.drain()
-      updateLastFired.mockRestore()
+      write.mockRestore()
+      spawn.mockRestore()
       gate.restore()
     }
+    expect(await execution).toMatchObject({ status: 'completed', output: 'appended output', sessionId: 'fixture-session' })
     const runs = JSON.parse(await fs.readFile(logPath, 'utf8')).runs
     expect(runs.find((run: { id: string }) => run.id === 'stale-run')?.status).toBe('failed')
     expect(runs.filter((run: { taskId: string }) => run.taskId === created.id)).toMatchObject([
@@ -366,17 +373,33 @@ describe('session execution', () => {
     const gate = gateFirstRunLogRead()
     let cleanup: Promise<void> | undefined
     let recovery: Promise<void> | undefined
+    let recovering!: () => void
+    const queued = new Promise<void>(resolve => { recovering = resolve })
+    const originalGetTask = service.getTask.bind(service)
+    const getTask = spyOn(service, 'getTask').mockImplementation(async (...args) => {
+      const result = await originalGetTask(...args)
+      // Recovery enqueues updateRun immediately after resolving its task lookup.
+      setImmediate(recovering)
+      return result
+    })
     try {
       cleanup = (scheduler as unknown as { cleanupStaleRuns: () => Promise<void> }).cleanupStaleRuns()
       await gate.entered
       recovery = (scheduler as unknown as { recoverSessionTaskReceipts: () => Promise<void> }).recoverSessionTaskReceipts()
+      await queued
+      // Only cleanup's snapshot and recovery's getRunDetail may read before release.
+      expect(gate.readCount()).toBe(2)
+      expect((await readScheduledTaskReceipts())[0]?.historyWritten).toBe(false)
     } finally {
       gate.release()
       await Promise.allSettled([cleanup, recovery].filter((work): work is Promise<void> => !!work))
       await migrationMaintenance.drain()
+      getTask.mockRestore()
       gate.restore()
     }
+    await recovery
     const runs = JSON.parse(await fs.readFile(logPath, 'utf8')).runs
+    expect(runs.find((run: { id: string }) => run.id === 'stale-run')?.status).toBe('failed')
     expect(runs.filter((run: { id: string }) => run.id === receipt.runId)).toMatchObject([
       { status: 'completed', output: 'recovered output' },
     ])

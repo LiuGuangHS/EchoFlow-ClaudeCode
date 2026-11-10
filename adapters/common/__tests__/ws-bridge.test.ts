@@ -4,6 +4,7 @@ import { restoreSelectedSession } from '../session-selection.js'
 import { restoreStoredSessionBinding } from '../session-recovery.js'
 import { enqueueInboundPowerActivity } from '../inbound-power-activity.js'
 import { WebSocketServer, type WebSocket as WsServerSocket } from 'ws'
+import { createServer, type Socket } from 'node:net'
 
 async function waitFor(
   predicate: () => boolean,
@@ -62,6 +63,36 @@ describe('WsBridge', () => {
   it('sendStopGeneration returns false when no open connection', () => {
     bridge.connectSession('chat-stop', 'uuid-stop')
     expect(bridge.sendStopGeneration('chat-stop')).toBe(false)
+  })
+
+  it.each(['destroy', 'resetSession'] as const)('%s aborts a handshake that never receives a response', async operation => {
+    const peers: Socket[] = []
+    let requested!: () => void
+    const handshake = new Promise<void>(resolve => { requested = resolve })
+    const server = createServer(socket => {
+      peers.push(socket)
+      socket.once('data', () => requested())
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const pending = new WsBridge(`ws://127.0.0.1:${(server.address() as { port: number }).port}`, 'test')
+    try {
+      pending.connectSession('stalled', 'stalled-session')
+      await handshake
+      const ws = (pending as any).sessions.get('stalled').ws
+      expect(ws.readyState).toBe(ws.CONNECTING)
+      if (operation === 'destroy') pending.destroy()
+      else pending.resetSession('stalled')
+      // closeSocket detaches public listeners; observe completion through state.
+      expect(await waitFor(() => ws.readyState === ws.CLOSED)).toBe(true)
+      expect(pending.hasSession('stalled')).toBe(false)
+      expect(ws.listenerCount('open')).toBe(0)
+      expect(ws.listenerCount('error')).toBe(0)
+      expect(ws.listenerCount('close')).toBe(0)
+    } finally {
+      pending.destroy()
+      for (const socket of peers) socket.destroy()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    }
   })
 
   it('destroy cleans up all sessions without leaking connecting-socket errors', async () => {

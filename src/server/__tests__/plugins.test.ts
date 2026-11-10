@@ -64,6 +64,31 @@ describe('Plugins API', () => {
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
+  it('恢复市场预设、注册源、缓存浏览和详情四个只读接口', async () => {
+    const marketplaceRoot = path.join(tmpDir, 'registered-market')
+    await fs.mkdir(path.join(marketplaceRoot, '.claude-plugin'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'plugins'), { recursive: true })
+    await fs.writeFile(path.join(marketplaceRoot, '.claude-plugin', 'marketplace.json'), JSON.stringify({
+      name: 'test-market', owner: { name: 'Test' },
+      plugins: [{ name: 'demo', source: './plugins/demo', description: 'Cached demo' }],
+    }))
+    await fs.writeFile(path.join(tmpDir, 'plugins', 'known_marketplaces.json'), JSON.stringify({
+      'test-market': { source: { source: 'directory', path: marketplaceRoot }, installLocation: marketplaceRoot, lastUpdated: new Date(0).toISOString() },
+    }))
+    const get = async (endpoint: string) => {
+      const { req, url, segments } = makeRequest('GET', endpoint)
+      return handlePluginsApi(req, url, segments)
+    }
+    expect(await (await get('/api/plugins/marketplace/presets')).json()).toHaveProperty('presets')
+    expect(await (await get('/api/plugins/marketplace/registered')).json()).toMatchObject({ marketplaces: [{ name: 'test-market', allowedByPolicy: true }] })
+    expect(await (await get('/api/plugins/marketplace/discover?marketplace=test-market')).json()).toMatchObject({ name: 'test-market', plugins: [{ id: 'demo@test-market' }] })
+    expect(await (await get('/api/plugins/marketplace/detail?marketplace=test-market&plugin=demo')).json()).toMatchObject({ detail: { id: 'demo@test-market', description: 'Cached demo' } })
+    expect((await get('/api/plugins/marketplace/discover')).status).toBe(400)
+    expect((await get('/api/plugins/marketplace/detail?marketplace=test-market')).status).toBe(400)
+    expect((await get('/api/plugins/marketplace/discover?marketplace=unknown')).status).toBe(404)
+    expect((await get('/api/plugins/marketplace/detail?marketplace=test-market&plugin=unknown')).status).toBe(404)
+  })
+
   it('GET /api/plugins returns an empty plugin list for a clean config', async () => {
     const { req, url, segments } = makeRequest('GET', '/api/plugins')
     const res = await handlePluginsApi(req, url, segments)

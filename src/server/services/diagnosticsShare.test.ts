@@ -162,6 +162,55 @@ describe('projectDiagnosticEventForSharing', () => {
     expect(projected.omittedFields).toContain('details.serverTiming')
     expect(JSON.stringify(projected)).not.toContain('/Users/alice')
   })
+
+  test('omits untrusted index metadata outside its event and rejects unbounded values', () => {
+    const base = { id: 'event', timestamp: '2026-09-21T22:15:00.000Z', severity: 'warn' as const, summary: '' }
+    const unrelated = projectDiagnosticEventForSharing({ ...base, type: 'other', details: { indexMode: 'PRIVATE', discovered: 10, matched: true } })
+    expect(unrelated.details).toBeUndefined()
+    const invalid = projectDiagnosticEventForSharing({ ...base, type: 'session_list_fallback_slow', details: { indexMode: 'PRIVATE', discoveryMs: 'PRIVATE', includedRatio: 2, discovered: Infinity } })
+    expect(invalid.details).toBeUndefined()
+    const shadow = projectDiagnosticEventForSharing({ ...base, type: 'local_index_session_shadow_comparison', details: { matched: true, fileCount: 10, indexedCount: 9, operation: 'PRIVATE' } })
+    expect(shadow.details).toEqual({ matched: true, fileCount: 10, indexedCount: 9 })
+  })
+
+  test('keeps bounded local-index fallback metadata while redacting unknown fields', () => {
+    const projected = projectDiagnosticEventForSharing({
+      id: 'event-local-index-1',
+      timestamp: '2026-09-21T22:15:00.000Z',
+      type: 'session_list_fallback_slow',
+      severity: 'warn',
+      summary: 'slow fallback',
+      details: {
+        indexMode: 'off',
+        indexState: 'off',
+        discoveryMs: 20,
+        statMs: 30,
+        summaryMs: 1951,
+        totalMs: 2001,
+        discovered: 20,
+        included: 10,
+        includedRatio: 0.5,
+        durationMs: 2001,
+        prompt: 'PRIVATE_PROMPT',
+        path: '/Users/alice/private',
+      },
+    })
+
+    expect(projected.details).toEqual({
+      indexMode: 'off',
+      indexState: 'off',
+      discoveryMs: 20,
+      statMs: 30,
+      summaryMs: 1951,
+      totalMs: 2001,
+      discovered: 20,
+      included: 10,
+      includedRatio: 0.5,
+      durationMs: 2001,
+    })
+    expect(projected.omittedFields).toContain('details.prompt')
+    expect(projected.omittedFields).toContain('details.path')
+  })
 })
 
 describe('buildDiagnosticsIssueReport', () => {

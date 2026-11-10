@@ -20,6 +20,9 @@ import { handlePluginsApi } from './api/plugins.js'
 import { handleSkillsApi } from './api/skills.js'
 import { handleMarketApi } from './api/market.js'
 import { handleComputerUseApi } from './api/computer-use.js'
+import { handleEchoFlowOAuthApi } from './api/echoflow-oauth.js'
+import { handleEchoFlowOpenAIOAuthApi } from './api/echoflow-openai-oauth.js'
+import { handleEchoFlowGrokOAuthApi } from './api/echoflow-grok-oauth.js'
 import { handleHahaOAuthApi } from './api/haha-oauth.js'
 import { handleHahaOpenAIOAuthApi } from './api/haha-openai-oauth.js'
 import { handleHahaGrokOAuthApi } from './api/haha-grok-oauth.js'
@@ -112,6 +115,12 @@ async function routeApiRequest(req: Request, url: URL, context: ApiRequestContex
 
   // Route to appropriate handler based on the second segment
   const resource = segments[1]
+  if (context.remoteBrowser && [
+    'echoflow-oauth', 'echoflow-openai-oauth', 'echoflow-grok-oauth',
+    'haha-oauth', 'haha-openai-oauth', 'haha-grok-oauth', 'haha-deepseek-oauth',
+  ].includes(resource ?? '')) {
+    return Response.json({ error: 'Desktop-only capability' }, { status: 403 })
+  }
 
   switch (resource) {
     case 'session-collaboration':
@@ -162,6 +171,15 @@ async function routeApiRequest(req: Request, url: URL, context: ApiRequestContex
 
     case 'echoflow':
       return handleEchoFlowApi(req, url, segments, context)
+
+    case 'echoflow-oauth':
+      return handleEchoFlowOAuthApi(req, url, segments)
+
+    case 'echoflow-openai-oauth':
+      return handleEchoFlowOpenAIOAuthApi(req, url, segments)
+
+    case 'echoflow-grok-oauth':
+      return handleEchoFlowGrokOAuthApi(req, url, segments)
 
     case 'haha-oauth':
       return handleHahaOAuthApi(req, url, segments)

@@ -11,6 +11,7 @@ import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 import { getAgentProfile, isAgentProfileCommandSupported, setAgentProfile } from '../../utils/agentProfile.js'
 import type { Command } from '../../types/command.js'
 import { handlePluginsApi } from '../api/plugins.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { handleComputerUseApi } from '../api/computer-use.js'
 import { handleSkillsApi, listSkillSlashCommands, type SkillSlashCommand } from '../api/skills.js'
 
@@ -190,9 +191,9 @@ describe('Skills API', () => {
     const provider = (id: string, extra: Record<string, unknown> = {}) => ({
       id, presetId: 'custom', name: id, apiKey: 'fake-key', baseUrl: 'http://127.0.0.1:9/v1', models, ...extra,
     })
-    await fs.mkdir(path.join(tmpHome, '.claude', 'cc-haha'), { recursive: true })
+    await fs.mkdir(getEchoFlowInternalDir(path.join(tmpHome, '.claude')), { recursive: true })
     const writeProviders = (activeId: string | null) => fs.writeFile(
-      path.join(tmpHome, '.claude', 'cc-haha', 'providers.json'),
+      path.join(getEchoFlowInternalDir(path.join(tmpHome, '.claude')), 'providers.json'),
       JSON.stringify({
         schemaVersion: 2,
         activeId,

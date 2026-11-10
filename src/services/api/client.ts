@@ -30,7 +30,7 @@ import {
   OPENAI_OAUTH_DUMMY_KEY,
   shouldUseOpenAICodexAuth,
 } from '../openaiAuth/fetch.js'
-import { isOpenAIResponsesModel } from '../openaiAuth/models.js'
+import { isOpenAIResponsesModel, shouldForceOpenAICodexProvider } from '../openaiAuth/models.js'
 import {
   buildGrokFetch,
   GROK_OAUTH_DUMMY_KEY,
@@ -50,6 +50,8 @@ import {
   getVertexRegionForModel,
   isEnvTruthy,
 } from '../../utils/envUtils.js'
+
+export { shouldForceOpenAICodexProvider }
 
 /**
  * Environment variables for different client types:
@@ -275,7 +277,7 @@ export async function getAnthropicClient({
   logForDebugging('[API:auth] OAuth token check complete')
 
   const isOpenAIModel = model ? isOpenAIResponsesModel(model) : false
-  const forceOpenAICodex = isEnvTruthy(process.env.CC_HAHA_OPENAI_OAUTH_PROVIDER)
+  const forceOpenAICodex = shouldForceOpenAICodexProvider()
   const forceGrok = isEnvTruthy(process.env.CC_HAHA_GROK_OAUTH_PROVIDER)
   // Selected account mode stays selected while signed out: the fetch wrapper
   // answers with a sign-in-required error instead of this request falling

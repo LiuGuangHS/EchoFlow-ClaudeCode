@@ -10,6 +10,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { ProviderService } from '../services/providerService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import {
   buildNetworkEnvironment,
   resolveProviderNetworkSettings,
@@ -148,7 +149,7 @@ describe('per-provider proxy override', () => {
 
   describe('providers index normalization', () => {
     test('a legacy index without proxy fields loads unchanged', async () => {
-      const ccHahaDir = path.join(tmpDir, 'cc-haha')
+      const ccHahaDir = getEchoFlowInternalDir(tmpDir)
       await fs.mkdir(ccHahaDir, { recursive: true })
       const legacy = {
         schemaVersion: 8,

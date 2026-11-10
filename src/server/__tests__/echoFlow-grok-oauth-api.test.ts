@@ -23,12 +23,15 @@ afterEach(async () => {
 })
 
 describe('EchoFlow Grok OAuth API', () => {
-  test('rejects the retired resource route', async () => {
-    const legacyUrl = new URL('http://localhost:3456/api/haha-grok-oauth/success')
-
-    const legacy = await handleApiRequest(new Request(legacyUrl), legacyUrl)
-
-    expect(legacy.status).toBe(404)
+  test('routes both OAuth resource names without exposing them to remote browsers', async () => {
+    for (const resource of ['echoflow-grok-oauth', 'haha-grok-oauth']) {
+      const url = new URL(`http://localhost:3456/api/${resource}/success`)
+      const response = await handleApiRequest(new Request(url), url)
+      expect(response.status).toBe(200)
+      expect(await response.text()).toContain('Grok Login Successful')
+      const remote = await handleApiRequest(new Request(url), url, { remoteBrowser: true })
+      expect(remote.status).toBe(403)
+    }
   })
 
   test('serves a clear local success page after browser authorization', async () => {

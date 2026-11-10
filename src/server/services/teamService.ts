@@ -222,7 +222,10 @@ const MESSAGE_ENTRY_TYPES = new Set([
   'tool_use',
   'tool_result',
 ])
-const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE = 'cc-haha-task-notification'
+const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES = new Set([
+  'cc-haha-task-notification',
+  'echoflow-code-task-notification',
+])
 const TASK_NOTIFICATION_BLOCK_RE = /<task-notification>\s*[\s\S]*?<\/task-notification>/i
 
 const TEAM_WORKBENCH_ARCHIVE_SCHEMA_VERSION = 1
@@ -560,7 +563,7 @@ function taskNotificationFromEntry(
   ownerAgentId?: string,
 ): SessionTaskNotification | null {
   const timestamp = stringValue(entry.timestamp)
-  if (entry.type === PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE) {
+  if (typeof entry.type === 'string' && PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES.has(entry.type)) {
     const notification = objectValue(entry.taskNotification)
     if (!notification) return null
     const toolUseId = stringValue(notification.toolUseId)
@@ -1498,8 +1501,34 @@ export class TeamService {
     return path.join(this.getConfigDir(), 'cc-haha', 'agent-teams')
   }
 
+  private getLegacyWorkbenchArchiveDir(): string {
+    return path.join(this.getConfigDir(), 'echoflow-code', 'agent-teams')
+  }
+
   private getWorkbenchArchivePath(sessionId: string): string {
     return path.join(this.getWorkbenchArchiveDir(), `${hash(sessionId)}.json`)
+  }
+
+  private getLegacyWorkbenchArchivePath(sessionId: string): string {
+    return path.join(this.getLegacyWorkbenchArchiveDir(), `${hash(sessionId)}.json`)
+  }
+
+  private async resolveWorkbenchArchivePath(sessionId: string, forWrite = false): Promise<string> {
+    const currentPath = this.getWorkbenchArchivePath(sessionId)
+    const legacyPath = this.getLegacyWorkbenchArchivePath(sessionId)
+    const readIfPresent = async (filePath: string): Promise<Buffer | null> => {
+      try {
+        return await fs.readFile(filePath)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw error
+      }
+    }
+    const [current, legacy] = await Promise.all([readIfPresent(currentPath), readIfPresent(legacyPath)])
+    if (current && legacy && (forWrite || !current.equals(legacy))) {
+      throw new Error('Conflicting current and legacy Team workbench archives')
+    }
+    return current ? currentPath : legacy ? legacyPath : currentPath
   }
 
   // ── List all teams ──────────────────────────────────────────────────────
@@ -2282,14 +2311,15 @@ export class TeamService {
     sessionId: string,
   ): Promise<TeamWorkbenchArchiveDocument | null> {
     try {
+      const archivePath = await this.resolveWorkbenchArchivePath(sessionId)
       const raw = JSON.parse(
-        await fs.readFile(this.getWorkbenchArchivePath(sessionId), 'utf8'),
+        await fs.readFile(archivePath, 'utf8'),
       ) as Record<string, unknown>
       if (
         raw.schemaVersion !== TEAM_WORKBENCH_ARCHIVE_SCHEMA_VERSION ||
         raw.sessionId !== sessionId ||
         !Array.isArray(raw.teams)
-      ) return null
+      ) throw new Error('Invalid Team workbench archive')
       const groupedTeams = new Map<string, TeamWorkbenchArchiveEntry>()
       for (const value of raw.teams) {
         const entry = objectValue(value)
@@ -2349,8 +2379,9 @@ export class TeamService {
         updatedAt: stringValue(raw.updatedAt) ?? teams.at(-1)?.updatedAt ?? new Date(0).toISOString(),
         teams,
       }
-    } catch {
-      return null
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
     }
   }
 
@@ -2358,6 +2389,7 @@ export class TeamService {
     filePath: string,
     document: TeamWorkbenchArchiveDocument,
   ): Promise<void> {
+    filePath = await this.resolveWorkbenchArchivePath(document.sessionId, true)
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     const temporaryPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${crypto.randomBytes(6).toString('hex')}`
     try {
@@ -3151,7 +3183,7 @@ export class TeamService {
       const selected = page.entries.filter(locator =>
         locator.ordinal > afterOrdinal && (
           MESSAGE_ENTRY_TYPES.has(locator.entryType) ||
-          locator.entryType === PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE
+          PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES.has(locator.entryType)
         ),
       )
       const result = await this.targetedEntryReader({

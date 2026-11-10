@@ -70,6 +70,16 @@ describe('claudeAgentSdkDriver', () => {
     await connection.close()
   })
 
+  test('queue edits reject with the declared unsupported capability without sending SDK input', async () => {
+    const { sdk, session, connection } = await open()
+    try {
+      await expect(session.updateQueue('item-1', { kind: 'remove' })).rejects.toMatchObject({ name: 'UnsupportedRuntimeCapabilityError', message: 'the runtime does not support prompt.queue' })
+      expect(sdk.calls[0]!.prompts).toHaveLength(0)
+    } finally {
+      await connection.close()
+    }
+  })
+
   test('capabilities claim only what a test drives, and every unsupported leaf says why', async () => {
     const { connection } = await open()
     const c = connection.capabilities

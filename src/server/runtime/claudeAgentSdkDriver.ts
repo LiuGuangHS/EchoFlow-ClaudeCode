@@ -453,6 +453,9 @@ export function createClaudeAgentSdkDriver(options: ClaudeAgentSdkDriverOptions 
             if (optionId !== 'allow' && optionId !== 'deny') throw new Error(`unknown approval option: ${optionId}`)
             resolveApproval(requestId, optionId, 'user')
           },
+          async updateQueue() {
+            throw new UnsupportedRuntimeCapabilityError('prompt.queue')
+          },
           async interrupt(): Promise<InterruptResult> {
             // shortcut: an engine-started turn is not interruptible here; add when a test drives it
             return activeTurn === null ? { status: 'not-running', forcedTerminate: false } : interruptTurn(activeTurn)

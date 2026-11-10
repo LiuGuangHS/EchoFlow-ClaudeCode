@@ -270,7 +270,7 @@ function validateIncompleteCommands(
     }
   }
 
-  if (/^\s*(&&|\|\||;|>>?|<)/.test(originalCommand)) {
+  if (/^\s*(&&|\|\|?|;|>>?|<)/.test(originalCommand)) {
     logEvent('tengu_bash_security_check_triggered', {
       checkId: BASH_SECURITY_CHECK_IDS.INCOMPLETE_COMMANDS,
       subId: 3,

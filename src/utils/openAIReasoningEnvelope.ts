@@ -9,11 +9,13 @@ export type OpenAIReasoningEnvelopeData = {
 export function parseOpenAIReasoningEnvelope(
   data: string,
 ): OpenAIReasoningEnvelopeData | null {
-  if (!data.startsWith(OPENAI_REASONING_ENVELOPE_PREFIX)) return null
+  const prefix = [OPENAI_REASONING_ENVELOPE_PREFIX, 'echoflow-code:openai-reasoning:v1:']
+    .find(candidate => data.startsWith(candidate))
+  if (!prefix) return null
 
   try {
     const value = JSON.parse(
-      data.slice(OPENAI_REASONING_ENVELOPE_PREFIX.length),
+      data.slice(prefix.length),
     ) as unknown
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null
 

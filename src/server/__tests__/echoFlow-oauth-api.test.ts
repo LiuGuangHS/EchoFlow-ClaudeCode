@@ -6,7 +6,6 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
-import { handleEchoFlowOAuthApi } from '../api/echoflow-oauth.js'
 import { handleApiRequest } from '../router.js'
 import { echoFlowOAuthService } from '../services/echoFlowOAuthService.js'
 
@@ -48,10 +47,10 @@ describe('POST /api/echoflow-oauth/start', () => {
   afterEach(teardown)
 
   test('returns authorize URL with PKCE challenge', async () => {
-    const { req, url, segments } = buildReq('POST', '/api/echoflow-oauth/start', {
+    const { req, url } = buildReq('POST', '/api/echoflow-oauth/start', {
       serverPort: 54321,
     })
-    const res = await handleEchoFlowOAuthApi(req, url, segments)
+    const res = await handleApiRequest(req, url)
     expect(res.status).toBe(200)
     const data = (await res.json()) as { authorizeUrl: string; state: string }
     expect(data.authorizeUrl).toContain('code_challenge_method=S256')
@@ -62,8 +61,8 @@ describe('POST /api/echoflow-oauth/start', () => {
   })
 
   test('400 if serverPort missing', async () => {
-    const { req, url, segments } = buildReq('POST', '/api/echoflow-oauth/start', {})
-    const res = await handleEchoFlowOAuthApi(req, url, segments)
+    const { req, url } = buildReq('POST', '/api/echoflow-oauth/start', {})
+    const res = await handleApiRequest(req, url)
     expect(res.status).toBe(400)
     const body = (await res.json()) as { error: string; message?: string }
     expect(body.error).toBe('BAD_REQUEST')
@@ -74,17 +73,22 @@ describe('GET /api/echoflow-oauth/status', () => {
   beforeEach(setup)
   afterEach(teardown)
 
-  test('rejects the retired resource route', async () => {
-    const legacyUrl = new URL('http://localhost:3456/api/haha-oauth')
-
-    const legacy = await handleApiRequest(new Request(legacyUrl), legacyUrl)
-
-    expect(legacy.status).toBe(404)
+  test('routes both OAuth resource names while keeping remote browsers out', async () => {
+    for (const resource of ['echoflow-oauth', 'haha-oauth']) {
+      const url = new URL(`http://localhost:3456/api/${resource}`)
+      const response = await handleApiRequest(new Request(url), url)
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ loggedIn: false })
+      for (const method of ['GET', 'POST', 'DELETE']) {
+        const remote = await handleApiRequest(new Request(url, { method }), url, { remoteBrowser: true })
+        expect(remote.status).toBe(403)
+      }
+    }
   })
 
   test('returns loggedIn=false when no token file', async () => {
-    const { req, url, segments } = buildReq('GET', '/api/echoflow-oauth/status')
-    const res = await handleEchoFlowOAuthApi(req, url, segments)
+    const { req, url } = buildReq('GET', '/api/echoflow-oauth/status')
+    const res = await handleApiRequest(req, url)
     expect(res.status).toBe(200)
     const data = (await res.json()) as { loggedIn: boolean }
     expect(data.loggedIn).toBe(false)
@@ -99,8 +103,8 @@ describe('GET /api/echoflow-oauth/status', () => {
       subscriptionType: 'max',
     })
 
-    const { req, url, segments } = buildReq('GET', '/api/echoflow-oauth/status')
-    const res = await handleEchoFlowOAuthApi(req, url, segments)
+    const { req, url } = buildReq('GET', '/api/echoflow-oauth/status')
+    const res = await handleApiRequest(req, url)
     expect(res.status).toBe(200)
     const data = (await res.json()) as {
       loggedIn: boolean
@@ -126,8 +130,8 @@ describe('GET /api/echoflow-oauth/status', () => {
       throw new Error('refresh revoked')
     })
 
-    const { req, url, segments } = buildReq('GET', '/api/echoflow-oauth/status')
-    const res = await handleEchoFlowOAuthApi(req, url, segments)
+    const { req, url } = buildReq('GET', '/api/echoflow-oauth/status')
+    const res = await handleApiRequest(req, url)
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ loggedIn: false })
@@ -147,8 +151,8 @@ describe('DELETE /api/echoflow-oauth', () => {
       subscriptionType: null,
     })
 
-    const { req, url, segments } = buildReq('DELETE', '/api/echoflow-oauth')
-    const res = await handleEchoFlowOAuthApi(req, url, segments)
+    const { req, url } = buildReq('DELETE', '/api/echoflow-oauth')
+    const res = await handleApiRequest(req, url)
     expect(res.status).toBe(200)
     expect(await echoFlowOAuthService.loadTokens()).toBeNull()
   })

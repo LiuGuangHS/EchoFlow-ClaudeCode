@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AgentProviderUnavailableError, resolveAgentProviderRoute } from './agentProviderRoute.js'
+import { getEchoFlowInternalDir } from '../echoFlowConfigRoot.js'
 import { get3PModelCapabilityOverride } from './modelSupportOverrides.js'
 import { getConfiguredModelContextWindow } from './modelContextWindows.js'
 import {
@@ -19,7 +20,7 @@ import { isOpenAIResponsesModel } from '../../services/openaiAuth/models.js'
 
 const ENV_KEYS = [
   'CLAUDE_CONFIG_DIR', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL',
-  'CLAUDE_CODE_PROVIDER_MAX_OUTPUT_TOKENS', 'CC_HAHA_OPENAI_OAUTH_PROVIDER',
+  'CLAUDE_CODE_PROVIDER_MAX_OUTPUT_TOKENS', 'CC_HAHA_OPENAI_OAUTH_PROVIDER', 'ECHOFLOW_OPENAI_OAUTH_PROVIDER',
   'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
   'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS', 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST', 'CC_HAHA_DESKTOP_SERVER_URL',
   'HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'CC_HAHA_SYSTEM_PROXY_URL', 'CC_HAHA_SYSTEM_PROXY_ERROR',
@@ -28,8 +29,9 @@ let savedEnv: Array<string | undefined>
 let configDir: string
 
 function writeProviders(providers: unknown[]) {
-  mkdirSync(join(configDir, 'cc-haha'), { recursive: true })
-  writeFileSync(join(configDir, 'cc-haha', 'providers.json'), JSON.stringify({
+  const providerDir = getEchoFlowInternalDir(configDir)
+  mkdirSync(providerDir, { recursive: true })
+  writeFileSync(join(providerDir, 'providers.json'), JSON.stringify({
     schemaVersion: 4, activeId: null, providers,
   }))
 }
@@ -198,11 +200,11 @@ describe('provider route scope', () => {
     expect(getConfiguredModelContextWindow('deepseek-v4-pro')).toBe(128_000)
   })
 
-  test('shapes the Agent request by its own provider, not by session-wide settings', async () => {
+  test.each(['CC_HAHA_OPENAI_OAUTH_PROVIDER', 'ECHOFLOW_OPENAI_OAUTH_PROVIDER'])('isolates Agent requests from session-wide %s', async (oauthEnvKey) => {
     // Session: a ChatGPT-account runtime with a 128k output cap, connecting directly.
     Object.assign(process.env, {
       CLAUDE_CODE_PROVIDER_MAX_OUTPUT_TOKENS: '128000',
-      CC_HAHA_OPENAI_OAUTH_PROVIDER: '1',
+      [oauthEnvKey]: '1',
       ANTHROPIC_MODEL: 'opusplan',
     })
     const proxied: ProviderRoute = {

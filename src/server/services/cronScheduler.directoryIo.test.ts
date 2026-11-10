@@ -79,6 +79,9 @@ test.each(['statSync', 'realpathSync'] as const)('cron %s directory admission st
       };
       ${script}
     `, { eval: true, workerData: { gate: gate.buffer, method, project } })
+    const terminate = worker.terminate.bind(worker)
+    let termination: Promise<number> | undefined
+    worker.terminate = () => termination ??= terminate()
     workers.push(worker)
     return worker
   }, 500)
@@ -180,6 +183,9 @@ test('a full directory worker queue cannot make cron fall back to HOME', async (
       };
       ${script}
     `, { eval: true, workerData: { gate: gate.buffer, project } })
+    const terminate = worker.terminate.bind(worker)
+    let termination: Promise<number> | undefined
+    worker.terminate = () => termination ??= terminate()
     workers.push(worker)
     return worker
   }, 1_000)
@@ -220,6 +226,9 @@ test('manual cron session creation cannot swallow a later directory timeout and 
       };
       ${script}
     `, { eval: true, workerData: { gate: gate.buffer, project } })
+    const terminate = worker.terminate.bind(worker)
+    let termination: Promise<number> | undefined
+    worker.terminate = () => termination ??= terminate()
     workers.push(worker)
     return worker
   }, 200)

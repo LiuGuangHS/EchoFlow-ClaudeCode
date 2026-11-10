@@ -207,8 +207,8 @@ describe('whole-team planning tools', () => {
     })
 
     test('explicit model suggestions on another configured provider remain available for review', async () => {
-      await mkdir(join(directory, 'cc-haha'), { recursive: true })
-      await writeFile(join(directory, 'cc-haha', 'providers.json'), JSON.stringify({ providers: [{ id: 'other-provider' }] }))
+      await mkdir(join(directory, 'echoflow-code'), { recursive: true })
+      await writeFile(join(directory, 'echoflow-code', 'providers.json'), JSON.stringify({ providers: [{ id: 'other-provider' }] }))
       const member = resolveProposedTeamPlan(proposal('opus', 'other-provider'), context).members[0]!
       expect(member.runtime).toEqual({ providerId: 'other-provider', modelId: 'opus', effortLevel: 'high' })
       expect(resolveProposedTeamPlan(proposal('deepseek-v4-pro'), context).members[0]?.runtime)
@@ -334,8 +334,8 @@ describe('whole-team planning tools', () => {
     // move the member to a different, billed provider.
     expect(resolveProposedTeamPlan(proposal('anthropic'), context).members[0]?.runtime).toEqual({ providerId: 'fake-provider', modelId: 'fake-model' })
     expect(resolveProposedTeamPlan(proposal('claude-official'), context).members[0]?.runtime.providerId).toBe('fake-provider')
-    await mkdir(join(directory, 'cc-haha'), { recursive: true })
-    await writeFile(join(directory, 'cc-haha', 'providers.json'), JSON.stringify({ schemaVersion: 6, activeId: null, providers: [{ id: 'configured-provider', presetId: 'custom', name: 'Configured', apiKey: 'fake', baseUrl: 'http://127.0.0.1:1', apiFormat: 'anthropic', models: { main: 'm', haiku: 'm', sonnet: 'm', opus: 'm' } }] }))
+    await mkdir(join(directory, 'echoflow-code'), { recursive: true })
+    await writeFile(join(directory, 'echoflow-code', 'providers.json'), JSON.stringify({ schemaVersion: 6, activeId: null, providers: [{ id: 'configured-provider', presetId: 'custom', name: 'Configured', apiKey: 'fake', baseUrl: 'http://127.0.0.1:1', apiFormat: 'anthropic', models: { main: 'm', haiku: 'm', sonnet: 'm', opus: 'm' } }] }))
     expect(resolveProposedTeamPlan(proposal('configured-provider'), context).members[0]?.runtime).toEqual({ providerId: 'configured-provider', modelId: 'claude-sonnet-5-5' })
   })
 

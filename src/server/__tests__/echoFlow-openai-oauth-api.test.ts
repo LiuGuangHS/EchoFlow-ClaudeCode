@@ -2,16 +2,19 @@
  * Integration tests for /api/echoflow-openai-oauth/* endpoints.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { createServer } from 'net'
-import { handleEchoFlowOpenAIOAuthApi } from '../api/echoflow-openai-oauth.js'
 import { handleApiRequest } from '../router.js'
 import { echoFlowOpenAIOAuthService } from '../services/echoFlowOpenAIOAuthService.js'
 import { startServer, stopServerRuntimeForShutdown } from '../index.js'
 import { ProviderService } from '../services/providerService.js'
+import { echoFlowOAuthService } from '../services/echoFlowOAuthService.js'
+import { hahaOAuthService } from '../services/hahaOAuthService.js'
+import { hahaOpenAIOAuthService } from '../services/hahaOpenAIOAuthService.js'
+import { isPublicBusinessPathAllowed } from '../publicAccess.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -74,12 +77,12 @@ describe('POST /api/echoflow-openai-oauth/start', () => {
     const callbackPort = await getFreePort()
     echoFlowOpenAIOAuthService.setCallbackPortForTests(callbackPort)
 
-    const { req, url, segments } = buildReq(
+    const { req, url } = buildReq(
       'POST',
       '/api/echoflow-openai-oauth/start',
       { serverPort: 54321 },
     )
-    const res = await handleEchoFlowOpenAIOAuthApi(req, url, segments)
+    const res = await handleApiRequest(req, url)
     expect(res.status).toBe(200)
     const data = (await res.json()) as { authorizeUrl: string; state: string }
     expect(data.authorizeUrl).toContain('code_challenge_method=S256')
@@ -97,12 +100,12 @@ describe('POST /api/echoflow-openai-oauth/start', () => {
   })
 
   test('400 if serverPort missing', async () => {
-    const { req, url, segments } = buildReq(
+    const { req, url } = buildReq(
       'POST',
       '/api/echoflow-openai-oauth/start',
       {},
     )
-    const res = await handleEchoFlowOpenAIOAuthApi(req, url, segments)
+    const res = await handleApiRequest(req, url)
     expect(res.status).toBe(400)
     const body = (await res.json()) as { error: string; message?: string }
     expect(body.error).toBe('BAD_REQUEST')
@@ -113,17 +116,22 @@ describe('GET /api/echoflow-openai-oauth', () => {
   beforeEach(setup)
   afterEach(teardown)
 
-  test('rejects the retired resource route', async () => {
-    const legacyUrl = new URL('http://localhost:3456/api/haha-openai-oauth')
-
-    const legacy = await handleApiRequest(new Request(legacyUrl), legacyUrl)
-
-    expect(legacy.status).toBe(404)
+  test('routes both OAuth resource names while keeping remote browsers out', async () => {
+    for (const resource of ['echoflow-openai-oauth', 'haha-openai-oauth']) {
+      const url = new URL(`http://localhost:3456/api/${resource}`)
+      const response = await handleApiRequest(new Request(url), url)
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ loggedIn: false })
+      for (const method of ['GET', 'POST', 'DELETE']) {
+        const remote = await handleApiRequest(new Request(url, { method }), url, { remoteBrowser: true })
+        expect(remote.status).toBe(403)
+      }
+    }
   })
 
   test('returns loggedIn=false when no token file', async () => {
-    const { req, url, segments } = buildReq('GET', '/api/echoflow-openai-oauth')
-    const res = await handleEchoFlowOpenAIOAuthApi(req, url, segments)
+    const { req, url } = buildReq('GET', '/api/echoflow-openai-oauth')
+    const res = await handleApiRequest(req, url)
     expect(res.status).toBe(200)
     const data = (await res.json()) as { loggedIn: boolean }
     expect(data.loggedIn).toBe(false)
@@ -138,8 +146,8 @@ describe('GET /api/echoflow-openai-oauth', () => {
       accountId: 'acct_123',
     })
 
-    const { req, url, segments } = buildReq('GET', '/api/echoflow-openai-oauth')
-    const res = await handleEchoFlowOpenAIOAuthApi(req, url, segments)
+    const { req, url } = buildReq('GET', '/api/echoflow-openai-oauth')
+    const res = await handleApiRequest(req, url)
     expect(res.status).toBe(200)
     const data = (await res.json()) as {
       loggedIn: boolean
@@ -167,8 +175,8 @@ describe('GET /api/echoflow-openai-oauth', () => {
       throw new Error('refresh revoked')
     })
 
-    const { req, url, segments } = buildReq('GET', '/api/echoflow-openai-oauth')
-    const res = await handleEchoFlowOpenAIOAuthApi(req, url, segments)
+    const { req, url } = buildReq('GET', '/api/echoflow-openai-oauth')
+    const res = await handleApiRequest(req, url)
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ loggedIn: false })
@@ -188,8 +196,8 @@ describe('DELETE /api/echoflow-openai-oauth', () => {
       accountId: null,
     })
 
-    const { req, url, segments } = buildReq('DELETE', '/api/echoflow-openai-oauth')
-    const res = await handleEchoFlowOpenAIOAuthApi(req, url, segments)
+    const { req, url } = buildReq('DELETE', '/api/echoflow-openai-oauth')
+    const res = await handleApiRequest(req, url)
     expect(res.status).toBe(200)
     expect(await echoFlowOpenAIOAuthService.loadTokens()).toBeNull()
   })
@@ -198,6 +206,64 @@ describe('DELETE /api/echoflow-openai-oauth', () => {
 describe('GET /auth/callback', () => {
   beforeEach(setup)
   afterEach(teardown)
+
+  test('dispatches callbacks only to the state owner, with no retry after consumption or failure', async () => {
+    const originalServerPort = ProviderService.getServerPort()
+    const server = startServer(0, '127.0.0.1')
+    const cases = [
+      { service: echoFlowOAuthService, callback: '/callback' },
+      { service: hahaOAuthService, callback: '/callback' },
+      { service: echoFlowOpenAIOAuthService, callback: '/auth/callback' },
+      { service: hahaOpenAIOAuthService, callback: '/callback/openai' },
+    ]
+    const spies = cases.map(({ service }, index) =>
+      spyOn(service, 'completeSession').mockImplementation(async (_code, state) => {
+        expect(service.consumeSession(state)).not.toBeNull()
+        throw new Error(`fixture-exchange-failed-${index}`)
+      }),
+    )
+    try {
+      echoFlowOpenAIOAuthService.setCallbackPortForTests(await getFreePort())
+      hahaOpenAIOAuthService.setCallbackPortForTests(await getFreePort())
+      for (const [index, { service, callback }] of cases.entries()) {
+        const session = await service.startSession({ serverPort: server.port! })
+        const url = `http://127.0.0.1:${server.port}${callback}?code=fixture-code&state=${session.state}`
+        const response = await fetch(url)
+        expect(response.status).toBe(200)
+        expect(await response.text()).toContain(`fixture-exchange-failed-${index}`)
+        expect(spies[index]).toHaveBeenCalledWith('fixture-code', session.state)
+        const replay = await fetch(url)
+        expect(replay.status).toBe(400)
+      }
+      for (const callback of ['/callback', '/auth/callback', '/callback/openai']) {
+        const unknown = await fetch(`http://127.0.0.1:${server.port}${callback}?code=fixture-code&state=unknown`)
+        expect(unknown.status).toBe(400)
+      }
+      for (const spy of spies) expect(spy).toHaveBeenCalledTimes(1)
+    } finally {
+      for (const spy of spies) spy.mockRestore()
+      hahaOpenAIOAuthService.dispose()
+      hahaOpenAIOAuthService.resetCallbackPortForTests()
+      server.stop(true)
+      stopServerRuntimeForShutdown()
+      ProviderService.setServerPort(originalServerPort)
+    }
+  })
+
+  test('OAuth resource names remain denied on the public business surface', () => {
+    for (const resource of [
+      'echoflow-oauth', 'echoflow-openai-oauth', 'echoflow-grok-oauth',
+      'haha-oauth', 'haha-openai-oauth', 'haha-grok-oauth', 'haha-deepseek-oauth',
+    ]) {
+      for (const action of ['', '/start', '/status', '/callback', '/success']) {
+        for (const method of ['GET', 'POST', 'DELETE']) {
+          const url = new URL(`https://remote.example/api/${resource}${action}`)
+          expect(isPublicBusinessPathAllowed(url, method)).toBe(false)
+          expect(isPublicBusinessPathAllowed(new URL(url.href.replace('/api/', '/api//')), method)).toBe(false)
+        }
+      }
+    }
+  })
 
   test('routes the OpenAI Codex redirect path to the desktop callback page', async () => {
     const originalServerPort = ProviderService.getServerPort()

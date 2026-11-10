@@ -28,6 +28,48 @@ describe('background task notification persistence', () => {
     await fs.rm(configDir, { recursive: true, force: true })
   })
 
+  it('reads mixed legacy and current notifications without rewriting the transcript', async () => {
+    const sessionId = crypto.randomUUID()
+    const projectDir = path.join(configDir, 'projects', '-tmp-legacy-notifications')
+    const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`)
+    await fs.mkdir(projectDir, { recursive: true })
+    const entries = [
+      { type: 'echoflow-code-task-notification', taskNotification: { taskId: 'first', toolUseId: 'tool-1', status: 'completed' } },
+      { type: 'cc-haha-task-notification', taskNotification: { taskId: 'second', toolUseId: 'tool-2', status: 'completed' } },
+      { type: 'echoflow-code-task-notification', taskNotification: { taskId: 'first', toolUseId: 'tool-1', status: 'failed' } },
+    ]
+    const original = entries.map(entry => JSON.stringify(entry)).join('\n') + '\n'
+    await fs.writeFile(transcriptPath, original)
+    const service = new SessionService()
+    const expected = [
+      { taskId: 'first', toolUseId: 'tool-1', status: 'failed' },
+      { taskId: 'second', toolUseId: 'tool-2', status: 'completed' },
+    ]
+    expect(await service.getSessionTaskNotifications(sessionId)).toEqual(expected)
+    expect((await service.getSessionHistory(sessionId)).taskNotifications).toEqual(expected)
+    expect((await service.getSessionHistoryPage(sessionId, { full: true })).taskNotifications).toEqual(expected)
+    let requestedTypes: string[] = []
+    const indexed = new SessionService({
+      getMode: () => 'on',
+      getPublicStatus: () => ({ state: 'ready' }),
+      isSessionScopeReady: () => true,
+      getSessionEntryLocators: (_file: string, types: string[]) => {
+        requestedTypes = types
+        return { entries: entries.map((entry, ordinal) => ({ ordinal, entryType: entry.type })) }
+      },
+    } as never, {
+      targetedEntryReader: async ({ page }) => ({
+        entries: page.entries.filter(locator => requestedTypes.includes(locator.entryType)).map(locator => entries[locator.ordinal]!),
+        bytesRead: 0,
+        rangesRead: 1,
+      }),
+    })
+    spyOn(indexed, 'findSessionFile').mockResolvedValue({ filePath: transcriptPath, projectDir: '-tmp-legacy-notifications' })
+    expect(await indexed.getSessionTaskNotifications(sessionId)).toEqual(expected)
+    expect(requestedTypes).toContain('echoflow-code-task-notification')
+    expect(await fs.readFile(transcriptPath, 'utf8')).toBe(original)
+  })
+
   it('restores a terminal Agent notification that was not forwarded into transcript history', async () => {
     const sessionId = crypto.randomUUID()
     const projectDir = path.join(configDir, 'projects', '-tmp-background-agent')

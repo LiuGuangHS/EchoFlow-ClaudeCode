@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { PROVIDER_PRESETS } from '../../server/config/providerPresets.js'
 import { buildProviderManagedEnv } from '../../server/services/providerRuntimeEnv.js'
 import { getImageGenerationRuntimeConfig } from '../../services/imageGeneration/config.js'
 import { clearUserProvidedImages } from '../../utils/userProvidedImages.js'
@@ -22,11 +21,11 @@ afterEach(async () => {
 })
 
 function runtimeConfig() {
-  const preset = PROVIDER_PRESETS.find(p => p.id === 'apismart')!
   const env = buildProviderManagedEnv({
-    id: 'saved-apismart', presetId: preset.id, name: preset.name,
-    baseUrl: preset.baseUrl, apiKey: 'fake-apismart-key', apiFormat: preset.apiFormat,
-    models: preset.defaultModels, imageGeneration: preset.defaultImageGeneration,
+    id: 'saved-apismart', presetId: 'custom', name: 'Custom ApiSmart',
+    baseUrl: 'https://gw.apismart.ai/v1', apiKey: 'fake-apismart-key', apiFormat: 'openai',
+    models: { main: 'test-model', haiku: 'test-model', sonnet: 'test-model', opus: 'test-model' },
+    imageGeneration: { model: 'doubao-seedream-5-0', protocol: 'openai_images' },
   })
   const config = getImageGenerationRuntimeConfig(env)
   expect(config).toEqual({

@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
+import { MAGPIE_CLIENT_KEY } from './magpieGateway.js'
 
 import {
   getClaudeCodeModelCapabilities,
@@ -416,6 +417,10 @@ const RETIRED_PROVIDER_RUNTIME: Record<string, {
   defaultEnv?: Record<string, string>
   modelContextWindows: Record<string, number>
 }> = {
+  magpie: {
+    defaultEnv: { ANTHROPIC_AUTH_TOKEN: MAGPIE_CLIENT_KEY },
+    modelContextWindows: {},
+  },
   shengsuanyun: {
     defaultEnv: { API_TIMEOUT_MS: '3000000', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' },
     modelContextWindows: {

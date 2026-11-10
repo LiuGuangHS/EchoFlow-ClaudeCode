@@ -722,6 +722,11 @@ const TASK_NOTIFICATION_RE = /^<task-notification>\s*[\s\S]*<\/task-notification
 const TASK_NOTIFICATION_BLOCK_RE = /<task-notification>\s*[\s\S]*?<\/task-notification>/i
 const TASK_NOTIFICATION_BLOCKS_RE = /<task-notification>\s*[\s\S]*?<\/task-notification>/gi
 const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE = 'cc-haha-task-notification'
+const LEGACY_TASK_NOTIFICATION_ENTRY_TYPE = 'echoflow-code-task-notification'
+const TASK_NOTIFICATION_ENTRY_TYPES = new Set([
+  PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE,
+  LEGACY_TASK_NOTIFICATION_ENTRY_TYPE,
+])
 const PROVIDER_MODEL_ALIAS_SEPARATORS = ['-', '_', ':', '/', '.', ' ']
 
 function normalizeProviderModelAlias(model: string): string {
@@ -6066,7 +6071,7 @@ export class SessionService {
 
     const entries = await this.readTargetedJsonlEntries(
       found,
-      ['user', 'attachment', 'queue-operation', PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE],
+      ['user', 'attachment', 'queue-operation', ...TASK_NOTIFICATION_ENTRY_TYPES],
     ) ?? await this.readJsonlFile(found.filePath)
     return this.taskNotificationsFromEntries(entries)
   }
@@ -6076,7 +6081,7 @@ export class SessionService {
   ): SessionTaskNotification[] {
     const notifications = new Map<string, SessionTaskNotification>()
     for (const entry of entries) {
-      const notification = entry.type === PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE
+      const notification = entry.type && TASK_NOTIFICATION_ENTRY_TYPES.has(entry.type)
         ? this.parsePersistedTaskNotification(entry.taskNotification, entry.timestamp)
         : entry.message?.role === 'user'
           ? this.parseTaskNotificationContent(entry.message.content, entry.timestamp)

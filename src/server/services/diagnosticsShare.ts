@@ -105,7 +105,7 @@ const SAFE_ERROR_NAMES = new Set([
 
 export function projectDiagnosticEventForSharing(event: DiagnosticEvent): SharedDiagnosticEvent {
   const omittedFields = ['summary']
-  const details = projectDetails(event.details, 'details', omittedFields)
+  const details = projectDetails(event.details, 'details', omittedFields, event.type)
   return {
     id: sanitizeSharedIdentifier(event.id, 'unknown-event', MAX_SHARED_IDENTIFIER_LENGTH),
     timestamp: sanitizeSharedIdentifier(event.timestamp, 'unknown-time', 64),
@@ -222,6 +222,7 @@ function projectDetails(
   value: unknown,
   path: string,
   omittedFields: string[],
+  eventType: string,
 ): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     if (value !== undefined) omittedFields.push(path)
@@ -251,9 +252,34 @@ function projectDetails(
       continue
     }
     if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
-      const nested = projectDetails(entry, entryPath, omittedFields)
+      const nested = projectDetails(entry, entryPath, omittedFields, eventType)
       if (nested && Object.keys(nested).length > 0) projected[key] = nested
       continue
+    }
+    if (path === 'details' && eventType === 'session_list_fallback_slow') {
+      const numericKeys = ['discoveryms', 'statms', 'summaryms', 'totalms', 'discovered', 'included', 'includedratio']
+      if (numericKeys.includes(normalizedKey) && typeof entry === 'number' && Number.isFinite(entry) && entry >= 0 && entry <= (normalizedKey === 'includedratio' ? 1 : 1e9)) {
+        projected[key] = entry
+        continue
+      }
+      if (normalizedKey === 'indexmode' && typeof entry === 'string' && ['on', 'off', 'shadow', 'unknown'].includes(entry)) {
+        projected[key] = entry
+        continue
+      }
+      if (normalizedKey === 'indexstate' && typeof entry === 'string' && ['off', 'starting', 'ready', 'degraded', 'unknown'].includes(entry)) {
+        projected[key] = entry
+        continue
+      }
+    }
+    if (path === 'details' && eventType === 'local_index_session_shadow_comparison') {
+      if (normalizedKey === 'matched' && typeof entry === 'boolean') {
+        projected[key] = entry
+        continue
+      }
+      if (['filecount', 'indexedcount'].includes(normalizedKey) && typeof entry === 'number' && Number.isSafeInteger(entry) && entry >= 0 && entry <= 1e9) {
+        projected[key] = entry
+        continue
+      }
     }
     if (SAFE_SCALAR_KEYS.has(normalizedKey) && isScalar(entry)) {
       projected[key] = normalizedKey === 'route' && typeof entry === 'string'

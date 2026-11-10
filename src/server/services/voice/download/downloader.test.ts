@@ -247,7 +247,14 @@ describe('downloadAsset', () => {
     const result = await downloadAsset(
       assetFor(content, [`${flaky.origin}/file`, `${good.origin}/file`]),
       destination,
-      { maxRetries: 1, sleep: noSleep, probeTimeoutMs: 1000 },
+      {
+        maxRetries: 1,
+        sleep: noSleep,
+        // Probe selection is covered separately; pin the failing mirror first.
+        fetch: async (url, init) => init?.method === 'HEAD'
+          ? new Response(null, { status: url.startsWith(flaky.origin) ? 200 : 503 })
+          : fetch(url, init as RequestInit),
+      },
     )
 
     expect(result.source).toBe(good.origin)
@@ -262,7 +269,12 @@ describe('downloadAsset', () => {
     const result = await downloadAsset(
       assetFor(content, [`${broken.origin}/file`, `${good.origin}/file`]),
       join(dir, 'file.bin'),
-      { sleep: noSleep },
+      {
+        sleep: noSleep,
+        fetch: async (url, init) => init?.method === 'HEAD'
+          ? new Response(null, { status: url.startsWith(broken.origin) ? 200 : 503 })
+          : fetch(url, init as RequestInit),
+      },
     )
     expect(result.source).toBe(good.origin)
     expect(broken.gets()).toHaveLength(1)
