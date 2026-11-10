@@ -22,7 +22,7 @@ enum HelperAuthorizationDecision: Equatable, Sendable {
 /// ancestry and command policy stay exhaustively unit-testable.
 enum HelperClientPolicy {
     static let helperIdentifier = "dev.cchaha.cu-helper"
-    static let desktopIdentifier = "com.claude-code-haha.desktop"
+    static let desktopIdentifier = "com.echoflow.code.desktop"
     static let sidecarIdentifier = "com.claude-code-haha.desktop.sidecar"
 
     private static let daemonCommands: Set<String> = [
