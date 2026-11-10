@@ -26,13 +26,17 @@ describe('release please configuration', () => {
     expect(config.packages.desktop['changelog-path']).toBeUndefined()
   })
 
-  test('synchronizes the Android version files through JSON extra-files', () => {
-    // The paths are root-relative: the desktop package resolves relative
-    // paths against its own directory.
-    expect(config.packages.desktop['extra-files']).toEqual([
-      { type: 'json', path: '/mobile/package.json', jsonpath: '$.version' },
-      { type: 'json', path: '/mobile/app.json', jsonpath: '$.expo.version' },
-    ])
+  test('keeps the mobile user version independent of desktop releases', () => {
+    // mobile/app.json and mobile/package.json are hashed into the mobile
+    // delivery fingerprint. Syncing them on every desktop release changes
+    // the fingerprint each time and forces a needless EAS build. The mobile
+    // version moves only via scripts/release.ts --mobile.
+    const extraFiles = config.packages.desktop['extra-files'] ?? []
+    expect(extraFiles.some((entry: { path: string }) => entry.path.includes('/mobile/'))).toBe(false)
+  })
+
+  test('does not pin release-as to the already published manifest version', () => {
+    expect(config.packages.desktop['release-as']).not.toBe(manifest.desktop)
   })
 
   test('bases the next release on the last published tag', () => {

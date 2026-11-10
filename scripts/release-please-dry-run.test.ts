@@ -208,7 +208,7 @@ describe('release please offline dry run', () => {
     expect(pullRequests[0].version?.toString()).toBe('0.7.3')
   })
 
-  test('writes one version into the three product version files', async () => {
+  test('updates the desktop version without changing the independent mobile versions', async () => {
     const scm = new FakeScm(readRepoFiles(), commitsAfterBaseline(), [
       {
         tagName: 'v0.7.2',
@@ -231,25 +231,29 @@ describe('release please offline dry run', () => {
     expect(changedPaths).toEqual([
       '.release-please-manifest.json',
       'desktop/package.json',
-      'mobile/app.json',
-      'mobile/package.json',
     ])
+    expect(pullRequest.updates.some(update => update.path.startsWith('mobile/'))).toBe(false)
+    const updatedFiles = new Map(scm.files)
 
     for (const update of pullRequest.updates) {
       if (!scm.files.has(update.path)) {
         continue
       }
       const content = update.updater.updateContent(scm.files.get(update.path) as string)
+      updatedFiles.set(update.path, content)
       const parsed = JSON.parse(content)
       if (update.path === '.release-please-manifest.json') {
         expect(parsed.desktop).toBe('0.7.3')
-      } else if (update.path === 'mobile/app.json') {
-        expect(parsed.expo.version).toBe('0.7.3')
-        expect(parsed.version).toBeUndefined()
       } else {
         expect(parsed.version).toBe('0.7.3')
       }
     }
+
+    for (const path of ['mobile/package.json', 'mobile/app.json']) {
+      expect(updatedFiles.get(path)).toBe(scm.files.get(path))
+    }
+    expect(JSON.parse(updatedFiles.get('mobile/package.json') as string).version).toBe('0.1.3')
+    expect(JSON.parse(updatedFiles.get('mobile/app.json') as string).expo.version).toBe('0.1.3')
   })
 
   test('does not generate a changelog file', async () => {

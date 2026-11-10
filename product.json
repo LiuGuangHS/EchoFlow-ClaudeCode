@@ -1,0 +1,15 @@
+{
+  "name": "EchoFlow Code",
+  "slug": "echoflow-code",
+  "appId": "com.echoflow.code.desktop",
+  "mobilePackage": "com.echoflow.code.mobile",
+  "mobileBundleId": "com.echoflow.code.mobile",
+  "scheme": "codemobile",
+  "protocol": "echoflowcode",
+  "repoUrl": "https://github.com/LiuGuangHS/EchoFlow-ClaudeCode",
+  "docsUrl": "https://code.echoflow.cn",
+  "envPrefix": "ECHOFLOW_",
+  "legacyEnvPrefix": "CC_HAHA_",
+  "configDir": "echoflow-code",
+  "adsPublisherId": "pub-1962125033823297"
+}
