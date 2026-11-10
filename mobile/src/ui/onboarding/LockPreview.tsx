@@ -58,7 +58,7 @@ export function LockPreview({ hostName }: { hostName: string }) {
             <Logo size={17} label="" />
           </View>
           <Text style={{ flex: 1, color: dark.ink, fontSize: 13, fontWeight: '600' }}>
-            cc-haha
+            EchoFlow Code
           </Text>
           <Text style={{ color: dark.ink3, fontSize: 12 }}>现在</Text>
         </View>

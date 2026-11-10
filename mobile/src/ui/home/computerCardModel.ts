@@ -28,7 +28,7 @@ export type ComputerCardView = {
   trailing: 'chevron' | 'repair'
 }
 
-export const offlineDetail = '电脑可能睡着了，或者 cc-haha 没在运行。手机没法远程唤醒它。'
+export const offlineDetail = '电脑可能睡着了，或者 EchoFlow Code 没在运行。手机没法远程唤醒它。'
 
 /**
  * 公网配对的到期提醒。只有公网、读到了到期时间、且剩余不超过 7 天才返回文案；

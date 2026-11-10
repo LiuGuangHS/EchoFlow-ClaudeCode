@@ -76,5 +76,5 @@ export function exportFileName(path: string) {
     .pop()
     ?.replace(/[\u0000-\u001f<>:"|?*]/g, '_')
     .slice(0, 160)
-  return name && name !== '.' && name !== '..' ? name : 'cc-haha-file'
+  return name && name !== '.' && name !== '..' ? name : 'echoflow-code-file'
 }

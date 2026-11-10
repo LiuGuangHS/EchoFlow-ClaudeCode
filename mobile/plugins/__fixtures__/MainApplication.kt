@@ -1,4 +1,4 @@
-package app.cchaha.mobile
+package com.echoflow.code.mobile
 
 import android.app.Application
 import android.content.res.Configuration

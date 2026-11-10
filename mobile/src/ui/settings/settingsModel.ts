@@ -50,7 +50,7 @@ export function pushFootnote(
     case 'notConfigured':
       return '电脑还没配 APNs / FCM 推送。App 打开时照常同步；想在离开 App 后收到通知，要先在电脑上配好推送。'
     case 'permissionRequired':
-      return '系统还没允许 cc-haha 发通知。去系统设置里打开，或重新打开上面的开关。'
+      return '系统还没允许 EchoFlow Code 发通知。去系统设置里打开，或重新打开上面的开关。'
     case 'unsupported':
       return '这台设备暂时登记不了远程通知。'
     case 'error':

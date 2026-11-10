@@ -58,7 +58,7 @@ function Navigation() {
         }}
       >
         <Text style={{ color: colors.ink, fontSize: 22 }}>
-          请安装 cc-haha 原生 App
+          请安装 EchoFlow Code 原生 App
         </Text>
         <Text style={{ color: colors.ink3, lineHeight: 24 }}>
           请使用项目生成的开发版或安装包，以启用原生连接保护。

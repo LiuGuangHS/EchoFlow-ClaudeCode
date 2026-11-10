@@ -5,8 +5,11 @@ import {
   connectionHeaders,
   normalizeHostUrl,
   parseConnectionInput,
+  takeIncomingConnection,
 } from './connection'
 import type { Host } from './types'
+import { redirectSystemPath } from '../app/+native-intent'
+import { receivedConnection } from '../ui/connect/connectForm'
 
 const lan: Host = {
   id: 'a',
@@ -33,6 +36,46 @@ describe('desktop connection contracts', () => {
         JSON.stringify({ serverUrl: lan.url, h5Token: 'fake-token' })
       )
     ).toEqual({ url: lan.url, auth: 'lan', credential: 'fake-token' })
+  })
+
+  test('restores legacy codemobile links through the normal LAN parser', () => {
+    expect(
+      parseConnectionInput(
+        'codemobile://connect?serverUrl=http%3A%2F%2F192.168.1.12%3A3456&h5Token=fake-token'
+      )
+    ).toEqual({ url: lan.url, auth: 'lan', credential: 'fake-token' })
+    expect(() =>
+      parseConnectionInput('codemobile://connect?serverUrl=file%3A%2F%2F%2Ftmp')
+    ).toThrow('HTTP')
+    expect(() =>
+      parseConnectionInput('codemobile://connect?serverUrl=http%3A%2F%2F192.168.1.12%3A3456&other=x')
+    ).toThrow()
+  })
+
+  test.each([
+    `codemobile://connect?${new URLSearchParams([
+      ['serverUrl', lan.url], ['h5Token', 'first'], ['h5Token', 'second'],
+    ])}`,
+    'codemobile://user:pass@connect?serverUrl=http%3A%2F%2F192.168.1.12%3A3456',
+  ])('拒绝旧链接中的重复令牌或用户信息：%s', (value) => {
+    expect(() => parseConnectionInput(value)).toThrow()
+  })
+
+  test.each([true, false])('旧链接在冷/热启动时进入连接表单（initial=%s）', (initial) => {
+    const path = `codemobile://?${new URLSearchParams({ serverUrl: lan.url, h5Token: 'fixture' })}`
+    const route = redirectSystemPath({ path, initial })
+    const rewritten = new URL(route, 'https://app.invalid')
+    expect(rewritten.pathname).toBe('/connect')
+    expect(route).not.toContain('fixture')
+    expect(route).not.toContain('h5Token')
+    const id = Number(rewritten.searchParams.get('incoming'))
+    expect(receivedConnection(takeIncomingConnection(id)!)).toEqual({
+      address: path, name: '192.168.1.12', mode: 'lan',
+    })
+    expect(takeIncomingConnection(id)).toBeUndefined()
+    expect(redirectSystemPath({ path: '/settings', initial })).toBe('/settings')
+    expect(redirectSystemPath({ path: 'codemobile://connect?serverUrl=file:///tmp', initial }))
+      .toBe('/connect?invalidLink=1')
   })
 
   test('remote pairing secret stays separate from origin', () => {

@@ -72,7 +72,7 @@ export function activityUrl(
   const query = new URLSearchParams({ host: hostId })
   if (requestId) query.set('requestId', requestId)
   if (requestId && action) query.set('notificationAction', action)
-  return `cchaha:///chat/${encodeURIComponent(sessionId)}?${query}`
+  return `codemobile:///chat/${encodeURIComponent(sessionId)}?${query}`
 }
 
 /**

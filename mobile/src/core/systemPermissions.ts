@@ -37,7 +37,7 @@ export async function openNotificationSettings() {
       await Linking.sendIntent('android.settings.APP_NOTIFICATION_SETTINGS', [
         {
           key: 'android.provider.extra.APP_PACKAGE',
-          value: Constants.expoConfig?.android?.package ?? 'app.cchaha.mobile',
+          value: Constants.expoConfig?.android?.package ?? 'com.echoflow.code.mobile',
         },
       ])
   } catch {
@@ -62,7 +62,7 @@ export async function openChannelSettings(kind: ChannelKind) {
     await Linking.sendIntent('android.settings.CHANNEL_NOTIFICATION_SETTINGS', [
       {
         key: 'android.provider.extra.APP_PACKAGE',
-        value: Constants.expoConfig?.android?.package ?? 'app.cchaha.mobile',
+        value: Constants.expoConfig?.android?.package ?? 'com.echoflow.code.mobile',
       },
       { key: 'android.provider.extra.CHANNEL_ID', value: CHANNEL_IDS[kind] },
     ])

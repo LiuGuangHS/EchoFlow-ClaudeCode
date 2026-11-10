@@ -12,7 +12,7 @@ test('native push failures distinguish missing build configuration from transien
     mock.module(${JSON.stringify(import.meta.resolve('expo-notifications'))}, () => ({ getDevicePushTokenAsync: () => request() }))
     const { getDevicePushToken, DevicePushTokenError } = await import(${JSON.stringify(import.meta.resolve('./devicePushToken'))})
     assert.equal(await getDevicePushToken(), 'fixture-token')
-    request = async () => { throw Object.assign(new Error('Default FirebaseApp is not initialized in this process app.cchaha.mobile. Make sure to call FirebaseApp.initializeApp(Context) first.'), { code: 'E_REGISTRATION_FAILED' }) }
+    request = async () => { throw Object.assign(new Error('Default FirebaseApp is not initialized in this process com.echoflow.code.mobile. Make sure to call FirebaseApp.initializeApp(Context) first.'), { code: 'E_REGISTRATION_FAILED' }) }
     await assert.rejects(getDevicePushToken(), error => error instanceof DevicePushTokenError && error.code === 'NOT_CONFIGURED')
     request = async () => { throw Object.assign(new Error('Fetching the token failed: SERVICE_NOT_AVAILABLE'), { code: 'E_REGISTRATION_FAILED' }) }
     await assert.rejects(getDevicePushToken(), error => error.code === 'UNAVAILABLE')

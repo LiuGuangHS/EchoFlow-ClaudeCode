@@ -2164,7 +2164,7 @@ export function Loading() {
   return <ActivityIndicator style={{ padding: 30 }} color={colors.ink3} />
 }
 
-/** cc-haha 标识（陶土底 + 舷窗环），全应用唯一的品牌色出现处。 */
+/** EchoFlow Code 标识（陶土底 + 舷窗环），全应用唯一的品牌色出现处。 */
 export function BrandMark({ size = 22 }: { size?: number }) {
   const colors = useColors()
   return (

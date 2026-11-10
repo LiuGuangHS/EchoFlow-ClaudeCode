@@ -140,7 +140,7 @@ function LiveActivitySettings() {
         </Group>
         <InlineError text={error} style={{ marginTop: 12 }} />
 
-        <Footnote>想完全关掉实时活动，去系统设置 › cc-haha › 实时活动。</Footnote>
+        <Footnote>想完全关掉实时活动，去系统设置 › EchoFlow Code › 实时活动。</Footnote>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="打开系统设置"

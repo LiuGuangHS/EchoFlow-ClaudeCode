@@ -14,7 +14,7 @@
 
 选择规则（`mobile/src/state/pushProvider.ts`）：Android 有 `desktop` 就用 `desktop`；否则电脑自己配了该平台凭据就直连；iOS 再退到 `expo`。旧电脑不返回 `providers`，手机按原来的直连流程登记，不发送 `provider` 字段。
 
-**Expo 中转的前提**（发布者一次性操作，不在仓库里）：在 expo.dev 的项目凭据里为 `com.yunce.cchaha.mobile` 配好 APNs Push Key（`bunx eas-cli credentials --platform ios`），并保持 Expo 的 Enhanced Push Security 关闭——开启后发送需要 Expo access token，而这个 token 不能放进分发给用户的电脑。关闭时，持有手机 Expo token 的人都能给这台手机发通知；token 只登记在已配对的电脑上，且加密保存。电脑把通知发往 `https://exp.host/--/api/v2/push/send`（走 cc-haha 网络设置里的代理），通知标题和正文会经过 Expo 和 Apple；不想让命令原文经过第三方的用户可以关掉「锁屏上显示命令」。Expo 只回执 `DeviceNotRegistered` 时电脑删除登记，其余错误按投递失败重试；最近一次 Expo 发送失败的原因通过 `GET` 的 `relayErrors.expo` 告诉手机，下一次发送成功后清除，手机设置页据此显示「推送发送失败」并提示配置网络代理。电脑的推送轮询分两条互不等待的通道：手机拉取只是入队，Expo / APNs / FCM 要等网络（连不上时每次最多 15 秒），所以中转卡住不会拖慢安卓的提醒。
+**Expo 中转的前提**（发布者一次性操作，不在仓库里）：在 expo.dev 的项目凭据里为 `com.echoflow.code.mobile` 配好 APNs Push Key（`bunx eas-cli credentials --platform ios`），并保持 Expo 的 Enhanced Push Security 关闭——开启后发送需要 Expo access token，而这个 token 不能放进分发给用户的电脑。关闭时，持有手机 Expo token 的人都能给这台手机发通知；token 只登记在已配对的电脑上，且加密保存。电脑把通知发往 `https://exp.host/--/api/v2/push/send`（走 EchoFlow Code 网络设置里的代理），通知标题和正文会经过 Expo 和 Apple；不想让命令原文经过第三方的用户可以关掉「锁屏上显示命令」。Expo 只回执 `DeviceNotRegistered` 时电脑删除登记，其余错误按投递失败重试；最近一次 Expo 发送失败的原因通过 `GET` 的 `relayErrors.expo` 告诉手机，下一次发送成功后清除，手机设置页据此显示「推送发送失败」并提示配置网络代理。电脑的推送轮询分两条互不等待的通道：手机拉取只是入队，Expo / APNs / FCM 要等网络（连不上时每次最多 15 秒），所以中转卡住不会拖慢安卓的提醒。
 
 **手机拉取**：Android 对每台电脑生成一个随机拉取 token（32 字节，存 SecureStore；一台电脑只知道自己的那个，移除电脑时删除）。App 每次登记成功后把这台电脑的地址、认证头和 token 单独交给本地模块 `mobile/modules/cchaha-duty` 的前台服务（类型 `specialUse`，通知栏常驻「正在值守」）；服务自己保存电脑列表，App 只增删单台电脑，所以启动时暂时连不上的电脑不会被挤出列表。服务对每台电脑循环 `POST /api/sessions/mobile-push/pull`，电脑最多挂起 25 秒，有通知立即返回；手机按 id 去重并在下一次请求里 `ack`，电脑删除已确认的条目，未确认的保留 10 分钟、每个 token 最多 32 条。耗电上，服务只在被唤醒（回复到达、重试到期、放弃半开连接）到下一次拉取发出之间持有唤醒锁，拉取挂在电脑上时靠电脑的回复唤醒手机。连接失败按 2 秒起倍增、最长 30 秒重试；一台电脑连续 5 分钟连不上（换了网络、电脑合盖）后改为每 5 分钟试一次，打开 App 或网络变化时立即重连。线程计时在 CPU 休眠时不走，所以服务另有一个约每分钟的系统闹钟（`setAndAllowWhileIdle`，Doze 下会被拉长）：只处理已到期的重试和超过 40 秒没有回音的半开连接，其余时候不持锁。配置用 Android Keystore 加密保存，开机和 App 更新后自动恢复。只有电脑本身的两种回答会让服务停止拉取这台电脑：401（配对凭据被拒）和 404 `NO_REGISTRATION`（电脑没有这台手机的登记），直到 App 重新登记；隧道、代理返回的 403/5xx 都按网络错误重试。国产 ROM 仍可能清理后台：设置页会引导「允许后台运行」（电池优化豁免）和到应用设置里打开自启动。
 
@@ -28,7 +28,7 @@ iOS 直连需要与已安装 App 的 bundle ID 和签名环境对应的 APNs 配
 CC_HAHA_APNS_KEY_PATH=/absolute/path/AuthKey.p8
 CC_HAHA_APNS_KEY_ID=YOUR_KEY_ID
 CC_HAHA_APNS_TEAM_ID=YOUR_TEAM_ID
-CC_HAHA_APNS_TOPIC=com.yunce.cchaha.mobile
+CC_HAHA_APNS_TOPIC=com.echoflow.code.mobile
 CC_HAHA_APNS_SANDBOX=false
 ```
 

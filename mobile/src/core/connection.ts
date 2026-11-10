@@ -73,11 +73,61 @@ export type ParsedConnection = {
   pairSecret?: string
 }
 
+let incomingConnection: { id: number; value: string } | undefined
+let incomingConnectionId = 0
+
+/** Keep deep-link credentials in memory, never in router parameters. */
+export function queueIncomingConnection(value: string): number {
+  const id = ++incomingConnectionId
+  incomingConnection = { id, value }
+  return id
+}
+
+export function takeIncomingConnection(id: number): string | undefined {
+  if (incomingConnection?.id !== id) return undefined
+  const value = incomingConnection.value
+  incomingConnection = undefined
+  return value
+}
+
 /** Accepts desktop LAN QR URLs, their JSON equivalent, a raw origin or a remote #pair URL. */
 export function parseConnectionInput(input: string): ParsedConnection {
   const raw = input.trim()
   if (!raw || raw.length > 16384)
     throw new ConnectionError('连接地址为空或过长')
+  // 旧版 Android 通过 codemobile:// 传入局域网地址和令牌；仅转换该协议，
+  // 再复用当前 HTTP(S) 查询格式和完整安全校验。
+  if (/^codemobile:/i.test(raw)) {
+    let legacy: URL
+    try {
+      legacy = new URL(raw)
+    } catch {
+      throw new ConnectionError('旧版连接地址格式无效')
+    }
+    if (
+      legacy.protocol !== 'codemobile:' ||
+      legacy.username ||
+      legacy.password ||
+      legacy.searchParams.getAll('h5Token').length > 1 ||
+      legacy.hash ||
+      !['', '/', '/connect'].includes(legacy.pathname)
+    )
+      throw new ConnectionError('旧版连接地址格式无效')
+    if (
+      [...legacy.searchParams.keys()].some(
+        (key) => !['serverUrl', 'h5Token'].includes(key)
+      )
+    )
+      throw new ConnectionError('旧版连接地址参数无效')
+    const serverUrl = legacy.searchParams.get('serverUrl')
+    if (!serverUrl || legacy.searchParams.getAll('serverUrl').length !== 1)
+      throw new ConnectionError('旧版连接地址缺少服务器地址')
+    const converted = new URL('http://codemobile.invalid/')
+    converted.searchParams.set('serverUrl', serverUrl)
+    const token = legacy.searchParams.get('h5Token')
+    if (token !== null) converted.searchParams.set('h5Token', token)
+    return parseConnectionInput(converted.toString())
+  }
   if (raw.startsWith('{')) {
     let value: unknown
     try {

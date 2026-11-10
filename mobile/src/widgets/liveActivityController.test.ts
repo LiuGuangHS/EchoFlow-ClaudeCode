@@ -14,7 +14,7 @@ const props = (hostId: string): TaskActivityProps => ({
   detail: 'working',
   status: 'running',
   activeCount: 1,
-  openUrl: `cchaha:///chat/session?host=${hostId}`,
+  openUrl: `codemobile:///chat/session?host=${hostId}`,
 })
 function factory(log: string[]): ActivityFactory {
   return {
@@ -183,8 +183,8 @@ test('foreground offline removes approval links immediately even when HTTP token
   const waiting = {
     ...props('a'),
     status: 'waiting' as const,
-    allowUrl: 'cchaha:///allow',
-    denyUrl: 'cchaha:///deny',
+    allowUrl: 'codemobile:///allow',
+    denyUrl: 'codemobile:///deny',
   }
   const register = async () => {
     started()

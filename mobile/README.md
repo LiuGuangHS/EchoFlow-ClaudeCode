@@ -1,6 +1,6 @@
-# cc-haha 移动端
+# EchoFlow Code 移动端
 
-React Native / Expo 58 / Expo Router 的 iOS、Android 客户端。按「cc-haha 移动端主题提案」重做界面和功能分工：手机负责收到提醒、做决定、派任务、查看结果和及时停止；模型执行、仓库和配置保留在电脑上。
+React Native / Expo 58 / Expo Router 的 iOS、Android 客户端。按「EchoFlow Code 移动端主题提案」重做界面和功能分工：手机负责收到提醒、做决定、派任务、查看结果和及时停止；模型执行、仓库和配置保留在电脑上。
 
 ## 页面与真实行为
 
@@ -21,6 +21,25 @@ React Native / Expo 58 / Expo Router 的 iOS、Android 客户端。按「cc-haha
 | 系统通知与 Live Activity | iOS 原生锁屏 / Dynamic Island，Android 通知；动作进入 App 后重新校验当前审批，过期内容不允许直接批准 |
 
 外观是「值守」设计（`src/ui/palette.ts` + `src/ui/kit.tsx`）：系统字体，命令、路径和计时用 Geist Mono（许可位于 `assets/fonts/OFL.txt`）；颜色只表达状态——琥珀是等你决定、蓝是运行、绿是完成、红是出错，主按钮用墨色，品牌陶土色只出现在标识上。额外的加载、断线、权限未授权、空列表、失败和大字体状态属于运行时必须处理的情况，不能用设计稿样例数据替代。
+
+## 单一移动端实现
+
+移动端只有本目录这一套 Expo 应用：旧的 `mobile/legacy-webview/` Android WebView 壳和它的 `release-mobile-apk.yml` 发版链路已删除，唯一发布链路是根目录 `.github/workflows/release-mobile.yml`（EAS）。桌面服务端托管的 H5（`desktop/dist/m`，路径 `/m/`）是给手机**浏览器**用的同一套界面，不是 APK，也不需要 WebView 壳。
+
+旧壳里值得保留的行为已由原生实现承接，并由 `src/core/mobileParity.test.ts` 与 `plugins/singleMobileApp.test.ts` 固定成回归契约：
+
+| 旧壳行为 | 现在的承接方式 |
+| --- | --- |
+| 扫描 / 粘贴桌面局域网二维码（`?serverUrl=&h5Token=`） | `src/core/connection.ts#parseConnectionInput` 仍解析同一格式；`src/ui/connect/Scanner.tsx` 用 expo-camera 取帧、本地 ML Kit 解码，不依赖 Google Play 服务 |
+| 连接前验证 `/health` 与访问令牌 | `src/core/connectHost.ts` 先 `verify()` / 原生 `pair` + `claim` 批准，凭据才写入 SecureStore；访问校验按认证方式分流，不再单独打 `/health` |
+| AndroidKeyStore 加密保存凭据、最近 5 个服务器地址回填 | `expo-secure-store` + AsyncStorage，每台电脑独立元数据与版本迁移，`hosts` 页可保存任意多台 |
+| 断开 / 切换时清除凭据与会话 | 移除电脑先撤销通知登记再清理凭据；原生应用没有 WebView，自然无 Cookie / WebStorage 残留 |
+| WebSocket 权限审批（`permission_request` / `permission_response`） | `src/core/chatActions.ts` 与原生审批界面；通知动作重新校验后才提交 |
+| 同源校验、限制跳转到别的 origin | `normalizeHostUrl` 只收纯净 http(s) 主机地址；`plugins/withPinnedWebSockets.js` 关闭重定向 |
+| 网页文件上传 | `expo-document-picker` / `expo-image-picker` 选取材料，工作区文件走带认证、带大小限制的原生下载与分享 |
+| `codemobile://` 深链接与应用身份 | `app.json` scheme 不变，Android / iOS 包名统一为 `com.echoflow.code.mobile` |
+
+有意不迁移的旧做法：WebView 容器（新应用是纯原生 UI）、依赖 Google Play 服务的 Google Code Scanner（`plugins/cameraBarcodeAvailability.test.ts` 固化本地解码这一点）、把令牌放进 URL 查询串（现在原生请求走 `Authorization` 头）、以及旧品牌蓝色图标与脚手架占位资源。新应用另外提供旧壳没有的系统推送、Android 前台值守服务、iOS Live Activity、原生文件 / 图片 / 语音、定时任务与工作区等能力。
 
 ## 运行与构建
 
@@ -84,7 +103,7 @@ bunx expo prebuild --platform android --no-install
 详见 [PUSH_NOTIFICATIONS.md](PUSH_NOTIFICATIONS.md)。前台本地提醒、系统通知授权和后台远程推送是不同路径。没有 APNs / FCM 配置时，设置页会明确提示，不能据此声称后台远程投递成功。
 
 - iOS：构建包含通知与 ActivityKit entitlement，桌面端显式配置 APNs 密钥、Team ID、Key ID、topic 及环境。私钥不进入手机或仓库。
-- Android：构建前设置 `CC_HAHA_GOOGLE_SERVICES_FILE=/绝对路径/google-services.json`，文件必须含 `app.cchaha.mobile` 的 Firebase 客户端；重新 prebuild / 构建。桌面另需 FCM 服务账户。这两个 JSON 用途不同，不能互相代替。参见 [Expo 官方配置说明](https://docs.expo.dev/push-notifications/fcm-credentials/)。
+- Android：构建前设置 `CC_HAHA_GOOGLE_SERVICES_FILE=/绝对路径/google-services.json`，文件必须含 `com.echoflow.code.mobile` 的 Firebase 客户端；重新 prebuild / 构建。桌面另需 FCM 服务账户。这两个 JSON 用途不同，不能互相代替。参见 [Expo 官方配置说明](https://docs.expo.dev/push-notifications/fcm-credentials/)。
 - 服务端登记按设备权限、偏好、勿扰时段与期限校验；令牌加密保存。推送不携带模型密钥。通知按钮会重新验证审批，AskUserQuestion 和计划不能被普通「允许」动作替代。
 
 ## 验证

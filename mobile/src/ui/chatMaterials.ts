@@ -45,7 +45,7 @@ export async function pickChatMaterial(
     const permission = await ImagePicker.requestCameraPermissionsAsync()
     if (!permission.granted)
       throw new Error(
-        '相机权限未开启。可以选择相册，或到系统设置允许 cc-haha 使用相机。'
+        '相机权限未开启。可以选择相册，或到系统设置允许 EchoFlow Code 使用相机。'
       )
   }
   const result =

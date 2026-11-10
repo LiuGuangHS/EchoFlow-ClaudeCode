@@ -149,7 +149,9 @@ test('HTTP manual/QR verification, save/reload, REST and reconnect preserve the 
     expect(seen.filter(request => new URL(request.url).pathname === '/ws/session').every(request => request.authorization === `Bearer ${token}`)).toBe(true)
   } finally {
     transport?.dispose()
+    // Close every server-side socket above before stopping: stop(true) waits on
+    // active WebSocket upgrades and can hang the loopback fixture on WSL.
     for (const socket of sockets) socket.close()
-    await server.stop(true)
+    server.stop()
   }
 }, 10000)

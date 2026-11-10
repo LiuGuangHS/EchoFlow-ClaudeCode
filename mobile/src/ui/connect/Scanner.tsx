@@ -241,7 +241,7 @@ export function Scanner({
             >
               <BrandMark size={22} />
               <Text style={{ fontSize: 16, fontWeight: '600', color: '#FFFFFF' }}>
-                cc-haha
+                EchoFlow Code
               </Text>
             </View>
           ) : (
@@ -299,7 +299,7 @@ export function Scanner({
               textAlign: 'center',
             }}
           >
-            {'在电脑的 cc-haha 里打开\n「设置 → 手机连接」，选择局域网或 Cloudflare 外出连接'}
+            {'在电脑的 EchoFlow Code 里打开\n「设置 → 手机连接」，选择局域网或 Cloudflare 外出连接'}
           </Text>
           {notice ? (
             <View
@@ -351,7 +351,7 @@ export function Scanner({
               color: colors.ink3,
             }}
           >
-            只连你自己电脑上的 cc-haha，用不着模型的 API Key。
+            只连你自己电脑上的 EchoFlow Code，用不着模型的 API Key。
           </Text>
         </View>
       </ScrollView>

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Platform, View } from 'react-native'
 import { getStringAsync } from 'expo-clipboard'
 import { randomUUID } from 'expo-crypto'
@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar'
 import { Redirect, router, useFocusEffect, useLocalSearchParams } from 'expo-router'
 import { createApiClient } from '../state/api'
 import { connectHost, pairingMessage } from '../core/connectHost'
+import { takeIncomingConnection } from '../core/connection'
 import { useApp } from '../state/AppContext'
 import { goBack } from '../ui/kit'
 import { goHome } from '../ui/navigation'
@@ -38,7 +39,7 @@ export default function ConnectRoute() {
 function Connect() {
   const { add, registry } = useApp()
   const { dark } = useTheme()
-  const params = useLocalSearchParams<{ mode?: string }>()
+  const params = useLocalSearchParams<{ mode?: string; incoming?: string; invalidLink?: string }>()
   const [stage, setStage] = useState<ConnectStage>(() => initialStage(params.mode))
   // 欢迎页「手动输入地址」直达表单：收起表单就离开本页，不绕去扫码页（还没开过相机）。
   const [direct, setDirect] = useState(() => initialStage(params.mode) === 'form')
@@ -53,6 +54,8 @@ function Connect() {
   const [notice, setNotice] = useState('')
   const [focused, setFocused] = useState(false)
   const attempt = useRef<AbortController | null>(null)
+  const handledLink = useRef<string | null>(null)
+  const incomingUrl = params.incoming
 
   useFocusEffect(
     useCallback(() => {
@@ -114,6 +117,15 @@ function Connect() {
       setNotice(errorText(e))
     }
   }
+  useEffect(() => {
+    if (!incomingUrl || handledLink.current === incomingUrl) return
+    const timer = setTimeout(() => {
+      handledLink.current = incomingUrl
+      const value = takeIncomingConnection(Number(incomingUrl))
+      if (value) receive(value)
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [incomingUrl])
   async function paste() {
     try {
       const value = await getStringAsync()
@@ -200,7 +212,7 @@ function Connect() {
           active={focused && stage === 'scan'}
           // 全屏呈现不能下滑关闭：只要有页面可回，就给关闭按钮；直接打开（无处可回）才显示品牌。
           firstRun={registry.hosts.length === 0 && !router.canGoBack()}
-          notice={notice}
+          notice={notice || (params.invalidLink ? '连接链接无效，请重新扫码或手动输入。' : '')}
           onNotice={setNotice}
           onClose={close}
           onScanned={receive}

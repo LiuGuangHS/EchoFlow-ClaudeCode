@@ -2,19 +2,19 @@
 
 移动端使用独立的用户版本号。桌面 Release 继续使用 `vX.Y.Z`，只改桌面时不用升级移动端；发布说明应链接现有移动版本。iOS 自动交付到 App Store Connect / TestFlight，正式 App Store 审核与上架另行处理；Android 发布正式签名 APK，不提交 Google Play。
 
-## 已关联的项目
+## 项目标识（由账号持有人在 CI 配置）
 
-- Expo：`@relakkesyangs-team/cc-haha`
-- Project ID：`4e75f835-1b64-463c-a196-cc181b4c83ec`
-- App Store Connect App ID：`6826961014`
-- iOS Bundle ID：`com.yunce.cchaha.mobile`
-- iOS Widget：`com.yunce.cchaha.mobile.widgets`
-- App Group：`group.com.yunce.cchaha.mobile`
-- Android package：`app.cchaha.mobile`
+- Expo owner / Project ID / App Store Connect App ID：由 CI 变量 `EXPO_OWNER`、`EXPO_PROJECT_ID`、`ASC_APP_ID` 注入，仓库内不登记账号标识。
+- iOS Bundle ID：`com.echoflow.code.mobile`
+- iOS Widget：`com.echoflow.code.mobile.widgets`
+- App Group：`group.com.echoflow.code.mobile`
+- Android package：`com.echoflow.code.mobile`
 
 项目标识可公开，凭据不能提交。EAS 管理生产签名凭据；保管并备份 Android keystore，后续升级必须保持签名身份。
 
 ## 一次性账号设置
+
+本节是 iOS + Android 全量配置。**只发 Android 时见下一节**：步骤 1、2、4 以及 `ASC_APP_ID`、Apple Developer 协议、App Store Connect 应用、iOS 描述文件、APNs Push Key、ASC API Key、Widget 与 App Group 注册都可以跳过。
 
 1. 账户持有人在 Apple Developer / App Store Connect 接受当前协议，在 App Store Connect 创建上述 Bundle ID 的应用。
 2. 注册主 App、Widget 和 App Group，配置通知等实际使用的 capabilities，为主 App 和扩展分别准备 App Store 分发描述文件。
@@ -27,7 +27,38 @@
 
 `eas.json` 固定 EAS CLI 版本，使用 `production` 环境、远程签名凭据、自动递增构建号，Android 产物明确设为 APK。不要使用本地默认 debug keystore 作为公开分发签名。
 
-Android FCM 如果需要启用，在 EAS production 环境设置文件变量 `CC_HAHA_GOOGLE_SERVICES_FILE`，内容是匹配 `app.cchaha.mobile` 的 Firebase Android 客户端 JSON。服务账户私钥不能放进应用。可选：Android 默认走手机拉取，不需要 FCM。详见 [推送说明](PUSH_NOTIFICATIONS.md)。
+Android FCM 如果需要启用，在 EAS production 环境设置文件变量 `CC_HAHA_GOOGLE_SERVICES_FILE`，内容是匹配 `com.echoflow.code.mobile` 的 Firebase Android 客户端 JSON。服务账户私钥不能放进应用。可选：Android 默认走手机拉取，不需要 FCM。详见 [推送说明](PUSH_NOTIFICATIONS.md)。
+
+## 只发 Android 的最小配置
+
+首发建议只交付 Android。需要满足：
+
+- 一个**已公开发布**的桌面正式 Release tag（`vX.Y.Z`）。该 tag 必须包含 `release-mobile.yml`、`scripts/mobile-release.ts`、`mobile/eas.json`、`mobile/app.config.ts`；CI 按 tag 检出代码，工作区未提交的改动不会生效。
+- GitHub Secret `EXPO_TOKEN`（建议专用发布机器人），GitHub Variables `EXPO_PROJECT_ID`（EAS 项目 UUID）和 `EXPO_OWNER`。
+- 在 `mobile/` 执行 `bunx eas-cli@25.3.0 credentials:configure-build --platform android --profile production` 配置并备份 Android keystore。`eas.json` 的 `cli.appVersionSource: "remote"` 与 `autoIncrement: true` 由 EAS 管理构建号，首次需要初始化。
+- Android FCM 可选：不配 `CC_HAHA_GOOGLE_SERVICES_FILE` 时默认走手机拉取，不影响交付。
+- **不需要**：`ASC_APP_ID`、Apple Developer 协议与账号、App Store Connect 应用、iOS 描述文件、APNs Push Key、EAS Submit 的 ASC API Key、TestFlight。
+
+两种设置方式：
+
+1. **手动（推荐首发）**：不设 `MOBILE_RELEASE_ENABLED`。GitHub Actions → `Release Mobile` → `Run workflow`，填 `release_tag=vX.Y.Z`、`platform=android`；先用默认 `dry_run=true` 看计划，确认后改成 `false` 真正交付。
+2. **自动化**：先设 GitHub variable `MOBILE_RELEASE_PLATFORM=android`，再设 `MOBILE_RELEASE_ENABLED=true`。桌面正式 Release 完成后只会走 Android 分支；手动触发时传入 `platform` 仍可覆盖该变量。
+
+产物是正式签名 APK（`eas.json` 的 `production.android.buildType: "apk"`），不提交 Google Play。上传前用 apksigner 校验安装包结构与签名并拒绝默认 debug keystore；成功后在 Release 附件写入 `mobile-release-android.json`（源码提交、输入摘要、移动版本、EAS build ID、APK 名与 SHA-256）。
+
+## 凭据获取与 GitHub 配置
+
+- **`EXPO_TOKEN`**：CI 里 EAS CLI 不做交互式 `eas login`，只认 `EXPO_TOKEN` 环境变量。登录 Expo 账号后打开 `https://expo.dev/settings/access-tokens`，点 **Create token** 生成并复制（只显示一次）。生产建议使用 **robot user**：在账号或组织里建一个非交互成员、授予 Developer 或更高角色，再为它单独建 token —— 权限可收敛、可单独吊销，也不会随个人账号变动失效。
+- **`EXPO_PROJECT_ID`**：EAS 项目的 UUID。可在 expo.dev 项目页看到，或在 `mobile/` 执行 `bunx eas-cli@25.3.0 project:info` 读取；首次可用 `eas init` 关联项目。仓库故意不把账号标识写进 `app.json`，`app.config.ts#withEasProject` 会在构建时校验 UUID 格式并注入 `extra.eas.projectId`。
+- **`EXPO_OWNER`**：拥有该项目的 Expo 账号名或组织 slug，与 `EXPO_PROJECT_ID` 同属公开标识。
+- **GitHub 配置位置**：仓库 → Settings → Secrets and variables → Actions。Secret 用 **New repository secret** 建 `EXPO_TOKEN`；Variables 标签用 **New repository variable** 建 `EXPO_PROJECT_ID`、`EXPO_OWNER`，以及按需的 `MOBILE_RELEASE_PLATFORM`、`MOBILE_RELEASE_ENABLED`。也可用 `gh secret set EXPO_TOKEN` 与 `gh variable set <NAME>`。
+- **Android keystore**：在 `mobile/` 执行 `bunx eas-cli@25.3.0 credentials:configure-build --platform android --profile production`，按提示让 EAS 生成或上传现有 keystore，并**离线备份**；后续升级必须保持同一签名身份。`eas.json` 的 `cli.appVersionSource: "remote"` 与 `autoIncrement: true` 由 EAS 管理构建号，首次需要初始化。
+
+## 桌面发版与手机包的关系
+
+移动端使用独立的用户版本号，只由 `scripts/release.ts --mobile` 显式递增；release-please 不再同步 `mobile/package.json` 和 `mobile/app.json`。这两个文件是移动端交付指纹的一部分，若每次桌面发版都改版本号，指纹必然变化，会导致每个桌面版本都重新构建手机包。
+
+桌面专用改动（移动端未 import 的共享文件）、测试、文档和生成文件不触发新包。`scripts/mobile-release.ts` 对比该平台**上一次成功交付**的输入摘要：摘要不变时 Android 把上次 APK 挂到新 Release（不重新构建），iOS 直接跳过；摘要变了但移动版本没递增会阻止发布，提示先 bump 版本。
 
 ## 日常发版
 

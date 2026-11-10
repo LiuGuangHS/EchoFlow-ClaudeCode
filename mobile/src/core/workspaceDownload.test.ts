@@ -93,5 +93,5 @@ test('redirects and oversized responses are never saved', async () => {
 })
 test('export names cannot escape the cache directory', () => {
   expect(exportFileName('../../bad:name.txt')).toBe('bad_name.txt')
-  expect(exportFileName('..')).toBe('cc-haha-file')
+  expect(exportFileName('..')).toBe('echoflow-code-file')
 })

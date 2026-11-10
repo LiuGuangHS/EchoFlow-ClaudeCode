@@ -43,7 +43,7 @@ export function Welcome({
           color: colors.ink,
         }}
       >
-        cc-haha
+        EchoFlow Code
       </Text>
       <Text style={{ marginTop: 8, fontSize: 16, lineHeight: 24, color: colors.ink2 }}>
         电脑上的任务在跑，你在手机上看着、拍板。
@@ -102,7 +102,7 @@ export function Welcome({
 }
 
 const steps = [
-  { title: '在电脑上打开 cc-haha', hint: '' },
+  { title: '在电脑上打开 EchoFlow Code', hint: '' },
   { title: '进入 设置 → 手机连接', hint: '同一个 Wi-Fi 用局域网；外出选择 Cloudflare 快速连接或固定域名' },
   { title: '用手机扫页面上的二维码', hint: '' },
 ]

@@ -258,7 +258,7 @@ export function deliveryNote(
   if (push?.status === 'registered' && push.issue === 'relayFailing')
     return `${push.error ?? '电脑发送推送失败'}。如果电脑要通过代理上网，请在电脑端「设置 → 通用」里配置网络代理，再点「测试通知」确认。`
   if (duty && push?.status === 'registered')
-    return '离开 App 后，靠通知栏里那条「正在值守」保持与电脑的连接。小米、华为、OPPO、vivo 等手机还要在应用设置里允许自启动，并在最近任务里锁定 cc-haha，否则可能被系统清理。'
+    return '离开 App 后，靠通知栏里那条「正在值守」保持与电脑的连接。小米、华为、OPPO、vivo 等手机还要在应用设置里允许自启动，并在最近任务里锁定 EchoFlow Code，否则可能被系统清理。'
   if (push?.issue === 'deviceNotConfigured')
     return '此版本暂不支持后台推送，请在 App 内查看任务提醒。无需重复修改手机通知权限。'
   if (push?.issue === 'deviceUnavailable')
@@ -292,7 +292,7 @@ export const TEST_NOTIFICATION_DELAY_SECONDS = 5
  * （`eventType: 'test'`），App 在前台时也弹横幅。
  */
 export const testNotificationContent = {
-  title: '测试通知 · cc-haha',
+  title: '测试通知 · EchoFlow Code',
   body: '看到这条，说明这台手机的系统通知正常。',
   data: { eventType: 'test' },
 }
@@ -433,7 +433,7 @@ export function versionLabel(version: string | undefined, build?: string | null)
   return build ? `${version} (${build})` : version
 }
 
-export const repoUrl = 'https://github.com/NanmiCoder/cc-haha'
+export const repoUrl = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode'
 export const aboutLinks = {
   guide: repoUrl,
   issues: `${repoUrl}/issues`,

@@ -245,7 +245,7 @@ function ChangesPage({ hostId, id }: { hostId: string; id: string }) {
                 })}
               </Group>
               <Footnote style={{ paddingTop: 10 }}>
-                这是 cc-haha 在这一轮开始前存下的检查点。想看工作区里所有没提交的改动，去「
+                这是 EchoFlow Code 在这一轮开始前存下的检查点。想看工作区里所有没提交的改动，去「
                 <Text
                   accessibilityRole="link"
                   onPress={openWorkspace}

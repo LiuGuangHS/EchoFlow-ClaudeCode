@@ -12,7 +12,7 @@ afterEach(() => {
 const config = {
   name: 'cc-haha',
   slug: 'cc-haha-mobile',
-  android: { package: 'app.cchaha.mobile', permissions: ['CAMERA'] },
+  android: { package: 'com.echoflow.code.mobile', permissions: ['CAMERA'] },
 }
 function fixture(value: unknown) {
   const directory = mkdtempSync(join(tmpdir(), 'cc-haha-fcm-config-'))

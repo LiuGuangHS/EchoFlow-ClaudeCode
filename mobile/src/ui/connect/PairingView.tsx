@@ -59,7 +59,7 @@ export function PairingView({
             <InlineError text={state.error} style={{ alignSelf: 'stretch' }} />
           ) : (
             <Text style={{ fontSize: 15, lineHeight: 23, color: colors.ink2, textAlign: 'center' }}>
-              电脑上的 cc-haha 会弹出确认。核对是这台手机，再点批准。
+              电脑上的 EchoFlow Code 会弹出确认。核对是这台手机，再点批准。
             </Text>
           )}
           <View

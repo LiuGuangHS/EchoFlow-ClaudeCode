@@ -44,7 +44,7 @@ test('lock screen displays only real sessions and picks waiting approvals ahead 
   })
   expect(value?.actionLabel).toBeUndefined()
   expect(value?.allowUrl).toBe(
-    'cchaha:///chat/one?host=host-a&requestId=request-id&notificationAction=allow'
+    'codemobile:///chat/one?host=host-a&requestId=request-id&notificationAction=allow'
   )
   expect(JSON.stringify(value)).not.toContain('192.168')
   expect(

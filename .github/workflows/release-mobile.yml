@@ -43,7 +43,7 @@ jobs:
         id: inputs
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
-          PLATFORM: ${{ inputs.platform || 'all' }}
+          PLATFORM: ${{ inputs.platform || vars.MOBILE_RELEASE_PLATFORM || 'all' }}
         shell: bash
         run: |
           set -euo pipefail

@@ -231,14 +231,14 @@ function Hosts() {
               ))}
             </Group>
             <Footnote>
-              电脑休眠或没打开 cc-haha 时连不上。左滑或长按可移除，只会删掉手机上的连接，电脑上的会话还在。
+              电脑休眠或没打开 EchoFlow Code 时连不上。左滑或长按可移除，只会删掉手机上的连接，电脑上的会话还在。
             </Footnote>
           </>
         ) : (
           <EmptyState
             icon="laptop"
             title="先连接第一台电脑"
-            detail="打开电脑上的 cc-haha，在「设置 → 手机连接」中开启局域网，或选择 Cloudflare 快速连接 / 固定域名，再用手机扫码。"
+            detail="打开电脑上的 EchoFlow Code，在「设置 → 手机连接」中开启局域网，或选择 Cloudflare 快速连接 / 固定域名，再用手机扫码。"
           />
         )}
         <Group style={{ marginTop: 22 }}>

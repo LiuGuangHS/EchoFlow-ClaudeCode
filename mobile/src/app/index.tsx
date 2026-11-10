@@ -153,7 +153,7 @@ export default function Home() {
               accessibilityRole="header"
               style={{ fontSize: 20, lineHeight: 24, fontWeight: '700', letterSpacing: -0.2, color: colors.ink }}
             >
-              cc-haha
+              EchoFlow Code
             </Text>
           </View>
           <FloatButton
