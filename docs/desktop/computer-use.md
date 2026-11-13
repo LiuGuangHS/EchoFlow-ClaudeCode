@@ -27,9 +27,9 @@ Windows 的后台文字替换依赖控件提供可设置的值；模拟逐字输
 
 **确认一次后，Computer Use 可以操作这台电脑上的所有受支持应用，不再逐个请求应用授权。** macOS 系统权限、全局开关和目标有效性检查仍然生效。Windows 和 Linux 不会显示 macOS 的权限卡，也不需要「下载 Python」或「安装环境」。
 
-![macOS 设置示例：Computer Use 开关与系统权限](../images/app/zh-CN/settings-computer-use.webp)
+![Linux 设置示例：Computer Use 未启用，当前图形会话的运行组件不可用](../images/app/zh-CN/settings-computer-use.webp)
 
-上图为 macOS 示例。Windows 和 Linux 页面显示原生运行组件及对应平台的输入限制。
+上图展示 Linux 中功能关闭、当前图形会话无法访问辅助功能服务的状态，不表示 Linux 不受支持，也不是已授权操控的演示。Windows 和 Linux 显示原生运行组件及对应平台的输入限制；macOS 另有系统权限卡。
 
 ### macOS 系统权限
 

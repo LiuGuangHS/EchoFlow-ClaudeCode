@@ -61,6 +61,26 @@ test('the docs CLI checks all README links and screenshot locales', async (t) =>
   await t.test('accepts valid bilingual README references', async () => {
     assert.match((await check()).stdout, /Documentation check passed/)
   })
+  for (const width of [2000, 1206]) {
+    await t.test(`${width === 2000 ? 'accepts' : 'rejects stale'} ${width}px H5 screenshots`, async () => {
+      const h5Image = Buffer.from(image)
+      h5Image.writeUIntLE(width - 1, 24, 3)
+      h5Image.writeUIntLE(4349, 27, 3)
+      const screenshots = ['en', 'zh-CN'].flatMap((locale) =>
+        ['h5-session', 'h5-sessions'].map((basename) => `docs/images/app/${locale}/${basename}.webp`))
+      try {
+        for (const screenshot of screenshots) await write(screenshot, h5Image)
+        if (width === 2000) {
+          assert.match((await check()).stdout, /Documentation check passed/)
+        } else {
+          await assert.rejects(check(), (error) => error.code === 1
+            && screenshots.every((screenshot) => error.stderr.includes(`${screenshot}: width 1206, expected 2000`)))
+        }
+      } finally {
+        for (const screenshot of screenshots) await fs.rm(path.join(root, screenshot), { force: true })
+      }
+    })
+  }
   for (const [name, locale] of readmes) {
     await t.test(`${name}: broken local links fail the CLI`, async () => {
       await write(name, `${content(locale)}\n[Broken](missing.md)\n`)

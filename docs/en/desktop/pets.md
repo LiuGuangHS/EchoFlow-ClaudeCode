@@ -20,7 +20,7 @@ The pet is **off by default**:
 3. Pick one from **Built-in pets**.
 4. Turn on **Show desktop pet**.
 
-![Settings → Pets: four built-in pets and appearance controls (Chinese interface)](../../images/app/en/settings-pets.webp)
+![Settings → Pets: four built-in pets and appearance controls](../../images/app/en/settings-pets.webp)
 
 ## The four built-in pets
 
@@ -57,7 +57,7 @@ Clicking a row raises the main window and opens that session. Permissions are st
 
 ## Making your own
 
-![Add a pet: three ways to create your own (Chinese interface)](../../images/app/en/pet-create.webp)
+![Add a pet: three ways to create your own](../../images/app/en/pet-create.webp)
 
 Click **Add pet** to the right of **Your pets**. Every image is processed on your own machine — nothing is uploaded, and nothing costs conversation credits.
 

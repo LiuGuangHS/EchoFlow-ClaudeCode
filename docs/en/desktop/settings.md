@@ -19,7 +19,7 @@ You'll come here once during setup and rarely again. Full steps in [Connecting a
 
 General covers four areas: appearance and replies, how the agent works, network and notifications, and local data. Check the first two before your first session; adjust the others when you need them.
 
-![Settings → General: color themes, language, output style, default permissions (Chinese interface)](../../images/app/en/settings-general.webp)
+![Settings → General: theme, interface language, and font settings](../../images/app/en/settings-general.webp)
 
 ### Before your first session: permissions and replies
 
@@ -121,7 +121,9 @@ Let Claude read the screen, click, and type. Enable it, confirm the global conse
 
 ## Token usage
 
-![Settings → Token usage: heatmap and stat cards (Chinese interface)](../../images/app/en/settings-usage.webp)
+![Settings → Token usage: the default EchoFlow profile and example records with zero token usage](../../images/app/en/settings-usage.webp)
+
+The screenshot uses example conversation records with zero token usage; no online model was run.
 
 A usage dashboard computed from the Claude Code session records on this machine. Everything is calculated locally and nothing is uploaded.
 

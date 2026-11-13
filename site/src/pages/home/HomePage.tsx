@@ -32,12 +32,12 @@ const VIDEO = 'https://pollen-batch-41236914.figma.site/_components/v2/f0ee2dae7
 // The film is hosted on the CDN; versioned keys keep cached copies from going stale.
 const FILM = 'https://cdn.zizhi1.com/cc-haha/site/cchaha-film-1080p-v2.mp4'
 const featureIcons: Record<FeatureId, LucideIcon> = { teams: UsersRound, 'computer-use': MousePointer2, models: Layers, workbench: PanelsTopLeft, skills: Store }
-// Real captures from the desktop app and the Android app; both locales share the Chinese interface.
+// Current desktop and H5 browser UI with synthetic/recorded demos; both locales share the Chinese interface.
 const featureImages: Record<FeatureId, string> = { teams: teamsShot, 'computer-use': computerUseShot, models: modelsShot, workbench: workbenchShot, skills: skillsShot }
 const phoneScreens = [phoneHome, phoneApproval, phoneReply]
-const DESKTOP_SHOT_SIZE = { width: 2000, height: 1300 }
+const DESKTOP_SHOT_SIZE = { width: 2000, height: 1250 }
 const FEATURE_IMAGE_SIZE = { width: 2000, height: 1250 }
-const PHONE_SHOT_SIZE = { width: 900, height: 2000 }
+const PHONE_SHOT_SIZE = { width: 2000, height: 4350 }
 const abilityIcons = [ShieldCheck, MessageCircleQuestion, Send]
 const stepIcons = [Download, SlidersHorizontal, FolderOpen, ScanEye]
 const taskSteps = {
@@ -107,7 +107,7 @@ function Nav({ locale }: { locale: LandingLocale }) {
   return <header className="wander-header">
     <a className="wander-wordmark" href={toSiteHref(en ? '/en' : '/')} aria-label="EchoFlow Code">EchoFlow Code</a>
     <nav aria-label={en ? 'Main navigation' : '主导航'} id="wander-nav" className="wander-nav" data-open={open}>
-      <a href="#mobile" onClick={() => setOpen(false)}>{en ? 'Phone app' : '手机 App'}</a>
+      <a href="#mobile" onClick={() => setOpen(false)}>{en ? 'Phone browser access' : '手机浏览器访问'}</a>
       <a href="#discover" onClick={() => setOpen(false)}>{en ? 'Discover' : '发现可能'}</a>
       <a href="#how-it-works" onClick={() => setOpen(false)}>{en ? 'How it works' : '如何开始'}</a>
       <a href="#faqs" onClick={() => setOpen(false)}>{en ? 'FAQs' : '常见问题'}</a>
@@ -133,6 +133,7 @@ function Hero({ locale, paused, setPaused }: { locale: LandingLocale; paused: bo
         <p className="wander-hero__description">{c.hero.description.map(sentence => <span key={sentence}>{sentence}</span>)}</p>
         <div className="wander-hero__actions"><a className="wander-primary" href={downloadHref}><Download size={17} />{download}</a><a className="wander-secondary" href={GITHUB_URL} target="_blank" rel="noreferrer"><Icon name="github" size={17} />GitHub</a></div>
         <p className="wander-hero__phone">{c.hero.phoneLabel}<a href={MOBILE_LINKS.android} aria-label={c.downloads.androidLabel}>{c.downloads.android}</a><span aria-hidden="true">·</span><a href={MOBILE_LINKS.testFlight} aria-label={c.downloads.iphoneLabel}>{c.downloads.iphone}</a></p>
+        <p className="wander-feedback">{c.screenshotNote}</p>
       </div>
       <figure className="wander-hero__visual"><img className="wander-hero__desktop" src={heroDesktop} alt={c.hero.desktopAlt} width={DESKTOP_SHOT_SIZE.width} height={DESKTOP_SHOT_SIZE.height} fetchPriority="high" /><img className="wander-hero__phone-shot" src={phoneApproval} alt={c.hero.phoneAlt} width={PHONE_SHOT_SIZE.width} height={PHONE_SHOT_SIZE.height} /></figure>
     </div>
@@ -145,7 +146,7 @@ function Mobile({ locale, onEnlarge }: { locale: LandingLocale; onEnlarge: (imag
   const en = locale === 'en'
   return <section className="wander-mobile wander-section" id="mobile" aria-labelledby="mobile-title">
     <div className="wander-mobile__copy">
-      <span className="wander-eyebrow">01 / {en ? 'THE PHONE APP' : '手机 App'}</span>
+      <span className="wander-eyebrow">01 / {en ? 'PHONE BROWSER ACCESS' : '手机浏览器访问'}</span>
       <h2 id="mobile-title">{en ? <>Step away.<br />Keep <em>going.</em></> : <>离开电脑，<br />也能<em>接着干。</em></>}</h2>
       <p className="wander-mobile__lede">{c.mobile.description}</p>
       <ul className="wander-mobile__abilities">{c.mobile.abilities.map((item, index) => { const Symbol = abilityIcons[index]; return <li key={item.title}><span className="wander-mobile__icon"><Symbol size={18} strokeWidth={1.6} /></span><strong>{item.title}</strong><span>{item.body}</span></li> })}</ul>
@@ -242,7 +243,7 @@ function Closing({ locale }: { locale: LandingLocale }) {
   const downloadHref = toSiteHref(downloadPagePath(locale, platform))
   return <footer className="wander-closing" id="download"><img className="wander-landscape" src={landscape} alt="" loading="lazy" /><div className="wander-closing__content"><span className="wander-eyebrow">{en ? 'YOUR TIME. YOUR POSSIBILITIES.' : '你的时间，你的可能。'}</span><h2>{en ? <>Your next idea<br />starts <em>here.</em></> : <>下一件想做的事，<br /><em>从这里开始。</em></>}</h2><p>{c.closing.body}</p><div className="wander-closing__groups">
       <div className="wander-closing__group" role="group" aria-labelledby="closing-desktop"><span className="wander-closing__label" id="closing-desktop"><Laptop size={14} />{en ? 'Desktop app' : '桌面端'}</span><div className="wander-platforms" aria-label={en ? 'Choose your operating system' : '选择你的操作系统'}>{['macOS', 'Windows', 'Linux'].map((name, index) => { const Symbol = [Command, Monitor, Laptop][index]; return <button key={name} aria-pressed={platform === name} onClick={() => setPlatform(name)}><Symbol size={15} />{name}</button> })}</div><a className="wander-primary wander-download" href={downloadHref}><Download size={18} />{en ? `Get EchoFlow Code for ${platform}` : `下载 ${platform} 版`}<ArrowUpRight size={18} /></a><span className="wander-closing__hint">{en ? 'Choose your architecture on GitHub Releases · See LICENSE for use terms' : '前往 GitHub Releases 选择对应架构 · 使用条款见 LICENSE'}</span></div>
-      <div className="wander-closing__group" role="group" aria-labelledby="closing-phone"><span className="wander-closing__label" id="closing-phone"><Smartphone size={14} />{en ? 'Phone app' : '手机 App'}</span><a className="wander-secondary wander-download" href={MOBILE_LINKS.android} aria-label={c.downloads.androidLabel}><Download size={18} />{c.downloads.android}<ArrowUpRight size={18} /></a><a className="wander-secondary wander-download" href={MOBILE_LINKS.testFlight} aria-label={c.downloads.iphoneLabel}><Smartphone size={18} />{c.downloads.iphone}<ArrowUpRight size={18} /></a><span className="wander-closing__hint">{c.downloads.requirement}</span></div>
+      <div className="wander-closing__group" role="group" aria-labelledby="closing-phone"><span className="wander-closing__label" id="closing-phone"><Smartphone size={14} />{en ? 'Phone browser access' : '手机浏览器访问'}</span><a className="wander-secondary wander-download" href={MOBILE_LINKS.android} aria-label={c.downloads.androidLabel}><Download size={18} />{c.downloads.android}<ArrowUpRight size={18} /></a><a className="wander-secondary wander-download" href={MOBILE_LINKS.testFlight} aria-label={c.downloads.iphoneLabel}><Smartphone size={18} />{c.downloads.iphone}<ArrowUpRight size={18} /></a><span className="wander-closing__hint">{c.downloads.requirement}</span></div>
     </div></div><div className="wander-footer"><a className="wander-wordmark" href="#wander-title">EchoFlow Code</a><span>{en ? 'A little more room for life.' : '给生活，多留一点空间。'}</span><nav aria-label={en ? 'Footer navigation' : '页脚导航'}><a href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Docs' : '文档'}</a><a href={GITHUB_URL} target="_blank" rel="noreferrer"><Code2 size={14} />GitHub</a><a href={toSiteHref(en ? '/en/start/privacy' : '/start/privacy')}>{en ? 'Privacy' : '隐私'}</a><a href={toSiteHref(en ? '/' : '/en')} onClick={() => rememberLocale(en ? 'zh' : 'en')}>{en ? '中文' : 'English'}</a></nav></div></footer>
 }
 

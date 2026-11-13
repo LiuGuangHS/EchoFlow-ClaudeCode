@@ -1,5 +1,6 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { appendFileSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { dirname, join, resolve, sep } from 'node:path'
 import { baselineCases } from './baseline/cases'
 import { executeBaselineCase } from './baseline/execute'
 import { executeDesktopSmoke } from './desktop-smoke/execute'
@@ -7,6 +8,7 @@ import { lanesForMode } from './modes'
 import { executeProviderSmoke } from './provider-smoke/execute'
 import { writeReport } from './reporter'
 import type {
+  CandidateFingerprint,
   CoverageSuiteSummary,
   ImpactSummary,
   LaneCategory,
@@ -23,19 +25,100 @@ function nowId() {
   return new Date().toISOString().replace(/[:.]/g, '-')
 }
 
-async function output(cmd: string[], cwd: string) {
-  const proc = Bun.spawn(cmd, {
+async function gitOutput(args: string[], cwd: string) {
+  const proc = Bun.spawn(['git', '-c', 'core.fsmonitor=false', '-c', 'core.filemode=true', ...args], {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
   })
-  const stdout = await new Response(proc.stdout).text()
-  const stderr = await new Response(proc.stderr).text()
-  const code = await proc.exited
-  if (code !== 0) {
-    return null
+  const [stdout, , code] = await Promise.all([
+    new Response(proc.stdout).arrayBuffer(),
+    new Response(proc.stderr).arrayBuffer(),
+    proc.exited,
+  ])
+  if (code !== 0 || proc.signalCode) {
+    throw new Error(`git ${args[0]} failed (exit ${code}, signal ${proc.signalCode ?? 'none'})`)
   }
-  return (stdout || stderr).trim()
+  return Buffer.from(stdout)
+}
+
+const sha256 = (data: Buffer | string) => createHash('sha256').update(data).digest('hex')
+
+async function fingerprint(rootDir: string): Promise<CandidateFingerprint> {
+  let stage = 'HEAD'
+  try {
+    const head = (await gitOutput(['rev-parse', '--verify', 'HEAD'], rootDir)).toString().trim()
+    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(head)) throw new Error('invalid full HEAD')
+    const diffArgs = ['--binary', '--full-index', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames']
+    stage = 'index diff'
+    const indexDiffSha256 = sha256(await gitOutput(['diff', '--cached', ...diffArgs, 'HEAD', '--'], rootDir))
+    stage = 'worktree diff'
+    const worktreeDiffSha256 = sha256(await gitOutput(['diff', ...diffArgs, '--'], rootDir))
+    stage = 'untracked files'
+    const listed = await gitOutput(['ls-files', '--others', '--exclude-standard', '-z'], rootDir)
+    const paths: Buffer[] = []
+    let start = 0
+    for (let i = 0; i < listed.length; i += 1) {
+      if (listed[i] === 0) {
+        paths.push(listed.subarray(start, i))
+        start = i + 1
+      }
+    }
+    if (start !== listed.length) throw new Error('unterminated Git path list')
+    const hash = createHash('sha256')
+    const frame = (value: Buffer | string) => {
+      const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value)
+      hash.update(`${bytes.length}\0`).update(bytes)
+    }
+    const root = Buffer.from(resolve(rootDir) + sep)
+    for (const path of paths.sort(Buffer.compare)) {
+      // Keep raw filename bytes; reject symlink ancestors instead of reading through them.
+      for (let i = 0; i < path.length; i += 1) {
+        if (path[i] === 47 && !lstatSync(Buffer.concat([root, path.subarray(0, i)])).isDirectory()) {
+          throw new Error('untracked path has a non-directory ancestor')
+        }
+      }
+      const absolute = Buffer.concat([root, path])
+      const stat = lstatSync(absolute)
+      frame(path)
+      frame(String(stat.mode & 0o777))
+      if (stat.isSymbolicLink()) {
+        frame('symlink')
+        frame(readlinkSync(absolute, { encoding: 'buffer' }))
+      } else if (stat.isFile()) {
+        frame('file')
+        const fd = openSync(absolute, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+        try {
+          frame(sha256(readFileSync(fd)))
+        } finally {
+          closeSync(fd)
+        }
+      } else {
+        throw new Error('unsupported untracked file type')
+      }
+    }
+    return { status: 'valid', head, indexDiffSha256, worktreeDiffSha256, untrackedSha256: hash.digest('hex') }
+  } catch (error) {
+    return { status: 'unknown', error: `${stage}: ${error instanceof Error ? error.message : String(error)}` }
+  }
+}
+
+function candidateProvenance(before: CandidateFingerprint, after: CandidateFingerprint): NonNullable<QualityGateReport['candidate']> {
+  const failures: string[] = []
+  if (before.status === 'unknown') failures.push(`Before fingerprint unknown: ${before.error}`)
+  if (after.status === 'unknown') failures.push(`After fingerprint unknown: ${after.error}`)
+  const invalid = failures.length > 0
+  if (before.status === 'valid' && after.status === 'valid') {
+    for (const key of ['head', 'indexDiffSha256', 'worktreeDiffSha256', 'untrackedSha256'] as const) {
+      if (before[key] !== after[key]) failures.push(`Candidate changed: ${key}`)
+    }
+  }
+  return {
+    before, after,
+    status: invalid ? 'invalid' : failures.length ? 'changed' : 'stable',
+    failures,
+    limitation: 'Endpoint equality only; cannot detect intermediate change-and-restore. Collection is not an atomic filesystem snapshot.',
+  }
 }
 
 function sanitizeId(value: string) {
@@ -82,15 +165,6 @@ async function pipeToLog(
     const chunk = Buffer.from(value)
     appendFileSync(logPath, chunk)
     write(chunk)
-  }
-}
-
-async function gitInfo(rootDir: string) {
-  const sha = await output(['git', 'rev-parse', '--short', 'HEAD'], rootDir)
-  const status = await output(['git', 'status', '--short'], rootDir)
-  return {
-    sha,
-    dirty: Boolean(status),
   }
 }
 
@@ -163,13 +237,17 @@ async function runCommandLane(lane: LaneDefinition, options: QualityGateOptions)
     pipeToLog(proc.stderr, logPath, writeStderr),
   ])
 
+  const signalCode = proc.signalCode
+  if (signalCode) appendFileSync(logPath, `[quality-gate] terminated by signal: ${signalCode}\n`)
   return {
     id: lane.id,
     title: lane.title,
-    status: exitCode === 0 ? 'passed' : 'failed',
+    status: exitCode === 0 && !signalCode ? 'passed' : 'failed',
     command,
     durationMs: Date.now() - started,
     exitCode,
+    signalCode,
+    ...(signalCode ? { error: `Command terminated by signal: ${signalCode}` } : {}),
     logPath,
   }
 }
@@ -476,11 +554,27 @@ export async function runQualityGateLanes(
   const selectedLanes = filterLanesForOptions(lanes, options)
 
   const runOptions = { ...options, runId, runOutputDir: outputDir }
+  const before = await fingerprint(options.rootDir)
   const rawResults: LaneResult[] = []
   for (const lane of selectedLanes) {
-    const result = await executeLane(lane, runOptions)
+    const started = Date.now()
+    let result: LaneResult
+    try {
+      result = await executeLane(lane, runOptions)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const logPath = join(outputDir, 'logs', `${sanitizeId(lane.id)}.log`)
+      mkdirSync(dirname(logPath), { recursive: true })
+      appendFileSync(logPath, `[quality-gate] executor failed: ${message}\n`)
+      result = {
+        id: lane.id, title: lane.title, command: lane.command, status: 'failed',
+        durationMs: Date.now() - started, error: message, logPath,
+      }
+    }
     rawResults.push(withLaneMetadata(lane, result))
   }
+  const after = await fingerprint(options.rootDir)
+  const candidate = candidateProvenance(before, after)
   const releaseResults = enforceReleaseLiveLanes(options, selectedLanes, rawResults)
   const results = enforceBlockedImpact(options, releaseResults)
 
@@ -493,7 +587,22 @@ export async function runQualityGateLanes(
     startedAt,
     finishedAt: new Date().toISOString(),
     rootDir: options.rootDir,
-    git: await gitInfo(options.rootDir),
+    git: {
+      sha: after.status === 'valid' ? after.head : null,
+      dirty: after.status === 'valid'
+        ? [after.indexDiffSha256, after.worktreeDiffSha256, after.untrackedSha256].some(value => value !== sha256(''))
+        : null,
+    },
+    status: candidate.failures.length || results.some(result => result.status === 'failed') ? 'failed' : 'passed',
+    candidate,
+    runtime: {
+      name: process.versions.bun ? 'bun' : 'node',
+      version: process.versions.bun ?? process.versions.node,
+      executable: process.execPath,
+      argv: [...process.argv],
+      platform: process.platform,
+      arch: process.arch,
+    },
     results,
     impact: parseImpactSummary(results),
     coverage: parseCoverageSummary(results),

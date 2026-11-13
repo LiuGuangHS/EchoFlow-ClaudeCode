@@ -78,8 +78,8 @@ describe('DesktopUiPreferencesService', () => {
     expect(result.preferences).toEqual({
       schemaVersion: 7,
       profile: {
-        displayName: 'cc-haha',
-        subtitle: 'github.com/NanmiCoder/cc-haha',
+        displayName: 'EchoFlow Code',
+        subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
         avatarFile: null,
         avatarUpdatedAt: null,
       },
@@ -95,6 +95,40 @@ describe('DesktopUiPreferencesService', () => {
         projectSortBy: 'updatedAt',
       },
     })
+  })
+
+  test.each([
+    { displayName: 'Local Operator', subtitle: 'operator.example' },
+    { displayName: 'cc-haha', subtitle: 'github.com/NanmiCoder/cc-haha' },
+  ])('preserves a saved schema-4 profile on read and unrelated writes: %j', async (identity) => {
+    const profile = {
+      ...identity,
+      avatarFile: 'profile/avatar.png',
+      avatarUpdatedAt: '2025-01-01T00:00:00.000Z',
+      futureProfile: { keep: true },
+    }
+    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    const fixture = { schemaVersion: 4, profile, futureField: { keep: true } }
+    await fs.writeFile(path.join(tmpDir, 'cc-haha', 'desktop-ui.json'), JSON.stringify(fixture))
+
+    const service = new DesktopUiPreferencesService()
+    expect((await service.readPreferences()).preferences.profile).toEqual(profile)
+    expect(await readDesktopUiFile()).toEqual(fixture)
+    const after = await service.updateSidebarPreferences({ pinnedProjects: ['/workspace/alpha'] })
+    expect(after.profile).toEqual(profile)
+    expect(await readDesktopUiFile()).toMatchObject({ schemaVersion: 7, profile, futureField: { keep: true } })
+  })
+
+  test.each([
+    [{ subtitle: 'operator.example' }, { displayName: 'EchoFlow Code', subtitle: 'operator.example' }],
+    [{ displayName: 'Local Operator' }, { displayName: 'Local Operator', subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode' }],
+    [{ displayName: '   ', subtitle: 42 }, { displayName: 'EchoFlow Code', subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode' }],
+  ])('fills only missing or invalid profile fields: %j', async (profile, expected) => {
+    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.writeFile(path.join(tmpDir, 'cc-haha', 'desktop-ui.json'), JSON.stringify({ schemaVersion: 4, profile }))
+
+    const service = new DesktopUiPreferencesService()
+    expect((await service.readPreferences()).preferences.profile).toEqual({ ...expected, avatarFile: null, avatarUpdatedAt: null })
   })
 
   test('normalizes old schema files and preserves unknown fields when updating sidebar preferences', async () => {
@@ -136,8 +170,8 @@ describe('DesktopUiPreferencesService', () => {
       schemaVersion: 7,
       futureField: { keep: true },
       profile: {
-        displayName: 'cc-haha',
-        subtitle: 'github.com/NanmiCoder/cc-haha',
+        displayName: 'EchoFlow Code',
+        subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
         avatarFile: null,
         avatarUpdatedAt: null,
       },
@@ -159,8 +193,8 @@ describe('DesktopUiPreferencesService', () => {
       schemaVersion: 7,
       futureField: { keep: true },
       profile: {
-        displayName: 'cc-haha',
-        subtitle: 'github.com/NanmiCoder/cc-haha',
+        displayName: 'EchoFlow Code',
+        subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
         avatarFile: null,
         avatarUpdatedAt: null,
       },
@@ -191,7 +225,7 @@ describe('DesktopUiPreferencesService', () => {
 
     expect(result.exists).toBe(false)
     expect(result.preferences.sidebar.hiddenProjects).toEqual([])
-    expect(result.preferences.profile.displayName).toBe('cc-haha')
+    expect(result.preferences.profile.displayName).toBe('EchoFlow Code')
     expect(result.preferences.pet).toEqual(DEFAULT_PET_PREFERENCES)
     expect(result.preferences.projectDisplayNames).toEqual({})
     expect(files.some((name) => name.startsWith('desktop-ui.json.invalid-'))).toBe(true)
@@ -599,8 +633,8 @@ describe('desktop UI preferences API', () => {
       preferences: {
         schemaVersion: 7,
         profile: {
-          displayName: 'cc-haha',
-          subtitle: 'github.com/NanmiCoder/cc-haha',
+          displayName: 'EchoFlow Code',
+          subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
           avatarFile: null,
           avatarUpdatedAt: null,
         },
@@ -628,8 +662,8 @@ describe('desktop UI preferences API', () => {
       preferences: {
         schemaVersion: 7,
         profile: {
-          displayName: 'cc-haha',
-          subtitle: 'github.com/NanmiCoder/cc-haha',
+          displayName: 'EchoFlow Code',
+          subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
           avatarFile: null,
           avatarUpdatedAt: null,
         },
@@ -823,7 +857,7 @@ describe('desktop UI preferences API', () => {
     const response = await handleDesktopUiApi(request.req, request.url, request.segments)
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({
-      profile: { displayName: 'cc-haha', subtitle: 'github.com/NanmiCoder/cc-haha', avatarDataUrl: null },
+      profile: { displayName: 'EchoFlow Code', subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode', avatarDataUrl: null },
     })
   })
 

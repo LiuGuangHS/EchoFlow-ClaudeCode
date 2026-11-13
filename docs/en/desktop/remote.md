@@ -40,7 +40,9 @@ If an older configuration has no saved token, click **Generate token** to show a
 
 The scanned link carries the server address and token. Scan with your phone camera and open it in your usual Safari, Chrome, or system browser. Successful verification stores the connection in that browser's localStorage and removes the token from the address bar. Scanning again or opening a bookmark reconnects automatically. Temporary network failures do not forget pairing; choose **Retry** to use the saved credential. A revoked or regenerated token requires a fresh QR code.
 
-![A conversation in a phone browser: the same interface as the EchoFlow Code phone app (Chinese only)](../../images/app/en/h5-session.webp)
+![A sample H5 phone-browser conversation showing completed release notes (Chinese-only interface)](../../images/app/en/h5-session.webp)
+
+The screenshot uses sample conversations and local test data, not a live model run or a native phone app capture.
 
 ### The token is the credential
 
@@ -160,7 +162,7 @@ Phone pairing and access restrictions still apply. Traffic passes through Cloudf
 
 ## IM Adapters
 
-![Settings → IM Adapters: platform tabs and the Slack setup form (Chinese interface)](../../images/app/en/settings-im.webp)
+![Settings → IM Adapters: the unpaired Telegram setup form](../../images/app/en/settings-im.webp)
 
 **Settings → IM Adapters** supports eight platforms, each connected differently. These are the common setup paths; see the [messaging guide](../im/index.md) for full steps:
 

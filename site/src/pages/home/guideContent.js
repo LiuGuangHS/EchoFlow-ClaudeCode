@@ -14,9 +14,9 @@ export const guideContent = {
     primary: '从 0 到 1 开始', secondary: '先看真实案例', note: '从下载到第一条会话 · 约 20 分钟',
     showcaseLabel: '查看产品界面',
     showcase: [
-      { label: '写代码', window: '新建会话', kicker: '01 / 开始', title: '一句话，交代清楚任务。', body: '选好项目、模型与权限，从一条真实会话开始。', alt: 'EchoFlow Code 新建会话界面', href: '/start/first-session', action: '查看首次会话教程' },
-      { label: '操作应用', window: 'Computer Use', kicker: '02 / 特色能力', title: '让 Agent 走出代码编辑器。', body: 'macOS 原生操控其他应用，真实鼠标和键盘仍归你使用。', alt: 'EchoFlow Code 的 Computer Use 设置界面', href: '/desktop/computer-use', action: '查看 Computer Use 指南' },
-      { label: '审阅改动', window: '工作区', kicker: '03 / 交付', title: '看清每一处修改。', body: '从调用记录到文件差异，检查结果后再决定下一步。', alt: 'EchoFlow Code 工作区差异审阅界面', href: '/desktop/workspace', action: '查看工作区指南' }
+      { label: '写代码', window: '新建会话', kicker: '01 / 开始', title: '一句话，交代清楚任务。', body: '选好项目、模型与权限，从新建会话开始。', alt: 'EchoFlow Code 新建会话界面示例', href: '/start/first-session', action: '查看首次会话教程' },
+      { label: '操作应用', window: 'Computer Use', kicker: '02 / 特色能力', title: '让 Agent 走出代码编辑器。', body: 'macOS 原生操控其他应用，真实鼠标和键盘仍归你使用。图中为 Linux 禁用状态，运行组件不可用。', alt: 'EchoFlow Code 的 Linux Computer Use 设置界面：已禁用，运行组件不可用', href: '/desktop/computer-use', action: '查看 Computer Use 指南' },
+      { label: '审阅改动', window: '工作区', kicker: '03 / 交付', title: '看清每一处修改。', body: '从调用记录到文件差异，检查结果后再决定下一步。图中为合成会话与录制结果，非在线执行验收证据。', alt: 'EchoFlow Code 工作区：合成会话与录制的差异审阅示例', href: '/desktop/workspace', action: '查看工作区指南' }
     ],
     thesis: '先完成一件事，再理解每一个开关。',
     thesisBody: '不需要先读完所有功能。照着路径装好应用、接上模型、完成首次任务；遇到具体需求，再查设置和案例。',
@@ -41,7 +41,7 @@ export const guideContent = {
     allCases: '查看全部案例与技巧',
     settingsLabel: '04 / 配置地图', settingsTitle: '开关很多，先知道该去哪找。', settingsBody: '常用配置按问题归类。每一项的默认值、使用场景和影响范围，都在设置指南里展开。',
     settings: [['先能用', '服务商 · 模型 · 默认权限', '连上模型，决定 Agent 每一步能做什么。'], ['用得顺', '主题 · 语言 · 输出风格 · 快捷键', '让界面和回答适合你的习惯。'], ['连得稳', '代理 · 超时 · WebSearch · WebFetch', '排查请求慢、搜索不可用和网络限制。'], ['扩展工作流', 'Skills · Agents · MCP · 定时任务 · Computer Use', '让一次性的任务变成可复用的能力，在 macOS 上还能操控其他应用。']],
-    settingsLink: '逐项查看设置说明', settingsCaption: '真实界面 / Computer Use：macOS 原生控制，不占用真实鼠标。',
+    settingsLink: '逐项查看设置说明', settingsCaption: '界面示例 / Computer Use：Linux 上已禁用，运行组件不可用；不代表 macOS 或 Windows 原生端验收。',
     closingTitle: '从一个小任务开始。', closingBody: '先拿一个可以回退的项目练手。等你完成第一次交付，再把案例换成自己的工作。',
     footer: '本地优先的 AI 编程工作台，原创部分源码公开。文档随产品持续更新。'
   },
@@ -52,9 +52,9 @@ export const guideContent = {
     primary: 'Start from zero', secondary: 'Explore real examples', note: 'Download to first session · about 20 minutes',
     showcaseLabel: 'Explore the product UI',
     showcase: [
-      { label: 'Code', window: 'New session', kicker: '01 / BEGIN', title: 'Give it a real task.', body: 'Pick a project, model, and permission mode, then start a session.', alt: 'EchoFlow Code new session screen', href: '/en/start/first-session', action: 'Read the first session guide' },
-      { label: 'Use apps', window: 'Computer Use', kicker: '02 / DISTINCTIVE', title: 'Move beyond the editor.', body: 'On macOS, native app control leaves your physical mouse and keyboard free.', alt: 'EchoFlow Code Computer Use settings screen', href: '/en/desktop/computer-use', action: 'Read the Computer Use guide' },
-      { label: 'Review', window: 'Workspace', kicker: '03 / DELIVER', title: 'Inspect every change.', body: 'Follow tool calls and file diffs before deciding what to do next.', alt: 'EchoFlow Code workspace diff review screen', href: '/en/desktop/workspace', action: 'Read the workspace guide' }
+      { label: 'Code', window: 'New session', kicker: '01 / BEGIN', title: 'Give it a real task.', body: 'Pick a project, model, and permission mode, then start a session.', alt: 'EchoFlow Code new session screen example', href: '/en/start/first-session', action: 'Read the first session guide' },
+      { label: 'Use apps', window: 'Computer Use', kicker: '02 / DISTINCTIVE', title: 'Move beyond the editor.', body: 'On macOS, native app control leaves your physical mouse and keyboard free. The screenshot shows Linux with the feature disabled and runtime unavailable.', alt: 'EchoFlow Code Computer Use settings on Linux: disabled, runtime unavailable', href: '/en/desktop/computer-use', action: 'Read the Computer Use guide' },
+      { label: 'Review', window: 'Workspace', kicker: '03 / DELIVER', title: 'Inspect every change.', body: 'Follow tool calls and file diffs before deciding what to do next. The synthetic conversation and recorded results are not evidence of live execution acceptance testing.', alt: 'EchoFlow Code workspace: a synthetic conversation and recorded diff review example', href: '/en/desktop/workspace', action: 'Read the workspace guide' }
     ],
     thesis: 'Finish one task. Then learn the switches.', thesisBody: 'You do not need to learn every feature first. Install the app, connect one model, and complete a small task. Return to settings and examples when a need appears.',
     chapters: [['01', 'Discover', 'What it is and what it can do', '/en/start'], ['02', 'Begin', 'Install, connect, complete a session', '/en/start/first-session'], ['03', 'Configure', 'Everyday settings and advanced tools', '/en/desktop/settings'], ['04', 'Practice', 'Reproduce a complete workflow', '/en/cases']],
@@ -69,7 +69,7 @@ export const guideContent = {
     allCases: 'See all cases and tips',
     settingsLabel: '04 / SETTINGS MAP', settingsTitle: 'Many controls. One place to find them.', settingsBody: 'Find common settings by the problem they solve. The guide explains defaults, when to change them, and their scope.',
     settings: [['Get connected', 'Providers · models · permissions', 'Connect a model and decide what the agent can do.'], ['Make it yours', 'Theme · language · output style · shortcuts', 'Tune the interface and replies to your habits.'], ['Stay connected', 'Proxy · timeout · WebSearch · WebFetch', 'Diagnose slow requests and search or network restrictions.'], ['Extend the flow', 'Skills · Agents · MCP · schedules · Computer Use', 'Turn one-off work into reusable capabilities and control other apps on macOS.']],
-    settingsLink: 'Explore every setting', settingsCaption: 'Real UI / Computer Use: native macOS control without taking over the physical mouse.',
+    settingsLink: 'Explore every setting', settingsCaption: 'UI example / Computer Use on Linux: disabled, runtime unavailable; not macOS or Windows native app acceptance evidence.',
     closingTitle: 'Start with a small task.', closingBody: 'Practice on a project you can roll back. After the first delivery, adapt the cases to your own work.',
     footer: 'A local-first AI coding workbench whose original source is publicly viewable. This guide evolves with the product.'
   }

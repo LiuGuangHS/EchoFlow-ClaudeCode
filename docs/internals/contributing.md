@@ -55,10 +55,10 @@ bun install
 | --- | --- | --- | --- |
 | 本地迭代 | 手动 | 最窄的相关测试；`bun run check:impact` 选中的命令 | 秒级反馈 |
 | PR（必过） | `pull_request`，以及合入 `main` 后的 `push` | impact 选中的确定性 lane，含 `check:agent-flow`、`check:agent-e2e`；覆盖率只报告不阻塞 | 无模型、无 provider、无 secret、fork 可跑 |
-| 全量 | 每天定时（北京时间 03:00）+ 维护者手动触发 | 全部确定性 lane（不做路径选择）+ 模块图健康度 + `check:desktop-ui-smoke` | 仍然无模型、无 secret |
-| Release | 维护者手动 `bun run quality:release`（**不是** `release-desktop.yml`） | PR checks、baseline catalog/live、native 与当前平台打包 smoke；全量层另行执行，非自动包含其全部检查 | 真实模型需维护者显式授权 |
+| 全量 | `nightly-quality.yml` 每天定时（北京时间 03:00）+ 维护者手动触发 | 无路径选择地运行 workflow 列出的确定性检查、独立 macOS Swift 检查和模块图健康度；含 `check:desktop-ui-smoke` | 无模型、无 secret；手动 `skip_coverage` 默认关闭，UI smoke 缺依赖会明确跳过 |
+| Release | 维护者手动 `bun run quality:release -- --allow-live --provider-model <selector>:main` | PR checks、baseline catalog/live、native 与当前平台打包 smoke；全量层另行执行，非自动包含其全部检查 | 真实模型需维护者显式授权；不是发布 workflow 本身 |
 
-注意：`release-desktop.yml` 按设计**不跑任何质量门禁**——打 tag 不应被 `bun run verify` 阻塞，`scripts/pr/release-workflow.test.ts` 有守卫测试锁定这一点。因此发版前的质量证据来自「合并进来的那些 PR」+ 维护者手动跑的全量层 + `quality:release`。全量层每天跑一次（2026-10 维护者决定），频率写死在 `pr-quality-workflow.test.ts` 里，改频率需要维护者决定。
+`release-desktop.yml` 不直接调用 `bun run verify`，但有发布门禁：`verify-governance`（`check:policy`、`check:product-identity`、`check:upstream-content`）、`verify-runtime`（`check:server`、`check:agent-flow`、`check:adapters`）和 `verify-desktop`（`check:desktop`、`check:persistence-upgrade`）汇入 `release-verify-gate`。`publish-release` 同时依赖构建矩阵与该汇总门禁，任一验证组不成功就不能发布。各 job 绑定同一 release SHA；这不是完整 `verify`、全量层或手动 live release gate 的替代品。`scripts/pr/release-workflow.test.ts` 分别守卫不直接调用 `verify` 和实际发布依赖。全量层每天一次的频率由 `pr-quality-workflow.test.ts` 固定，改频率需维护者决定。
 
 分层原则：**PR 只跑改动能影响到的范围**，因此它天然无法覆盖"没有 PR 碰过的检查"和"只有全套一起跑才暴露的问题"——这两个盲区交给每天的全量层；**真实模型/额度只出现在 Release 与维护者手动 smoke**，任何贡献者在没有 provider 的情况下都必须能跑通 PR 层的全部门禁。
 
@@ -73,6 +73,8 @@ bun run check:impact
 选择是**依赖感知**的：除了改动文件自身的路径前缀，还会把「谁 import 了这些文件」纳入检查范围（`scripts/pr/module-graph.ts`）。这修掉了纯前缀路由的漏检，例如改 `src/shared/modelReasoning.ts` 会选中 `check:desktop`（`desktop/src/lib/runtimeSelection.ts` 直接 import 它），改 `desktop/src/lib/browserSafePort.ts` 会选中 `check:native`（`desktop/electron/services/sidecarManager.ts` import 它，而 `desktop/tsconfig.json` 并不编译 `desktop/electron/`）。报告的 `## Cross-surface impact` 会指名是哪个 importer 触发了额外检查。
 
 依赖图只**放宽检查选择**，不影响 area 标签和任何 blocking 规则——改一个 hub 文件不会因此要求你为没碰过的文件补测试。图构建失败时会选中全部 surface 并打印告警，不会静默退回前缀路由。
+
+本地 policy 需要例外判定却缺少可信 PR author 和 base branch CODEOWNERS 时，保持 `blocked`；缺上下文不等于已证实缺审批。不得从 `git user` 或工作区 CODEOWNERS 推断维护者身份，也不得伪造 label 或使用 `ALLOW_*` 绕过。保留技术检查结果，等待可核验的 PR/base 上下文后再作治理结论。
 
 ## 无模型的端到端 Agent 门禁
 
@@ -121,7 +123,7 @@ artifacts/coverage/<timestamp>/coverage-report.json
 
 PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quality:verify` 仍然保留给习惯显式质量命名的用户，但推荐文档和 AI prompt 都使用 `bun run verify`。
 
-覆盖率在 PR 上只报告、不阻塞合并：`coverage-checks` 作为独立 check 显示结果，不在 `pr-quality-gate` 的 `needs` 里，必过状态不等它跑完（它约 25 分钟）；它仍然执行四件事：按源码口径统计覆盖率、执行 baseline ratchet、报告 75-80%+ 的目标差距，并对新增/变更的可执行生产代码行执行 changed-line coverage。当前 baseline 记录在 `scripts/quality-gate/coverage-baseline.json`，CI 会优先对比 base branch 的 baseline，新增 PR 不允许覆盖率下降超过允许窗口。`coverage-baseline.json` 或 `coverage-thresholds.json` 变更必须由维护者加 `allow-coverage-baseline-change` 后才能合并。Quarantine 只用于维护者的 baseline/release 追踪，不得隐藏确定性的 provider/chat 契约测试；当前普通 PR gate 不依赖 quarantine 才能通过。
+本地 `bun run verify` 的 coverage lane 被选中时是阻塞项，失败会使本地验证失败；不要把托管 PR 的提示性策略套用于本地。托管覆盖率在 PR 上只报告、不阻塞合并：`coverage-checks` 作为独立 check 显示结果，不在 `pr-quality-gate` 的 `needs` 里，必过状态不等它跑完（它约 25 分钟）；它仍然执行四件事：按源码口径统计覆盖率、执行 baseline ratchet、报告 75-80%+ 的目标差距，并对新增/变更的可执行生产代码行执行 changed-line coverage。当前 baseline 记录在 `scripts/quality-gate/coverage-baseline.json`，CI 会优先对比 base branch 的 baseline，新增 PR 不允许覆盖率下降超过允许窗口。`coverage-baseline.json` 或 `coverage-thresholds.json` 变更必须由维护者加 `allow-coverage-baseline-change` 后才能合并。Quarantine 只用于维护者的 baseline/release 追踪，不得隐藏确定性的 provider/chat 契约测试；当前普通 PR gate 不依赖 quarantine 才能通过。
 
 ## AI Coding Agent 修复循环
 
@@ -139,7 +141,13 @@ PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quali
 
 `bun run check:impact` 只选择检查范围，不证明行为正确；普通任务运行选中的检查，需要 PR-ready/full validation 时直接使用 `bun run verify`，不必先单独重复执行其全部 lane。修复期间先重跑受影响的窄检查，交付时补齐最终 diff 的所需证据。没有后续改动或未解决风险时，不要反复运行已经通过的检查。无关的现有失败或环境阻塞应准确报告，而不是为了让结果变绿擅自扩大修改范围。
 
-验证证据须绑定候选：完整 Git SHA、dirty diff 及相关未跟踪源码的内容指纹，并记录环境（OS/架构、工具版本与路径）、实际命令、退出状态、最终 summary 和日志；发布产物还须记录 SHA-256。相关源码、依赖或环境变化会使受影响的旧证据失效。运行未完成、缺最终 summary 或后台任务状态不明均不是 `passed`；这些记录要求不表示当前 runner 已自动采集全部信息。
+验证证据须绑定候选：完整 Git SHA、dirty diff 及相关未跟踪源码的内容指纹，并记录环境（OS/架构、工具版本与路径）、实际命令、退出状态、最终 summary 和日志；发布产物还须记录 SHA-256。相关源码、依赖或环境变化会使受影响的旧证据失效。运行未完成、缺最终 summary 或后台任务状态不明均不是 `passed`。
+
+当前 quality runner 在 lane 执行前后采集 `candidate.before` / `candidate.after`：完整 HEAD、HEAD→index 的 `indexDiffSha256`、index→worktree 的 `worktreeDiffSha256`，以及非 ignored 未跟踪文件的 `untrackedSha256`（按原始文件名字节排序，包含路径、权限、类型及内容身份；符号链接只记录链接目标字节，不跟随读取）。读取或 Git 失败的端点标记为 `unknown`，不是干净候选。`candidate.status` 为 `stable`、`changed` 或 `invalid`；`candidate.failures` 独立于 lane 计数，候选变化或未知会使总体 `status` 与 CLI 退出失败，JSON、Markdown 和 JUnit 也保留此失败，即使所有 lane 通过。
+
+这些字段在 schema version `1` 中为兼容旧报告而可选；旧报告没有字段不代表已证明候选稳定。`runtime` 记录 runner 自身的名称、版本、可执行文件、`argv`、平台与架构，不推断子工具版本。端点相等不能发现中途修改后恢复，采集也不是原子快照。没有自动跨运行缓存或覆盖所有入口的强制 preflight；额外工具版本、包哈希和平台证据仍需执行者记录。
+
+Lane 的 `signalCode` 会写入日志和报告。executor 抛错时追加错误证据、保留已有部分日志、记录失败 lane，并继续后续 lane；不要仅凭“有日志”判断已完成。runner 本身强制终止或产物写入失败时，不保证能生成最终报告。
 
 需要诊断失败时，按失败类型查阅相应证据：
 
@@ -149,6 +157,21 @@ PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quali
 | Path-aware PR checks | 核对同区域测试、CLI core 和 coverage policy；维护者 override 需要明确决定 |
 | Coverage gate | `artifacts/coverage/<timestamp>/coverage-report.md` 或 `.json`；修复 `changedLines.failures` / `failures`，`targetGaps` 是技术债提示。缺少测试发现结果、最终 summary 或预期 LCOV 属于采集失败，不据此推断产品缺陷或覆盖率不足；查日志定位，不改变现有 blocking 策略 |
 | 构建、类型、lint、文档或 native | 修复对应日志指出的本次变更问题，重跑受影响检查 |
+
+Coverage 控制台以 `[coverage]` JSON 输出阶段开始/结束。开始事件给出执行中的隔离 `capturePath`；结束后读持久化 `logPath` 和 `${logPath}.process.json`，临时 capture 通常会被清理。process JSON 记录命令、cwd、起止时间、耗时、实际 `exitCode`（未知为 `null`）、`signalCode`、可选 `error` 及 runner 自身 runtime。spawn/wait 异常先保留部分输出和诊断再清理、抛回原异常；不要因长时间没有最终摘要就重复启动同一检查。
+
+Root coverage 保留既有 instrumentation 例外：普通非零 assertion exit 只有在测试文件发现/完成、最终 summary 和单进程 LCOV 完整可用时，才接受覆盖率并记录 note；原始断言失败并未消失，correctness 仍由独立 `check:server` 保证。signal、执行异常或未知退出不适用该例外；signal 即使伴随 exit 0 或 `lcovAvailable: true` 仍失败。`lcovAvailable` 对 root 独立记录，不等于 suite 成功；adapters/desktop 不评估此字段。
+
+Changed-line 数字必须连同 `changedLines.scope` 阅读：它记录 `strategy`、可选 `baseRef` / `diffArgs`、`includes`（committed/staged/unstaged/untracked）和可选 `error`，不改变选择或评分。
+
+| Strategy | 实际比较 | 包含 | 不包含 |
+| --- | --- | --- | --- |
+| `explicit-base` | `<base>...HEAD` | 已提交差异 | 暂存、未暂存、未跟踪 |
+| `dirty-worktree` | `HEAD` | 暂存和未暂存差异 | 分支已提交差异、未跟踪 |
+| `branch-fallback` | `origin/main...HEAD` | 已提交差异 | 暂存、未暂存、未跟踪 |
+| `none` | 未选择 diff | 无 | 所有变更类型 |
+
+Dirty fallback 仍只在存在未暂存 tracked 改动时触发；staged-only 可能选择 branch fallback，或在 main 上没有 diff。dirty coverage 不是整条分支覆盖率。diff/scope 采集失败会注明 unknown，但现有 empty-fallback 评分未改变；此时零行不证明没有变更，也不能宣称全分支达标。
 
 只有最终 diff 的 `bun run verify` 报告通过，才能声明 PR-ready/full validation。不要通过降低 coverage baseline/threshold 或改写测试预期掩盖失败。
 
@@ -345,7 +368,7 @@ bun run quality:gate --mode baseline --allow-live
 bun run quality:gate --mode release --allow-live --provider-model <selector>:main
 ```
 
-release 模式会组合 PR checks、baseline catalog、live baseline、native checks，并用当前平台 canonical release artifact 跑 `package-smoke --package-kind release`，但不等于运行全量层的全部检查。发版报告同样写入 `artifacts/quality-runs/<timestamp>/`。`release-desktop.yml` 负责构建与发布，不运行 `bun run verify`；发版前质量证据来自 PR 门禁及维护者显式运行的全量检查和 release gate。
+`quality:release` 是 release 模式的别名，真实调用仍需显式 `--allow-live` 和维护者额度授权。release 模式会组合 PR checks、baseline catalog、live baseline、native checks，并用当前平台 canonical release artifact 跑 `package-smoke --package-kind release`，但不等于运行全量层的全部检查。发版报告同样写入 `artifacts/quality-runs/<timestamp>/`。发布 workflow 的三组验证及汇总依赖见上文「四层门禁分工」；它们不直接调用 `bun run verify`，也不自动调用手动 live release gate。
 
 发布证据应按目标 OS/架构区分以下层次，不能互相替代：
 
@@ -359,7 +382,9 @@ release 模式会组合 PR checks、baseline catalog、live baseline、native ch
 
 每层记录所用候选（完整 SHA、dirty diff 和相关未跟踪源码指纹）、目标、命令、退出状态、summary、日志及产物 SHA-256，关联到实际发布的同一产物；重建或签名改变字节后须重新关联并验证受影响证据。下方平台矩阵仍全部受支持，不能用单一平台结果代替其他目标，也不能静默移除目标。`skipped`、`UNEXERCISED`、`blocked` / `not run` 不证明相应路径已覆盖；合法的不相关 skip 仍允许，这不改变 lane 状态或现有 blocking 规则。
 
-当前 release workflow 不是按目标汇总全部原生运行、安装和升级证据的总门禁；本次仅文档修订，不新增该门禁，也不改变发布策略或授权。release 模式下 live lane 不允许静默跳过。缺少 provider、真实模型额度或外部账号时，门禁会失败，并要求在发版记录里明确 blocker。
+发布前用待发布的同一产物完成适用的原生启动、安装、旧版升级/数据保留及签名/公证验证；不要求尚未发布的候选已经出现在正式更新源中。正式发布后再验证旧版经线上 metadata、下载、安装和重启的真实更新链路（见下文），这项发布后证据不能倒写成发布前已经通过。
+
+当前 release workflow 不是按目标汇总全部原生运行、安装和升级证据的总门禁；文档要求不代表已新增此自动化，也不改变发布策略或授权。release 模式下 live lane 不允许静默跳过。缺少 provider、真实模型额度或外部账号时，门禁会失败，并要求在发版记录里明确 blocker。
 
 ## 发版与自动更新
 
@@ -432,7 +457,7 @@ bun run check:policy
 
 ### 验证一条真实更新链路
 
-每次发版至少验证一次从上一个正式版升上来的完整路径：
+这是正式发布后的更新链路验收，不是要求候选先发布才能运行的发布前门禁；发布前的包和安装/升级验证仍按上文执行。每次发版至少验证一次从上一个正式版升上来的完整路径：
 
 1. 安装 GitHub Release 里的上一个正式版。
 2. 按上述 Release Please 正式发布流程发布候选版本，并确认其授权调用的 `Release Desktop` workflow 完整通过；不要直接推 tag 替代正式发布授权。

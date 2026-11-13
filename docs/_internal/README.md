@@ -21,4 +21,4 @@
 
 ## 生命周期
 
-规则见 [文档位置与生命周期](../AGENTS.md#where-documentation-lives)：可复用的架构与边界规则进 `docs/internals/`，贡献流程进 `internals/contributing.md`，源码入口规则进对应目录的 `AGENTS.md`。当前任务、审计证据和设计方案留在本目录索引；完成或被替代后再归档到 `archive/`，不从公开页链接，也不存放凭据或真实用户状态。
+规则见 [文档放置](../AGENTS.md#文档放置)：可复用的架构与边界规则进 `docs/internals/`，贡献流程进 `internals/contributing.md`，源码入口规则进对应目录的 `AGENTS.md`。当前任务、审计证据和设计方案留在本目录索引；完成或被替代后再归档到 `archive/`，不从公开页链接，也不存放凭据或真实用户状态。

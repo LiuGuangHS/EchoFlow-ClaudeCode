@@ -24,6 +24,7 @@ export interface LandingFeature {
 }
 
 export interface LandingContent {
+  screenshotNote: string
   hero: {
     eyebrow: string
     // The second line ends with the accent word, which the page sets in the olive accent colour.
@@ -60,14 +61,15 @@ export interface LandingContent {
 
 export const landingContent: Record<LandingLocale, LandingContent> = {
   zh: {
+    screenshotNote: '截图说明：合成会话、录制结果与本地演示，非在线执行或原生端验收证据；手机画面均为 H5 浏览器。',
     hero: {
       eyebrow: '源码可查 · 使用条款见 LICENSE · macOS · Windows · Linux',
       headline: ['把 EchoFlow Code 装进桌面，', '也装进'],
       accent: '口袋。',
       description: ['多会话并行、Agent Teams、Computer Use，模型随你接。', '手机扫码连上电脑，离开工位也能审批、派任务。'],
-      desktopAlt: 'EchoFlow Code 桌面端：「给官网加更新日志页」会话写完代码，正在请求运行 bun test && npm run build',
-      phoneAlt: 'EchoFlow Code 手机 App 上的同一个请求：想运行命令 bun test && npm run build，可以拒绝或允许',
-      phoneLabel: '手机 App：'
+      desktopAlt: 'EchoFlow Code 桌面端：合成的欢迎会话，展示录制结果',
+      phoneAlt: 'EchoFlow Code 中文 H5 浏览器：合成的待审批请求，尚未批准或执行',
+      phoneLabel: '手机浏览器访问：'
     },
     downloads: {
       desktop: '下载桌面端',
@@ -78,7 +80,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
       requirement: 'EchoFlow 手机安装包尚未核验；可先用手机浏览器连接。上游 v0.7.6 要求不代表 EchoFlow 版本承诺。'
     },
     mobile: {
-      description: 'Android 和 iPhone App 扫码连上你的电脑。任务一直在电脑上跑，手机负责看进度、做决定。',
+      description: 'Android 和 iPhone 的浏览器扫码连上你的电脑。任务一直在电脑上跑，手机负责看进度、做决定。',
       abilities: [
         { title: '审批命令', body: 'Agent 想运行命令或改文件时，在手机上允许或拒绝。' },
         { title: '回答提问', body: 'Agent 需要你拿主意时，选一个答案它就接着做。' },
@@ -88,9 +90,9 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
       docs: '了解手机连接',
       route: '/desktop/remote',
       screens: [
-        { caption: '首页：哪些任务做完了、哪个在等你', alt: '手机 App 首页：lumen 项目的四个任务，三个已完成，一个正在等你批准运行命令' },
-        { caption: '审批：电脑上的命令，在手机上放行', alt: '手机 App 审批底单：想运行命令 bun test && npm run build，可以拒绝或允许' },
-        { caption: '回复：结果直接在手机上读', alt: '手机 App 会话页：模型写好的 v2.4.0 发布说明' }
+        { caption: 'H5 首页：演示会话列表', alt: '中文 H5 浏览器首页：echoflow-demo 项目的合成会话列表' },
+        { caption: 'H5 审批：演示请求，尚未批准或执行', alt: '中文 H5 浏览器审批面板：合成的待审批请求，尚未批准或执行' },
+        { caption: 'H5 回复：演示发布说明', alt: '中文 H5 浏览器会话页：合成的 v0.7.6 发布说明，显示已完成状态' }
       ]
     },
     taskSuggestions: [
@@ -105,15 +107,15 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
         title: '一个目标，一支团队。',
         body: '把大目标交给队长：它拆分任务、指派成员，成员各自并行推进。依赖关系、进度和成员之间的消息都在同一个面板里，结束后还能回看。',
         route: '/internals/agent',
-        alt: 'Agent Teams 运行报告：队长居中，四个成员并行，共享任务列表按依赖分层，两项完成、一项执行中'
+        alt: 'Agent Teams 演示提案：2 个拟议成员及任务处于 review_pending 待审阅状态，均未开始'
       },
       {
         id: 'computer-use',
         tab: 'Computer Use',
         title: '它有自己的光标。',
-        body: '开启 Computer Use 后，Agent 用独立的虚拟光标操作其他应用，你的鼠标和键盘照常使用。这是 macOS 14.4 及更新版本的原生能力；Windows 使用兼容执行器，会移动真实鼠标。',
+        body: 'macOS、Windows 和 Linux 都使用原生运行组件。macOS 14.4 及更新版本不移动真实鼠标；Windows 和 Linux 支持受控件与桌面环境限制的后台语义操作，物理输入可能占用真实鼠标或键盘。',
         route: '/desktop/computer-use',
-        alt: 'Computer Use 设置页：已启用，辅助功能和屏幕录制权限均已授权'
+        alt: 'Linux 上的 Computer Use 设置页：已禁用，运行组件不可用'
       },
       {
         id: 'models',
@@ -121,7 +123,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
         title: '模型，随你选。',
         body: 'Claude、ChatGPT、Grok 官方账号直接登录，DeepSeek、Kimi、GLM 等常用 API 一键预设，本机的 Ollama、LM Studio 也能接。完整的 Agent 工作流需要模型支持工具调用。',
         route: '/start/models',
-        alt: '输入框的模型菜单：DeepSeek、Kimi、智谱 GLM 等服务商的模型按来源分组'
+        alt: '输入框的模型菜单：无凭据的 EchoFlow 演示目录，展示 3 个模型'
       },
       {
         id: 'workbench',
@@ -129,7 +131,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
         title: '多个任务，一个窗口。',
         body: '多个会话同时推进，内置浏览器直接预览页面，改动按文件逐个审阅、留下行级意见，都在一个桌面窗口里完成。',
         route: '/desktop/workspace',
-        alt: '桌面工作台：左侧会话列表，中间是改完的对话和 5 个文件的改动，右侧内置浏览器预览新的更新日志页'
+        alt: '桌面工作台：合成会话与录制结果，内置浏览器展示静态双语本地演示页面'
       },
       {
         id: 'skills',
@@ -137,7 +139,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
         title: '技能市场，装上就能用。',
         body: '浏览 ClawHub 与 SkillHub 的精选技能，来源和安全扫描状态摆在明处，一键安装。技能来自社区第三方，安装前先看一眼技能文件。',
         route: '/desktop/skills',
-        alt: '技能市场：398 个精选技能，按来源、安全状态和分类筛选，卡片标明扫描通过'
+        alt: '技能市场：内置目录的 398 个技能及其扫描状态徽标；徽标非独立安全审计结论'
       }
     ],
     workflowSteps: [
@@ -151,7 +153,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
       { question: '我的设备能用吗？', answer: '桌面应用提供 macOS、Windows 和 Linux 安装包，支持对应的 Intel / AMD 与 ARM 架构，按下载指南选择适合系统的版本即可。手机连接支持浏览器扫码接力；EchoFlow Android / iPhone 安装包分发状态以发布页及手机连接文档为准。Computer Use 的平台支持有所不同，见下方说明。' },
       { question: '手机怎么连上电脑？', answer: '在桌面端「手机连接」里开启浏览器连接并扫码配对：同一 Wi-Fi 下直接连接，外出时走 Cloudflare。EchoFlow 手机安装包尚未核验，上游 APK 和 TestFlight 群组不属于 EchoFlow 分发渠道。任务始终在电脑上运行。' },
       { question: '可以用我已经有的模型吗？', answer: '可以。支持通过 Claude、ChatGPT、Grok 官方账号登录，也可配置第三方 API 或连接本地模型。可用模型取决于账号权限和服务商；完整的 Agent 工作流还需要模型支持工具调用。' },
-      { question: 'Computer Use 会抢我的鼠标吗？', answer: 'macOS 14.4 及更新版本的原生运行组件通过独立虚拟光标操作，不占用真实鼠标和键盘；少数操作可能改变应用焦点。Windows 的兼容执行器会移动真实鼠标。Linux 暂无执行器。启用前需要完成应用内确认及相应系统授权。' },
+      { question: 'Computer Use 会抢我的鼠标吗？', answer: 'macOS 14.4 及更新版本的原生运行组件不移动真实鼠标；Windows 和 Linux 支持受控件与桌面环境限制的后台语义操作，物理输入可能占用真实鼠标或键盘。Linux 需要可用的图形会话与 AT-SPI 服务；后台操作仍可能改变应用焦点或内容，不会创建独立虚拟桌面。启用前需要完成应用内确认及相应系统授权。' },
       { question: '我能控制 AI 改哪些东西吗？', answer: '可以选择权限模式。默认「询问权限」会在需要授权的写文件、执行命令操作前请求确认，也可以切换到仅规划等模式。编辑后可在工作区审阅差异、留下反馈。Computer Use 单独启用并确认后可操作所有受支持应用，因此也要在任务中写清范围。' }
     ],
     closing: {
@@ -160,14 +162,15 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
     }
   },
   en: {
+    screenshotNote: 'Screenshots use synthetic conversations, recorded results, and local demos, not evidence of live execution or native app acceptance testing. All phone views are H5 browser screens.',
     hero: {
       eyebrow: 'Source available · See LICENSE · macOS · Windows · Linux',
       headline: ['EchoFlow Code on your desktop.', 'And in your '],
       accent: 'pocket.',
       description: ['Parallel sessions, Agent Teams, Computer Use, and any model you like.', 'Pair your phone to approve and start tasks away from your desk.'],
-      desktopAlt: 'EchoFlow Code desktop (Chinese interface): a session that added a changelog page asks to run bun test && npm run build',
-      phoneAlt: 'The same request in the EchoFlow Code phone app (Chinese interface), with Deny and Allow buttons',
-      phoneLabel: 'Phone app:'
+      desktopAlt: 'EchoFlow Code desktop (Chinese interface): a synthetic welcome conversation with recorded results',
+      phoneAlt: 'EchoFlow Code H5 browser (Chinese interface): a synthetic pending request, not approved or executed',
+      phoneLabel: 'Phone browser access:'
     },
     downloads: {
       desktop: 'Get the desktop app',
@@ -178,7 +181,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
       requirement: 'EchoFlow mobile packages are not verified; use the phone browser meanwhile. The upstream v0.7.6 requirement is not an EchoFlow version promise.'
     },
     mobile: {
-      description: 'Pair the Android or iPhone app with your computer by QR code. Tasks keep running on the computer while your phone follows along and makes the calls.',
+      description: 'Pair an Android or iPhone browser with your computer by QR code. Tasks keep running on the computer while your phone follows along and makes the calls.',
       abilities: [
         { title: 'Approve commands', body: 'When the agent wants to run a command or edit files, allow or deny it from your phone.' },
         { title: 'Answer questions', body: 'When the agent needs a decision, pick an answer and it carries on.' },
@@ -188,9 +191,9 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
       docs: 'How phone pairing works',
       route: '/en/desktop/remote',
       screens: [
-        { caption: 'Home: what finished and what needs you', alt: 'Phone app home (Chinese interface): four tasks in the lumen project, three done and one waiting for approval' },
-        { caption: 'Approve a command from your phone', alt: 'Phone app approval sheet (Chinese interface) for bun test && npm run build, with Deny and Allow' },
-        { caption: 'Read the result where you are', alt: 'Phone app conversation (Chinese interface) showing the v2.4.0 release notes the model wrote' }
+        { caption: 'H5 home: demo sessions', alt: 'H5 browser home (Chinese interface): synthetic sessions in the echoflow-demo project' },
+        { caption: 'H5 approval: demo request, not approved or executed', alt: 'H5 browser approval panel (Chinese interface): a synthetic pending request, not approved or executed' },
+        { caption: 'H5 reply: demo release notes', alt: 'H5 browser conversation (Chinese interface): synthetic v0.7.6 release notes with completed status' }
       ]
     },
     taskSuggestions: [
@@ -205,15 +208,15 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
         title: 'One goal, one team.',
         body: 'Hand a large goal to a team lead. It splits the work and assigns teammates who run in parallel, with dependencies, progress, and every message between them on one board you can replay afterwards.',
         route: '/en/internals/agent',
-        alt: 'Agent Teams run report (Chinese interface): the lead, four teammates working in parallel, and the shared task list by dependency'
+        alt: 'Agent Teams demo proposal (Chinese interface): 2 proposed members and tasks in review_pending, none started'
       },
       {
         id: 'computer-use',
         tab: 'Computer Use',
         title: 'It has its own cursor.',
-        body: 'With Computer Use on, the agent works in other apps through its own virtual cursor while your mouse and keyboard stay yours. This is native on macOS 14.4 and later; Windows uses a compatibility executor that moves the physical mouse.',
+        body: 'macOS, Windows, and Linux use native runtimes. On macOS 14.4 and later, operations do not move your physical mouse. Windows and Linux support background semantic operations where the control and desktop environment allow them; physical input may use your mouse or keyboard.',
         route: '/en/desktop/computer-use',
-        alt: 'Computer Use settings (Chinese interface): enabled, with Accessibility and Screen Recording granted'
+        alt: 'Computer Use settings on Linux (Chinese interface): disabled, runtime unavailable'
       },
       {
         id: 'models',
@@ -221,7 +224,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
         title: 'Any model you want.',
         body: 'Sign in with an official Claude, ChatGPT, or Grok account, pick a preset for DeepSeek, Kimi, GLM, and other APIs, or connect Ollama and LM Studio on your own machine. Full agent workflows need a model that supports tool calling.',
         route: '/en/start/models',
-        alt: 'Composer model menu (Chinese interface): DeepSeek, Kimi, Zhipu GLM, and other providers grouped by source'
+        alt: 'Composer model menu (Chinese interface): EchoFlow demo catalog with 3 models, configured without credentials'
       },
       {
         id: 'workbench',
@@ -229,7 +232,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
         title: 'Many tasks, one window.',
         body: 'Run several sessions at once, preview pages in the built-in browser, and review changes file by file with line comments, all in one desktop app.',
         route: '/en/desktop/workspace',
-        alt: 'Desktop workbench (Chinese interface): sessions, the finished conversation with five changed files, and the new changelog page in the built-in browser'
+        alt: 'Desktop workbench (Chinese interface): a synthetic conversation with recorded results and a static bilingual local demo in the built-in browser'
       },
       {
         id: 'skills',
@@ -237,7 +240,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
         title: 'Install a skill, use it now.',
         body: 'Browse curated skills from ClawHub and SkillHub with their source and security scan status in plain view, then install in one click. Skills come from community sources, so look over the files before installing.',
         route: '/en/desktop/skills',
-        alt: 'Skills Market (Chinese interface): 398 curated skills with source, safety, and category filters'
+        alt: 'Skills Market (Chinese interface): 398 skills in the bundled catalog with scan-status badges, not an independent security audit'
       }
     ],
     workflowSteps: [
@@ -251,7 +254,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
       { question: 'Will it work on my devices?', answer: 'Desktop packages are available for macOS, Windows, and Linux, with supported Intel / AMD and ARM builds. Choose the right package in the installation guide. Phone access supports browser pairing; check the release page and phone connection guide for EchoFlow Android / iPhone package availability. Computer Use has separate platform requirements, described below.' },
       { question: 'How do I connect my phone?', answer: 'Enable browser access under Phone connection in the desktop app and scan its QR code. Connect directly on the same Wi-Fi, or through Cloudflare when away. EchoFlow mobile packages are not verified; upstream APKs and TestFlight groups are not EchoFlow distribution channels. Tasks always run on your computer.' },
       { question: 'Can I use a model I already have?', answer: 'Yes. Sign in with an official Claude, ChatGPT, or Grok account, configure a third-party API, or connect a local model. Available models depend on your account and provider. Agent workflows also require a model that supports tool calling.' },
-      { question: 'Will Computer Use take over my mouse?', answer: 'On macOS 14.4 and later, the native runtime uses an independent virtual cursor and leaves your physical mouse and keyboard free, although some actions may change app focus. The Windows compatibility executor moves the physical mouse. Linux does not currently have an executor. Enabling the feature requires in-app consent and the relevant system permissions.' },
+      { question: 'Will Computer Use take over my mouse?', answer: 'On macOS 14.4 and later, native operations do not move your physical mouse. Windows and Linux support background semantic operations where the control and desktop environment allow them; physical input may use your mouse or keyboard. Linux needs an available graphical session and AT-SPI services. Background operations can still change app focus or content and do not create a separate virtual desktop. Enabling the feature requires in-app consent and the relevant system permissions.' },
       { question: 'Can I control what AI changes?', answer: 'Choose a permission mode. The default Ask mode requests approval for file writes and commands that require authorization; other modes include planning only. Review edits and leave feedback in the workspace. Computer Use is enabled separately: once confirmed, it can operate all supported apps, so define the scope in your task as well.' }
     ],
     closing: {

@@ -19,7 +19,7 @@ order: 6
 
 通用设置分成四件事：界面和表达、Agent 如何工作、网络与提醒、数据保存。第一次只需要确认前两件；遇到具体问题再改后两件。
 
-![设置 → 通用：配色主题、语言、输出风格、默认权限](../images/app/zh-CN/settings-general.webp)
+![设置 → 通用：主题、界面语言与字体设置](../images/app/zh-CN/settings-general.webp)
 
 ### 第一条会话前：权限与表达
 
@@ -121,7 +121,9 @@ Windows 用户可以在这里指定启动 Shell（系统默认 / PowerShell 7 / 
 
 ## Token 用量
 
-![设置 → Token 用量：热力图与统计卡](../images/app/zh-CN/settings-usage.webp)
+![设置 → Token 用量：EchoFlow 默认资料与零 Token 用量的示例记录](../images/app/zh-CN/settings-usage.webp)
+
+图中使用示例会话记录，Token 用量为零，未运行在线模型。
 
 基于本机 Claude Code 会话记录统计出来的用量看板，全部在本地算，不上传。
 

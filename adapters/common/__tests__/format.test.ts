@@ -150,16 +150,76 @@ describe('truncateInput', () => {
     expect(result.endsWith('…')).toBe(true)
   })
 
-  it('handles objects by stringifying', () => {
-    const result = truncateInput({ key: 'value' }, 100)
-    expect(result).toContain('key')
-    expect(result).toContain('value')
+  it('preserves pretty JSON, property order and truncation boundaries', () => {
+    const input = { z: [1, undefined, null], a: { key: 'value' }, omitted: undefined }
+    const pretty = '{\n  "z": [\n    1,\n    null,\n    null\n  ],\n  "a": {\n    "key": "value"\n  }\n}'
+
+    expect(truncateInput(input, pretty.length + 1)).toBe(pretty)
+    expect(truncateInput(input, pretty.length)).toBe(pretty)
+    expect(truncateInput(input, pretty.length - 1)).toBe(pretty.slice(0, -1) + '…')
+    expect(truncateInput(input, 0)).toBe('…')
   })
 
   it('handles unserializable input', () => {
     const circular: any = {}
     circular.self = circular
     expect(truncateInput(circular, 100)).toBe('(unserializable)')
+  })
+
+  it('serializes shared noncyclic references in each property', () => {
+    const shared = { value: 1 }
+    expect(truncateInput({ first: shared, second: shared }, 100)).toBe(
+      '{\n  "first": {\n    "value": 1\n  },\n  "second": {\n    "value": 1\n  }\n}',
+    )
+  })
+
+  it('reads getters only once without prewalking input', () => {
+    let reads = 0
+    const input = { get value() { return ++reads } }
+
+    expect(truncateInput(input, 100)).toBe('{\n  "value": 1\n}')
+    expect(reads).toBe(1)
+  })
+
+  it('lets root toJSON replace a raw cycle with one call and the root key', () => {
+    const keys: string[] = []
+    const input = {
+      self: null as unknown,
+      toJSON(key: string) {
+        keys.push(key)
+        return { safe: true }
+      },
+    }
+    input.self = input
+
+    expect(truncateInput(input, 100)).toBe('{\n  "safe": true\n}')
+    expect(keys).toEqual([''])
+  })
+
+  it('uses nested toJSON replacement once with its property key', () => {
+    const keys: string[] = []
+    const input = {
+      payload: {
+        raw: 'not serialized',
+        toJSON(key: string) {
+          keys.push(key)
+          return ['replacement', key]
+        },
+      },
+    }
+
+    expect(truncateInput(input, 100)).toBe('{\n  "payload": [\n    "replacement",\n    "payload"\n  ]\n}')
+    expect(keys).toEqual(['payload'])
+  })
+
+  it.each([
+    ['throwing getter', { get value() { throw new Error('getter failed') } }],
+    ['throwing toJSON', { toJSON() { throw new Error('toJSON failed') } }],
+    ['BigInt', 1n],
+    ['top-level undefined', undefined],
+    ['toJSON returning undefined', { toJSON() { return undefined } }],
+  ])('preserves the fallback for %s', (_name, input) => {
+    expect(truncateInput(input, 100)).toBe('(unserializable)')
   })
 })
 

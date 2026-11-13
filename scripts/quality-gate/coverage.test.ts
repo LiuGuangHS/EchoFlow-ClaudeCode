@@ -1,6 +1,6 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, spyOn, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, fstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
@@ -20,6 +20,7 @@ import {
   prefixRelativeLcovSourcePaths,
   removeSandboxHome,
   runCommand,
+  runCoverageGate,
 } from './coverage'
 
 describe('coverage gate helpers', () => {
@@ -203,6 +204,26 @@ describe('coverage gate helpers', () => {
       })
     expect(result.available).toBe(false)
     expect(result.error).toContain('no LCOV records for server-api')
+  })
+
+  test.each([
+    [{ exitCode: 0, signalCode: 'SIGTERM' }, 'signal SIGTERM'],
+    [{ exitCode: null, signalCode: null, error: 'spawn fixture failed' }, 'spawn fixture failed'],
+    [{ exitCode: null, signalCode: null }, 'unknown exit'],
+  ])('never admits abnormal termination with complete LCOV: %j', (process, error) => {
+    const result = evaluateRootCoverage('Ran 1 test across 1 file.', 1,
+      'SF:src/server/a.ts\nDA:1,1\nLF:1\nLH:1\nend_of_record', { process })
+    expect(result.available).toBe(false)
+    expect(result.lcovAvailable).toBe(true)
+    expect(result.error).toContain(error)
+  })
+
+  test('retains the existing assertion-exit exception while distinguishing LCOV availability', () => {
+    const result = evaluateRootCoverage('Ran 1 test across 1 file.', 1,
+      'SF:src/server/a.ts\nDA:1,1\nLF:1\nLH:1\nend_of_record',
+      { process: { exitCode: 7, signalCode: null } })
+    expect(result.available).toBe(true)
+    expect(result.lcovAvailable).toBe(true)
   })
 
   test('rejects empty aggregate coverage summaries', () => {
@@ -565,11 +586,234 @@ describe('coverage gate helpers', () => {
   })
 })
 
+describe('coverage gate scope and process reporting', () => {
+  async function fixture(options: { strategy: 'explicit-base' | 'dirty-worktree' | 'branch-fallback' | 'none'; signal?: 'root-server' | 'adapters' | 'desktop'; baseRef?: string }) {
+    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-scope-'))
+    const git = (...args: string[]) => {
+      const result = Bun.spawnSync(['git', ...args], { cwd: root, stdout: 'pipe', stderr: 'pipe' })
+      expect(result.exitCode).toBe(0)
+      return new TextDecoder().decode(result.stdout).trim()
+    }
+    let spawn: ReturnType<typeof spyOn> | undefined
+    try {
+      for (const directory of ['src/server', 'src/tools', 'src/utils', 'src/services', 'adapters', 'desktop']) {
+        mkdirSync(join(root, directory), { recursive: true })
+      }
+      const files = ['src/server/routes.ts', 'src/tools/tool.ts', 'src/utils/util.ts', 'src/services/runtime.ts']
+      for (const file of files) writeFileSync(join(root, file), 'export const first = 1\nexport const second = 2\n')
+      writeFileSync(join(root, 'src/fixture.test.ts'), '')
+      git('init', '-b', 'main')
+      git('config', 'user.name', 'Coverage Fixture')
+      git('config', 'user.email', 'coverage@example.invalid')
+      git('add', '.')
+      git('commit', '-m', 'fixture base')
+      const base = git('rev-parse', 'HEAD')
+      git('update-ref', 'refs/remotes/origin/main', base)
+      git('checkout', '-b', 'fixture-branch')
+      writeFileSync(join(root, files[0]!), 'export const first = 1\nexport const committed = 3\n')
+      git('add', files[0]!)
+      git('commit', '-m', 'fixture committed change')
+      writeFileSync(join(root, files[2]!), 'export const first = 1\nexport const staged = 4\n')
+      git('add', files[2]!)
+      if (options.strategy === 'explicit-base' || options.strategy === 'dirty-worktree') {
+        writeFileSync(join(root, files[1]!), 'export const first = 1\nexport const unstaged = 5\n')
+      }
+      if (options.strategy === 'none') git('checkout', 'main')
+      writeFileSync(join(root, 'src/server/untracked.ts'), 'export const untracked = true\n')
+      const thresholdsPath = join(root, 'thresholds.json')
+      writeFileSync(thresholdsPath, JSON.stringify({ schemaVersion: 1, minimums: {}, changedLines: { minimumPercent: 90 } }))
+      spawn = spyOn(Bun, 'spawn').mockImplementation(((command, config) => {
+        expect(fstatSync(config.stdout).isFile()).toBe(true)
+        expect(config.stderr).toBe(config.stdout)
+        const rootRun = config.cwd === root
+        const suite = rootRun ? 'root-server' : config.cwd.endsWith('adapters') ? 'adapters' : 'desktop'
+        const directory = join(root, 'artifacts', 'fixture', suite)
+        mkdirSync(directory, { recursive: true })
+        const sources = rootRun ? files : [suite === 'adapters' ? 'adapters/a.ts' : 'desktop/src/a.ts']
+        writeFileSync(join(directory, 'lcov.info'), sources.map(file => (
+          `SF:${file}\nDA:1,1\nDA:2,1\nLF:2\nLH:2\nend_of_record\n`
+        )).join(''))
+        if (suite === 'desktop') {
+          const metric = { total: 2, covered: 2, pct: 100 }
+          writeFileSync(join(directory, 'coverage-summary.json'), JSON.stringify({
+            total: { lines: metric, functions: metric, branches: metric, statements: metric },
+          }))
+        }
+        writeSync(config.stdout, 'Ran 1 test across 1 file.\n')
+        // A signal can accompany a misleading zero exit in a subprocess result.
+        return { exited: Promise.resolve(rootRun && options.signal !== suite ? 7 : 0), signalCode: options.signal === suite ? 'SIGTERM' : null }
+      }) as typeof Bun.spawn)
+      const report = await runCoverageGate({
+        rootDir: root,
+        artifactsDir: join(root, 'artifacts'),
+        runId: 'fixture',
+        thresholdsPath,
+        ...(options.strategy === 'explicit-base' ? { changedBaseRef: options.baseRef ?? ` ${base} ` } : {}),
+      })
+      const markdown = readFileSync(join(report.outputDir, 'coverage-report.md'), 'utf8')
+      const persisted = JSON.parse(readFileSync(join(report.outputDir, 'coverage-report.json'), 'utf8'))
+      return { report, persisted, markdown, base }
+    } finally {
+      spawn?.mockRestore()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+
+  test.each([
+    ['explicit-base', ['src/server/routes.ts'], { committed: true, staged: false, unstaged: false, untracked: false }],
+    ['dirty-worktree', ['src/tools/tool.ts', 'src/utils/util.ts'], { committed: false, staged: true, unstaged: true, untracked: false }],
+    ['branch-fallback', ['src/server/routes.ts'], { committed: true, staged: false, unstaged: false, untracked: false }],
+  ] as const)('discloses %s diff scope without altering the changed-line denominator', async (strategy, files, includes) => {
+    const { report, persisted, markdown, base } = await fixture({ strategy })
+    expect(report.changedLines?.files.map(file => file.file)).toEqual([...files])
+    expect(report.changedLines?.total).toBe(files.length)
+    expect(report.changedLines?.scope).toMatchObject({
+      strategy,
+      baseRef: strategy === 'explicit-base' ? base : strategy === 'dirty-worktree' ? 'HEAD' : 'origin/main',
+      includes,
+      diffArgs: ['diff', '--unified=0', '--no-ext-diff', strategy === 'explicit-base' ? `${base}...HEAD` : strategy === 'dirty-worktree' ? 'HEAD' : 'origin/main...HEAD', '--'],
+    })
+    expect(persisted.changedLines.scope).toEqual(report.changedLines?.scope)
+    expect(markdown).toContain(`Strategy: ${strategy}`)
+    expect(markdown).toContain('untracked=false')
+    expect(markdown).toContain('staged-only')
+    expect(report.suites.slice(0, 3).every(suite => suite.status === 'passed')).toBe(true)
+    expect(report.suites[0]).toMatchObject({ exitCode: 7, signalCode: null, lcovAvailable: true })
+    expect(report.suites[0]?.note).toContain('exited with 7')
+  })
+
+  test('discloses no selected diff when staged-only changes are on main', async () => {
+    const { report } = await fixture({ strategy: 'none' })
+    expect(report.changedLines?.scope).toEqual({
+      strategy: 'none', includes: { committed: false, staged: false, unstaged: false, untracked: false },
+    })
+    expect(report.changedLines?.total).toBe(0)
+  })
+
+  test('reports an unreadable explicit diff as unknown, without changing the empty-fallback scoring', async () => {
+    const { report, markdown } = await fixture({ strategy: 'explicit-base', baseRef: 'missing-fixture-ref' })
+    expect(report.changedLines?.scope).toMatchObject({ strategy: 'explicit-base', baseRef: 'missing-fixture-ref' })
+    expect(report.changedLines?.scope?.error).toContain('unknown')
+    expect(report.changedLines?.total).toBe(0)
+    expect(report.changedLines?.failures).toEqual([])
+    expect(markdown).toContain('Changed lines are unknown')
+    expect(markdown).not.toContain('No changed executable production lines')
+  })
+
+  test.each(['adapters', 'desktop'] as const)('does not mistake a signalled %s process for a successful exit', async signal => {
+    const { report } = await fixture({ strategy: 'explicit-base', signal })
+    const suite = report.suites.find(suite => suite.id === signal)
+    expect(suite).toMatchObject({ status: 'failed', exitCode: 0, signalCode: 'SIGTERM' })
+    expect(suite?.error).toContain('signal SIGTERM')
+    expect(report.failures).toHaveLength(1)
+  })
+
+  test('reports signalled root instrumentation as failed despite complete summary and LCOV', async () => {
+    const { report, persisted, markdown } = await fixture({ strategy: 'explicit-base', signal: 'root-server' })
+    for (const suite of report.suites.slice(0, 3)) {
+      expect(suite).toMatchObject({ status: 'failed', exitCode: 0, signalCode: 'SIGTERM', lcovAvailable: true })
+      expect(suite.error).toContain('signal SIGTERM')
+      expect(suite.note).toBeUndefined()
+      expect(suite.summary).toBeUndefined()
+    }
+    expect(report.failures).toHaveLength(3)
+    expect(persisted.suites[0].signalCode).toBe('SIGTERM')
+    expect(markdown).toContain('signal=SIGTERM')
+    expect(markdown).toContain('LCOV=available')
+    expect(report.changedLines?.unmeasured).toBe(1)
+  })
+})
+
 describe('coverage subprocess output', () => {
-  test.skipIf(process.platform === 'win32')('persists actual process signal diagnostics separately from raw output', async () => {
+  test('publishes phase and live capture before the child exits', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-progress-'))
+    const logPath = join(root, 'reports', 'coverage.log')
+    const events: string[] = []
+    const log = spyOn(console, 'log').mockImplementation(message => { events.push(String(message)) })
+    const script = join(root, 'child.ts')
+    let pending: ReturnType<typeof runCommand> | undefined
+    try {
+      writeFileSync(script, `
+        import { existsSync, writeFileSync, writeSync } from 'node:fs'
+        writeSync(1, 'live partial output\\n')
+        writeFileSync('ready', '')
+        const deadline = Date.now() + 2000
+        while (!existsSync('release') && Date.now() < deadline) await Bun.sleep(5)
+        if (!existsSync('release')) throw new Error('fixture was not released')
+      `)
+      pending = runCommand([process.execPath, '--no-env-file', script], root, logPath)
+      for (let attempt = 0; attempt < 400 && !existsSync(join(root, 'ready')); attempt++) await Bun.sleep(5)
+      expect(existsSync(join(root, 'ready'))).toBe(true)
+      const start = JSON.parse(events.find(event => event.startsWith('[coverage] '))!.slice(11))
+      expect(start).toMatchObject({ phase: 'start', logPath, cwd: root })
+      expect(readFileSync(start.capturePath, 'utf8')).toBe('live partial output\n')
+      expect(events).toHaveLength(1)
+      expect(existsSync(`${logPath}.process.json`)).toBe(false)
+      writeFileSync(join(root, 'release'), '')
+      const result = await pending
+      const end = JSON.parse(events[1]!.slice(11))
+      expect(end).toMatchObject({ phase: 'end', exitCode: 0, signalCode: null, logPath, durationMs: result.durationMs })
+      expect(result.output).toBe('live partial output\n')
+      expect(existsSync(start.capturePath)).toBe(false)
+      expect(JSON.parse(readFileSync(`${logPath}.process.json`, 'utf8'))).toMatchObject({
+        capturePath: start.capturePath, startedAt: start.startedAt, finishedAt: end.finishedAt,
+      })
+    } finally {
+      writeFileSync(join(root, 'release'), '')
+      await pending?.catch(() => {})
+      log.mockRestore()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('persists spawn failure and partial output before removing the sandbox and rethrowing', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-spawn-'))
+    const logPath = join(root, 'coverage.log')
+    const failure = new Error('fixture spawn failed')
+    let sandboxHome = ''
+    const spawn = spyOn(Bun, 'spawn').mockImplementation(((_command, options) => {
+      sandboxHome = options.env.HOME
+      expect(fstatSync(options.stdout).isFile()).toBe(true)
+      expect(options.stderr).toBe(options.stdout)
+      writeSync(options.stdout, 'partial spawn diagnostic\n')
+      throw failure
+    }) as typeof Bun.spawn)
+    try {
+      await expect(runCommand(['fixture-command'], root, logPath)).rejects.toBe(failure)
+      expect(existsSync(sandboxHome)).toBe(false)
+      expect(readFileSync(logPath, 'utf8')).toBe('$ fixture-command\npartial spawn diagnostic\n')
+      const diagnostics = JSON.parse(readFileSync(`${logPath}.process.json`, 'utf8'))
+      expect(diagnostics).toMatchObject({ exitCode: null, signalCode: null, error: 'fixture spawn failed' })
+      expect(diagnostics.durationMs).toBeGreaterThanOrEqual(0)
+    } finally {
+      spawn.mockRestore()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('persists real missing-executable errors without manufacturing an exit code', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-missing-'))
+    const logPath = join(root, 'coverage.log')
+    try {
+      await expect(runCommand([join(root, 'absent-executable')], root, logPath)).rejects.toThrow()
+      const diagnostics = JSON.parse(readFileSync(`${logPath}.process.json`, 'utf8'))
+      expect(diagnostics).toMatchObject({ exitCode: null, signalCode: null })
+      expect(diagnostics.error).toBeTruthy()
+      expect(existsSync(diagnostics.capturePath)).toBe(false)
+      expect(readFileSync(logPath, 'utf8')).toContain('absent-executable')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('persists signal diagnostics and partial output without sending a signal', async () => {
     const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-signal-'))
     const logPath = join(root, 'coverage.log')
-    const command = [process.execPath, '--no-env-file', '-e', "process.kill(process.pid, 'SIGTERM')"]
+    const command = ['fixture-signalled-command']
+    const spawn = spyOn(Bun, 'spawn').mockImplementation(((_command, options) => {
+      writeSync(options.stderr, 'partial signal output\n')
+      return { exited: Promise.resolve(143), signalCode: 'SIGTERM' }
+    }) as typeof Bun.spawn)
     try {
       const result = await runCommand(command, root, logPath)
       const diagnostics = JSON.parse(readFileSync(`${logPath}.process.json`, 'utf8'))
@@ -577,15 +821,17 @@ describe('coverage subprocess output', () => {
       expect(diagnostics).toMatchObject({
         command,
         cwd: root,
-        exitCode: result.exitCode,
+        exitCode: 143,
         signalCode: 'SIGTERM',
         durationMs: result.durationMs,
         runnerRuntime: { executable: process.execPath, bunVersion: Bun.version },
       })
       expect(diagnostics.durationMs).toBeGreaterThanOrEqual(0)
-      expect(result.output).toBe('')
-      expect(readFileSync(logPath, 'utf8')).toBe(`$ ${command.join(' ')}\n`)
+      expect(result.output).toBe('partial signal output\n')
+      expect(readFileSync(logPath, 'utf8')).toBe(`$ ${command.join(' ')}\npartial signal output\n`)
+      expect(existsSync(diagnostics.capturePath)).toBe(false)
     } finally {
+      spawn.mockRestore()
       rmSync(root, { recursive: true, force: true })
     }
   })

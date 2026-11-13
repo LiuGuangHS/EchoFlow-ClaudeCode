@@ -92,7 +92,7 @@ Magpie 没开时，这条配置会显示「没有运行」，发消息也会提�
 
 ## 「添加服务商」弹窗逐个字段
 
-![添加服务商弹窗：预设、接口地址、认证变量、API 密钥、模型映射](../images/app/zh-CN/settings-provider-add.webp)
+![添加模型弹窗：预设、接口地址、认证变量、空 API 密钥与模型映射](../images/app/zh-CN/settings-provider-add.webp)
 
 **名称**（必填）— 显示在服务商列表里的名字。选了预设会自动填，可以改成你认得出的，比如「DeepSeek-工作号」。
 

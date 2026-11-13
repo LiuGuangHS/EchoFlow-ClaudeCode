@@ -103,8 +103,8 @@ describe('release desktop workflow', () => {
   test('release packaging does not run the PR-quality gate', () => {
     const workflow = readReleaseWorkflow()
 
-    // Quality gates run on PRs, not at release time: tagging should not be
-    // blocked by `bun run verify`. Releasing is gated on the tag only.
+    // Release uses explicit verification groups feeding release-verify-gate,
+    // not a direct `bun run verify`; publication dependencies are tested below.
     expect(workflow).not.toContain('quality-preflight')
     expect(workflow).not.toContain('bun run verify')
     expect(workflow).toContain('name: Build (${{ matrix.label }})')

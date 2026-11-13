@@ -92,7 +92,7 @@ While Magpie is closed, the configuration shows "Not running" and sending a mess
 
 ## The Add Provider dialog, field by field
 
-![Add Provider dialog: preset, base URL, auth variable, API key, model mapping (Chinese interface)](../../images/app/en/settings-provider-add.webp)
+![Add Model dialog: preset, base URL, auth variable, empty API key, and model mapping](../../images/app/en/settings-provider-add.webp)
 
 **Name** (required) — how this provider appears in the list. A preset fills it in; rename it to something you'll recognize, like "DeepSeek — work account".
 

@@ -84,6 +84,8 @@ const { report, outputDir } = await runQualityGate({
 console.log(`Quality gate report: ${outputDir}/report.md`)
 console.log(`Summary: passed=${report.summary.passed} failed=${report.summary.failed} skipped=${report.summary.skipped}`)
 
-if (report.summary.failed > 0) {
+if (report.candidate) console.log(`Candidate: ${report.candidate.status}; failures=${report.candidate.failures.length}`)
+
+if (report.status === 'failed' || report.summary.failed > 0) {
   process.exit(1)
 }

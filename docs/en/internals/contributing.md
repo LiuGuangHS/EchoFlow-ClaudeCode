@@ -55,10 +55,10 @@ Do not commit local artifacts such as `artifacts/quality-runs/`, `node_modules/`
 | --- | --- | --- | --- |
 | Local | manual | The narrowest relevant tests, then whatever `bun run check:impact` selects | seconds |
 | PR (required) | `pull_request`, and `push` to `main` after a merge | The deterministic lanes the impact report selects, including `check:agent-flow` and `check:agent-e2e`; coverage is reported, not blocking | no model, no provider, no secret, runs on an untrusted fork |
-| Full sweep | Daily (19:00 UTC) plus maintainer-triggered | Every deterministic lane with no path selection, plus module-graph health and `check:desktop-ui-smoke` | still no model, no secret |
-| Release | maintainer-run `bun run quality:release` (**not** `release-desktop.yml`) | PR checks, baseline catalog/live, native and current-platform packaging smoke; the full sweep runs separately, not all of its checks are automatically included | live models require explicit maintainer authorization |
+| Full sweep | `nightly-quality.yml`, daily (19:00 UTC) plus maintainer-triggered | The workflow's configured deterministic checks without path selection, separate macOS Swift checks, and module-graph health; includes `check:desktop-ui-smoke` | no model, no secret; manual `skip_coverage` defaults off, and UI smoke explicitly skips missing dependencies |
+| Release | maintainer-run `bun run quality:release -- --allow-live --provider-model <selector>:main` | PR checks, baseline catalog/live, native and current-platform packaging smoke; the full sweep runs separately, not all of its checks are automatically included | live models require explicit maintainer authorization; this is not the publication workflow |
 
-Note: `release-desktop.yml` deliberately runs no quality gate — tagging must not be blocked by `bun run verify`, and `scripts/pr/release-workflow.test.ts` guards that decision. Release-time evidence therefore comes from the PRs that were merged, plus whatever full sweeps the maintainer ran, plus the manual `quality:release`. The full sweep runs once a day (maintainer decision, 2026-10); the frequency is pinned in `pr-quality-workflow.test.ts`, so changing it is a maintainer decision too.
+`release-desktop.yml` does not directly invoke `bun run verify`, but it does gate publication: `verify-governance` (`check:policy`, `check:product-identity`, `check:upstream-content`), `verify-runtime` (`check:server`, `check:agent-flow`, `check:adapters`), and `verify-desktop` (`check:desktop`, `check:persistence-upgrade`) feed `release-verify-gate`. `publish-release` depends on both the build matrix and that aggregate gate; any verification group without a successful result prevents publication. Jobs bind to the same release SHA; these checks do not replace complete `verify`, the full sweep, or the manual live release gate. `scripts/pr/release-workflow.test.ts` separately guards the absence of a direct `verify` invocation and the actual publication dependencies. The daily frequency is pinned in `pr-quality-workflow.test.ts`; changing it requires a maintainer decision.
 
 The split follows from what each tier can prove. A per-PR gate only ever covers what the diff reaches, so it is structurally blind to checks no recent PR selected and to failures that only appear when the whole suite runs together — the daily full sweep closes both. Live model quota is spent only at release time, so every contributor can pass the required gate with no provider at all.
 
@@ -73,6 +73,8 @@ bun run check:impact
 Selection is **import-aware**. Besides the changed paths themselves, the router adds every surface that imports a changed file (`scripts/pr/module-graph.ts`). This closes holes that prefix-only routing could not see: editing `src/shared/modelReasoning.ts` now selects `check:desktop` because `desktop/src/lib/runtimeSelection.ts` imports it, and editing `desktop/src/lib/browserSafePort.ts` now selects `check:native` because `desktop/electron/services/sidecarManager.ts` imports it while `desktop/tsconfig.json` does not compile `desktop/electron/`. The report's `## Cross-surface impact` section names the importer behind each extra check.
 
 The graph only widens *check selection*. Areas, labels, and every blocking rule stay scoped to the actual diff, so editing a hub file never demands tests for files you did not touch. If the graph cannot be built, the run selects every surface and says so rather than silently reverting to prefix routing.
+
+When local policy needs an exception decision but lacks a trusted PR author and base branch CODEOWNERS, keep it `blocked`; missing context does not prove approval is missing. Never infer maintainer identity from `git user` or worktree CODEOWNERS, fabricate labels, or use `ALLOW_*` bypasses. Preserve technical check results and wait for verifiable PR/base context before drawing a governance conclusion.
 
 ## Deterministic Agent Gate (no model required)
 
@@ -121,7 +123,7 @@ artifacts/coverage/<timestamp>/coverage-report.json
 
 Include the commands you ran and the report summary in your PR description. `quality:pr` / `quality:verify` remain available for contributors who prefer explicit quality command names, but docs and AI prompts should prefer `bun run verify`.
 
-Coverage is reported on pull requests but never blocks a merge: `coverage-checks` reports as its own check and is not in `pr-quality-gate`'s `needs`, so the required status does not wait for its ~25 minutes. It still does four things: measures source-only coverage, enforces the baseline ratchet, reports target gaps against 75-80%+ maintained-area goals, and enforces changed-line coverage for new or modified executable production lines. The current baseline lives in `scripts/quality-gate/coverage-baseline.json`, and CI compares against the base branch baseline when available. New PRs must not lower coverage beyond the allowed window. Changes to `coverage-baseline.json` or `coverage-thresholds.json` require the maintainer-only `allow-coverage-baseline-change` label. Quarantine is reserved for maintainer baseline/release tracking and must never hide deterministic provider/chat contract tests; the normal PR gate does not depend on quarantine to pass.
+In local `bun run verify`, the selected coverage lane is blocking: a failure fails local verification. Do not apply the hosted PR advisory policy to local runs. Hosted coverage is reported on pull requests but never blocks a merge: `coverage-checks` reports as its own check and is not in `pr-quality-gate`'s `needs`, so the required status does not wait for its ~25 minutes. It still does four things: measures source-only coverage, enforces the baseline ratchet, reports target gaps against 75-80%+ maintained-area goals, and enforces changed-line coverage for new or modified executable production lines. The current baseline lives in `scripts/quality-gate/coverage-baseline.json`, and CI compares against the base branch baseline when available. New PRs must not lower coverage beyond the allowed window. Changes to `coverage-baseline.json` or `coverage-thresholds.json` require the maintainer-only `allow-coverage-baseline-change` label. Quarantine is reserved for maintainer baseline/release tracking and must never hide deterministic provider/chat contract tests; the normal PR gate does not depend on quarantine to pass.
 
 ## AI Coding Agent Fix Loop
 
@@ -139,7 +141,13 @@ Judge quality by intended behavior, clear boundaries, and regression evidence, n
 
 `bun run check:impact` selects checks; it does not prove behavior correct. Run the selected checks for ordinary tasks; use `bun run verify` directly for PR-ready/full validation without first running all of its lanes separately. During repairs, rerun affected focused checks, then complete the evidence needed for the final diff. Do not repeat passing checks without subsequent edits or unresolved risks. Report unrelated existing failures or environment blockers instead of expanding the change merely to make everything green.
 
-Bind verification evidence to a candidate: the full Git SHA, dirty diff, and content fingerprints of relevant untracked source, along with the environment (OS/architecture, tool versions and paths), actual commands, exit statuses, final summaries, and logs; also record SHA-256 for release artifacts. Relevant source, dependency, or environment changes invalidate affected prior evidence. An incomplete run, missing final summary, or unknown background-task state is not `passed`; these recording requirements do not mean the current runner automatically collects all of this information.
+Bind verification evidence to a candidate: the full Git SHA, dirty diff, and content fingerprints of relevant untracked source, along with the environment (OS/architecture, tool versions and paths), actual commands, exit statuses, final summaries, and logs; also record SHA-256 for release artifacts. Relevant source, dependency, or environment changes invalidate affected prior evidence. An incomplete run, missing final summary, or unknown background-task state is not `passed`.
+
+The quality runner now captures `candidate.before` / `candidate.after` around lane execution: full HEAD, `indexDiffSha256` for HEAD→index, `worktreeDiffSha256` for index→worktree, and `untrackedSha256` for non-ignored untracked files (sorted by raw filename bytes, including path, permissions, type, and content identity; symlinks record only their target bytes without reading through the link). A read or Git failure marks an endpoint `unknown`, not clean. `candidate.status` is `stable`, `changed`, or `invalid`; `candidate.failures` is separate from lane counts. Changed or unknown candidates fail overall `status` and the CLI exit, with that failure preserved in JSON, Markdown, and JUnit even when all lanes pass.
+
+These fields remain optional in schema version `1` for legacy reports; missing fields do not prove candidate stability. `runtime` records the runner's own name, version, executable, `argv`, platform, and architecture, not inferred child-tool versions. Equal endpoints cannot detect intermediate change-and-restore, and collection is not atomic. There is no automatic cross-run cache or enforced universal preflight; operators still record additional tool versions, package hashes, and platform evidence.
+
+Lane `signalCode` is persisted in logs and reports. An executor exception appends error evidence, preserves existing partial logs, records a failed lane, and continues later lanes; a log's existence alone does not prove completion. Forced termination of the runner itself or artifact-write failure cannot guarantee a final report.
 
 When a check fails, consult the evidence for that failure:
 
@@ -149,6 +157,21 @@ When a check fails, consult the evidence for that failure:
 | Path-aware PR checks | Check same-area tests, CLI core, and coverage policy; maintainer overrides require an explicit decision |
 | Coverage gate | `artifacts/coverage/<timestamp>/coverage-report.md` or `.json`; address `changedLines.failures` / `failures`, while `targetGaps` signal technical debt. Missing test-discovery results, a final summary, or expected LCOV is a collection failure, not proof of a product defect or insufficient coverage; investigate logs without changing existing blocking policy |
 | Build, types, lint, docs, or native | Fix issues caused by the change identified in the relevant log and rerun affected checks |
+
+Coverage emits phase start/end events as `[coverage]` JSON. The start event identifies the isolated live `capturePath`; after completion, read the persisted `logPath` and `${logPath}.process.json`, since the temporary capture is normally cleaned up. Process JSON records the command, cwd, timestamps, duration, actual `exitCode` (`null` when unknown), `signalCode`, optional `error`, and the runner's own runtime. Spawn/wait exceptions preserve partial output and diagnostics before cleanup and rethrowing the original exception; do not start duplicate checks just because the final summary has not appeared.
+
+Root coverage preserves its existing instrumentation exception: an ordinary nonzero assertion exit can supply coverage only when test-file discovery/completion, the final summary, and single-process LCOV are complete and available, with a note recorded. The original assertion failures still happened; independent `check:server` enforces correctness. Signals, execution errors, and unknown exits cannot use this exception; a signal fails even with exit 0 or `lcovAvailable: true`. Root records `lcovAvailable` independently of suite success; adapters/desktop do not evaluate that field.
+
+Read changed-line numbers with `changedLines.scope`: it records `strategy`, optional `baseRef` / `diffArgs`, `includes` (committed/staged/unstaged/untracked), and optional `error`, without changing selection or scoring.
+
+| Strategy | Actual comparison | Includes | Excludes |
+| --- | --- | --- | --- |
+| `explicit-base` | `<base>...HEAD` | committed changes | staged, unstaged, untracked |
+| `dirty-worktree` | `HEAD` | staged and unstaged changes | committed branch changes, untracked |
+| `branch-fallback` | `origin/main...HEAD` | committed changes | staged, unstaged, untracked |
+| `none` | no diff selected | nothing | all change types |
+
+Dirty fallback still triggers only for unstaged tracked changes; staged-only changes may select branch fallback or no diff on main. Dirty coverage is not whole-branch coverage. Failed diff/scope collection is explicitly unknown, but existing empty-fallback scoring is unchanged; zero lines in that case prove neither an absence of changes nor whole-branch compliance.
 
 Claim PR-ready/full validation only after `bun run verify` passes for the final diff. Do not lower coverage baselines/thresholds or rewrite test expectations to hide failures.
 
@@ -345,7 +368,7 @@ Before a release, run release mode:
 bun run quality:gate --mode release --allow-live --provider-model <selector>:main
 ```
 
-Release mode composes PR checks, baseline catalog validation, live baseline cases, provider smoke, native checks, and current-platform canonical release `package-smoke --package-kind release`, but does not run every full-sweep check. Reports are written to `artifacts/quality-runs/<timestamp>/`. `release-desktop.yml` builds and publishes artifacts without running `bun run verify`. Pre-release quality evidence comes from PR gates and explicitly run maintainer full checks and release gates.
+`quality:release` aliases release mode; real calls still require explicit `--allow-live` and maintainer quota authorization. Release mode composes PR checks, baseline catalog validation, live baseline cases, provider smoke, native checks, and current-platform canonical release `package-smoke --package-kind release`, but does not run every full-sweep check. Reports are written to `artifacts/quality-runs/<timestamp>/`. See Gate Tiers above for the publication workflow's three verification groups and aggregate dependencies; they neither directly invoke `bun run verify` nor automatically run the manual live release gate.
 
 Distinguish these evidence layers per target OS/architecture; they are not interchangeable:
 
@@ -359,7 +382,9 @@ Distinguish these evidence layers per target OS/architecture; they are not inter
 
 For each layer, record the candidate (full SHA, dirty diff, and relevant untracked source fingerprints), target, commands, exit statuses, summaries, logs, and artifact SHA-256, linking evidence to the same artifact actually published. Rebuilding or signing changes bytes: relink and revalidate affected evidence. All platforms in the platform matrix below remain supported; one platform's results cannot stand in for other targets or silently remove them. `skipped`, `UNEXERCISED`, and `blocked` / `not run` do not prove those paths covered; valid unrelated skips remain allowed, without changing lane statuses or existing blocking rules.
 
-The current release workflow is not a per-target aggregate gate for all native runtime, installation, and upgrade evidence. This documentation-only revision adds no such gate and changes neither publication policy nor authorization. In release mode, live lanes are not allowed to be silently skipped. Missing providers, model quota, or external account access will fail the gate and must be recorded as a release blocker.
+Before publication, use the same artifact intended for release for applicable native launch, installation, older-version upgrade/data preservation, and signing/notarization checks; do not require an unpublished candidate to exist on the official update feed. Verify the post-publication real update path from an older client through hosted metadata, download, installation, and restart separately (below); do not backdate that evidence as a passed pre-publication check.
+
+The current release workflow is not a per-target aggregate gate for all native runtime, installation, and upgrade evidence. Documentation requirements do not imply such automation exists or change publication policy or authorization. In release mode, live lanes are not allowed to be silently skipped. Missing providers, model quota, or external account access will fail the gate and must be recorded as a release blocker.
 
 ## Releases and Auto-Update
 
@@ -432,7 +457,7 @@ Before running `bun run scripts/release.ts <version>` for real, confirm `release
 
 ### Verify one real update path
 
-Every release should be verified by upgrading from the previous stable build at least once:
+This is post-publication update-path acceptance, not a pre-publication gate that requires publishing the candidate first. Package and installation/upgrade checks still run before publication as described above. Every release should be verified by upgrading from the previous stable build at least once:
 
 1. Install the previous stable release from GitHub Releases.
 2. Publish the candidate through the Release Please process above and confirm its authorized `Release Desktop` workflow finishes green; do not substitute a direct tag push for official publication authorization.

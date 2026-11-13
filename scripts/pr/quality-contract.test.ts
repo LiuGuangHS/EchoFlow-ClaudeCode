@@ -121,6 +121,30 @@ describe('feature quality contract', () => {
     expect(rootContributing).toContain('不再自动运行本地质量门禁')
   })
 
+  test('keeps bilingual release guidance aligned with the actual publication gate', () => {
+    for (const path of ['docs/internals/contributing.md', 'docs/en/internals/contributing.md']) {
+      const guidance = readFileSync(path, 'utf8')
+      for (const job of ['verify-governance', 'verify-runtime', 'verify-desktop', 'release-verify-gate', 'publish-release']) {
+        expect(guidance, path).toContain(`\`${job}\``)
+      }
+      expect(guidance, path).toContain('check:product-identity')
+      expect(guidance, path).toContain('check:upstream-content')
+      expect(guidance, path).not.toMatch(/不跑任何质量门禁|runs no quality gate/)
+    }
+  })
+
+  test('keeps bilingual verification evidence limits explicit', () => {
+    for (const path of ['docs/internals/contributing.md', 'docs/en/internals/contributing.md']) {
+      const guidance = readFileSync(path, 'utf8')
+      for (const field of ['candidate.before', 'candidate.after', 'candidate.failures', 'changedLines.scope', 'signalCode', '${logPath}.process.json']) {
+        expect(guidance, path).toContain(`\`${field}\``)
+      }
+      expect(guidance, path).toMatch(/本地.*coverage.*阻塞|local.*coverage.*blocking/)
+      expect(guidance, path).toMatch(/可信.*PR author.*base.*CODEOWNERS.*blocked|trusted.*PR author.*base.*CODEOWNERS.*blocked/)
+      expect(guidance, path).toMatch(/发布后.*更新链路|post-publication.*update path/)
+    }
+  })
+
   test('keeps desktop native CI aligned with Electron packaging', () => {
     const packageJson = JSON.parse(readFileSync('package.json', 'utf8'))
     const prQuality = readFileSync('.github/workflows/pr-quality.yml', 'utf8')

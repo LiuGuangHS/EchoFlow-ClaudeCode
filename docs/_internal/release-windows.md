@@ -46,12 +46,12 @@ bun run scripts/release.ts X.Y.Z
 
 1. `release-contract` 运行 `check:release-surface`；push tag 时检查 tag 与 `desktop/package.json` 版本相同，并检查 release notes 文件和标题。
 2. `signing-preflight` 检查 macOS 签名/公证配置和 Windows SignPath 配置，输出本次构建是否签名。
-3. `verify-governance` 运行 `check:policy`。
+3. `verify-governance` 运行 `check:policy`、`check:product-identity` 和 `check:upstream-content`，分别验证门禁契约、产品身份一致性和公开内容中的上游残留。
 4. `verify-runtime` 运行 `check:server`、`check:agent-flow` 和 `check:adapters`。
 5. `verify-desktop` 运行 `check:desktop` 和 `check:persistence-upgrade`。
-6. `release-verify-gate` 只有在三个 `verify-*` job 都成功时才成功；构建矩阵还要在六个平台完成 package smoke，所有依赖通过后才发布。
+6. `release-verify-gate` 只有在三个 `verify-*` job 都成功时才成功；`publish-release` 同时依赖它和六平台构建矩阵（含 package smoke）。验证 job、构建与发布都绑定同一 release SHA。
 
-不要用本地“看起来成功”的安装包替代 workflow 结果。公开发布资产以 GitHub Release 为准。
+workflow 不直接运行 `bun run verify`，不等于没有质量门禁；它也不自动包含 nightly 全量检查或维护者显式授权的 `quality:release` live 检查。不要用本地“看起来成功”的安装包替代 workflow 结果。公开发布资产以 GitHub Release 为准。
 
 ## 签名与公证
 
@@ -65,7 +65,7 @@ APPLE_APP_SPECIFIC_PASSWORD
 APPLE_TEAM_ID
 ```
 
-`MACOS_CERTIFICATE` 是 Developer ID Application `.p12` 的 base64 内容。项目不发布 `.pkg`，不需要 Developer ID Installer 证书。缺少 macOS 配置时 workflow 会明确标记产物为 unsigned，并报告 Computer Use client attestation 可能受影响。
+`MACOS_CERTIFICATE` 是 Developer ID Application `.p12` 的 base64 内容。项目不发布 `.pkg`，不需要 Developer ID Installer 证书。缺少 macOS 签名/公证配置时 preflight 直接失败，draft 也不例外；不能把无法通过 Computer Use client attestation 的 unsigned Mac 包当作可用发布产物。
 
 Windows 使用 SignPath，而不是旧的 `WINDOWS_CERTIFICATE` / `WINDOWS_CERTIFICATE_PASSWORD` 变量。preflight 读取：
 
@@ -79,7 +79,7 @@ SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG
 SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG
 ```
 
-Windows 签名配置全部缺失时，当前 workflow 可以按其规则生成 unsigned 产物；部分配置则视为错误，非 draft 发布会拒绝继续。手动 workflow 还可以显式选择 `skip_windows_signing`，但 release 记录必须说明产物未签名。unsigned Windows 产物仍可能触发 SmartScreen，SmartScreen 提示本身不等于安装或 updater 失败。
+Windows 签名由 `WINDOWS_SIGNING_ENABLED` 仓库变量控制，未设为 `true` 时生成 unsigned 产物并输出 notice。手动 `windows_signing` 输入可选 `auto`（跟随变量）、`unsigned` 或 `signed`；旧 `skip_windows_signing` 已不存在。请求签名后，`signed` 缺配置直接失败；`auto` 缺配置时仅 draft 可退为 unsigned，非 draft 拒绝继续。发布记录须说明签名状态；unsigned Windows 产物仍可能触发 SmartScreen，SmartScreen 提示本身不等于安装或 updater 失败。
 
 ## Windows x64 打包
 
@@ -127,7 +127,9 @@ bun run test:package-smoke --platform windows --package-kind release \
 sha256sum desktop/build-artifacts/windows-x64-validation/EchoFlow-Code-X.Y.Z-win-x64.exe
 ```
 
-`package-smoke` 只能证明包结构，不能证明 Windows 安装或启动。维护者仍需在真实 Windows 上安装 NSIS `.exe`，检查：
+`package-smoke` 的结构检查本身不能证明 Windows 安装或启动。workflow 另在 Windows x64 执行 compiled sidecar 和 installer smoke，不能据此声称 Windows ARM64 或全部真实升级路径已验收。发布前须在目标 OS/架构验证待发布的同一产物：真实包启动、安装、从受支持旧版本升级/数据保留、签名和平台启动策略，并记录完整候选 SHA、源码指纹、命令/退出状态、日志及产物 SHA-256。重建或签名后重新关联证据，不要求候选此时已经在线上发布。
+
+维护者仍需在真实 Windows 上安装 NSIS `.exe`，检查：
 
 - About 中的版本与本次 release 一致；
 - 会话创建、sidecar 启动和 Provider Settings 可用；
@@ -162,4 +164,4 @@ Task 4 仍未完成发布验收，但应用级 `DifferentialHttpExecutor` 已建
 2. 镜像的 yml 与 GitHub 资产逐字节一致，不能重新序列化；
 3. `artifactName` 保持 `EchoFlow-Code-${version}-${os}-${arch}.${ext}`，因为下载 manifest 和安装包校验依赖它。
 
-每次正式发布至少从上一个稳定版本做一次真实升级：安装旧版、推 tag 并等待 workflow、在旧版触发更新、安装并重启，然后确认版本、provider、会话、Skills、Agents、记忆、自定义数据目录和历史任务状态仍可用。macOS 重点检查签名/启动策略，Windows 重点检查 `latest.yml`、安装包和 blockmap，Linux 重点检查 AppImage 自动更新。
+正式发布后至少从上一个稳定版本做一次真实更新链路验收：安装旧版、按 Release Please 的可信授权发布并等待 workflow、在旧版触发更新、安装并重启，然后确认版本、provider、会话、Skills、Agents、记忆、自定义数据目录和历史任务状态仍可用。直接推 tag 不替代正式发布授权。这是发布后 metadata/下载/安装链路证据，不是要求候选先上线的发布前置条件；发布前包验收与旧版升级验证仍须单独完成。macOS 重点检查签名/启动策略，Windows 重点检查 `latest.yml`、安装包和 blockmap，Linux 重点检查 AppImage 自动更新。

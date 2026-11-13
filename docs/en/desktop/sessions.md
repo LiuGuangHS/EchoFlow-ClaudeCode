@@ -23,7 +23,7 @@ The small line under the session title is metadata: project path, branch, model.
 
 ## Reading the conversation
 
-![A release-notes conversation in the real project, with tool calls and the session list (Chinese interface)](../../images/app/en/session-main.webp)
+![An example conversation in the welcome project, with project history](../../images/app/en/session-main.webp)
 
 Claude doesn't just reply with a paragraph. Several kinds of card appear along the way:
 
@@ -47,7 +47,7 @@ When in doubt, pick **Allow** — being asked a few extra times costs nothing. I
 
 ### The five permission modes
 
-![The five permission modes in the composer (Chinese interface)](../../images/app/en/permission-modes.webp)
+![The five permission modes in the composer](../../images/app/en/permission-modes.webp)
 
 The permission button in the composer toolbar sets the overall strictness:
 
@@ -129,7 +129,7 @@ With Agent Trace enabled in **Settings → General**, assistant lines also get a
 
 ## What the composer can do
 
-![The slash-command panel that opens when you type `/` (Chinese interface)](../../images/app/en/composer-slash.webp)
+![The slash-command panel that opens when you type `/`](../../images/app/en/composer-slash.webp)
 
 - **`/` slash commands** — type `/` for the command panel. `/status` for session state and usage, `/context` for context breakdown, `/compact` to compress, `/review` to review changes, `/commit`, `/memory` to open project memory, `/doctor` to open the diagnostics check.
 - **`@` file and session references** — type `@` to search files and past sessions. Files are attached as paths; sessions appear as clickable references.

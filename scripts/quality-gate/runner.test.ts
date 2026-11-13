@@ -1,5 +1,7 @@
-import { describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { describe, expect, spyOn, test } from 'bun:test'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { currentPackageSmokeArch, currentPackageSmokePlatform, currentReleaseArtifactsDir, lanesForMode } from './modes'
@@ -547,6 +549,267 @@ describe('runQualityGate', () => {
     } finally {
       rmSync(artifactsDir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('candidate provenance', () => {
+  const lane: LaneDefinition = {
+    id: 'fixture', title: 'Fixture', description: 'Offline fixture', kind: 'command',
+    command: ['true'], requiredForModes: ['pr'],
+  }
+  const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
+
+  function fixture() {
+    const dir = mkdtempSync(join(tmpdir(), 'quality-candidate-'))
+    const root = join(dir, 'repo')
+    mkdirSync(root)
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim()
+    git('init', '-q')
+    // Fixture identity is not PR policy context.
+    git('config', 'user.name', 'Fixture')
+    git('config', 'user.email', 'fixture@example.invalid')
+    writeFileSync(join(root, '.gitignore'), 'ignored\n')
+    writeFileSync(join(root, 'tracked'), 'base\n')
+    git('add', '.')
+    git('commit', '-qm', 'fixture')
+    const options = {
+      mode: 'pr' as const, dryRun: false, allowLive: false, baselineTargets: [],
+      rootDir: root, artifactsDir: join(dir, 'reports'), runId: 'fixture',
+    }
+    const run = (change: () => void = () => {}) => runQualityGateLanes(options, [lane], async () => {
+      change()
+      return { id: lane.id, title: lane.title, status: 'passed', durationMs: 0, exitCode: 0 }
+    })
+    return { dir, root, git, options, run }
+  }
+
+  test('records full HEAD, separate dirty digests and actual runner identity without rejecting unchanged dirt', async () => {
+    const f = fixture()
+    try {
+      f.git('config', 'diff.external', 'false')
+      f.git('config', 'diff.fixture.textconv', 'false')
+      writeFileSync(join(f.root, '.gitattributes'), 'tracked diff=fixture\n')
+      writeFileSync(join(f.root, 'tracked'), 'index\n')
+      f.git('add', 'tracked')
+      writeFileSync(join(f.root, 'tracked'), 'worktree\n')
+      writeFileSync(join(f.root, 'untracked\nfile'), Buffer.from([0, 255, 1]))
+      const { report } = await f.run()
+      expect(report.candidate?.status).toBe('stable')
+      expect(report.candidate?.failures).toEqual([])
+      const before = report.candidate?.before
+      expect(before?.status).toBe('valid')
+      if (before?.status !== 'valid') throw new Error('missing fingerprint')
+      expect(before.head).toBe(f.git('rev-parse', 'HEAD'))
+      expect(before.head).toMatch(/^[a-f0-9]{40}$/)
+      expect(before.indexDiffSha256).not.toBe(sha256(''))
+      expect(before.worktreeDiffSha256).not.toBe(sha256(''))
+      expect(before.indexDiffSha256).not.toBe(before.worktreeDiffSha256)
+      const diff = ['--binary', '--full-index', '--no-ext-diff', '--no-textconv']
+      expect(before.indexDiffSha256).toBe(sha256(execFileSync('git', ['diff', '--cached', ...diff, 'HEAD', '--'], { cwd: f.root })))
+      expect(before.worktreeDiffSha256).toBe(sha256(execFileSync('git', ['diff', ...diff, '--'], { cwd: f.root })))
+      expect(before.untrackedSha256).not.toBe(sha256(''))
+      expect(report.candidate?.after).toEqual(before)
+      expect(report.git).toEqual({ sha: before.head, dirty: true })
+      expect(report.runtime).toEqual({
+        name: 'bun', version: Bun.version, executable: process.execPath,
+        argv: process.argv, platform: process.platform, arch: process.arch,
+      })
+      expect(report.summary).toEqual({ passed: 1, failed: 0, skipped: 0 })
+      expect(report.status).toBe('passed')
+      expect(report.candidate?.limitation).toContain('change-and-restore')
+    } finally { rmSync(f.dir, { recursive: true, force: true }) }
+  })
+
+  for (const change of ['index', 'text', 'binary', 'mode', 'symlink', 'delete', 'head', 'tracked-mode'] as const) {
+    test(`fails the candidate, not the passing lane, on ${change} drift in every report format`, async () => {
+      const f = fixture()
+      try {
+        writeFileSync(join(f.root, 'loose'), 'old\n')
+        f.git('config', 'core.filemode', 'false')
+        const { report, outputDir } = await f.run(() => {
+          if (change === 'index') {
+            writeFileSync(join(f.root, 'tracked'), 'staged\n')
+            f.git('add', 'tracked')
+            writeFileSync(join(f.root, 'tracked'), 'base\n')
+          }
+          if (change === 'text') writeFileSync(join(f.root, 'loose'), 'new\n')
+          if (change === 'binary') writeFileSync(join(f.root, 'loose'), Buffer.from([0, 255, 2]))
+          if (change === 'mode') chmodSync(join(f.root, 'loose'), 0o755)
+          if (change === 'symlink') {
+            unlinkSync(join(f.root, 'loose'))
+            symlinkSync('/nonexistent-outside-repo', join(f.root, 'loose'))
+          }
+          if (change === 'delete') unlinkSync(join(f.root, 'loose'))
+          if (change === 'head') f.git('commit', '--allow-empty', '-qm', 'next')
+          if (change === 'tracked-mode') chmodSync(join(f.root, 'tracked'), 0o755)
+        })
+        expect(report.summary).toEqual({ passed: 1, failed: 0, skipped: 0 })
+        expect(report.status).toBe('failed')
+        expect(report.candidate?.status).toBe('changed')
+        expect(report.candidate?.failures.length).toBeGreaterThan(0)
+        const json = JSON.parse(readFileSync(join(outputDir, 'report.json'), 'utf8'))
+        expect(json.status).toBe('failed')
+        expect(json.results[0].status).toBe('passed')
+        const markdown = readFileSync(join(outputDir, 'report.md'), 'utf8')
+        expect(markdown).toContain('Candidate status: changed')
+        expect(markdown).toContain('Candidate Failures')
+        expect(markdown).toContain('Passed: 1')
+        const junit = readFileSync(join(outputDir, 'junit.xml'), 'utf8')
+        expect(junit).toContain('tests="2" failures="1"')
+        expect(junit).toContain('name="candidate-provenance"')
+      } finally { rmSync(f.dir, { recursive: true, force: true }) }
+    })
+  }
+
+  test('canonicalizes NUL-separated paths, hashes binary bytes and ignores link targets and ignored files', async () => {
+    const f = fixture()
+    try {
+      const target = join(f.dir, 'external')
+      writeFileSync(target, 'outside-one')
+      symlinkSync(target, join(f.root, 'link'))
+      writeFileSync(join(f.root, 'z\nfile'), Buffer.from([0, 255]))
+      writeFileSync(join(f.root, 'a'), 'a')
+      const first = await f.run()
+      expect(first.report.candidate?.status).toBe('stable')
+      const { report } = await f.run(() => {
+        writeFileSync(target, 'outside-two')
+        writeFileSync(join(f.root, 'ignored'), 'ignored')
+        unlinkSync(join(f.root, 'a'))
+        writeFileSync(join(f.root, 'a'), 'a')
+      })
+      expect(report.candidate?.status).toBe('stable')
+      expect(report.candidate?.before).toEqual(first.report.candidate?.before)
+      const changed = await f.run(() => {
+        unlinkSync(join(f.root, 'link'))
+        symlinkSync(join(f.dir, 'different-missing-target'), join(f.root, 'link'))
+      })
+      expect(changed.report.candidate?.status).toBe('changed')
+    } finally { rmSync(f.dir, { recursive: true, force: true }) }
+  })
+
+  test('records unknown endpoints and fails closed on Git/read errors instead of claiming clean', async () => {
+    const f = fixture()
+    try {
+      const { report } = await f.run(() => rmSync(join(f.root, '.git'), { recursive: true }))
+      expect(report.candidate?.before.status).toBe('valid')
+      expect(report.candidate?.after.status).toBe('unknown')
+      expect(report.candidate?.status).toBe('invalid')
+      expect(report.status).toBe('failed')
+      expect(report.git).toEqual({ sha: null, dirty: null })
+      expect(renderMarkdownReport(report)).toContain('Dirty worktree: unknown')
+      const invalidBefore = await f.run()
+      expect(invalidBefore.report.candidate?.before.status).toBe('unknown')
+      expect(invalidBefore.report.status).toBe('failed')
+    } finally { rmSync(f.dir, { recursive: true, force: true }) }
+  })
+
+  test('marks an untracked file read failure unknown rather than hashing an empty file', async () => {
+    const f = fixture()
+    try {
+      const unreadable = join(f.root, 'unreadable')
+      writeFileSync(unreadable, 'not empty')
+      chmodSync(unreadable, 0o000)
+      try {
+        expect(() => readFileSync(unreadable)).toThrow()
+        const { report } = await f.run()
+        expect(report.candidate?.status).toBe('invalid')
+        expect(report.candidate?.before.status).toBe('unknown')
+        expect(report.status).toBe('failed')
+      } finally { chmodSync(unreadable, 0o600) }
+    } finally { rmSync(f.dir, { recursive: true, force: true }) }
+  })
+
+  test('persists executor rejection and spawn failure, preserves partial logs and continues independent lanes', async () => {
+    const f = fixture()
+    try {
+      const second = { ...lane, id: 'second' }
+      const { report } = await runQualityGateLanes(f.options, [lane, second], async (current, options) => {
+        if (current.id === lane.id) {
+          mkdirSync(join(options.runOutputDir!, 'logs'), { recursive: true })
+          writeFileSync(join(options.runOutputDir!, 'logs', 'fixture.log'), 'partial output\n')
+          throw new Error('executor fixture rejection')
+        }
+        return { id: current.id, title: current.title, status: 'passed', durationMs: 0 }
+      })
+      expect(report.results.map(result => result.status)).toEqual(['failed', 'passed'])
+      expect(report.summary).toEqual({ passed: 1, failed: 1, skipped: 0 })
+      expect(report.results[0].command).toEqual(['true'])
+      expect(report.results[0].error).toContain('executor fixture rejection')
+      expect(readFileSync(report.results[0].logPath!, 'utf8')).toContain('partial output\n')
+      expect(readFileSync(report.results[0].logPath!, 'utf8')).toContain('executor fixture rejection')
+      const spawned = await runQualityGateLanes(f.options, [{ ...lane, command: ['/nonexistent-fixture-executable'] }, second])
+      expect(spawned.report.results.map(result => result.status)).toEqual(['failed', 'passed'])
+      expect(readFileSync(spawned.report.results[0].logPath!, 'utf8')).toContain('/nonexistent-fixture-executable')
+    } finally { rmSync(f.dir, { recursive: true, force: true }) }
+  })
+
+  test('records command termination signal and fails even if the exit code is zero', async () => {
+    const f = fixture()
+    const original = Bun.spawn
+    const spawn = spyOn(Bun, 'spawn').mockImplementation(((command: string[], options: unknown) => {
+      if (command[0] !== 'signal-fixture') return original(command, options as never)
+      // No process signals: model the subprocess result at the existing spawn boundary.
+      return { exited: Promise.resolve(0), signalCode: 'SIGTERM', stdout: new Response('partial\n').body, stderr: null }
+    }) as typeof Bun.spawn)
+    try {
+      const { report } = await runQualityGateLanes(f.options, [{ ...lane, command: ['signal-fixture'] }])
+      expect(report.results[0].status).toBe('failed')
+      expect(report.results[0].signalCode).toBe('SIGTERM')
+      expect(readFileSync(report.results[0].logPath!, 'utf8')).toContain('SIGTERM')
+      expect(renderMarkdownReport(report)).toContain('Signal: SIGTERM')
+      expect(renderJUnitReport(report)).toContain('SIGTERM')
+    } finally {
+      spawn.mockRestore()
+      rmSync(f.dir, { recursive: true, force: true })
+    }
+  })
+
+  test('CLI exits nonzero on drift even when every selected lane passed', async () => {
+    const f = fixture()
+    try {
+      const baseline = join(f.root, 'scripts', 'quality-gate', 'baseline')
+      mkdirSync(baseline, { recursive: true })
+      writeFileSync(join(baseline, 'cases.test.ts'), [
+        "import { test } from 'bun:test'",
+        "import { writeFileSync } from 'node:fs'",
+        "test('offline fixture mutation', () => writeFileSync('tracked', 'changed by fixture'))",
+      ].join('\n'))
+      const proc = Bun.spawn([
+        process.execPath, '--no-env-file', join(import.meta.dir, 'index.ts'),
+        '--mode', 'baseline', '--only', 'baseline-catalog', '--artifacts-dir', f.options.artifactsDir,
+      ], { cwd: f.root, stdout: 'pipe', stderr: 'pipe' })
+      const [stdout, , code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
+      expect(code).toBe(1)
+      expect(stdout).toContain('passed=1 failed=0 skipped=0')
+      expect(stdout).toContain('Candidate: changed')
+      const reportPath = stdout.match(/Quality gate report: (.+)\/report.md/)?.[1]
+      expect(reportPath).toBeTruthy()
+      const report = JSON.parse(readFileSync(join(reportPath!, 'report.json'), 'utf8'))
+      expect(report.status).toBe('failed')
+      expect(report.results[0].status).toBe('passed')
+      expect(report.candidate.status).toBe('changed')
+    } finally { rmSync(f.dir, { recursive: true, force: true }) }
+  })
+
+  test('CLI exits nonzero for candidate failure despite zero failed lanes and preserves reports', async () => {
+    const f = fixture()
+    try {
+      rmSync(join(f.root, '.git'), { recursive: true })
+      const proc = Bun.spawn([
+        process.execPath, '--no-env-file', join(import.meta.dir, 'index.ts'),
+        '--mode', 'baseline', '--dry-run', '--only', 'baseline-catalog', '--artifacts-dir', f.options.artifactsDir,
+      ], { cwd: f.root, stdout: 'pipe', stderr: 'pipe' })
+      const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
+      expect(stderr).toBe('')
+      expect(stdout).toContain('failed=0')
+      expect(code).toBe(1)
+      const reportPath = stdout.match(/Quality gate report: (.+)\/report.md/)?.[1]
+      expect(reportPath).toBeTruthy()
+      const report = JSON.parse(readFileSync(join(reportPath!, 'report.json'), 'utf8'))
+      expect(report.candidate.status).toBe('invalid')
+      expect(report.summary.failed).toBe(0)
+      expect(report.status).toBe('failed')
+    } finally { rmSync(f.dir, { recursive: true, force: true }) }
   })
 })
 

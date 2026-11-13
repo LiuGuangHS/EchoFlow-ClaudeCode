@@ -17,7 +17,7 @@ The empty panel offers **Side chat**, **Review**, **Terminal**, **Browser**, and
 
 ## Review: choose a comparison
 
-![The Review file tree showing changed files and line counts in the selected HEAD commit (Chinese interface)](../../images/app/en/workspace-changes.webp)
+![The Review file tree showing untracked working-tree files in the example project](../../images/app/en/workspace-changes.webp)
 
 Open **Review** and use **Comparison** in the toolbar to choose the changes you want to inspect:
 
@@ -25,7 +25,7 @@ Open **Review** and use **Comparison** in the toolbar to choose the changes you 
 - **Branch / Compare branch…** — differences against the selected branch.
 - **View commit…** — enter a commit reference to inspect that commit's changes.
 
-Use **Toggle file tree** to show the files changed in the selected comparison. Each row includes a status and line counts; select a file to see its diff. The Review screenshots on this page use **View commit…** to inspect the existing `HEAD` commit in read-only mode.
+Use **Toggle file tree** to show the files changed in the selected comparison. Each row includes a status and line counts; select a file to see its diff. The image above shows untracked files in the example project. The diff below shows the frozen before/after snapshot of a recorded turn, not a `HEAD` commit.
 
 If the folder is not a Git repository, the **Review** entry explains why it is unavailable.
 
@@ -50,7 +50,7 @@ When Claude rewrites a file you are previewing, the preview refreshes in place. 
 
 ## Diff review: leaving a note on a line
 
-![A read-only review of the HEAD commit with syntax-highlighted diff lines (Chinese interface)](../../images/app/en/workspace-diff.webp)
+![A frozen recorded-turn diff adding a Language line to the example file](../../images/app/en/workspace-diff.webp)
 
 The diff keeps old and new lines with syntax highlighting. The toolbar lets you switch between **Unified diff** and **Split diff** and enable word wrap. When you finish a file, use **Mark as viewed**. To leave feedback, use line-level comments:
 
@@ -81,7 +81,9 @@ The temporary worktree is cleaned up when you're done. History stays readable, b
 
 ## Built-in browser
 
-![The built-in browser previewing a page that was just edited (Chinese interface)](../../images/app/en/workspace-preview.webp)
+![The built-in browser displaying a local static bilingual welcome-page example](../../images/app/en/workspace-preview.webp)
+
+The screenshot uses a local static demo page and a sample conversation to show the browser beside the chat. It does not represent a live model run.
 
 Open a **Browser** tab from the empty workspace panel or the `+` menu at the top, then type a local dev address or any URL. It stays in its own tab alongside **Files** and **Review**. Three buttons here exist specifically so Claude can see what you see:
 

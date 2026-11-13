@@ -1,4 +1,5 @@
-import type { NormalizedSkill } from '../../types/market'
+import { useState } from 'react'
+import type { NormalizedSkill } from '@/types/market'
 
 /** First visible character of the name, uppercased (handles CJK and multi-byte chars). */
 function initialOf(name: string): string {
@@ -36,11 +37,13 @@ export function SkillAvatar({
   className?: string
 }) {
   const tile = tileClasses(size)
+  const [failedIconUrl, setFailedIconUrl] = useState<string>()
 
-  if (skill.iconUrl) {
+  if (skill.iconUrl && skill.iconUrl !== failedIconUrl) {
     return (
       <img
         src={skill.iconUrl}
+        onError={() => setFailedIconUrl(skill.iconUrl)}
         alt=""
         loading="lazy"
         style={{ width: size, height: size }}

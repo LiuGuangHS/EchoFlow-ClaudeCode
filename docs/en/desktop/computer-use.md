@@ -27,9 +27,9 @@ Open **Settings → Computer Use**, check the native runtime status, then turn o
 
 **One confirmation authorizes Computer Use for all supported apps on this computer; there is no separate approval for each app.** macOS system permissions, the global switch, and target-validity checks still apply. Windows and Linux do not show the macOS permission card or require **Download Python** or **Install Environment**.
 
-![macOS example: Computer Use switch and system permissions](../../images/app/en/settings-computer-use.webp)
+![Linux settings example: Computer Use is off and the runtime cannot access the current graphical session](../../images/app/en/settings-computer-use.webp)
 
-The image shows macOS. Windows and Linux display the native runtime status and their platform's input limits.
+The image shows Linux with the feature off and accessibility services unavailable in the current graphical session. It does not mean Linux is unsupported or demonstrate authorized desktop control. Windows and Linux display native runtime status and platform-specific input limits; macOS also has a system permission card.
 
 ### macOS system permissions
 

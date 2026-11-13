@@ -18,7 +18,7 @@ When you inherit a repository, ask Claude for an evidence-backed map before chan
 
 1. Start a new session and select the project folder. Switch the composer permission control to **Plan mode**.
 
-![New session composer with permission, project, and model controls in its toolbar (Chinese interface)](../../images/app/en/session-new.webp)
+![New session composer with permission, project, and model controls in its toolbar](../../images/app/en/session-new.webp)
 
 2. Send this prompt. “Evidence” means repository files and actual command output, not guesses about files it has not read.
 

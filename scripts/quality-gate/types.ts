@@ -62,6 +62,7 @@ export type LaneResult = {
   command?: string[]
   durationMs: number
   exitCode?: number
+  signalCode?: string | null
   skipReason?: string
   error?: string
   artifactDir?: string
@@ -112,6 +113,17 @@ export type QualityGateOptions = {
   skipLaneSelectors?: string[]
 }
 
+export type CandidateFingerprint = {
+  status: 'valid'
+  head: string
+  indexDiffSha256: string
+  worktreeDiffSha256: string
+  untrackedSha256: string
+} | {
+  status: 'unknown'
+  error: string
+}
+
 export type QualityGateReport = {
   schemaVersion: 1
   runId: string
@@ -123,7 +135,23 @@ export type QualityGateReport = {
   rootDir: string
   git: {
     sha: string | null
-    dirty: boolean
+    dirty: boolean | null
+  }
+  status?: 'passed' | 'failed'
+  candidate?: {
+    before: CandidateFingerprint
+    after: CandidateFingerprint
+    status: 'stable' | 'changed' | 'invalid'
+    failures: string[]
+    limitation: string
+  }
+  runtime?: {
+    name: 'bun' | 'node'
+    version: string
+    executable: string
+    argv: string[]
+    platform: string
+    arch: string
   }
   results: LaneResult[]
   impact?: ImpactSummary

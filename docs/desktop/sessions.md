@@ -23,7 +23,7 @@ order: 1
 
 ## 读懂对话流
 
-![真实项目中的发布说明会话：工具调用、回复与完整会话列表](../images/app/zh-CN/session-main.webp)
+![欢迎项目的示例会话：对话内容与项目历史](../images/app/zh-CN/session-main.webp)
 
 Claude 干活时不是一句话回你，中间会插进来几种卡片：
 

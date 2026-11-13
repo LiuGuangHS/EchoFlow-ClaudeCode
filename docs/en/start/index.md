@@ -9,9 +9,9 @@ order: 0
 
 It's an app on your computer. You hand it a project folder, describe what you want in plain language, and it goes off to read the code, edit files, and run commands — with every change laid out in front of you, waiting for your approval.
 
-![A release-notes conversation in the real project, with tool calls and the session list (Chinese interface)](../../images/app/en/session-main.webp)
+![An example conversation in the welcome project, with project history](../../images/app/en/session-main.webp)
 
-That's a real session. Projects and history on the left, the conversation in the middle, and when Claude edits a file the diff appears right underneath, line by line.
+The real desktop app is displaying a preloaded example conversation: projects and history on the left, the conversation in the middle. The example illustrates the interface, not a live model run. During an actual task, file changes can be reviewed line by line in the conversation and workspace.
 
 ## How this relates to the Claude Code CLI
 

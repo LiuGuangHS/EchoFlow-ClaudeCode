@@ -184,7 +184,7 @@ async function checkAppScreenshotFiles() {
       }
 
       sizes[locale].set(basename, size)
-      const expectedWidth = basename.startsWith('h5-') ? 1206 : 2000
+      const expectedWidth = 2000
       if (size.width !== expectedWidth) {
         problems.push(
           `docs/images/app/${directoryName}/${basename}.webp: width ${size.width}, expected ${expectedWidth}`

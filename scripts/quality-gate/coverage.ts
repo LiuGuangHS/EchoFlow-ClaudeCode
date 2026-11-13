@@ -29,6 +29,20 @@ type CoverageScope = {
   excludeSuffixes?: string[]
 }
 
+type CommandTermination = {
+  exitCode: number | null
+  signalCode: NodeJS.Signals | null
+  error?: string
+}
+
+type ChangedLineScope = {
+  strategy: 'explicit-base' | 'dirty-worktree' | 'branch-fallback' | 'none'
+  baseRef?: string
+  diffArgs?: string[]
+  includes: { committed: boolean; staged: boolean; unstaged: boolean; untracked: boolean }
+  error?: string
+}
+
 type SuiteCoverage = {
   id: string
   title: string
@@ -37,6 +51,9 @@ type SuiteCoverage = {
   durationMs: number
   summary?: CoverageSummary
   logPath: string
+  exitCode?: number | null
+  signalCode?: NodeJS.Signals | null
+  lcovAvailable?: boolean
   error?: string
   note?: string
 }
@@ -91,6 +108,7 @@ type FileLineCoverage = {
 }
 
 type ChangedLineCoverage = {
+  scope?: ChangedLineScope
   minimumPercent: number
   covered: number
   total: number
@@ -376,20 +394,29 @@ export function parseBunStartedTestFileCount(output: string) {
   return startedTestFiles.size
 }
 
+function terminationError(result?: CommandTermination) {
+  if (result?.error) return `coverage command failed: ${result.error}`
+  if (result?.signalCode) return `coverage command terminated by signal ${result.signalCode} (exit ${result.exitCode ?? 'unknown'})`
+  if (result && result.exitCode === null) return 'coverage command has unknown exit status'
+  return undefined
+}
+
 export function evaluateRootCoverage(output: string, expectedFiles: number, lcov: string, options: {
   rootDir?: string
   scope?: CoverageScope
+  process?: CommandTermination
 } = {}) {
   const completedFiles = parseBunTestFileCount(output)
   const startedFiles = parseBunStartedTestFileCount(output)
-  const error = completedFiles !== expectedFiles
+  const lcovAvailable = hasUsableLcov(lcov, options)
+  const error = terminationError(options.process) ?? (completedFiles !== expectedFiles
     ? `coverage command final test file summary ${completedFiles ?? 'unknown'}/${expectedFiles}; started ${startedFiles}/${expectedFiles} root test files`
     : !hasUsableLcov(lcov, { rootDir: options.rootDir })
       ? 'coverage command produced no usable LCOV records'
-      : options.scope && !hasUsableLcov(lcov, options)
+      : !lcovAvailable && options.scope
         ? `coverage command produced no LCOV records for ${options.scope.id}`
-        : undefined
-  return { completedFiles, startedFiles, available: error === undefined, error }
+        : undefined)
+  return { completedFiles, startedFiles, lcovAvailable, available: error === undefined, error }
 }
 
 export function buildRootCoverageCommand(outputDir: string, serverFiles: string[], rootDir = ROOT_DIR) {
@@ -508,34 +535,49 @@ export function removeSandboxHome(directory: string, warn: (message: string) => 
 
 export async function runCommand(command: string[], cwd: string, logPath: string) {
   const started = Date.now()
+  const startedAt = new Date(started).toISOString()
   const sandboxHome = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-test-'))
   const header = `$ ${command.join(' ')}\n`
   const capturePath = join(sandboxHome, 'coverage-output.log')
+  const context = { command, cwd, logPath, capturePath, startedAt }
   let logFd: number | undefined
+  let exitCode: number | null = null
+  let signalCode: NodeJS.Signals | null = null
+  let failed = false
+  let failure: unknown
   try {
-    // Reporters such as Vitest delete their output directory on startup. Keep
-    // the live capture outside that directory until the process has finished.
-    logFd = openSync(capturePath, 'w')
-    // Bun's synchronous text coverage reporter can fail while writing a large
-    // report to a pipe, before it emits LCOV or its test-count summary. Give
-    // both streams a regular file descriptor, with no pipe buffer to exhaust.
-    const proc = Bun.spawn(command, {
-      cwd,
-      env: createSandboxedTestEnvironment(sandboxHome),
-      stdout: logFd,
-      stderr: logFd,
-    })
-    const exitCode = await proc.exited
-    closeSync(logFd)
-    logFd = undefined
-    const output = readFileSync(capturePath, 'utf8')
-    mkdirSync(dirname(logPath), { recursive: true })
-    writeFileSync(logPath, `${header}${output}`)
+    try {
+      // Reporters such as Vitest delete their output directory on startup. Keep
+      // the live capture outside that directory until the process has finished.
+      logFd = openSync(capturePath, 'w')
+      console.log(`[coverage] ${JSON.stringify({ phase: 'start', ...context })}`)
+      // Bun's synchronous text coverage reporter can fail while writing a large
+      // report to a pipe, before it emits LCOV or its test-count summary. Give
+      // both streams a regular file descriptor, with no pipe buffer to exhaust.
+      const proc = Bun.spawn(command, {
+        cwd,
+        env: createSandboxedTestEnvironment(sandboxHome),
+        stdout: logFd,
+        stderr: logFd,
+      })
+      try {
+        exitCode = await proc.exited
+      } finally {
+        signalCode = proc.signalCode
+      }
+    } catch (error) {
+      failed = true
+      failure = error
+    } finally {
+      if (logFd !== undefined) closeSync(logFd)
+    }
+    const output = existsSync(capturePath) ? readFileSync(capturePath, 'utf8') : ''
     const diagnostics = {
-      command,
-      cwd,
+      ...context,
       exitCode,
-      signalCode: proc.signalCode,
+      signalCode,
+      ...(failed ? { error: failure instanceof Error ? failure.message : String(failure) } : {}),
+      finishedAt: new Date().toISOString(),
       durationMs: Date.now() - started,
       runnerRuntime: {
         executable: process.execPath,
@@ -544,10 +586,13 @@ export async function runCommand(command: string[], cwd: string, logPath: string
         arch: process.arch,
       },
     }
+    mkdirSync(dirname(logPath), { recursive: true })
+    writeFileSync(logPath, `${header}${output}`)
     writeFileSync(`${logPath}.process.json`, JSON.stringify(diagnostics, null, 2) + '\n')
+    console.log(`[coverage] ${JSON.stringify({ phase: 'end', ...diagnostics })}`)
+    if (failed) throw failure
     return { ...diagnostics, output }
   } finally {
-    if (logFd !== undefined) closeSync(logFd)
     removeSandboxHome(sandboxHome)
   }
 }
@@ -563,7 +608,9 @@ async function runSuite(
   mkdirSync(suiteDir, { recursive: true })
   const logPath = join(suiteDir, 'coverage.log')
   const result = await runCommand(command, cwd, logPath)
-  if (result.exitCode !== 0) {
+  const termination = { exitCode: result.exitCode, signalCode: result.signalCode }
+  const processError = terminationError(result)
+  if (processError || result.exitCode !== 0) {
     return {
       id,
       title,
@@ -571,7 +618,8 @@ async function runSuite(
       command,
       durationMs: result.durationMs,
       logPath,
-      error: `coverage command exited with ${result.exitCode}`,
+      ...termination,
+      error: processError ?? `coverage command exited with ${result.exitCode}`,
     }
   }
 
@@ -587,6 +635,7 @@ async function runSuite(
       command,
       durationMs: result.durationMs,
       logPath,
+      ...termination,
       summary,
     }
   } catch (error) {
@@ -597,6 +646,7 @@ async function runSuite(
       command,
       durationMs: result.durationMs,
       logPath,
+      ...termination,
       error: error instanceof Error ? error.message : String(error),
     }
   }
@@ -674,26 +724,42 @@ function gitOutput(rootDir: string, args: string[]) {
 }
 
 function collectChangedLines(rootDir: string, baseRef?: string) {
+  function collect(strategy: ChangedLineScope['strategy'], base: string, comparison: string) {
+    const diffArgs = ['diff', '--unified=0', '--no-ext-diff', comparison, '--']
+    const diff = gitOutput(rootDir, diffArgs)
+    const dirty = strategy === 'dirty-worktree'
+    const scope: ChangedLineScope = {
+      strategy,
+      baseRef: base,
+      diffArgs,
+      includes: { committed: !dirty, staged: dirty, unstaged: dirty, untracked: false },
+      ...(diff === null ? { error: 'git diff failed; changed lines are unknown, not an empty diff' } : {}),
+    }
+    return { lines: diff ? parseChangedLinesFromDiff(diff) : new Map<string, Set<number>>(), scope }
+  }
+
   const explicitBase = baseRef?.trim()
   if (explicitBase) {
-    const diff = gitOutput(rootDir, ['diff', '--unified=0', '--no-ext-diff', `${explicitBase}...HEAD`, '--'])
-    return diff ? parseChangedLinesFromDiff(diff) : new Map<string, Set<number>>()
+    return collect('explicit-base', explicitBase, `${explicitBase}...HEAD`)
   }
 
   const dirty = gitOutput(rootDir, ['diff', '--name-only', '--'])
   if (dirty?.trim()) {
-    const diff = gitOutput(rootDir, ['diff', '--unified=0', '--no-ext-diff', 'HEAD', '--'])
-    return diff ? parseChangedLinesFromDiff(diff) : new Map<string, Set<number>>()
+    return collect('dirty-worktree', 'HEAD', 'HEAD')
   }
 
   const branch = gitOutput(rootDir, ['branch', '--show-current'])?.trim()
   const hasOriginMain = gitOutput(rootDir, ['rev-parse', '--verify', 'origin/main'])
   if (branch && branch !== 'main' && hasOriginMain) {
-    const diff = gitOutput(rootDir, ['diff', '--unified=0', '--no-ext-diff', 'origin/main...HEAD', '--'])
-    return diff ? parseChangedLinesFromDiff(diff) : new Map<string, Set<number>>()
+    return collect('branch-fallback', 'origin/main', 'origin/main...HEAD')
   }
 
-  return new Map<string, Set<number>>()
+  const scope: ChangedLineScope = {
+    strategy: 'none',
+    includes: { committed: false, staged: false, unstaged: false, untracked: false },
+    ...(dirty === null || branch === undefined ? { error: 'git scope discovery failed; changed lines are unknown' } : {}),
+  }
+  return { lines: new Map<string, Set<number>>(), scope }
 }
 
 export function evaluateChangedLineCoverage(
@@ -864,6 +930,12 @@ function renderReport(report: CoverageReport) {
     ].join(' | ')} |`)
   }
 
+  lines.push('', '## Command Diagnostics', '')
+  for (const suite of report.suites) {
+    const lcov = suite.lcovAvailable === undefined ? 'not evaluated' : suite.lcovAvailable ? 'available' : 'unavailable'
+    lines.push(`- ${suite.title}: exit=${suite.exitCode ?? 'unknown'}; signal=${suite.signalCode ?? 'none'}; LCOV=${lcov}; duration=${suite.durationMs}ms; log=${suite.logPath}; process=${suite.logPath}.process.json`)
+  }
+
   const suiteNotes = report.suites.filter((suite) => suite.note)
   if (suiteNotes.length > 0) {
     lines.push('', '## Suite Notes', '')
@@ -873,6 +945,16 @@ function renderReport(report: CoverageReport) {
   }
 
   lines.push('', '## Changed Lines', '')
+  const scope = report.changedLines?.scope
+  if (scope) {
+    lines.push(
+      `- Strategy: ${scope.strategy}; base: ${scope.baseRef ?? 'none'}`,
+      `- Diff: ${scope.diffArgs ? ['git', ...scope.diffArgs].join(' ') : 'none'}`,
+      `- Included change categories: ${Object.entries(scope.includes).map(([kind, included]) => `${kind}=${included}`).join(', ')}`,
+      '- Selection preserves existing semantics: dirty fallback is triggered by unstaged tracked changes, not staged-only or untracked changes. Dirty diff is not whole-branch coverage; three-dot comparisons include committed changes since the merge base only. Untracked files are always excluded.',
+      ...(scope.error ? [`- Scope diagnostic: ${scope.error}`] : []),
+    )
+  }
   if (report.changedLines?.unmeasured) {
     lines.push(`- Not measured: ${report.changedLines.unmeasured} changed lines belong to a suite that failed (see Failures); they are not counted as uncovered.`)
   }
@@ -885,7 +967,9 @@ function renderReport(report: CoverageReport) {
       lines.push(`| ${file.file} | ${file.suiteId} | - (${file.total} lines) | ${file.reason ?? '-'} |`)
     }
   } else if (report.changedLines.total === 0) {
-    lines.push(`- No changed executable production lines matched the coverage scopes. Minimum: ${report.changedLines.minimumPercent}%`)
+    lines.push(scope?.error
+      ? `- Changed lines are unknown; the existing empty-fallback scoring is unchanged, not evidence of no changes. Minimum: ${report.changedLines.minimumPercent}%`
+      : `- No changed executable production lines matched the coverage scopes. Minimum: ${report.changedLines.minimumPercent}%`)
   } else {
     lines.push(
       `- Coverage: ${report.changedLines.pct}% (${report.changedLines.covered}/${report.changedLines.total})`,
@@ -949,7 +1033,7 @@ export async function runCoverageGate(options: {
     ? readFileSync(rootLcovPath, 'utf8')
     : ''
   const rootRecords = parseLcovRecords(rootLcov, { rootDir }).filter(isUsableLcovRecord)
-  const rootCoverage = evaluateRootCoverage(rootResult.output, serverFiles.length, rootLcov, { rootDir })
+  const rootCoverage = evaluateRootCoverage(rootResult.output, serverFiles.length, rootLcov, { rootDir, process: rootResult })
   const rootCoverageAvailable = rootCoverage.available
 
   if (rootResult.exitCode !== 0 && rootCoverageAvailable) {
@@ -961,7 +1045,7 @@ export async function runCoverageGate(options: {
 
   for (const scope of ROOT_COVERAGE_SCOPES) {
     const scopedRecords = rootRecords.filter((record) => matchesScope(record.file, scope))
-    const scopeCoverage = evaluateRootCoverage(rootResult.output, serverFiles.length, rootLcov, { rootDir, scope })
+    const scopeCoverage = evaluateRootCoverage(rootResult.output, serverFiles.length, rootLcov, { rootDir, scope, process: rootResult })
     const scopeCoverageAvailable = scopeCoverage.available
     const summary = scopeCoverageAvailable
       ? summarizeLcovRecords(scopedRecords)
@@ -973,6 +1057,9 @@ export async function runCoverageGate(options: {
       command: rootCommand,
       durationMs: rootResult.durationMs,
       logPath: rootLogPath,
+      exitCode: rootResult.exitCode,
+      signalCode: rootResult.signalCode,
+      lcovAvailable: scopeCoverage.lcovAvailable,
       ...(summary ? { summary } : {}),
       ...(rootResult.exitCode !== 0 && rootCoverageAvailable ? {
         note: `instrumentation test process exited with ${rootResult.exitCode}; correctness is enforced by the required per-file server gate`,
@@ -1053,16 +1140,22 @@ export async function runCoverageGate(options: {
     .filter((suite) => suite.status !== 'passed' || !suite.summary)
     .map((suite) => [suite.id, `${suite.id}: ${suite.error ?? 'coverage suite failed'}`]))
   if (!rootCoverageAvailable) {
-    unavailableScopes.set(ROOT_RUNTIME_CHANGED_SCOPE.id, `${ROOT_RUNTIME_CHANGED_SCOPE.id}: root coverage run produced no usable LCOV`)
+    unavailableScopes.set(ROOT_RUNTIME_CHANGED_SCOPE.id, `${ROOT_RUNTIME_CHANGED_SCOPE.id}: ${rootCoverage.error ?? 'root coverage run unavailable'}`)
   }
-  const changedLines = typeof changedLineMinimum === 'number'
-    ? evaluateChangedLineCoverage(
-      collectChangedLines(rootDir, options.changedBaseRef ?? process.env.COVERAGE_BASE_REF),
-      coverageByFile,
-      CHANGED_LINE_SCOPES,
-      changedLineMinimum,
-      unavailableScopes,
-    )
+  const changed = typeof changedLineMinimum === 'number'
+    ? collectChangedLines(rootDir, options.changedBaseRef ?? process.env.COVERAGE_BASE_REF)
+    : undefined
+  const changedLines = changed && typeof changedLineMinimum === 'number'
+    ? {
+      ...evaluateChangedLineCoverage(
+        changed.lines,
+        coverageByFile,
+        CHANGED_LINE_SCOPES,
+        changedLineMinimum,
+        unavailableScopes,
+      ),
+      scope: changed.scope,
+    }
     : undefined
   if (changedLines) {
     failures.push(...changedLines.failures)

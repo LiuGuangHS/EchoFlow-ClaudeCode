@@ -303,7 +303,8 @@ export function formatPermissionRequest(toolName: string, input: unknown, reques
 /** Truncate tool input to a preview string. */
 export function truncateInput(input: unknown, maxLen: number): string {
   try {
-    const s = typeof input === 'string' ? input : JSON.stringify(input, null, 2)
+    // shortcut: avoid Bun 1.4.3's slow cyclic pretty-JSON path; still unbounded, revisit after a runtime fix.
+    const s = typeof input === 'string' ? input : JSON.stringify(input, (_key, value) => value, 2)
     return s.length > maxLen ? s.slice(0, maxLen) + '…' : s
   } catch {
     return '(unserializable)'
