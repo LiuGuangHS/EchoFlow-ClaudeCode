@@ -6,6 +6,11 @@ import { codeOwnerLogins, evaluateChangePolicy } from './change-policy'
 import { createSandboxedTestEnvironment } from './test-environment'
 
 describe('evaluateChangePolicy', () => {
+  test('routes the product identity manifest to policy checks', () => {
+    expect(evaluateChangePolicy(['product.json']).checks.policy).toBe(true)
+    const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'))
+    expect(scripts['check:policy'].split(/\s+/)).toContain('./scripts/generate-product-identity.test.ts')
+  })
   test.each([
     'scripts/issue-router/cli.ts',
     'scripts/issue-router/store.ts',

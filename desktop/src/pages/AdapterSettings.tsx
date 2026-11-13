@@ -3,6 +3,7 @@ import { Bot, ChevronRight, CircleAlert, CircleCheck, ExternalLink, QrCode, Tria
 import { useAdapterStore } from '../stores/adapterStore'
 import { useTranslation } from '../i18n'
 import { cx } from '@/lib/cx'
+import { PRODUCT_IDENTITY } from '@/lib/productIdentity.generated'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { Badge, StatusDot, type Tone } from '@/components/ui/Badge'
@@ -32,7 +33,7 @@ type AdapterUnbindTarget =
   | 'slackApp'
 
 const FEISHU_CREATE_BOT_URL = 'https://open.feishu.cn/page/openclaw?form=multiAgent'
-const IM_CONFIG_DOCS_URL = 'https://cchaha.ai/im/'
+const IM_CONFIG_DOCS_URL = `${PRODUCT_IDENTITY.docsUrl}/im/`
 
 // Section heads inside the IM card use the settings-row type: 13 medium title
 // over a 12 tertiary line, matching `SettingsRow`.

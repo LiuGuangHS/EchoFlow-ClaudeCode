@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { setImmediate } from 'node:timers'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DEDICATED_LOGIN_PROFILE,
   EchoFlowLoginSession,
@@ -22,6 +23,7 @@ class FakeLoginWindow implements EchoFlowLoginWindow {
   focused = false
   closedCount = 0
   loadCount = 0
+  loadAttempt?: () => Promise<void>
   loadFailed?: (event: unknown, errorCode: number, errorDescription: string, validatedURL: string, isMainFrame: boolean) => void
   loadFinished?: () => void
   pageUrl = MAIN_LOGIN_PROFILE.url
@@ -65,6 +67,7 @@ class FakeLoginWindow implements EchoFlowLoginWindow {
   async loadURL(url: string) {
     this.loadedUrl = url
     this.loadCount += 1
+    await this.loadAttempt?.()
   }
 
   failLoad(errorCode: number, description: string, isMainFrame = true) {
@@ -231,7 +234,7 @@ describe('EchoFlow site login session', () => {
     await expect(result).resolves.toBe('cancelled')
   })
 
-  it('reloads a blank login page once instead of waiting on a credential that cannot arrive', async () => {
+  it('reloads a blank login page once, then fails instead of leaving a blank window', async () => {
     const { login, window, createWindow } = makeLogin()
     window.bodyText = ''
     const result = login.open()
@@ -241,13 +244,11 @@ describe('EchoFlow site login session', () => {
     await waitFor(() => window.loadCount === 2)
     expect(window.loadedUrl).toBe('https://api.echoflowai.cc/login')
 
-    // One retry only: a page that stays blank must not reload in a loop.
-    window.finishLoad()
-    await new Promise(resolve => setTimeout(resolve, 80))
+    // A second blank page is a real failure: leave the renderer waiting on a
+    // window that can no longer paint or hand back a credential.
+    await waitFor(() => window.closedCount === 1)
+    await expect(result).resolves.toBe('failed')
     expect(window.loadCount).toBe(2)
-
-    window.close()
-    await expect(result).resolves.toBe('cancelled')
   })
 
   it('keeps the login window open when session verification is unavailable', async () => {
@@ -459,6 +460,229 @@ describe('EchoFlow site login session', () => {
     expect(DEDICATED_LOGIN_PROFILE.url).toBe('https://expapi.echoflowai.cc/login')
     expect(DEDICATED_LOGIN_PROFILE.origin).toBe('https://expapi.echoflowai.cc')
     expect(DEDICATED_LOGIN_PROFILE.partition).toBe('persist:echoflow-dedicated-login')
+  })
+})
+
+const realSetImmediate = setImmediate
+
+// Bun lacks the async timer API; drain promises between steps to preserve retry ordering.
+async function advanceTime(milliseconds: number): Promise<void> {
+  for (let elapsed = 0; elapsed <= milliseconds; elapsed++) {
+    vi.advanceTimersByTime(elapsed === 0 ? 0 : 1)
+    await new Promise<void>(resolve => realSetImmediate(resolve))
+  }
+}
+
+describe('login navigation and restoration regressions', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
+  it('starts blank recovery when loadURL resolves without did-finish-load and fails a second blank page', async () => {
+    const { login, window } = makeLogin()
+    window.bodyText = ''
+    const result = login.open()
+    const settled = vi.fn()
+    void result.then(settled)
+    await advanceTime(100)
+
+    expect(window.loadCount).toBe(2)
+    expect(window.closedCount).toBe(1)
+    expect(settled).toHaveBeenCalledWith('failed')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('keeps the event-scheduled retry when the same loadURL also rejects', async () => {
+    const { login, window, credential } = makeLogin()
+    window.loadAttempt = async () => {
+      if (window.loadCount === 1) {
+        window.failLoad(-21, 'ERR_NETWORK_CHANGED')
+        throw new Error('ERR_NETWORK_CHANGED')
+      }
+      window.finishLoad()
+      window.signIn(credential)
+    }
+    const result = login.open()
+    await advanceTime(0)
+    expect(window.closedCount).toBe(0)
+    await advanceTime(10)
+    await expect(result).resolves.toBe('authenticated')
+    expect(window.loadCount).toBe(2)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('keeps a late failure event paired with an earlier loadURL rejection', async () => {
+    const { login, window, credential } = makeLogin()
+    window.loadAttempt = async () => {
+      if (window.loadCount === 1) {
+        setTimeout(() => window.failLoad(-21, 'ERR_NETWORK_CHANGED'), 1)
+        throw new Error('ERR_NETWORK_CHANGED')
+      }
+      window.finishLoad()
+      window.signIn(credential)
+    }
+    const result = login.open()
+    await advanceTime(0)
+    expect(window.closedCount).toBe(0)
+    await advanceTime(10)
+    await expect(result).resolves.toBe('authenticated')
+    expect(window.loadCount).toBe(2)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['main', 'dedicated'] as const)('bounds offline retries for %s when error documents finish loading', async endpoint => {
+    const { login, window, clearCookies, clearStorage } = makeLogin({ loadRetries: 2 })
+    window.loadAttempt = async () => {
+      window.failLoad(-106, 'ERR_INTERNET_DISCONNECTED')
+      window.finishLoad()
+      throw new Error('ERR_INTERNET_DISCONNECTED')
+    }
+    const settled = vi.fn()
+    void login.open(endpoint).then(settled)
+    await advanceTime(100)
+
+    expect(window.loadCount).toBe(3)
+    expect(window.closedCount).toBe(1)
+    expect(settled).toHaveBeenCalledOnce()
+    expect(settled).toHaveBeenCalledWith('failed')
+    expect(vi.getTimerCount()).toBe(0)
+    expect(clearCookies).not.toHaveBeenCalled()
+    expect(clearStorage).not.toHaveBeenCalled()
+  })
+
+  it.each(['main', 'dedicated'] as const)('preserves the %s load timeout after an error document finishes', async endpoint => {
+    const { login, window } = makeLogin({ loadTimeoutMs: 2 })
+    window.loadAttempt = async () => {
+      window.failLoad(-106, 'ERR_INTERNET_DISCONNECTED')
+      window.finishLoad()
+      throw new Error('ERR_INTERNET_DISCONNECTED')
+    }
+    const settled = vi.fn()
+    void login.open(endpoint).then(settled)
+    await advanceTime(3)
+
+    expect(window.loadCount).toBe(1)
+    expect(window.closedCount).toBe(1)
+    expect(settled).toHaveBeenCalledOnce()
+    expect(settled).toHaveBeenCalledWith('failed')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('bounds paired event/promise failures and gives a new window a fresh retry budget', async () => {
+    const { login, window, credential } = makeLogin({ loadRetries: 2 })
+    window.loadAttempt = async () => {
+      window.failLoad(-21, 'ERR_NETWORK_CHANGED')
+      throw new Error('ERR_NETWORK_CHANGED')
+    }
+    const first = login.open()
+    await advanceTime(100)
+    await expect(first).resolves.toBe('failed')
+    expect(window.loadCount).toBe(3)
+    expect(window.closedCount).toBe(1)
+    expect(vi.getTimerCount()).toBe(0)
+
+    window.loadAttempt = async () => {
+      if (window.loadCount === 4) {
+        window.failLoad(-21, 'ERR_NETWORK_CHANGED')
+        throw new Error('ERR_NETWORK_CHANGED')
+      }
+      window.finishLoad()
+      window.signIn(credential)
+    }
+    const second = login.open()
+    await advanceTime(10)
+    await expect(second).resolves.toBe('authenticated')
+    expect(window.loadCount).toBe(5)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['initial', 'retry', 'blank reload'] as const)('fails a %s promise rejection with no retry event', async phase => {
+    const { login, window } = makeLogin()
+    window.loadAttempt = async () => {
+      if (phase === 'initial' || window.loadCount === 2) throw new Error('load rejected without event')
+      if (phase === 'retry') window.failLoad(-21, 'ERR_NETWORK_CHANGED')
+      else {
+        window.bodyText = ''
+        window.finishLoad()
+      }
+    }
+    const result = login.open()
+    const settled = vi.fn()
+    void result.then(settled)
+    await advanceTime(40)
+    expect(settled).toHaveBeenCalledWith('failed')
+    expect(window.loadCount).toBe(phase === 'initial' ? 1 : 2)
+    expect(window.closedCount).toBe(1)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['close', 'load timeout', 'login timeout'] as const)('cancels a scheduled retry on %s', async reason => {
+    const { login, window } = makeLogin({
+      loadTimeoutMs: reason === 'load timeout' ? 2 : 500,
+      loginTimeoutMs: reason === 'login timeout' ? 2 : 2_000,
+    })
+    window.loadAttempt = async () => {
+      window.failLoad(-21, 'ERR_NETWORK_CHANGED')
+      throw new Error('ERR_NETWORK_CHANGED')
+    }
+    const result = login.open()
+    await advanceTime(0)
+    expect(window.closedCount).toBe(0)
+    if (reason === 'close') window.close()
+    await advanceTime(100)
+    await expect(result).resolves.toBe(reason === 'close' ? 'cancelled' : 'failed')
+    expect(window.loadCount).toBe(1)
+    expect(window.closedCount).toBe(1)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  describe.each(['main', 'dedicated'] as const)('%s previously verified session', endpoint => {
+    it.each(['missing', 'rejected', 'unavailable', 'read error'] as const)('can authenticate interactively after %s restoration without clearing the other endpoint', async failure => {
+      const otherEndpoint = endpoint === 'main' ? 'dedicated' : 'main'
+      const persisted: EchoFlowLoginCredential = endpoint === 'main'
+        ? { kind: 'session', userId: '1', cookie: 'session=old' }
+        : { kind: 'bearer', userId: '1', accessToken: 'old-token' }
+      const fresh: EchoFlowLoginCredential = endpoint === 'main'
+        ? { kind: 'session', userId: '2', cookie: 'session=fresh' }
+        : { kind: 'bearer', userId: '2', accessToken: 'fresh-token' }
+      let invalid = false
+      const { login, window, clearCookies, clearStorage, verifySession } = makeLogin({
+        readCredential: async (requested, target) => {
+          if (target) return (target as FakeLoginWindow).credential
+          if (invalid && requested === endpoint) {
+            if (failure === 'missing') return null
+            if (failure === 'read error') throw new Error('fixture read failure')
+          }
+          return persisted
+        },
+        verifySession: async (requested, credential) => {
+          if (invalid && requested === endpoint && credential === persisted) {
+            return failure === 'unavailable' ? 'unavailable' : 'rejected'
+          }
+          return 'ok'
+        },
+      })
+      await expect(login.open(endpoint)).resolves.toBe('authenticated')
+      await expect(login.open(otherEndpoint)).resolves.toBe('authenticated')
+      invalid = true
+      const result = login.open(endpoint)
+      const settled = vi.fn()
+      void result.then(settled)
+      await advanceTime(0)
+      expect(window.loadCount).toBe(1)
+      window.signIn(fresh)
+      await advanceTime(10)
+      expect(settled).toHaveBeenCalledWith('authenticated')
+      expect(verifySession).toHaveBeenCalledWith(endpoint, fresh)
+      expect(vi.getTimerCount()).toBe(0)
+      const clearedEndpoints = failure === 'rejected' ? [[endpoint]] : []
+      expect(clearCookies.mock.calls).toEqual(clearedEndpoints)
+      expect(clearStorage.mock.calls).toEqual(clearedEndpoints)
+      await expect(login.open(otherEndpoint)).resolves.toBe('authenticated')
+      expect(window.loadCount).toBe(1)
+    })
   })
 })
 

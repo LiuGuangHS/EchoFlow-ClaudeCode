@@ -12,6 +12,12 @@
 
 项目标识可公开，凭据不能提交。EAS 管理生产签名凭据；保管并备份 Android keystore，后续升级必须保持签名身份。
 
+### 旧安装与新包的迁移边界
+
+旧 Android WebView 壳已使用 `codemobile`，当前 Expo 应用沿用这一 scheme；旧 Expo 应用则使用 `cchaha`，Android package 为 `app.cchaha.mobile`，iOS Bundle ID 为 `com.yunce.cchaha.mobile`。当前两个平台均为 `com.echoflow.code.mobile`，只注册 `codemobile`，不注册旧 `cchaha` scheme，也不接管旧 App 的链接。
+
+scheme 相同不代表安装身份或沙箱相同。新身份的包不能视为旧包的原地升级，不自动继承旧沙箱的连接凭据、通知 token 或 Live Activity 登记。用户需在新 App 重新连接 / 扫码配对，并重新授权通知、登记推送和 Live Activity；不承诺跨 App、跨沙箱自动迁移凭据。发布验收须分别记录 Android 会话通知正文 / 允许 / 拒绝点击，以及 iOS 本地卡片、远端更新后的按钮和整体点击；远端 content-state 的 URL 正确并不证明原生卡片创建时的整体链接已被更新；离线契约测试或 H5 导出不能替代原生点击验收。
+
 ## 一次性账号设置
 
 本节是 iOS + Android 全量配置。**只发 Android 时见下一节**：步骤 1、2、4 以及 `ASC_APP_ID`、Apple Developer 协议、App Store Connect 应用、iOS 描述文件、APNs Push Key、ASC API Key、Widget 与 App Group 注册都可以跳过。

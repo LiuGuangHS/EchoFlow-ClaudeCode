@@ -384,6 +384,16 @@ describe('DiagnosticsService', () => {
     if (!result.ok) expect(result.error).not.toContain(tmpDir)
   })
 
+  test('brands exported diagnostics without moving the legacy storage directory', async () => {
+    const service = new DiagnosticsService()
+    const bundle = await service.exportBundle()
+    expect(bundle.fileName).toMatch(/^echoflow-code-diagnostics-.*\.tar\.gz$/)
+    expect(bundle.path).toBe(path.join(tmpDir, 'cc-haha', 'diagnostics', 'exports', bundle.fileName))
+    const archive = await fs.readFile(bundle.path)
+    expect(readTarEntry(archive, 'README.txt').split('\n')[0]).toBe('EchoFlow Code diagnostics bundle')
+    expect(readTarEntry(archive, 'recent-errors.md').split('\n')[0]).toBe('# EchoFlow Code recent diagnostics')
+  })
+
   test('exports a single diagnostics tarball without provider secrets', async () => {
     const service = new DiagnosticsService()
     await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })

@@ -418,11 +418,37 @@ describe('overlay opacity contract', () => {
     }
   })
 
+  it('shares the glass fill and blur with composers without overriding fallback surfaces', () => {
+    const glass = getCssBetween('.glass-panel {', '/* The fill above')
+    expect(glass).toContain('background: var(--color-surface-glass);')
+    expect(glass).toContain('backdrop-filter: blur(18px);')
+    expect(glass).toContain('-webkit-backdrop-filter: blur(18px);')
+
+    // Both composers also carry .glass-panel. Later composer/focus rules must
+    // not reset its fill or blur, otherwise even a present fallback loses.
+    for (const selector of ['.glass-panel--composer', '.glass-panel--composer:focus-within', '.glass-panel:focus-within']) {
+      expect(getThemeBlock(selector), selector).not.toMatch(/(?:background(?:-[\w-]+)?|(?:-webkit-)?backdrop-filter)\s*:/)
+    }
+    expect(getThemeBlock('.glass-panel--composer')).toContain('box-shadow: var(--shadow-composer);')
+  })
+
+  it('disables glass blur for reduced-transparency and forced-colors users', () => {
+    const fallback = normalizedCss.match(
+      /@media \(prefers-reduced-transparency: reduce\), \(forced-colors: active\)\s*\{\s*\.glass-panel \{([^}]*)\}/,
+    )
+    expect(fallback, 'expected accessibility fallbacks for .glass-panel').not.toBeNull()
+    expect(fallback!.index).toBeGreaterThan(normalizedCss.indexOf('.glass-panel {'))
+    expect(fallback![1]).toContain('background: var(--color-surface-dialog);')
+    expect(fallback![1]).toContain('backdrop-filter: none;')
+    expect(fallback![1]).toContain('-webkit-backdrop-filter: none;')
+  })
+
   it('drops glass to a fully opaque fill where backdrop-filter is unavailable', () => {
     const fallback = normalizedCss.match(
       /@supports not \(\(backdrop-filter[^)]*\)[^{]*\{\s*\.glass-panel\s*\{([^}]*)\}/,
     )
     expect(fallback, 'expected an @supports fallback for .glass-panel').not.toBeNull()
+    expect(fallback!.index).toBeGreaterThan(normalizedCss.indexOf('.glass-panel {'))
     expect(fallback![1]).toMatch(/background:\s*rgb\(var\(--cc-bg-rgb\)\)/)
   })
 

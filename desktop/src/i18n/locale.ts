@@ -65,8 +65,19 @@ export function resolveSupportedLocale(languageTags: readonly string[]): Locale 
   return 'en'
 }
 
+export function migrateLegacyLocalePreference(storage: Pick<Storage, 'getItem' | 'setItem'>): boolean {
+  // Schema 9 repairs the prefix rename, including already-upgraded schema 8.
+  if (Number(storage.getItem('cc-haha.persistence.schemaVersion') ?? 0) >= 9) return false
+  if (storage.getItem(LOCALE_STORAGE_KEY) !== null) return false
+  const legacy = storage.getItem('echoflow-code-locale')
+  if (!isLocale(legacy)) return false
+  storage.setItem(LOCALE_STORAGE_KEY, legacy)
+  return true
+}
+
 export function readStoredLocale(): Locale | null {
   try {
+    migrateLegacyLocalePreference(localStorage)
     const stored = localStorage.getItem(LOCALE_STORAGE_KEY)
     if (isLocale(stored)) return stored
   } catch {

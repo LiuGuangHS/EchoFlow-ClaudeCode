@@ -71,6 +71,15 @@ describe('buildShareLayout', () => {
     }
   })
 
+  it.each(['portrait', 'square', 'wide'] as const)('keeps the product title clear of the date in %s', (size) => {
+    const { ops } = buildShareLayout(DATA, THEME, { ...OPTIONS, size }, measure)
+    const title = ops.find((op): op is TextOp => op.kind === 'text' && op.text === 'EchoFlow Code')
+    const date = ops.find((op): op is TextOp => op.kind === 'text' && op.text === DATA.dateLabel)!
+    expect(title).toBeDefined()
+    expect(title!.y).toBe(date.y)
+    expect(date.x - measure(date) - (title!.x + measure(title!))).toBeGreaterThanOrEqual(24)
+  })
+
   it('puts the unit right after the number and the project link in the footer', () => {
     const { ops } = buildShareLayout(DATA, THEME, OPTIONS, measure)
     const total = ops.find((op): op is TextOp => op.kind === 'text' && op.text === '241')!
@@ -109,7 +118,7 @@ describe('buildShareLayout', () => {
   it('leaves out what the user turned off', () => {
     const bare = buildShareLayout(DATA, THEME, { ...OPTIONS, showIdentity: false, showModels: false, showLink: false }, measure)
     const out = texts(bare.ops)
-    expect(out).toContain('cc-haha') // the brand mark stays; the name line goes
+    expect(out).toContain('EchoFlow Code') // the brand mark stays; the name line goes
     expect(out).not.toContain(DATA.displayName)
     expect(out).not.toContain(DATA.summaryLine)
     expect(out).not.toContain('DeepSeek V4 Flash')

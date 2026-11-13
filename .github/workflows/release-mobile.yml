@@ -75,7 +75,7 @@ jobs:
       EXPO_NO_DOTENV: '1'
     steps:
       - name: Checkout exact published release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: refs/tags/${{ inputs.release_tag }}
           fetch-depth: 0
@@ -84,9 +84,11 @@ jobs:
         with:
           bun-version-file: package.json
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
+      - name: Check product identity
+        run: bun run check:product-identity
       - name: Install mobile dependencies
         working-directory: mobile
         run: bun install --frozen-lockfile

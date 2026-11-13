@@ -445,10 +445,10 @@ export function AboutSettings() {
       >
         <div className="flex flex-col items-center gap-3 pb-2">
           <img
-            src={publicAssetPath('icons/wechat-group-qr.png')}
+            src={publicAssetPath('icons/echoflowai-community-qr.webp')}
             alt={t('settings.about.communityQrAlt')}
             width={240}
-            height={240}
+            height={339}
             className="rounded-[var(--radius-md)]"
           />
           <p className="text-center text-xs text-[var(--color-text-tertiary)]">{t('settings.about.communityHint')}</p>

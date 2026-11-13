@@ -215,6 +215,20 @@ describe('release desktop workflow', () => {
     }
   })
 
+  test('development builds freeze every workspace install while retaining cross-architecture desktop addons', () => {
+    const steps = parse(readFileSync('.github/workflows/build-desktop-dev.yml', 'utf8')).jobs.build.steps as Array<{
+      run?: string
+      'working-directory'?: string
+    }>
+    const build = steps.findIndex(step => step.run === 'bun run build:sidecars')
+    for (const workspace of [undefined, 'desktop', 'adapters', 'mobile']) {
+      const install = steps.findIndex(step => step['working-directory'] === workspace && step.run?.startsWith('bun install'))
+      expect(install, workspace ?? 'root').toBeGreaterThanOrEqual(0)
+      expect(install).toBeLessThan(build)
+      expect(steps[install].run).toBe(workspace === 'desktop' ? 'bun install --frozen-lockfile --cpu="*"' : 'bun install --frozen-lockfile')
+    }
+  })
+
   test('desktop build workflows install the phone app before building the renderer', () => {
     // `bun run build` exports mobile/ into dist/m; without its packages the build fails.
     for (const workflowPath of [
@@ -664,7 +678,7 @@ describe('release desktop workflow', () => {
     expect(buildJob).toContain('Upload release artifacts for final publish')
     // Blockmaps ship with installers so installed clients can use differential updates.
     expect(extractStep(buildJob ?? '', 'Upload release artifacts for final publish')).toContain('desktop/build-artifacts/electron/*.blockmap')
-    expect(buildJob).toContain('actions/upload-artifact@v4')
+    expect(buildJob).toContain('actions/upload-artifact@v5')
     expect(buildJob).toContain('name: desktop-release-artifacts-${{ matrix.label }}')
     expect(buildJob).not.toContain('softprops/action-gh-release@v2')
     expect(buildJob).not.toContain('Load release notes')
@@ -857,7 +871,7 @@ fi
     expect(publishJob).toContain('needs:')
     expect(publishJob).toContain('- build')
     expect(publishJob).toContain('- release-verify-gate')
-    expect(publishJob).toContain('actions/download-artifact@v4')
+    expect(publishJob).toContain('actions/download-artifact@v6')
     expect(publishJob).toContain('pattern: desktop-release-artifacts-*')
     expect(publishJob).toContain('pattern: desktop-update-metadata-*')
     expect(publishJob).toContain('Validate complete release asset set')
@@ -916,7 +930,7 @@ fi
     expect(gateRun).toContain('exit 1')
 
     const laneChecks: Record<string, string[]> = {
-      'verify-governance': ['check:policy', 'check:upstream-content'],
+      'verify-governance': ['check:policy', 'check:upstream-content', 'check:product-identity'],
       'verify-runtime': ['check:server', 'check:agent-flow', 'check:adapters'],
       'verify-desktop': ['check:desktop', 'check:persistence-upgrade'],
     }

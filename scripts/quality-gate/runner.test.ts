@@ -26,6 +26,21 @@ describe('quality gate modes', () => {
     expect(lanes.some((lane) => lane.startsWith('baseline:'))).toBe(false)
   })
 
+  test('PR and release always check public content and generated product identity', () => {
+    for (const mode of ['pr', 'release'] as const) {
+      for (const [id, command] of [
+        ['public-content-checks', 'check:upstream-content'],
+        ['product-identity-checks', 'check:product-identity'],
+      ]) {
+        const lane = lanesForMode(mode).find(candidate => candidate.id === id)
+        expect(lane, `${id} missing from ${mode}`).toBeDefined()
+        expect(lane?.command).toEqual(['bun', 'run', command])
+        expect(lane?.impactRequiredCheck).toBeUndefined()
+        expect(lane?.live).toBeUndefined()
+      }
+    }
+  })
+
   test('runs the deterministic agent flow in every mode without requiring a live provider', () => {
     for (const mode of ['pr', 'baseline', 'release'] as const) {
       const lane = lanesForMode(mode).find((candidate) => candidate.id === 'agent-flow-checks')

@@ -1,4 +1,5 @@
 import { DARK_THEME_MODES, LIGHT_THEME_MODES, THEME_MODES } from '../types/settings'
+import { migrateLegacyLocalePreference } from '../i18n/locale'
 import {
   WORKSPACE_STORAGE_KEY,
   WORKSPACE_STORAGE_VERSION,
@@ -19,7 +20,7 @@ import {
   DARK_THEME_STORAGE_KEY as CURRENT_DARK_THEME_STORAGE_KEY,
 } from '../theme/systemAppearance'
 
-export const CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION = 8
+export const CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION = 9
 export const DESKTOP_PERSISTENCE_VERSION_KEY = 'cc-haha.persistence.schemaVersion'
 
 type DesktopMigrationReport = {
@@ -381,6 +382,17 @@ function getDefaultStorage(): StorageLike | null {
   }
 }
 
+// The workspace bridge imports uiStore before main.tsx runs migrations, so
+// the store also calls this step before hydrating its width.
+export function migrateLegacySidebarWidth(storage: Pick<Storage, 'getItem' | 'setItem'>): boolean {
+  if (Number(storage.getItem(DESKTOP_PERSISTENCE_VERSION_KEY) ?? 0) >= 9) return false
+  if (storage.getItem('cc-haha-sidebar-width') !== null) return false
+  const legacy = storage.getItem('echoflow-code-sidebar-width')
+  if (legacy === null || !Number.isFinite(Number(legacy)) || Number(legacy) <= 0) return false
+  storage.setItem('cc-haha-sidebar-width', legacy)
+  return true
+}
+
 export function runDesktopPersistenceMigrations(storage: StorageLike | null = getDefaultStorage()): DesktopMigrationReport {
   const report: DesktopMigrationReport = { migratedKeys: [] }
   if (!storage) return report
@@ -412,7 +424,13 @@ export function runDesktopPersistenceMigrations(storage: StorageLike | null = ge
       migrateThemeKey(storage, currentKey, allowed, report)
     })
   }
-  runMigrationStep(report, LOCALE_STORAGE_KEY, () => normalizeEnumKey(storage, LOCALE_STORAGE_KEY, SUPPORTED_LOCALES, report))
+  runMigrationStep(report, LOCALE_STORAGE_KEY, () => {
+    if (migrateLegacyLocalePreference(storage)) report.migratedKeys.push(LOCALE_STORAGE_KEY)
+    normalizeEnumKey(storage, LOCALE_STORAGE_KEY, SUPPORTED_LOCALES, report)
+  })
+  runMigrationStep(report, 'cc-haha-sidebar-width', () => {
+    if (migrateLegacySidebarWidth(storage)) report.migratedKeys.push('cc-haha-sidebar-width')
+  })
   runMigrationStep(report, APP_ZOOM_STORAGE_KEY, () => normalizeAppZoomKey(storage, report))
   runMigrationStep(report, WORKSPACE_STORAGE_KEY, () => migrateWorkspaceState(storage, report))
   runMigrationStep(report, CHAT_APPEARANCE_STORAGE_KEY, () => {

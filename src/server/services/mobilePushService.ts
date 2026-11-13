@@ -308,7 +308,7 @@ export class MobilePushService {
           const body = event === 'decision' ? hideCommand ? '打开 App 查看命令' : activity.preview || '需要你做决定' : event === 'error' ? activity.stalled ? '超过 5 分钟没有进展，请打开查看' : '任务遇到错误，请打开查看' : '任务已完成'
           let payload: Record<string, unknown>
           if (registration.kind === 'liveActivity') {
-            const base = `cchaha:///chat/${encodeURIComponent(activity.id)}?host=${encodeURIComponent(registration.hostId)}`
+            const base = `codemobile:///chat/${encodeURIComponent(activity.id)}?host=${encodeURIComponent(registration.hostId)}`
             const request = activity.requestId ? `&requestId=${encodeURIComponent(activity.requestId)}` : ''
             const terminal = activity.activityState === 'idle' || activity.activityState === 'review' || activity.activityState === 'failed'
             // 'decisions' mode keeps remote pushes from reviving a running-only activity: end it instead.

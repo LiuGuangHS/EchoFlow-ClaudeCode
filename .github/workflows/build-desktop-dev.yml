@@ -59,7 +59,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Read version
         id: version
@@ -80,21 +80,21 @@ jobs:
           bun-version-file: package.json
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
 
       - name: Install root dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Install desktop dependencies
         working-directory: desktop
         # The x64 Windows runner also packages ARM64; retain both native addons.
-        run: bun install --cpu="*"
+        run: bun install --frozen-lockfile --cpu="*"
 
       - name: Install adapter dependencies
         working-directory: adapters
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Install mobile dependencies
         working-directory: mobile
@@ -186,7 +186,7 @@ jobs:
           ls -lh "$STAGING/" 2>/dev/null || true
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: EchoFlow-Code-v${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}
           path: ${{ steps.collect.outputs.staging_dir }}

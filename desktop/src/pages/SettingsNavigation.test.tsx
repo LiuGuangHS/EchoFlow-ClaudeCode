@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -29,6 +29,52 @@ describe('Settings section navigation', () => {
     cleanup()
     scrollIntoView.mockClear()
     useUIStore.setState({ activeSettingsTab: 'providers', pendingSettingsTab: null })
+  })
+
+  it('organizes all 20 unique entries into the historical named groups with About independent', () => {
+    render(<Settings />)
+
+    const rail = within(screen.getByRole('navigation', { name: 'Settings' }))
+    const expectedGroups = [
+      { name: 'Models & Runtime', entries: ['Model Settings', 'Runtime management'] },
+      { name: 'Preferences', entries: ['General', 'Network', 'Data & Storage', 'Voice Input', 'Pets'] },
+      { name: 'Capabilities', entries: ['Agents', 'Skills', 'Plugins', 'MCP', 'Memory', 'Computer Use'] },
+      { name: 'Remote Access', entries: ['Phone connection', 'IM Adapters'] },
+      { name: 'Tools & Activity', entries: ['Terminal', 'Token usage', 'Trace', 'Diagnostics'] },
+    ]
+    const groups = rail.getAllByRole('group')
+    expect(groups).toHaveLength(5)
+    expectedGroups.forEach(({ name, entries }, index) => {
+      const group = rail.getByRole('group', { name })
+      expect(groups[index]).toBe(group)
+      expect(within(group).getByRole('heading', { name })).toBeVisible()
+      expect(within(group).getAllByRole('button').map((button) => button.textContent)).toEqual(entries)
+    })
+
+    const entries = rail.getAllByRole('button')
+    expect(entries.map((button) => button.textContent)).toEqual([
+      ...expectedGroups.flatMap((group) => group.entries), 'About',
+    ])
+    expect(entries).toHaveLength(20)
+    expect(new Set(entries.map((button) => button.textContent)).size).toBe(20)
+    expect(rail.getByRole('button', { name: 'About' }).closest('[role="group"]')).toBeNull()
+  })
+
+  it('names the five groups in Chinese without reverting the phone connection label', () => {
+    useSettingsStore.setState({ locale: 'zh' })
+    render(<Settings />)
+
+    const rail = within(screen.getByRole('navigation', { name: '设置' }))
+    const groups = rail.getAllByRole('group')
+    expect(groups).toHaveLength(5)
+    const names = ['模型与运行', '偏好', '能力扩展', '远程接入', '工具与观测']
+    names.forEach((name, index) => {
+      const group = rail.getByRole('group', { name })
+      expect(groups[index]).toBe(group)
+      expect(within(group).getByRole('heading', { name })).toBeVisible()
+    })
+    expect(within(rail.getByRole('group', { name: '远程接入' })).getByRole('button', { name: '手机连接' })).toBeVisible()
+    expect(rail.getByRole('button', { name: '关于' }).closest('[role="group"]')).toBeNull()
   })
 
   it('opens the section a pending request asked for and clears the request', async () => {

@@ -58,26 +58,51 @@ export function Settings() {
 
 type SettingsNavEntry = { tab: SettingsTab; icon: LucideIcon; label: TranslationKey }
 
-const SETTINGS_NAV: SettingsNavEntry[] = [
-  { tab: 'providers', icon: Server, label: 'settings.tab.providers' },
-  { tab: 'runtime', icon: Cpu, label: 'settings.tab.runtime' },
-  { tab: 'general', icon: SlidersHorizontal, label: 'settings.tab.general' },
-  { tab: 'network', icon: Network, label: 'settings.tab.network' },
-  { tab: 'data', icon: Database, label: 'settings.tab.data' },
-  { tab: 'voice', icon: Mic, label: 'settings.tab.voice' },
-  { tab: 'h5Access', icon: QrCode, label: 'settings.tab.h5Access' },
-  { tab: 'adapters', icon: MessageSquare, label: 'settings.tab.adapters' },
-  { tab: 'terminal', icon: SquareTerminal, label: 'settings.tab.terminal' },
-  { tab: 'mcp', icon: Plug, label: 'settings.tab.mcp' },
-  { tab: 'agents', icon: Bot, label: 'settings.tab.agents' },
-  { tab: 'skills', icon: Box, label: 'settings.tab.skills' },
-  { tab: 'memory', icon: BookOpen, label: 'settings.tab.memory' },
-  { tab: 'plugins', icon: Puzzle, label: 'settings.tab.plugins' },
-  { tab: 'pets', icon: PawPrint, label: 'settings.tab.pets' },
-  { tab: 'computerUse', icon: MousePointer2, label: 'settings.tab.computerUse' },
-  { tab: 'activity', icon: ChartNoAxesColumn, label: 'settings.tab.activity' },
-  { tab: 'trace', icon: Workflow, label: 'settings.tab.trace' },
-  { tab: 'diagnostics', icon: HeartPulse, label: 'settings.tab.diagnostics' },
+const SETTINGS_NAV_GROUPS: { label: TranslationKey; entries: SettingsNavEntry[] }[] = [
+  {
+    label: 'settings.navGroup.models',
+    entries: [
+      { tab: 'providers', icon: Server, label: 'settings.tab.providers' },
+      { tab: 'runtime', icon: Cpu, label: 'settings.tab.runtime' },
+    ],
+  },
+  {
+    label: 'settings.navGroup.preferences',
+    entries: [
+      { tab: 'general', icon: SlidersHorizontal, label: 'settings.tab.general' },
+      { tab: 'network', icon: Network, label: 'settings.tab.network' },
+      { tab: 'data', icon: Database, label: 'settings.tab.data' },
+      { tab: 'voice', icon: Mic, label: 'settings.tab.voice' },
+      { tab: 'pets', icon: PawPrint, label: 'settings.tab.pets' },
+    ],
+  },
+  {
+    label: 'settings.navGroup.capabilities',
+    entries: [
+      { tab: 'agents', icon: Bot, label: 'settings.tab.agents' },
+      { tab: 'skills', icon: Box, label: 'settings.tab.skills' },
+      { tab: 'plugins', icon: Puzzle, label: 'settings.tab.plugins' },
+      { tab: 'mcp', icon: Plug, label: 'settings.tab.mcp' },
+      { tab: 'memory', icon: BookOpen, label: 'settings.tab.memory' },
+      { tab: 'computerUse', icon: MousePointer2, label: 'settings.tab.computerUse' },
+    ],
+  },
+  {
+    label: 'settings.navGroup.access',
+    entries: [
+      { tab: 'h5Access', icon: QrCode, label: 'settings.tab.h5Access' },
+      { tab: 'adapters', icon: MessageSquare, label: 'settings.tab.adapters' },
+    ],
+  },
+  {
+    label: 'settings.navGroup.tools',
+    entries: [
+      { tab: 'terminal', icon: SquareTerminal, label: 'settings.tab.terminal' },
+      { tab: 'activity', icon: ChartNoAxesColumn, label: 'settings.tab.activity' },
+      { tab: 'trace', icon: Workflow, label: 'settings.tab.trace' },
+      { tab: 'diagnostics', icon: HeartPulse, label: 'settings.tab.diagnostics' },
+    ],
+  },
 ]
 
 /** Set apart below a rule, the way the reference rail ends. */
@@ -115,8 +140,13 @@ export function DesktopSettings() {
           className="w-[216px] flex-shrink-0 flex flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-[18px]"
         >
           <div className="px-2.5 pb-2 text-xs font-semibold text-[var(--color-text-tertiary)]">{t('settings.title')}</div>
-          <div className="flex flex-col gap-px">
-            {SETTINGS_NAV.map(navItem)}
+          <div className="flex flex-col gap-3">
+            {SETTINGS_NAV_GROUPS.map(({ label, entries }) => (
+              <div key={label} role="group" aria-labelledby={label} className="flex flex-col gap-px">
+                <h2 id={label} className="px-2.5 pb-1 text-xs font-semibold text-[var(--color-text-tertiary)]">{t(label)}</h2>
+                {entries.map(navItem)}
+              </div>
+            ))}
           </div>
           <div aria-hidden="true" className="mx-2.5 my-2 h-px shrink-0 bg-[var(--color-border)]" />
           {navItem(SETTINGS_NAV_ABOUT)}

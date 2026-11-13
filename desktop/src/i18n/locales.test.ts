@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { translate, type Locale } from './index'
 import { en } from './locales/en'
 import { jp } from './locales/jp'
 import { kr } from './locales/kr'
@@ -6,6 +7,19 @@ import { zh } from './locales/zh'
 import { zh as zhTW } from './locales/zh-TW'
 
 const LOCALES = { en, jp, kr, zh, 'zh-TW': zhTW }
+
+describe('voice vocabulary product copy', () => {
+  it.each(Object.keys(LOCALES) as Locale[])('uses EchoFlow Code examples and interpolates session counts in %s', (locale) => {
+    const example = translate(locale, 'voice.settings.vocabulary.bulk.placeholder')
+    expect(example.split(' = ')[0]).toBe('EchoFlow Code')
+    expect(example).not.toContain('cc-haha')
+    const sessions = translate(locale, 'voice.settings.vocabulary.history.sessionsWithHaha', { days: 37, count: 12 })
+    expect(sessions).toContain('EchoFlow Code')
+    expect(sessions).toContain('37')
+    expect(sessions).toContain('12')
+    expect(sessions).not.toMatch(/cc-haha|\{days\}|\{count\}/)
+  })
+})
 
 describe('EchoFlow SiHub copy', () => {
   it('presents the API business as recommended access, never as official or region-locked', () => {

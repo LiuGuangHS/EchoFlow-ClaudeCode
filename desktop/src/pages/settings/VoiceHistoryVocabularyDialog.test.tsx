@@ -91,7 +91,7 @@ describe('VoiceHistoryVocabularyDialog', () => {
   it('explains what is read and sent before anything runs', async () => {
     const dialog = renderDialog()
 
-    expect(await within(dialog).findByText('Includes cc-haha sessions · 907 sessions in the last 14 days')).toBeInTheDocument()
+    expect(await within(dialog).findByText('Includes EchoFlow Code sessions · 907 sessions in the last 14 days')).toBeInTheDocument()
     expect(checkbox('Claude Code')).toBeChecked()
     // A source with no history in the analyzed days cannot be chosen.
     expect(within(dialog).getByText('No history in the last 14 days')).toBeInTheDocument()
@@ -108,7 +108,7 @@ describe('VoiceHistoryVocabularyDialog', () => {
 
   it('runs with the chosen sources and model, and can be cancelled while it runs', async () => {
     const dialog = renderDialog()
-    await within(dialog).findByText('Includes cc-haha sessions · 907 sessions in the last 14 days')
+    await within(dialog).findByText('Includes EchoFlow Code sessions · 907 sessions in the last 14 days')
     let signal: AbortSignal | undefined
     api.suggestFromHistory.mockImplementation((_sources, _model, options) => {
       signal = options?.signal
@@ -131,7 +131,7 @@ describe('VoiceHistoryVocabularyDialog', () => {
     api.suggestFromHistory.mockResolvedValue(RESULT)
     api.addVocabulary.mockResolvedValue({ vocabulary: { terms: [], suggestions: [], history: null, maxTerms: 500 }, added: 2, merged: 0, skipped: 0 })
     const dialog = renderDialog()
-    await within(dialog).findByText('Includes cc-haha sessions · 907 sessions in the last 14 days')
+    await within(dialog).findByText('Includes EchoFlow Code sessions · 907 sessions in the last 14 days')
 
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Start analysis' }))
@@ -166,7 +166,7 @@ describe('VoiceHistoryVocabularyDialog', () => {
       terms: [], suggestions: [], history: { lastRunAt: '2026-11-01T08:00:00.000Z', addedCount: 0 }, maxTerms: 500,
     })
     const dialog = renderDialog()
-    await within(dialog).findByText('Includes cc-haha sessions · 907 sessions in the last 14 days')
+    await within(dialog).findByText('Includes EchoFlow Code sessions · 907 sessions in the last 14 days')
     api.vocabulary.mockClear()
 
     await act(async () => {
@@ -181,7 +181,7 @@ describe('VoiceHistoryVocabularyDialog', () => {
   it('ticks everything selectable or nothing at once', async () => {
     api.suggestFromHistory.mockResolvedValue(RESULT)
     const dialog = renderDialog()
-    await within(dialog).findByText('Includes cc-haha sessions · 907 sessions in the last 14 days')
+    await within(dialog).findByText('Includes EchoFlow Code sessions · 907 sessions in the last 14 days')
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Start analysis' }))
     })
@@ -198,7 +198,7 @@ describe('VoiceHistoryVocabularyDialog', () => {
   it('says when no model is available, and offers a retry after a failure', async () => {
     api.suggestFromHistory.mockRejectedValueOnce(new ApiError(409, { error: 'voice/correction-unavailable', message: 'x' }))
     const dialog = renderDialog()
-    await within(dialog).findByText('Includes cc-haha sessions · 907 sessions in the last 14 days')
+    await within(dialog).findByText('Includes EchoFlow Code sessions · 907 sessions in the last 14 days')
 
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Start analysis' }))

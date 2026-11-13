@@ -3,10 +3,8 @@
 /**
  * Generates the product identity modules from `product.json`.
  *
- * `product.json` is the single source of truth. Nothing else should spell the
- * product name, app id, package id, scheme, repository URL or env prefix by
- * hand: an upstream sync can overwrite any individual file, but it cannot
- * overwrite the generator output without `--check` failing in CI.
+ * `product.json` owns the generated constants. `--check` also verifies the
+ * desktop and mobile packaging fields that must match this identity.
  *
  *   bun run scripts/generate-product-identity.ts            # write
  *   bun run scripts/generate-product-identity.ts --check    # verify only
@@ -88,14 +86,43 @@ export function generate(root: string, outDir = root): string[] {
 }
 
 export function check(root: string, outDir = root): string[] {
-  const expected = render(readIdentity(root))
-  return TARGETS.filter(target => {
+  const identity = readIdentity(root)
+  const expected = render(identity)
+  const errors: string[] = TARGETS.filter(target => {
     try {
       return readFileSync(path.join(outDir, target), 'utf8') !== expected
     } catch {
       return true
     }
   })
+  const packagingFields: Record<string, Record<string, string | string[]>> = {
+    'desktop/package.json': {
+      'build.productName': identity.name,
+      'build.appId': identity.appId,
+      'build.protocols.schemes': [identity.protocol],
+    },
+    'mobile/app.json': {
+      'expo.name': identity.name,
+      'expo.slug': identity.slug,
+      'expo.scheme': identity.scheme,
+      'expo.ios.bundleIdentifier': identity.mobileBundleId,
+      'expo.android.package': identity.mobilePackage,
+    },
+  }
+  for (const [file, fields] of Object.entries(packagingFields)) {
+    try {
+      const config = JSON.parse(readFileSync(path.join(root, file), 'utf8'))
+      for (const [field, value] of Object.entries(fields)) {
+        const actual = field.split('.').reduce((entry, key) => entry?.[key], config)
+        if (JSON.stringify(actual) !== JSON.stringify(value)) {
+          errors.push(`${file}: ${field} does not match product.json`)
+        }
+      }
+    } catch (error) {
+      errors.push(`${file}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  return errors
 }
 
 if (import.meta.main) {
@@ -104,7 +131,7 @@ if (import.meta.main) {
   if (args.includes('--check')) {
     const stale = check(root, args.find(arg => !arg.startsWith('--')))
     if (stale.length > 0) {
-      console.error(`[product-identity] stale generated files:\n${stale.map(file => `- ${file}`).join('\n')}`)
+      console.error(`[product-identity] identity inconsistencies:\n${stale.map(file => `- ${file}`).join('\n')}`)
       process.exit(1)
     }
     console.log('[product-identity] generated files match product.json')

@@ -199,8 +199,8 @@ describe('Settings > Diagnostics tab', () => {
     })
     diagnosticsApiMock.exportBundle.mockResolvedValue({
       bundle: {
-        path: '/tmp/claude/cc-haha/diagnostics/exports/cc-haha-diagnostics.tar.gz',
-        fileName: 'cc-haha-diagnostics.tar.gz',
+        path: '/tmp/claude/cc-haha/diagnostics/exports/echoflow-code-diagnostics-2026-05-02T00-00-00-000Z.tar.gz',
+        fileName: 'echoflow-code-diagnostics-2026-05-02T00-00-00-000Z.tar.gz',
         bytes: 1024,
       },
     })
@@ -595,7 +595,7 @@ describe('Settings > Diagnostics tab', () => {
     await waitFor(() => {
       expect(diagnosticsApiMock.exportBundle).toHaveBeenCalled()
     })
-    expect(await screen.findByText('/tmp/claude/cc-haha/diagnostics/exports/cc-haha-diagnostics.tar.gz')).toBeInTheDocument()
+    expect(await screen.findByText('/tmp/claude/cc-haha/diagnostics/exports/echoflow-code-diagnostics-2026-05-02T00-00-00-000Z.tar.gz')).toBeInTheDocument()
   })
 
   it('asks with the shared confirm dialog before clearing diagnostics', async () => {

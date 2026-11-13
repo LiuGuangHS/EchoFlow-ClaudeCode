@@ -343,6 +343,67 @@ describe('desktop persistence migrations', () => {
     expect(window.localStorage.getItem('cc-haha-dark-theme')).toBe('ink-blue')
   })
 
+  test.each([null, '7', '8'])('restores legacy preferences from schema %s without deleting old or unrelated values', (version) => {
+    if (version !== null) localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, version)
+    localStorage.setItem('echoflow-code-locale', 'zh')
+    localStorage.setItem('echoflow-code-sidebar-width', '367.5')
+    localStorage.setItem('unrelated-user-key', '{"future":true}')
+
+    const report = runDesktopPersistenceMigrations()
+
+    expect(localStorage.getItem('cc-haha-locale')).toBe('zh')
+    expect(localStorage.getItem('cc-haha-sidebar-width')).toBe('367.5')
+    expect(report.migratedKeys).toEqual(expect.arrayContaining(['cc-haha-locale', 'cc-haha-sidebar-width']))
+    expect(localStorage.getItem('echoflow-code-locale')).toBe('zh')
+    expect(localStorage.getItem('echoflow-code-sidebar-width')).toBe('367.5')
+    expect(localStorage.getItem('unrelated-user-key')).toBe('{"future":true}')
+    const second = runDesktopPersistenceMigrations()
+    expect(second.migratedKeys).not.toContain('cc-haha-locale')
+    expect(second.migratedKeys).not.toContain('cc-haha-sidebar-width')
+    expect(localStorage.getItem('cc-haha-locale')).toBe('zh')
+    expect(localStorage.getItem('cc-haha-sidebar-width')).toBe('367.5')
+  })
+
+  test.each([
+    ['en', '320', 'en', '320'],
+    ['invalid', 'invalid', null, 'invalid'],
+  ] as const)('keeps current preference precedence even for %s / %s', (locale, width, expectedLocale, expectedWidth) => {
+    localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, '8')
+    localStorage.setItem('echoflow-code-locale', 'zh')
+    localStorage.setItem('echoflow-code-sidebar-width', '400')
+    localStorage.setItem('cc-haha-locale', locale)
+    localStorage.setItem('cc-haha-sidebar-width', width)
+
+    for (let launch = 0; launch < 2; launch++) {
+      runDesktopPersistenceMigrations()
+      expect(localStorage.getItem('cc-haha-locale')).toBe(expectedLocale)
+      expect(localStorage.getItem('cc-haha-sidebar-width')).toBe(expectedWidth)
+      expect(localStorage.getItem('echoflow-code-locale')).toBe('zh')
+      expect(localStorage.getItem('echoflow-code-sidebar-width')).toBe('400')
+    }
+  })
+
+  test.each(['', '0', '-1', 'NaN', 'Infinity', 'wide'])('does not copy invalid legacy preferences (%s)', (width) => {
+    localStorage.setItem('echoflow-code-locale', 'unsupported')
+    localStorage.setItem('echoflow-code-sidebar-width', width)
+    runDesktopPersistenceMigrations()
+    expect(localStorage.getItem('cc-haha-locale')).toBeNull()
+    expect(localStorage.getItem('cc-haha-sidebar-width')).toBeNull()
+    expect(localStorage.getItem('echoflow-code-locale')).toBe('unsupported')
+    expect(localStorage.getItem('echoflow-code-sidebar-width')).toBe(width)
+  })
+
+  test('does not resurrect legacy preferences after a migrated install clears its selections', () => {
+    localStorage.setItem('echoflow-code-locale', 'zh')
+    localStorage.setItem('echoflow-code-sidebar-width', '400')
+    runDesktopPersistenceMigrations()
+    localStorage.removeItem('cc-haha-locale')
+    localStorage.removeItem('cc-haha-sidebar-width')
+    runDesktopPersistenceMigrations()
+    expect(localStorage.getItem('cc-haha-locale')).toBeNull()
+    expect(localStorage.getItem('cc-haha-sidebar-width')).toBeNull()
+  })
+
   test('preserves every supported locale during startup migration', () => {
     for (const locale of ['en', 'zh', 'zh-TW', 'jp', 'kr']) {
       window.localStorage.setItem('cc-haha-locale', locale)

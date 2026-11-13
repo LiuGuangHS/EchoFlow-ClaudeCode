@@ -252,7 +252,7 @@ class DutyService : Service() {
     val data = item.optJSONObject("data") ?: JSONObject()
     val sessionId = data.optString("sessionId").ifEmpty { null }
     val requestId = data.optString("requestId").ifEmpty { null }
-    val base = sessionId?.let { "cchaha:///chat/${enc(it)}?host=${enc(host.hostId)}" + (requestId?.let { id -> "&requestId=${enc(id)}" } ?: "") }
+    val base = sessionId?.let { "codemobile:///chat/${enc(it)}?host=${enc(host.hostId)}" + (requestId?.let { id -> "&requestId=${enc(id)}" } ?: "") }
     val requested = item.optString("channelId")
     val channel = if (requested.isNotEmpty() && (Build.VERSION.SDK_INT < 26 || getSystemService(NotificationManager::class.java).getNotificationChannel(requested) != null)) requested else FALLBACK_CHANNEL
     val body = item.optString("body")

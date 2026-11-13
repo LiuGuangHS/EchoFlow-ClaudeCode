@@ -252,6 +252,9 @@ export class EchoFlowLoginSession {
   private readonly verified = new Set<EchoFlowLoginEndpoint>()
   private loadRetriesUsed = 0
   private loadRetryTimer: ReturnType<typeof setTimeout> | null = null
+  private loadFailureFallbackTimer: ReturnType<typeof setTimeout> | null = null
+  private loadAttemptId = 0
+  private loadFailureEventReceived = false
   private loadTimer: ReturnType<typeof setTimeout> | null = null
   private loginTimer: ReturnType<typeof setTimeout> | null = null
   private pollTimer: ReturnType<typeof setInterval> | null = null
@@ -334,20 +337,23 @@ export class EchoFlowLoginSession {
   }
 
   private async tryRestoreSession(endpoint: EchoFlowLoginEndpoint): Promise<boolean> {
+    this.verified.delete(endpoint)
     const credential = await this.deps.readCredential(endpoint, null)
     if (!credential) return false
     const verdict = await this.deps.verifySession(endpoint, credential)
     if (verdict !== 'ok') {
-      if (verdict === 'rejected') {
-        await Promise.all([
-          this.deps.clearCookies?.(endpoint),
-          this.deps.clearStorage?.(endpoint),
-        ]).catch(() => {})
-      }
+      if (verdict === 'rejected') await this.clearEndpointState(endpoint)
       return false
     }
     this.verified.add(endpoint)
     return true
+  }
+
+  private async clearEndpointState(endpoint: EchoFlowLoginEndpoint): Promise<void> {
+    await Promise.all([
+      this.deps.clearCookies?.(endpoint),
+      this.deps.clearStorage?.(endpoint),
+    ])
   }
 
   private cancelLogin(): void {
@@ -374,6 +380,9 @@ export class EchoFlowLoginSession {
       window = await this.deps.createWindow(profile.partition)
       this.window = window
       this.activeProfile = profile
+      this.loadRetriesUsed = 0
+      this.loadAttemptId = 0
+      this.loadFailureEventReceived = false
       this.identityRejections = 0
       this.lastCredentialKey = ''
       this.pageLoaded = false
@@ -388,7 +397,8 @@ export class EchoFlowLoginSession {
         })
       }
       window.webContents.on('did-finish-load', () => {
-        this.loadRetriesUsed = 0
+        // Electron can finish loading an error document after did-fail-load.
+        if (this.window !== loginWindow || this.loadFailureEventReceived) return
         this.clearLoadTimeout()
         this.pageLoaded = true
         this.blankPolls = 0
@@ -398,10 +408,6 @@ export class EchoFlowLoginSession {
       })
       window.on('closed', () => this.onWindowClosed(loginWindow))
 
-      this.loadTimer = setTimeout(
-        () => this.failAndClose(loginWindow, 'load-timeout'),
-        this.loadTimeoutMs,
-      )
       this.loginTimer = setTimeout(
         () => this.failAndClose(loginWindow, 'login-timeout'),
         this.loginTimeoutMs,
@@ -414,9 +420,46 @@ export class EchoFlowLoginSession {
         this.pollIntervalMs,
       )
 
-      await window.loadURL(profile.url)
+      await this.loadLoginPage(loginWindow, profile)
     } catch (error) {
       this.failAndClose(window, 'window-start-failed', error)
+    }
+  }
+
+  private async loadLoginPage(window: EchoFlowLoginWindow, profile: EchoFlowLoginProfile): Promise<void> {
+    if (this.window !== window) return
+    const attemptId = ++this.loadAttemptId
+    this.loadFailureEventReceived = false
+    this.clearLoadFailureFallback()
+    this.pageLoaded = false
+    this.blankPolls = 0
+    this.clearLoadTimeout()
+    this.loadTimer = setTimeout(
+      () => this.failAndClose(window, 'load-timeout'),
+      this.loadTimeoutMs,
+    )
+    try {
+      await window.loadURL(profile.url)
+      // Some Electron/test implementations resolve loadURL without emitting
+      // did-finish-load; a resolved navigation is still eligible for blank recovery.
+      if (this.window === window && !this.pageLoaded) this.pageLoaded = true
+    } catch (error) {
+      // Electron can reject loadURL before dispatching its paired did-fail-load.
+      // Give that event one retry window, then fail if no event belongs to this load.
+      if (
+        this.window === window
+        && this.loadAttemptId === attemptId
+        && !this.loadFailureEventReceived
+      ) {
+        this.loadFailureFallbackTimer = setTimeout(() => {
+          this.loadFailureFallbackTimer = null
+          if (
+            this.window === window
+            && this.loadAttemptId === attemptId
+            && !this.loadFailureEventReceived
+          ) this.failAndClose(window, 'load-failed', error)
+        }, this.loadRetryDelayMs)
+      }
     }
   }
 
@@ -428,6 +471,10 @@ export class EchoFlowLoginSession {
   ): void {
     // -3 is ERR_ABORTED: the window superseded the load, not a network fault.
     if (!isMainFrame || errorCode === -3) return
+    this.loadFailureEventReceived = true
+    this.clearLoadFailureFallback()
+    this.pageLoaded = false
+    this.blankPolls = 0
     if (this.loadRetriesUsed >= this.loadRetryLimit) {
       this.failAndClose(window, `load-failed:${errorCode}:${description}`)
       return
@@ -437,7 +484,7 @@ export class EchoFlowLoginSession {
     this.loadRetryTimer = setTimeout(() => {
       this.loadRetryTimer = null
       const profile = this.activeProfile
-      if (this.window === window && profile) void window.loadURL(profile.url).catch(() => {})
+      if (this.window === window && profile) void this.loadLoginPage(window, profile)
     }, this.loadRetryDelayMs * this.loadRetriesUsed)
   }
 
@@ -447,7 +494,7 @@ export class EchoFlowLoginSession {
    * that; a second blank page is a real failure and keeps waiting.
    */
   private async checkBlankLoginPage(window: EchoFlowLoginWindow): Promise<void> {
-    if (this.window !== window || !this.pageLoaded || this.blankReloaded || this.blankCheckInFlight) return
+    if (this.window !== window || !this.pageLoaded || this.blankCheckInFlight) return
     this.blankCheckInFlight = true
     try {
       const length = await window.webContents.executeJavaScript(
@@ -461,11 +508,15 @@ export class EchoFlowLoginSession {
       }
       this.blankPolls += 1
       if (this.blankPolls < BLANK_POLLS_BEFORE_RELOAD) return
+      this.blankPolls = 0
+      if (this.blankReloaded) {
+        this.failAndClose(window, 'blank-page')
+        return
+      }
       // shortcut: host-side blank check, replace with the site's own preload-error handler once the site repo ships it.
       this.blankReloaded = true
-      this.blankPolls = 0
       const profile = this.activeProfile
-      if (profile) await window.loadURL(profile.url).catch(() => {})
+      if (profile) await this.loadLoginPage(window, profile)
     } catch {
       // Mid-navigation; the next poll checks again.
     } finally {
@@ -593,8 +644,16 @@ export class EchoFlowLoginSession {
     }
   }
 
+  private clearLoadFailureFallback(): void {
+    if (this.loadFailureFallbackTimer) {
+      clearTimeout(this.loadFailureFallbackTimer)
+      this.loadFailureFallbackTimer = null
+    }
+  }
+
   private clearTimers(): void {
     this.clearLoadTimeout()
+    this.clearLoadFailureFallback()
     if (this.loginTimer) {
       clearTimeout(this.loginTimer)
       this.loginTimer = null

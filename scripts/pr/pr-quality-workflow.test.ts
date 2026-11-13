@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -8,6 +8,7 @@ import { parse as parseShell } from 'shell-quote'
 import { createSandboxedTestEnvironment } from './test-environment'
 
 type WorkflowJob = {
+  env?: Record<string, string>
   if?: string
   'runs-on'?: string
   'continue-on-error'?: boolean
@@ -16,6 +17,7 @@ type WorkflowJob = {
   steps?: Array<{
     name?: string
     id?: string
+    env?: Record<string, string>
     if?: string
     'continue-on-error'?: boolean
     run?: string
@@ -52,6 +54,27 @@ function policyTestPaths(command: string) {
 }
 
 describe('PR quality workflow', () => {
+  test.each(readdirSync('.github/workflows').filter(file => /\.ya?ml$/.test(file)))(
+    'uses Node 24 action versions in %s', file => {
+      const versions: Record<string, string> = {
+        'actions/checkout': 'v5',
+        'actions/setup-node': 'v5',
+        'actions/upload-artifact': 'v5',
+        'actions/download-artifact': 'v6',
+        'actions/cache': 'v5',
+      }
+      const jobs = workflowJobs(readFileSync(join('.github/workflows', file), 'utf8'))
+      for (const [jobId, job] of Object.entries(jobs)) {
+        for (const step of job.steps ?? []) {
+          const action = step.uses?.split('@')[0]
+          if (action && versions[action]) {
+            expect(step.uses, `${file}: ${jobId}`).toBe(`${action}@${versions[action]}`)
+          }
+        }
+      }
+    },
+  )
+
   test('audits public product content on every PR and main push without scope gating', () => {
     const workflow = readFileSync('.github/workflows/pr-quality.yml', 'utf8')
     const jobs = workflowJobs(workflow)
@@ -60,6 +83,11 @@ describe('PR quality workflow', () => {
     const auditIndex = steps.findIndex(step => step.name === 'Audit public product content')
     const audit = steps[auditIndex]
 
+    const identityIndex = steps.findIndex(step => step.run === 'bun run check:product-identity')
+    expect(identityIndex).toBeGreaterThan(setupIndex)
+    expect(identityIndex).toBeLessThan(steps.findIndex(step => step.name === 'Install root dependencies'))
+    expect(steps[identityIndex].if).toBeUndefined()
+    expect(steps[identityIndex]['continue-on-error']).toBeUndefined()
     expect(audit?.run).toBe('bun run check:upstream-content')
     // No `if`: a scope plan that selects no policy lane must not skip identity.
     expect(audit?.if).toBeUndefined()
@@ -162,6 +190,31 @@ describe('PR quality workflow', () => {
       const ripgrep = steps.findIndex(step => step.run?.includes('apt-get install') && /\bripgrep\b/.test(step.run))
       expect(ripgrep).toBeGreaterThanOrEqual(0)
       expect(ripgrep).toBeLessThan(check)
+    }
+  })
+
+  test('prepares the installed Electron distribution before offline native packaging only', () => {
+    for (const file of ['pr-quality.yml', 'nightly-quality.yml', 'push-quality.yml']) {
+      const jobs = workflowJobs(readFileSync(`.github/workflows/${file}`, 'utf8'))
+      for (const [name, job] of Object.entries(jobs)) {
+        const steps = job.steps ?? []
+        const native = steps.findIndex(step => runsCommand(step, 'bun run check:native'))
+        const preparations = steps.filter(step => step.run === 'node desktop/node_modules/electron/install.js')
+        // Host unit/type/bundle checks do not launch Electron; only directory packaging needs dist.
+        expect(preparations.length, `${file}/${name}`).toBe(native >= 0 ? 1 : 0)
+        if (native < 0) continue
+        const prepare = steps.indexOf(preparations[0])
+        const install = steps.findIndex(step => step['working-directory'] === 'desktop' && step.run === 'bun install --frozen-lockfile')
+        const node = steps.findIndex(step => step.uses?.startsWith('actions/setup-node@'))
+        expect(install).toBeGreaterThanOrEqual(0)
+        expect(node).toBeGreaterThanOrEqual(0)
+        expect(prepare).toBeGreaterThan(install)
+        expect(prepare).toBeGreaterThan(node)
+        expect(prepare).toBeLessThan(native)
+        expect(preparations[0].if).toBeUndefined()
+        expect(preparations[0]['working-directory']).toBeUndefined()
+        expect(preparations[0]['continue-on-error']).toBeUndefined()
+      }
     }
   })
 
@@ -361,7 +414,7 @@ describe('PR quality workflow', () => {
 
     expect(workflow).toContain('COVERAGE_BASE_REF: origin/${{ github.base_ref }}')
     expect(workflow).toContain('cat "$latest_report" >> "$GITHUB_STEP_SUMMARY"')
-    expect(workflow).toContain('uses: actions/upload-artifact@v4')
+    expect(workflow).toContain('uses: actions/upload-artifact@v5')
     expect(workflow).toContain('path: artifacts/coverage/')
     expect(workflow).toContain('retention-days: 14')
   })
@@ -386,9 +439,9 @@ describe('PR quality workflow', () => {
     expect(workflow).not.toContain('QUALITY_GATE_PROVIDER_API_KEY')
     expect(workflow).not.toContain('secrets.')
     expect(workflow).not.toContain('pull_request_target')
-    expect(workflow.match(/uses: actions\/checkout@v4/g)?.length).toBeGreaterThan(0)
+    expect(workflow.match(/uses: actions\/checkout@v5/g)?.length).toBeGreaterThan(0)
     expect(workflow.match(/persist-credentials: false/g)?.length).toBe(
-      workflow.match(/uses: actions\/checkout@v4/g)?.length,
+      workflow.match(/uses: actions\/checkout@v5/g)?.length,
     )
   })
 
@@ -551,12 +604,57 @@ describe('PR quality workflow', () => {
 })
 
 describe('full quality workflow', () => {
+  test('runs nightly docs independently after dependencies and includes its outcome in the summary', () => {
+    const job = workflowJobs(readFileSync('.github/workflows/nightly-quality.yml', 'utf8'))['full-deterministic']
+    const steps = job.steps ?? []
+    const docs = steps.findIndex(step => step.run === 'bun run check:docs')
+    const ready = steps.findIndex(step => step.id === 'dependencies')
+    expect(docs).toBeGreaterThan(ready)
+    expect(steps[docs].id).toBe('docs')
+    expect(steps[docs].if).toBe("${{ !cancelled() && steps.dependencies.outcome == 'success' }}")
+    expect(steps[docs]['continue-on-error']).toBeUndefined()
+    const node = steps.findIndex(step => step.uses?.startsWith('actions/setup-node@'))
+    expect(node).toBeGreaterThanOrEqual(0)
+    expect(node).toBeLessThan(docs)
+    const summary = steps.findIndex(step => step.name === 'Summarize every nightly lane')
+    expect(summary).toBeGreaterThan(docs)
+    expect(steps[summary].if).toBe('always()')
+    expect(steps[summary].env?.LANE_RESULTS).toBe('${{ toJSON(steps) }}')
+  })
+
+  test('runs nightly macOS Swift XCTest and helper probes without directory packaging or signing overrides', () => {
+    const job = workflowJobs(readFileSync('.github/workflows/nightly-quality.yml', 'utf8'))['macos-swift-checks']
+    expect(job).toBeDefined()
+    expect(job['runs-on']).toBe('macos-latest')
+    expect(job.needs).toBeUndefined()
+    expect(job.if).toBeUndefined()
+    expect(job.env).toBeUndefined()
+    expect(job['continue-on-error']).toBeUndefined()
+    const steps = job.steps ?? []
+    const install = steps.findIndex(step => step.run === 'bun install --frozen-lockfile' && !step['working-directory'])
+    const swift = steps.findIndex(step => step.run === 'bun run check:swift')
+    expect(install).toBeGreaterThanOrEqual(0)
+    expect(swift).toBeGreaterThan(install)
+    expect(steps[swift].if).toBeUndefined()
+    expect(steps[swift]['continue-on-error']).toBeUndefined()
+    expect(steps.filter(step => step.run?.startsWith('bun run ')).map(step => step.run)).toEqual(['bun run check:swift'])
+    for (const step of steps) expect(step.env).toBeUndefined()
+    const summary = steps.find(step => step.name === 'Summarize macOS Swift checks')
+    expect(summary?.if).toBe('always()')
+    expect(summary?.run).toContain('steps.swift.outcome')
+    expect(summary?.run).toContain('GITHUB_STEP_SUMMARY')
+  })
+
   test('runs the full public content audit in the nightly sweep', () => {
     const workflow = readFileSync('.github/workflows/nightly-quality.yml', 'utf8')
     const steps = workflowJobs(workflow)['full-deterministic'].steps ?? []
     const audit = steps.findIndex(step => step.run === 'bun run check:upstream-content')
     const install = steps.findIndex(step => step.run === 'bun install --frozen-lockfile')
 
+    const identity = steps.findIndex(step => step.run === 'bun run check:product-identity')
+    expect(identity).toBeGreaterThan(install)
+    expect(steps[identity].if).toBe("${{ !cancelled() && steps.dependencies.outcome == 'success' }}")
+    expect(steps[identity]['continue-on-error']).toBeUndefined()
     expect(audit).toBeGreaterThanOrEqual(0)
     expect(install).toBeGreaterThanOrEqual(0)
     expect(install).toBeLessThan(audit)
@@ -624,7 +722,7 @@ describe('full quality workflow', () => {
     expect(workflow).not.toContain('--allow-live')
     expect(workflow).not.toContain('secrets.')
     expect(workflow.match(/persist-credentials: false/g)?.length).toBe(
-      workflow.match(/uses: actions\/checkout@v4/g)?.length,
+      workflow.match(/uses: actions\/checkout@v5/g)?.length,
     )
   })
 

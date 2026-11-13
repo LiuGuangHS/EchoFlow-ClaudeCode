@@ -13,12 +13,12 @@ This is a maintainer workflow. Finish merges on `main` and start from a clean wo
 
 EchoFlow Code uses its own version line. A release must satisfy all of these conditions:
 
-- `desktop/package.json`, `mobile/package.json`, and `mobile/app.json` have the same version;
+- the desktop version comes from `desktop/package.json`; mobile releases independently, so only `mobile/package.json` and `mobile/app.json` `expo.version` must match each other, not the desktop version;
 - `release-notes/vX.Y.Z.md` exists and starts with `# EchoFlow Code vX.Y.Z`;
 - the release tag is `vX.Y.Z` and matches the `desktop/package.json` version;
 - root `package.json` `999.0.0-local` is for local development, not a product release.
 
-`desktop/package.json` is the version and artifact-naming baseline. `scripts/release.ts` reads the current version from it and, on a non-dry release, updates the three version files, creates a release commit, and creates an annotated tag. Confirm that release notes exist before running the real release command.
+`desktop/package.json` is the desktop version and artifact-naming baseline. By default, `scripts/release.ts` prepares only the desktop version: without dry-run it creates `release/vX.Y.Z`, updates the desktop version, and commits the version files and existing release notes without creating a tag. Only an explicit `--mobile <patch|minor|major|x.y.z>` also increments the independent mobile version. Obtain separate authorization to create the branch and commit before executing it.
 
 The dry run reports the files it would update and whether release notes exist; it does not check remote Git tags:
 
@@ -26,17 +26,17 @@ The dry run reports the files it would update and whether release notes exist; i
 bun run scripts/release.ts X.Y.Z --dry
 ```
 
-The release script commits and creates a tag, so confirm the branch, worktree, and target version before running it:
+The following preparation command creates a branch and commit, so confirm authorization, a clean worktree, release notes, and the target version before running it:
 
 ```bash
 bun run scripts/release.ts X.Y.Z
 ```
 
-Running `scripts/release.ts` and pushing the tag only triggers the build and verification jobs of `Release Desktop`; it does not publish. `publish-release` runs only for the official `workflow_call` from Release Please (`official_release: true`) or a manual draft `workflow_dispatch`. Do not move existing tags or upload local build artifacts.
+Preparation neither creates nor pushes a tag. The separate `bun run scripts/release.ts --tag X.Y.Z` fetches `origin/main`, validates the merged version and release notes, and creates only a local annotated tag; it neither pushes nor publishes and requires separate authorization. Manually pushing a tag only triggers the build and verification jobs of `Release Desktop`; it does not publish. `publish-release` runs only for the official `workflow_call` from Release Please (`official_release: true`) or a manual draft `workflow_dispatch`. Do not move existing tags or upload local build artifacts.
 
 ## Official release entry: Release Please
 
-Official releases are driven by `.github/workflows/release-please.yml` on every push to `main`. It uses `release-please-config.json` and `.release-please-manifest.json` (which records the last published version) to open a release PR and sync the versions in `desktop/package.json`, `mobile/package.json`, and `mobile/app.json`. Merging the release PR creates the tag and a draft Release; `resolve-release` verifies the commit the tag peels to, then calls `release-desktop.yml` with `official_release: true` and `draft: false`. After the gates and the six-platform build all pass, that workflow uploads the complete asset set and un-drafts the release.
+Official releases are driven by `.github/workflows/release-please.yml` on every push to `main`. It uses `release-please-config.json` and `.release-please-manifest.json` (which records the last published version) to open a desktop release PR and update `desktop/package.json`. The current configuration includes only `desktop`; it neither synchronizes nor publishes the mobile version automatically. Merging the release PR creates the tag and a draft Release; `resolve-release` verifies the commit the tag peels to, then calls `release-desktop.yml` with `official_release: true` and `draft: false`. After the gates and the six-platform build all pass, that workflow uploads the complete asset set and un-drafts the release.
 
 `release-notes/vX.Y.Z.md` must already exist on `main` before the release PR is merged, otherwise `release-contract` fails.
 

@@ -118,7 +118,7 @@ it('opens the group QR in a dialog instead of pushing it below the fold', async 
   const dialog = screen.getByRole('dialog', { name: '加入 EchoFlow Code 交流群' })
   const qr = screen.getByRole('img', { name: 'EchoFlow Code 企业微信用户群二维码' })
   expect(dialog).toContainElement(qr)
-  expect(qr).toHaveAttribute('src', expect.stringContaining('icons/wechat-group-qr.png'))
+  expect(qr).toHaveAttribute('src', expect.stringContaining('icons/echoflowai-community-qr.webp'))
 
   fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()

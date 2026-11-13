@@ -8,13 +8,16 @@
  * upstream product identity presented as EchoFlow's own, or an actionable
  * upstream repository / download link in public content.
  *
- * Two surfaces, two strictness levels:
+ * Three surfaces, three strictness levels:
  *  - identity: files that state what this product is. Legacy names and the
  *    upstream brand used as a self-description are violations here.
  *  - links: every public surface, checked only for actionable upstream URLs.
  *    Bare "Claude Code" is legal here (it names the upstream runtime the app
  *    interoperates with) and bare "cc-haha" is often an internal config dir,
  *    bundle name or storage key. Neither is an editorial violation.
+ *  - docs prose: link-only `docs/**` pages additionally reject legacy names in
+ *    running prose. Code spans and fenced blocks are excluded; visible link
+ *    labels remain prose, while qualified source names stay legal.
  *
  * The manifest is fixed and tested. Internal identifiers (config dirs, test
  * fixtures, native bundle names, temp paths) are deliberately out of scope:
@@ -31,9 +34,11 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { Lexer, Tokenizer, type Token, type TokensList } from 'marked'
 
 export type RuleId =
   | 'legacy-product-identity'
+  | 'legacy-self-description'
   | 'upstream-brand-as-product'
   | 'upstream-distribution-url'
   | 'upstream-ads-publisher'
@@ -68,6 +73,184 @@ export const RULES: Rule[] = [
   },
 ]
 
+/**
+ * Link-only `docs/**` pages were previously checked for actionable upstream
+ * URLs only, so legacy names used as this product's own identity went
+ * unreported there. Real config dirs, env vars, launcher names and attribution
+ * references use code spans, fenced blocks or qualified source names; exclude
+ * those while keeping user-visible link labels subject to the prose rule.
+ */
+export const PROSE_SELF_NAME_PATTERN = /(?<![\w/])(?:cc-haha|claude-haha|Claude[ -]Code[ -]Haha)\b/i
+
+type ProseSource = { text: string; lines: number[] }
+
+function proseSource(text: string, lines: number[], original = text): ProseSource {
+  const originalLines = original.split('\n')
+  let cursor = 0
+  const mapped = text.split('\n').map(line => {
+    // Merged block text can omit blank lines consumed by an indented-code token.
+    while (line.trim() && originalLines[cursor]?.trim() === '') cursor += 1
+    const sourceLine = lines[cursor++]
+    if (sourceLine === undefined) throw new Error(`Cannot map Markdown lines near line ${(lines[0] ?? 0) + 1}`)
+    return sourceLine
+  })
+  return { text, lines: mapped }
+}
+
+export function stripNonProse(content: string): string {
+  const normalized = content.replace(/\r\n?/g, '\n')
+  const prose = normalized.split('\n').map(() => '')
+  const sourceRaw = new WeakMap<Token, { raw: string; source: string; children: string }>()
+  const tokenizer = new Tokenizer()
+  const blockquote = tokenizer.blockquote.bind(tokenizer)
+  let quoteDepth = 0
+  tokenizer.blockquote = text => {
+    const depth = ++quoteDepth
+    const lexer = tokenizer.lexer
+    const blockTokens = lexer.blockTokens
+    const lexBlocks = blockTokens.bind(lexer)
+    let children = ''
+    let lexing = false
+    let last: { token: Token; raw: string } | undefined
+    function captureBlocks(source: string, tokens?: Token[], clipped?: boolean): Token[]
+    function captureBlocks(source: string, tokens?: TokensList, clipped?: boolean): TokensList
+    function captureBlocks(source: string, tokens: Token[] = [], clipped?: boolean) {
+      if (quoteDepth !== depth || lexing) return lexBlocks(source, tokens, clipped)
+      lexing = true
+      try {
+        const result = lexBlocks(source, tokens, clipped)
+        children += (children ? '\n' : '') + source
+        const token = result.at(-1)
+        last = token ? { token, raw: token.raw } : undefined
+        return result
+      } finally {
+        lexing = false
+      }
+    }
+    lexer.blockTokens = captureBlocks
+    try {
+      const token = blockquote(text)
+      if (token) {
+        const replacement = token.tokens.at(-1)
+        // A lazy continuation reparses the last nested container with segmented prefixes.
+        if (last && replacement && replacement !== last.token) {
+          children = children.slice(0, children.length - last.raw.length)
+            + (sourceRaw.get(replacement)?.source ?? replacement.raw)
+        }
+        sourceRaw.set(token, { raw: token.raw, source: text.slice(0, token.raw.length), children })
+      }
+      return token
+    } finally {
+      lexer.blockTokens = blockTokens
+      quoteDepth -= 1
+    }
+  }
+  const write = (source: ProseSource, text = source.text) => {
+    text.split('\n').forEach((line, index) => { prose[source.lines[index]] += line })
+  }
+  const separate = (source: ProseSource) => {
+    for (const line of source.lines) prose[line] += ' '
+  }
+
+  const visit = (tokens: Token[], source: ProseSource, block = true) => {
+    let cursor = 0
+    let line = 0
+    for (const token of tokens) {
+      const captured = sourceRaw.get(token)
+      const original = captured && token.raw.startsWith(captured.raw)
+        ? captured.source + token.raw.slice(captured.raw.length)
+        : token.raw
+      // Omitted definitions can share the next label's prefix; consume them before matching.
+      if (block) {
+        let definition: RegExpExecArray | null
+        while ((token.type !== 'def' || !source.text.startsWith(original, cursor))
+          && (definition = Lexer.rules.block.gfm.def.exec(source.text.slice(cursor)))) {
+          cursor += definition[0].length
+          line += definition[0].split('\n').length - 1
+        }
+      }
+      if (!source.text.startsWith(original, cursor)) {
+        throw new Error(`Cannot map Markdown ${token.type} near line ${source.lines[line] + 1}`)
+      }
+      const raw = proseSource(original, source.lines.slice(line))
+      cursor += original.length
+      line += original.split('\n').length - 1
+
+      switch (token.type) {
+        case 'code':
+        case 'codespan':
+        case 'def':
+        case 'checkbox':
+          // Codespan text collapses newlines; only raw retains diagnostic positions.
+          write(raw, token.raw.replace(/[^\n]/g, ' '))
+          break
+        case 'list':
+          visit(token.items, raw)
+          break
+        case 'list_item': {
+          let text = token.text
+          if (token.task) {
+            const first = token.tokens?.[0]
+            const checkbox = first?.type === 'checkbox'
+              ? first
+              : first && 'tokens' in first ? first.tokens?.[0] : undefined
+            if (checkbox?.type !== 'checkbox') throw new Error('Cannot map Markdown task checkbox')
+            // marked removes the marker from item.text but inserts it into child tokens.
+            text = checkbox.raw + text
+          }
+          separate(raw)
+          visit(token.tokens!, proseSource(text, raw.lines))
+          separate(raw)
+          break
+        }
+        case 'table': {
+          const rows = [token.header, ...token.rows]
+          rows.forEach((cells, index) => {
+            // The delimiter occupies row 1; cell text already has escaped pipes decoded.
+            const rowIndex = index === 0 ? 0 : index + 1
+            const row = raw.lines.slice(rowIndex, rowIndex + 1)
+            for (const cell of cells) {
+              const mapped = proseSource(cell.text, row)
+              separate(mapped)
+              visit(cell.tokens, mapped, false)
+              separate(mapped)
+            }
+          })
+          break
+        }
+        case 'blockquote': {
+          if (!captured) throw new Error('Cannot map Markdown blockquote source')
+          separate(raw)
+          visit(token.tokens, proseSource(captured.children, raw.lines))
+          separate(raw)
+          break
+        }
+        case 'heading':
+        case 'paragraph':
+        case 'text':
+        case 'strong':
+        case 'em':
+        case 'del':
+        case 'link':
+        case 'image':
+          if (token.tokens) {
+            separate(raw)
+            visit(token.tokens, proseSource(token.text, raw.lines, token.raw), false)
+            separate(raw)
+          } else {
+            write(raw)
+          }
+          break
+        default:
+          write(raw)
+      }
+    }
+  }
+
+  visit(Lexer.lex(normalized, { gfm: true, tokenizer }), proseSource(normalized, prose.map((_, index) => index)))
+  return prose.map(line => line.replace(/https?:\/\/\S+/g, url => ' '.repeat(url.length))).join('\n')
+}
+
 /** Files that state what this product is, or carry a download / repo entry. */
 export const IDENTITY_SURFACES = [
   'README.md',
@@ -85,6 +268,8 @@ export const IDENTITY_SURFACES = [
   'mobile/src/ui/Logo.tsx',
   'docs/start/install.md',
   'docs/en/start/install.md',
+  // SVG is text: the social banner must not ship the legacy wordmark or an upstream repo URL.
+  'docs/public/images/banner.svg',
 ]
 
 /** Public surfaces checked for actionable upstream links only. */
@@ -116,6 +301,7 @@ export const MANUAL_REVIEW_SURFACES = [
   'site/src/pages/home/assets/quiet-*.webp (scene stills)',
   'docs/images/app/** (bilingual app screenshots)',
   'docs/images/logo-horizontal*.svg (brand mark)',
+  'docs/public/images/banner.png (OG image, rendered from banner.svg — re-export it after any SVG text change)',
   'site/src/pages/home/HomePage.tsx VIDEO (figma.site remote video)',
   'site/src/pages/home/HomePage.tsx FILM (cdn.zizhi1.com remote video)',
 ]
@@ -183,8 +369,8 @@ export const EXEMPTIONS: Exemption[] = [
   { path: 'docs/en/start/install.md', rule: 'upstream-brand-as-product', match: 'No separate Node.js or Claude Code install needed', reason: COMPAT_REASON },
   { path: 'docs/en/start/install.md', rule: 'upstream-brand-as-product', match: 'Claude Code Haha.app', reason: ARTIFACT_REASON },
   { path: 'site/src/pages/home/HomePage.tsx', rule: 'legacy-product-identity', match: 'cdn.zizhi1.com/cc-haha/site/', reason: 'real hosted media path; changing it breaks the film, tracked as unverified media' },
-  { path: 'docs/start/code-signing.md', rule: 'upstream-distribution-url', match: '从 [NanmiCoder/cc-haha]', reason: ATTRIBUTION_REASON },
-  { path: 'docs/en/start/code-signing.md', rule: 'upstream-distribution-url', match: 'in [NanmiCoder/cc-haha]', reason: ATTRIBUTION_REASON },
+  { path: 'docs/start/code-signing.md', rule: 'upstream-distribution-url', match: '从 [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha)', reason: ATTRIBUTION_REASON },
+  { path: 'docs/en/start/code-signing.md', rule: 'upstream-distribution-url', match: 'in [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha)', reason: ATTRIBUTION_REASON },
 ]
 
 /**
@@ -251,21 +437,31 @@ export function auditUpstreamContent(files: ScannedFile[], options: AuditOptions
 
   for (const file of files) {
     const rules = RULES.filter(rule => rule.scope === 'all' || file.kind === 'identity')
-    const lines = file.content.split(/\r?\n/)
+    const lines = file.content.split(/\r\n?|\n/)
+    const isPublicDoc = file.kind === 'links'
+      && file.path.startsWith('docs/')
+      && file.path.endsWith('.md')
+    const proseLines = isPublicDoc ? stripNonProse(file.content).split('\n') : []
     for (let index = 0; index < lines.length; index += 1) {
       const text = lines[index]
       for (const rule of rules) {
         rule.pattern.lastIndex = 0
         if (!rule.pattern.test(text)) continue
-        const exemption = EXEMPTIONS.findIndex(entry =>
-          entry.path === file.path && entry.rule === rule.id && text.includes(entry.match),
-        )
-        if (exemption >= 0) {
+        let remaining = text
+        for (let exemption = 0; exemption < EXEMPTIONS.length; exemption += 1) {
+          const entry = EXEMPTIONS[exemption]
+          if (entry.path !== file.path || entry.rule !== rule.id || !text.includes(entry.match)) continue
           usedExemptions.add(exemption)
-          continue
+          remaining = remaining.replaceAll(entry.match, ' '.repeat(entry.match.length))
         }
-        findings.push({ path: file.path, line: index + 1, rule: rule.id, text: text.trim() })
+        rule.pattern.lastIndex = 0
+        if (rule.pattern.test(remaining)) {
+          findings.push({ path: file.path, line: index + 1, rule: rule.id, text: text.trim() })
+        }
       }
+
+      if (!isPublicDoc || !PROSE_SELF_NAME_PATTERN.test(proseLines[index])) continue
+      findings.push({ path: file.path, line: index + 1, rule: 'legacy-self-description', text: text.trim() })
     }
   }
 

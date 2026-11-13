@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  getInitialLocale,
   initializeLocale,
   resolveSupportedLocale,
   subscribeLocaleChanges,
@@ -15,6 +16,37 @@ describe('locale detection', () => {
     vi.restoreAllMocks()
     window.localStorage.clear()
     document.documentElement.lang = 'en'
+  })
+
+  it.each([null, '8'])('restores a legacy Chinese choice before English browser detection for schema %s', async (version) => {
+    mockBrowserLanguages(['en-US'])
+    if (version !== null) localStorage.setItem('cc-haha.persistence.schemaVersion', version)
+    localStorage.setItem('echoflow-code-locale', 'zh')
+    const host = {
+      getLocalePreference: vi.fn().mockResolvedValue(null),
+      getPreferredSystemLanguages: vi.fn().mockResolvedValue(['en-US']),
+      setLocalePreference: vi.fn().mockResolvedValue(undefined),
+      onLocaleChanged: vi.fn().mockResolvedValue(() => {}),
+    }
+
+    expect(getInitialLocale()).toBe('zh')
+    await expect(initializeLocale(host)).resolves.toBe('zh')
+    expect(document.documentElement.lang).toBe('zh-CN')
+    expect(host.setLocalePreference).toHaveBeenCalledWith('zh')
+    expect(localStorage.getItem('cc-haha-locale')).toBe('zh')
+    expect(localStorage.getItem('echoflow-code-locale')).toBe('zh')
+  })
+
+  it('prefers the current locale over the retained legacy choice', async () => {
+    localStorage.setItem('echoflow-code-locale', 'zh')
+    localStorage.setItem('cc-haha-locale', 'kr')
+    await expect(initializeLocale({
+      getLocalePreference: vi.fn().mockResolvedValue(null),
+      getPreferredSystemLanguages: vi.fn().mockResolvedValue(['en-US']),
+      setLocalePreference: vi.fn().mockResolvedValue(undefined),
+      onLocaleChanged: vi.fn().mockResolvedValue(() => {}),
+    })).resolves.toBe('kr')
+    expect(localStorage.getItem('echoflow-code-locale')).toBe('zh')
   })
 
   it('normalizes BCP 47 tags and selects the first supported language', () => {

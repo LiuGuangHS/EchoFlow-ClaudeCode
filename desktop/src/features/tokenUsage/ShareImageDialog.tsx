@@ -9,6 +9,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import { SelectField } from '@/components/ui/SelectField'
 import { useTranslation, type Locale, type TranslationKey } from '../../i18n'
 import { THEME_MODES, type ThemeMode } from '../../types/settings'
+import { PRODUCT_SLUG } from '../../lib/productIdentity.generated'
 import { buildShareImageData } from './shareImage/data'
 import { SHARE_SIZES, type ShareOptions, type ShareSize } from './shareImage/layout'
 import { canvasToPngBlob } from './shareImage/paint'
@@ -50,7 +51,7 @@ const DEFAULT_OPTIONS: ShareOptions = {
 function downloadName(now: Date) {
   const month = `${now.getMonth() + 1}`.padStart(2, '0')
   const day = `${now.getDate()}`.padStart(2, '0')
-  return `cc-haha-token-usage-${now.getFullYear()}${month}${day}.png`
+  return `${PRODUCT_SLUG}-token-usage-${now.getFullYear()}${month}${day}.png`
 }
 
 export function ShareImageDialog({ open, onClose, stats, models, daily, totalTokens, locale, profile, avatarUrl }: Props) {

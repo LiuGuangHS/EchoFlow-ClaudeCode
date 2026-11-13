@@ -41,7 +41,7 @@ jobs:
       coverage_checks: ${{ steps.policy.outputs.coverage_checks }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -98,7 +98,7 @@ jobs:
       # checkout and Bun are unconditional here too. A push to main can report a
       # regression but cannot replace branch protection on the PR.
       - name: Checkout policy sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -106,6 +106,9 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+
+      - name: Check product identity
+        run: bun run check:product-identity
 
       - name: Audit public product content
         run: bun run check:upstream-content
@@ -148,7 +151,7 @@ jobs:
       matrix:
         shard: [1, 2]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -165,7 +168,7 @@ jobs:
         working-directory: adapters
         run: bun install --frozen-lockfile
       # `bun run build` also exports the phone app (mobile/) into dist/m, and Expo needs Node 22.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Install mobile dependencies
@@ -180,13 +183,13 @@ jobs:
     if: needs.scope-plan.outputs.mobile_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Install root dependencies
@@ -209,7 +212,7 @@ jobs:
       matrix:
         shard: [1, 2, 3]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -226,7 +229,7 @@ jobs:
         working-directory: adapters
         run: bun install --frozen-lockfile
       # The real Host regression uses harness's locked packages and Node >=24.9.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -242,7 +245,7 @@ jobs:
     if: needs.scope-plan.outputs.provider_contract_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -259,7 +262,7 @@ jobs:
     if: needs.scope-plan.outputs.chat_contract_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -279,7 +282,7 @@ jobs:
     if: needs.scope-plan.outputs.agent_flow_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -291,7 +294,7 @@ jobs:
         run: bun run check:agent-flow
       - name: Upload agent flow artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: agent-flow
           path: artifacts/agent-flow/
@@ -304,7 +307,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -316,7 +319,7 @@ jobs:
         run: bun run check:agent-e2e
       - name: Upload agent e2e artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: agent-e2e
           path: artifacts/agent-e2e/
@@ -328,7 +331,7 @@ jobs:
     if: needs.scope-plan.outputs.adapter_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -346,7 +349,7 @@ jobs:
     if: needs.scope-plan.outputs.desktop_native_checks == 'true'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Linux dependencies
@@ -368,14 +371,14 @@ jobs:
         working-directory: adapters
         run: bun install --frozen-lockfile
       # The packaged app carries the phone H5 exported from mobile/; Expo needs Node 22.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Install mobile dependencies
         working-directory: mobile
         run: bun install --frozen-lockfile
       - name: Cache Cloudflare connector build dependency
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: desktop/src-tauri/binaries/cloudflared-*
           key: cloudflared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/scripts/prepare-cloudflared.ts', 'desktop/scripts/cloudflared-licenses/*') }}
@@ -386,6 +389,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Prepare native Computer Use dependencies
         run: cargo +stable fetch --locked --manifest-path native/agent-desktop/Cargo.toml
+      # Electron has no postinstall; download its host distribution during online
+      # dependency preparation, before the offline directory-packaging check.
+      - name: Prepare Electron distribution
+        run: node desktop/node_modules/electron/install.js
       - name: Run desktop native checks
         run: bun run check:native
 
@@ -395,7 +402,7 @@ jobs:
     if: needs.scope-plan.outputs.desktop_native_checks == 'true'
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -410,7 +417,7 @@ jobs:
     if: needs.scope-plan.outputs.persistence_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -430,10 +437,10 @@ jobs:
     if: needs.scope-plan.outputs.docs_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -452,7 +459,7 @@ jobs:
     if: github.event_name == 'pull_request' && needs.scope-plan.outputs.coverage_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -469,7 +476,7 @@ jobs:
       - name: Install adapter dependencies
         working-directory: adapters
         run: bun install --frozen-lockfile
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -489,7 +496,7 @@ jobs:
           fi
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-report
           path: artifacts/coverage/

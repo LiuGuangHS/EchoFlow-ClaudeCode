@@ -199,6 +199,7 @@ const policyExactPaths = new Set([
   'docs/en/internals/contributing.md',
   'docs/internals/contributing.md',
   'package.json',
+  'product.json',
 ])
 
 const docsExactPaths = new Set([

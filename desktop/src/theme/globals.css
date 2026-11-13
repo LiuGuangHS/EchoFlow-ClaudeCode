@@ -1748,8 +1748,9 @@ body > :not(#root, [role="tooltip"]) * {
 .glass-panel {
   background: var(--color-surface-glass);
   border: 1px solid var(--color-border);
-  backdrop-filter: blur(18px);
+  /* Keep the standard property last: Lightning CSS otherwise drops it. */
   -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
   box-shadow: var(--shadow-dropdown);
 }
 
@@ -1761,6 +1762,15 @@ body > :not(#root, [role="tooltip"]) * {
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .glass-panel {
     background: rgb(var(--cc-bg-rgb));
+  }
+}
+
+/* Accessibility modes need an opaque surface rather than unblurred glass. */
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .glass-panel {
+    background: var(--color-surface-dialog);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 
@@ -1782,17 +1792,8 @@ body > :not(#root, [role="tooltip"]) * {
   box-shadow: var(--shadow-overlay);
 }
 
-/* The composer is a floating card (「素」): an opaque lifted sheet — white on
-   the light themes, one step up the ramp on the ink ones — with the card
-   hairline and the composer step of the shadow scale. No blur: it sits over
-   the transcript's fade, not over content that has to stay legible behind it.
-   Declared as a class rather than utilities because `.glass-panel` also sets
-   the fill, border and shadow, and which of two would win would come down to
-   stylesheet order. */
+/* Keep the shared glass fill, blur and fallbacks; only the composer shadow differs. */
 .glass-panel--composer {
-  background: var(--color-surface-dialog);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
   box-shadow: var(--shadow-composer);
   transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
 }
@@ -2991,8 +2992,9 @@ html[data-window-kind='pet'] #root {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.68),
     0 12px 30px rgba(30, 25, 44, 0.14);
-  backdrop-filter: blur(20px) saturate(1.18);
+  /* Keep the standard property last: Lightning CSS otherwise drops it. */
   -webkit-backdrop-filter: blur(20px) saturate(1.18);
+  backdrop-filter: blur(20px) saturate(1.18);
   transition: border-radius 180ms ease, padding 180ms ease;
   pointer-events: auto;
 }

@@ -52,6 +52,49 @@ afterEach(() => {
   document.querySelector('meta[name="theme-color"]')?.remove()
 })
 
+describe('uiStore legacy sidebar width startup', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    localStorage.clear()
+  })
+
+  it('hydrates the legacy width through the eager workspace import before startup migrations', async () => {
+    localStorage.setItem('cc-haha.persistence.schemaVersion', '8')
+    localStorage.setItem('echoflow-code-sidebar-width', '368')
+    // main.tsx statically imports this bridge before its migration call runs.
+    await import('../lib/workspace/persistenceBridge')
+    const { useUIStore } = await import('./uiStore')
+    const { runDesktopPersistenceMigrations } = await import('../lib/persistenceMigrations')
+    runDesktopPersistenceMigrations()
+    expect(useUIStore.getState().sidebarWidth).toBe(368)
+    expect(localStorage.getItem('cc-haha-sidebar-width')).toBe('368')
+    expect(localStorage.getItem('echoflow-code-sidebar-width')).toBe('368')
+  })
+
+  it.each([
+    ['1', 240],
+    ['367.5', 368],
+    ['999', 480],
+    ['invalid', 280],
+    ['0', 280],
+    ['-1', 280],
+    ['Infinity', 280],
+  ])('uses existing validation and clamp semantics for legacy width %s', async (legacy, expected) => {
+    localStorage.setItem('echoflow-code-sidebar-width', legacy)
+    const { useUIStore } = await import('./uiStore')
+    expect(useUIStore.getState().sidebarWidth).toBe(expected)
+    expect(localStorage.getItem('echoflow-code-sidebar-width')).toBe(legacy)
+  })
+
+  it.each([['320', 320], ['invalid', 280]])('never substitutes a stale width for current %s', async (current, expected) => {
+    localStorage.setItem('echoflow-code-sidebar-width', '400')
+    localStorage.setItem('cc-haha-sidebar-width', current)
+    const { useUIStore } = await import('./uiStore')
+    expect(useUIStore.getState().sidebarWidth).toBe(expected)
+    expect(localStorage.getItem('cc-haha-sidebar-width')).toBe(current)
+  })
+})
+
 describe('uiStore theme handling', () => {
   beforeEach(() => {
     vi.resetModules()

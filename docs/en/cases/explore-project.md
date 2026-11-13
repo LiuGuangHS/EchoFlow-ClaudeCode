@@ -37,7 +37,7 @@ Cite file paths for every conclusion. Write “unconfirmed” where evidence is 
 
 ### Try it on this repository
 
-If you do not have a practice project, select the cc-haha source repository and send this in Plan mode:
+If you do not have a practice project, select the EchoFlow Code source repository and send this in Plan mode:
 
 ```text
 Investigate this repository's documentation site without editing or building it. Find the page entry point, the source of long-form docs, and the local build command. Cite a file path for each conclusion.

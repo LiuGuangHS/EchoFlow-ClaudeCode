@@ -7,7 +7,7 @@ order: 2
 
 # Environment Variables
 
-cc-haha has two configuration paths:
+EchoFlow Code has two configuration paths:
 
 - Desktop users should select, test, and activate a provider under **Settings → Providers**. The app manages authentication, model mappings, and protocol translation.
 - When running the CLI from source, use a repository `.env`, shell variables, or Claude Code `settings.json`.

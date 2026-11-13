@@ -4,6 +4,7 @@ param(
   [string]$PerMachineInstallDir = '',
   [string]$CandidateInstallDir = '',
   [string]$UserDataDir = '',
+  [string]$LocalUserDataDir = '',
   [string]$RecoveryRoot = '',
   [string]$ProcessName = 'EchoFlow Code.exe',
   [string]$ActiveConfigDir = $env:CLAUDE_CONFIG_DIR,
@@ -203,14 +204,17 @@ function Test-SamePath {
 }
 
 function Read-AppMode {
-  param([Parameter(Mandatory = $true)][string]$ConfigDir)
+  param([Parameter(Mandatory = $true)][string]$ConfigDir, [switch]$RequireExplicitSelection)
 
   $modeFile = Join-Path $ConfigDir 'app-mode.json'
-  if (-not (Test-Path -LiteralPath $modeFile -PathType Leaf)) {
-    return $null
+  try { $attributes = [IO.File]::GetAttributes($modeFile) }
+  catch [IO.FileNotFoundException] { return $null }
+  catch [IO.DirectoryNotFoundException] { return $null }
+  if (($attributes -band ([IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint)) -ne 0) {
+    throw "Existing app mode metadata is not a regular file: $modeFile"
   }
   try {
-    $parsed = Get-Content -LiteralPath $modeFile -Raw | ConvertFrom-Json
+    $parsed = Get-Content -LiteralPath $modeFile -Raw -Encoding UTF8 | ConvertFrom-Json
   } catch {
     throw "Existing app mode metadata cannot be read safely ($modeFile): $($_.Exception.Message)"
   }
@@ -236,6 +240,16 @@ function Read-AppMode {
       $null -ne $portableProperty.Value -and
       $portableProperty.Value -isnot [string]) {
     throw "Existing app mode metadata has an invalid portable_dir value: $modeFile"
+  }
+  # Completed receipts require the explicit startup selection, not legacy default inference.
+  if ($RequireExplicitSelection) {
+    if ($null -eq $modeProperty -or $modeProperty.Name -cne 'mode' -or
+        $modeProperty.Value -cnotin @('default', 'portable') -or
+        ($modeProperty.Value -ceq 'portable' -and
+          ($null -eq $portableProperty -or $portableProperty.Name -cne 'portable_dir' -or
+            -not (Test-JournalAbsoluteDirectory $portableProperty.Value)))) {
+      throw 'Migrated data startup configuration is invalid'
+    }
   }
   $portableDir = if ($null -ne $portableProperty -and $portableProperty.Value -is [string]) {
     ([string]$portableProperty.Value).Trim()
@@ -282,38 +296,47 @@ function Resolve-LegacyConfiguredPath {
 function Get-LegacyActiveSource {
   param(
     [Parameter(Mandatory = $true)][string]$InstallDir,
-    $SystemMode
+    $SystemMode,
+    [switch]$HasTerminalJournal
   )
 
   $legacyDir = Join-Path $InstallDir 'CLAUDE_CONFIG_DIR'
   $legacyMode = Read-AppMode -ConfigDir $legacyDir
+  $legacySource = $null
   if ($null -ne $legacyMode) {
-    if ($legacyMode.Mode -ne 'portable') {
-      return $null
+    if ($legacyMode.Mode -eq 'portable') {
+      $legacySource = if ((Test-LegacyPortableData -Dir $legacyDir) -or
+          [string]::IsNullOrWhiteSpace([string]$legacyMode.PortableDir)) {
+        $legacyDir
+      } else {
+        Resolve-LegacyConfiguredPath -Value $legacyMode.PortableDir -Source (Join-Path $legacyDir 'app-mode.json')
+      }
     }
-    if (Test-LegacyPortableData -Dir $legacyDir) {
-      return $legacyDir
-    }
-    if ([string]::IsNullOrWhiteSpace([string]$legacyMode.PortableDir)) {
-      return $legacyDir
-    }
-    return Resolve-LegacyConfiguredPath -Value $legacyMode.PortableDir -Source (Join-Path $legacyDir 'app-mode.json')
+  } elseif (Test-LegacyPortableData -Dir $legacyDir) {
+    $legacySource = $legacyDir
   }
 
+  if ($null -ne $SystemMode -and $SystemMode.Mode -eq 'portable' -and
+      -not [string]::IsNullOrWhiteSpace([string]$SystemMode.PortableDir)) {
+    $currentSource = Resolve-LegacyConfiguredPath -Value $SystemMode.PortableDir -Source 'system app-mode.json'
+    # A retained source is not authority to overwrite a later explicit selection, even on retry.
+    if ($null -ne $legacySource -and (Test-Path -LiteralPath $legacySource -PathType Container) -and
+        -not (Test-SamePath -Left $currentSource -Right $legacySource)) {
+      throw "Current portable selection conflicts with retained legacy data. Preserve both directories and resolve the selection before upgrading: $currentSource; $legacySource"
+    }
+    return $currentSource
+  }
+  # A terminal receipt separates a later/default selection from pre-migration legacy defaults.
+  if ($HasTerminalJournal -and $null -ne $legacySource -and
+      (Test-Path -LiteralPath $legacySource -PathType Container)) {
+    throw "Current selection conflicts with retained legacy data after migration. Preserve both directories and resolve the selection before upgrading: $legacySource"
+  }
+  if ($null -ne $legacyMode) { return $legacySource }
   if ($null -ne $SystemMode) {
-    if ($SystemMode.Mode -ne 'portable') {
-      return $null
-    }
-    if ([string]::IsNullOrWhiteSpace([string]$SystemMode.PortableDir)) {
-      return $legacyDir
-    }
-    return Resolve-LegacyConfiguredPath -Value $SystemMode.PortableDir -Source 'system app-mode.json'
+    if ($SystemMode.Mode -eq 'portable') { return $legacyDir }
+    return $null
   }
-
-  if (Test-LegacyPortableData -Dir $legacyDir) {
-    return $legacyDir
-  }
-  return $null
+  return $legacySource
 }
 
 function Get-ExistingInstallDirs {
@@ -360,7 +383,8 @@ function Get-UnsafeLegacySource {
     [Parameter(Mandatory = $true)][string[]]$InstallDirs,
     [Parameter(Mandatory = $true)][string]$UserDataDir,
     [AllowEmptyString()][string]$ActiveConfigDir,
-    [AllowEmptyString()][string]$ActiveConfigManaged
+    [AllowEmptyString()][string]$ActiveConfigManaged,
+    [switch]$HasTerminalJournal
   )
 
   $sources = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::OrdinalIgnoreCase)
@@ -425,7 +449,7 @@ function Get-UnsafeLegacySource {
     $systemMode = Read-AppMode -ConfigDir $UserDataDir
   }
   foreach ($installDir in $InstallDirs) {
-    $source = Get-LegacyActiveSource -InstallDir $installDir -SystemMode $systemMode
+    $source = Get-LegacyActiveSource -InstallDir $installDir -SystemMode $systemMode -HasTerminalJournal:$HasTerminalJournal
     if ([string]::IsNullOrWhiteSpace([string]$source) -or
         -not (Test-Path -LiteralPath $source -PathType Container)) {
       continue
@@ -689,11 +713,169 @@ function Write-AppModeAtomically {
   }
 }
 
+function Resolve-UserDataDirectory {
+  param(
+    [Parameter(Mandatory = $true)][string]$Current,
+    [AllowEmptyString()][string]$Published
+  )
+
+  # Profile selection matches the app's lexical comparison; recovery paths still require canonical identities.
+  if ([string]::IsNullOrWhiteSpace($Published) -or
+      [IO.Path]::GetFullPath($Current).TrimEnd('\', '/').Equals(
+        [IO.Path]::GetFullPath($Published).TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
+    return $Current
+  }
+  # Keep this small cache-only exclusion in sync with echoFlowDataRoot.ts.
+  $caches = @('Cache', 'Code Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'ShaderCache', 'GrShaderCache', 'Crashpad', 'logs')
+  $populated = @($Current, $Published | Where-Object {
+    $directory = $_
+    if (Test-Path -LiteralPath $directory) {
+      if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+        throw "The user data path is not a directory: $directory"
+      }
+      @(Get-ChildItem -LiteralPath $directory -Force -ErrorAction Stop | Where-Object { $caches -cnotcontains $_.Name }).Count -gt 0
+    }
+  })
+  if ($populated.Count -gt 1) {
+    throw "Both Windows data directories contain user state. Back up and resolve the conflict manually before upgrading: $Current; $Published"
+  }
+  if ($populated.Count -eq 1) { return $populated[0] }
+  return $Published
+}
+
+function Assert-JournalProperties {
+  param($Value, [string[]]$Names)
+
+  if ($Value -isnot [pscustomobject]) { throw 'Expected a migration record object' }
+  foreach ($name in $Names) {
+    $property = $Value.PSObject.Properties[$name]
+    if ($null -eq $property -or $property.Name -cne $name) { throw "Missing migration record field: $name" }
+  }
+}
+
+function Test-JournalAbsoluteDirectory {
+  param($Value)
+
+  if ($Value -isnot [string] -or $Value.Contains([char]0) -or -not [IO.Path]::IsPathRooted($Value)) { return $false }
+  $full = [IO.Path]::GetFullPath($Value)
+  if ($full -ne [IO.Path]::GetPathRoot($full)) { $full = $full.TrimEnd('\', '/') }
+  return $Value -ceq $full
+}
+
+function Test-JournalPathsOverlap {
+  param([string]$Left, [string]$Right)
+
+  $leftRoot = $Left.TrimEnd('\', '/') + '\'
+  $rightRoot = $Right.TrimEnd('\', '/') + '\'
+  return $leftRoot.StartsWith($rightRoot, [StringComparison]::OrdinalIgnoreCase) -or
+    $rightRoot.StartsWith($leftRoot, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-JournalDirectoryIdentity {
+  param($Value)
+
+  Assert-JournalProperties $Value @('canonical', 'dev', 'ino')
+  return $Value -is [pscustomobject] -and (Test-JournalAbsoluteDirectory $Value.canonical) -and
+    $Value.dev -is [string] -and $Value.dev -cmatch '\A[0-9]+\z' -and
+    $Value.ino -is [string] -and $Value.ino -cmatch '\A[0-9]+\z'
+}
+
+function Assert-MigrationJournalAllowsRecovery {
+  param([Parameter(Mandatory = $true)][string]$UserDataDir)
+
+  $journalFile = Join-Path $UserDataDir 'data-migration-v1.json'
+  try {
+    try { [IO.File]::GetAttributes($journalFile) | Out-Null }
+    catch [IO.FileNotFoundException] { return $false }
+    catch [IO.DirectoryNotFoundException] { return $false }
+    Assert-NoReparsePointInPath -Path $journalFile
+    $text = [IO.File]::ReadAllText($journalFile)
+    if (-not $text.TrimStart().StartsWith('{')) { throw 'Expected a journal object' }
+    $journal = $text | ConvertFrom-Json
+    Assert-JournalProperties $journal @('version', 'status', 'oldMode', 'stagingDir', 'manifest', 'credentials', 'createdCredentials')
+    Assert-JournalProperties $journal.status @('id', 'stage', 'sourceDir', 'targetDir')
+    # Match dataMigration.ts parseJournal; terminal receipts describe history, not current filesystem identities.
+    if ($journal -isnot [pscustomobject] -or
+        ($journal.version -isnot [int] -and $journal.version -isnot [long] -and $journal.version -isnot [double]) -or
+        $journal.version -ne 1 -or $journal.status -isnot [pscustomobject]) { throw 'Unsupported migration recovery record' }
+    $status = $journal.status
+    if ($status.id -isnot [string] -or $status.id -cnotmatch '\A[a-zA-Z0-9_-]{1,80}\z' -or
+        $status.stage -cnotin @('completed', 'failed', 'cancelled') -or
+        -not (Test-JournalAbsoluteDirectory $status.sourceDir) -or
+        -not (Test-JournalAbsoluteDirectory $status.targetDir) -or
+        -not (Test-JournalAbsoluteDirectory $journal.stagingDir) -or
+        $journal.stagingDir -cne [IO.Path]::Combine($status.targetDir, ".cc-haha-migration-$($status.id)")) {
+      throw 'Unsupported or unfinished migration recovery record'
+    }
+    if (Test-JournalPathsOverlap $status.sourceDir $status.targetDir) { throw 'Migration recovery directories overlap' }
+    if (@($journal.PSObject.Properties.Name) -ccontains 'directories') {
+      Assert-JournalProperties $journal.directories @('source', 'target')
+      if (-not (Test-JournalDirectoryIdentity $journal.directories.source) -or
+          -not (Test-JournalDirectoryIdentity $journal.directories.target) -or
+          (Test-JournalPathsOverlap $journal.directories.source.canonical $journal.directories.target.canonical)) {
+        throw 'Invalid migration directory identities'
+      }
+    }
+    if (@($journal.PSObject.Properties.Name) -ccontains 'stagingIdentity' -and
+        -not (Test-JournalDirectoryIdentity $journal.stagingIdentity)) { throw 'Invalid migration staging identity' }
+    if ($journal.oldMode -ne $null) {
+      if ($journal.oldMode -isnot [string] -or -not $journal.oldMode.TrimStart().StartsWith('{')) { throw 'Invalid previous migration mode' }
+      $oldMode = $journal.oldMode | ConvertFrom-Json
+      if ($oldMode -isnot [pscustomobject]) { throw 'Invalid previous migration mode' }
+    }
+    if ($journal.manifest -isnot [array]) { throw 'Invalid migration manifest' }
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($file in $journal.manifest) {
+      Assert-JournalProperties $file @('relative', 'kind')
+      if ($file.kind -ceq 'file') { Assert-JournalProperties $file @('digest') }
+      if ($file.kind -ceq 'link') { Assert-JournalProperties $file @('link') }
+      if ($file -isnot [pscustomobject] -or $file.relative -isnot [string] -or
+          [string]::IsNullOrEmpty($file.relative) -or $file.relative.Contains([char]0) -or
+          [IO.Path]::IsPathRooted($file.relative) -or
+          @($file.relative -split '[\\/]' | Where-Object { $_ -in @('', '.', '..') }).Count -gt 0 -or
+          $file.kind -cnotin @('file', 'directory', 'link') -or
+          ($file.kind -ceq 'file' -and ($file.digest -isnot [string] -or $file.digest -cnotmatch '\A[a-f0-9]{64}\z')) -or
+          ($file.kind -ceq 'link' -and $file.link -isnot [string]) -or -not $seen.Add($file.relative)) {
+        throw 'Invalid or duplicate migration manifest entry'
+      }
+    }
+    if ($journal.credentials -isnot [array] -or $journal.createdCredentials -isnot [array]) { throw 'Invalid migration credentials' }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+      $targetHash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($status.targetDir.Normalize())))).Replace('-', '').ToLowerInvariant().Substring(0, 8)
+    } finally { $sha.Dispose() }
+    foreach ($property in @('credentials', 'createdCredentials')) {
+      $services = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+      foreach ($receipt in $journal.$property) {
+        Assert-JournalProperties $receipt @('service', 'digest')
+        if ($receipt -isnot [pscustomobject] -or $receipt.service -isnot [string] -or
+            $receipt.service -cnotmatch "\AClaude Code(?:-(?:custom|staging|local)-oauth)?(?:-credentials)?-$targetHash\z" -or
+            $receipt.digest -isnot [string] -or $receipt.digest -cnotmatch '\A[a-f0-9]{64}\z' -or
+            -not $services.Add($receipt.service)) { throw 'Invalid migration credential receipt' }
+      }
+    }
+    if ($status.stage -ceq 'completed') {
+      $current = Read-AppMode -ConfigDir $UserDataDir -RequireExplicitSelection
+      if ($null -eq $current) { throw 'Migrated data startup configuration is unavailable' }
+      if ($current.Mode -eq 'portable' -and
+          -not [string]::IsNullOrWhiteSpace($current.PortableDir) -and
+          [IO.Path]::GetFullPath($current.PortableDir).TrimEnd('\', '/').Equals($status.targetDir.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase) -and
+          -not (Test-Path -LiteralPath $status.targetDir -PathType Container -ErrorAction Stop)) {
+        throw 'The completed migration target is still selected but missing'
+      }
+    }
+    return $true
+  } catch {
+    throw "Finish migration recovery in the application before upgrading; no installer recovery was attempted. $($_.Exception.Message)"
+  }
+}
+
 function Invoke-LegacyRecovery {
   param(
     [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$InstallDirs,
     [AllowEmptyCollection()][AllowEmptyString()][string[]]$SharedInstallDirs = @(),
     [Parameter(Mandatory = $true)][string]$UserDataDir,
+    [AllowEmptyString()][string]$LocalUserDataDir = '',
     [Parameter(Mandatory = $true)][string]$RecoveryRoot,
     [Parameter(Mandatory = $true)][string]$ProcessName,
     [AllowEmptyString()][string]$ActiveConfigDir,
@@ -712,11 +894,15 @@ function Invoke-LegacyRecovery {
     return $null
   }
 
+  $UserDataDir = Resolve-UserDataDirectory -Current $UserDataDir -Published $LocalUserDataDir
+  $hasTerminalJournal = Assert-MigrationJournalAllowsRecovery -UserDataDir $UserDataDir
+
   $source = Get-UnsafeLegacySource `
     -InstallDirs $existingInstallDirs `
     -UserDataDir $UserDataDir `
     -ActiveConfigDir $ActiveConfigDir `
-    -ActiveConfigManaged $ActiveConfigManaged
+    -ActiveConfigManaged $ActiveConfigManaged `
+    -HasTerminalJournal:$hasTerminalJournal
   $sharedInstallDirInputs = @($SharedInstallDirs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
   $existingSharedInstallDirs = @()
   if ($sharedInstallDirInputs.Count -gt 0) {
@@ -775,12 +961,56 @@ function Write-TestMode {
     [Parameter(Mandatory = $true)]$Value
   )
   New-Item -ItemType Directory -Path $Dir -Force | Out-Null
-  $Value | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Dir 'app-mode.json') -Encoding UTF8
+  [IO.File]::WriteAllText((Join-Path $Dir 'app-mode.json'), ($Value | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+}
+
+function New-TestMigrationJournal {
+  param([string]$Stage, [string]$Source, [string]$Target)
+
+  # The old v1 shape intentionally has no optional directory identities.
+  return [ordered]@{
+    version = 1
+    status = [ordered]@{
+      id = 'installer-fixture'; stage = $Stage; sourceDir = $Source; targetDir = $Target
+      files = 1; totalFiles = 1; bytes = 1; totalBytes = 1
+      cancellable = $Stage -notin @('committing', 'restarting', 'completed', 'failed', 'cancelled')
+    }
+    oldMode = '{"mode":"default","unknown":42}'
+    stagingDir = [IO.Path]::Combine($Target, '.cc-haha-migration-installer-fixture')
+    manifest = @(@{ relative = 'settings.json'; kind = 'file'; digest = ('a' * 64) })
+    createdCredentials = @()
+    credentials = @()
+    unknownReceiptField = 'preserve byte for byte'
+  }
+}
+
+function Assert-TestRecoveryRefused {
+  param([string]$Root, [hashtable]$Arguments, [string]$Message, [string]$LockedFile = '')
+
+  $before = @(Get-TreeManifest -Root $Root)
+  $failure = ''
+  $lock = $null
+  try {
+    if ($LockedFile) {
+      $lock = [IO.File]::Open($LockedFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+    }
+    try {
+      Invoke-LegacyRecovery @Arguments | Out-Null
+    } catch {
+      $failure = $_.Exception.Message
+    }
+  } finally {
+    if ($null -ne $lock) { $lock.Dispose() }
+  }
+  Assert-SelfTest -Condition ($failure.Contains($Message)) -Message "expected refusal '$Message', received '$failure' ($Root)"
+  Assert-TreeManifestsEqual -Expected $before -Actual @(Get-TreeManifest -Root $Root) -Message "refusal modified journal, mode, source or staging ($Root)"
+  Assert-SelfTest -Condition (-not (Test-Path -LiteralPath $Arguments.RecoveryRoot)) -Message "refusal created a recovery copy ($Root)"
 }
 
 function Run-SelfTest {
   $testRoot = Join-Path ([IO.Path]::GetTempPath()) "cc-haha-storage-recovery-$([Guid]::NewGuid().ToString('N'))"
   New-Item -ItemType Directory -Path $testRoot | Out-Null
+  $unicodeName = "$([char]0x6570)$([char]0x636E)"
   try {
     $canonicalTestRoot = Get-CanonicalPathIdentity $testRoot
     Assert-SelfTest `
@@ -855,12 +1085,17 @@ function Run-SelfTest {
     Assert-SelfTest -Condition ($firstMode.mode -eq 'portable' -and $firstMode.portable_dir -eq $first) -Message 'recovery was not persisted as explicit custom mode'
 
     Set-Content -LiteralPath (Join-Path $legacy 'settings.json') -Value 'legacy-v2' -NoNewline
-    $second = Invoke-LegacyRecovery `
-      -InstallDirs @($install) -UserDataDir $userData -RecoveryRoot $recovery `
-      -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck
-    Assert-SelfTest -Condition ($second -ne $first) -Message 'retry reused an existing destination'
-    Assert-SelfTest -Condition ((Get-Content -LiteralPath (Join-Path $second 'settings.json') -Raw) -eq 'legacy-v2') -Message 'retry did not capture the latest source'
-    Assert-SelfTest -Condition ((Get-Content -LiteralPath (Join-Path $first 'settings.json') -Raw) -eq 'legacy-v1') -Message 'retry overwrote the first recovery'
+    $retryBefore = @(Get-TreeManifest -Root $testRoot)
+    $retryRefused = $false
+    try {
+      Invoke-LegacyRecovery `
+        -InstallDirs @($install) -UserDataDir $userData -RecoveryRoot $recovery `
+        -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck | Out-Null
+    } catch {
+      $retryRefused = $_.Exception.Message.Contains('Current portable selection conflicts with retained legacy data')
+    }
+    Assert-SelfTest -Condition $retryRefused -Message 'retry refused to override the current recovered selection'
+    Assert-TreeManifestsEqual -Expected $retryBefore -Actual @(Get-TreeManifest -Root $testRoot) -Message 'retry changed the current pointer, original data or recovered data'
 
     $pointerInstall = Join-Path $testRoot 'pointer install'
     $pointerLegacy = Join-Path $pointerInstall 'CLAUDE_CONFIG_DIR'
@@ -1064,18 +1299,20 @@ function Run-SelfTest {
     }
     Assert-SelfTest -Condition $missingModeFailed -Message 'missing persisted mode skipped the install-contained legacy data guard'
 
-    $externalInstall = Join-Path $testRoot 'external install'
+    $externalRoot = Join-Path $testRoot 'external selection with retained data'
+    $externalInstall = Join-Path $externalRoot 'install'
     $externalLegacy = Join-Path $externalInstall 'CLAUDE_CONFIG_DIR'
-    $externalUserData = Join-Path $testRoot 'external app data'
-    $externalDir = Join-Path $testRoot 'external custom'
+    $externalUserData = Join-Path $externalRoot 'app data'
+    $externalDir = Join-Path $externalRoot 'custom'
     New-Item -ItemType Directory -Path $externalLegacy -Force | Out-Null
-    Set-Content -LiteralPath (Join-Path $externalLegacy 'settings.json') -Value 'inactive-legacy' -NoNewline
+    Set-Content -LiteralPath (Join-Path $externalLegacy 'settings.json') -Value 'retained legacy data' -NoNewline
     New-Item -ItemType Directory -Path $externalDir -Force | Out-Null
     Write-TestMode -Dir $externalUserData -Value @{ mode = 'portable'; portable_dir = $externalDir }
-    $externalResult = Invoke-LegacyRecovery `
-      -InstallDirs @($externalInstall) -UserDataDir $externalUserData -RecoveryRoot (Join-Path $testRoot 'external recovery') `
-      -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck
-    Assert-SelfTest -Condition ($null -eq $externalResult) -Message 'external custom data was unnecessarily migrated'
+    Assert-TestRecoveryRefused -Root $externalRoot -Arguments @{
+      InstallDirs = @($externalInstall); UserDataDir = $externalUserData
+      RecoveryRoot = Join-Path $externalRoot 'recovery'; ProcessName = $ProcessName
+      ActiveConfigDir = ''; SkipProcessCheck = $true
+    } -Message 'Current portable selection conflicts with retained legacy data'
 
     $secondInstall = Join-Path $testRoot 'second install'
     $secondLegacy = Join-Path $secondInstall 'CLAUDE_CONFIG_DIR'
@@ -1128,6 +1365,435 @@ function Run-SelfTest {
     }
     Assert-SelfTest -Condition $junctionFailed -Message 'install-contained junction source was silently skipped'
 
+    foreach ($profileKind in @('Local', 'Roaming')) {
+      foreach ($shared in @($false, $true)) {
+        $profileRoot = Join-Path $testRoot "profile-$profileKind-$shared"
+        $profileInstall = Join-Path $profileRoot 'install'
+        $profileSource = Join-Path $profileInstall "custom $unicodeName"
+        $profileLocal = Join-Path $profileRoot 'Local'
+        $profileRoaming = Join-Path $profileRoot 'Roaming'
+        $selectedProfile = if ($profileKind -eq 'Local') { $profileLocal } else { $profileRoaming }
+        New-Item -ItemType Directory -Path $profileSource -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $profileSource 'settings.json') -Value 'profile sentinel' -NoNewline
+        Write-TestMode -Dir $selectedProfile -Value @{ mode = 'portable'; portable_dir = $profileSource }
+        Assert-SelfTest -Condition ([IO.File]::ReadAllBytes((Join-Path $selectedProfile 'app-mode.json'))[0] -eq 123) -Message 'mode fixture unexpectedly contains a BOM'
+        Assert-SelfTest -Condition ((Read-AppMode -ConfigDir $selectedProfile).PortableDir -ceq $profileSource) -Message 'BOM-less Unicode mode pointer did not round-trip'
+        $sharedProfiles = if ($shared) { @($profileInstall) } else { @() }
+        $profileResult = Invoke-LegacyRecovery `
+          -InstallDirs @($profileInstall) -SharedInstallDirs $sharedProfiles `
+          -UserDataDir $profileRoaming -LocalUserDataDir $profileLocal `
+          -RecoveryRoot (Join-Path $profileRoot 'recovery') -ProcessName $ProcessName `
+          -ActiveConfigDir '' -SkipProcessCheck
+        Assert-SelfTest -Condition ((Get-Content -LiteralPath (Join-Path $profileResult 'settings.json') -Raw) -eq 'profile sentinel') -Message 'Local/Roaming pointer was not recovered'
+        Assert-SelfTest -Condition ((Get-Content -LiteralPath (Join-Path $profileSource 'settings.json') -Raw) -eq 'profile sentinel') -Message 'Local pointer recovery did not preserve its source'
+        Assert-SelfTest -Condition ((Read-AppMode -ConfigDir $selectedProfile).PortableDir -eq $profileResult) -Message 'recovery wrote a pointer into the wrong profile'
+      }
+    }
+
+    $conflictLocal = Join-Path $testRoot 'conflict Local'
+    $conflictRoaming = Join-Path $testRoot 'conflict Roaming'
+    Write-TestMode -Dir $conflictLocal -Value @{ mode = 'default'; portable_dir = $null }
+    Write-TestMode -Dir $conflictRoaming -Value @{ mode = 'portable'; portable_dir = $managedLegacy }
+    $conflictFailed = $false
+    try {
+      Resolve-UserDataDirectory -Current $conflictRoaming -Published $conflictLocal | Out-Null
+    } catch {
+      $conflictFailed = $_.Exception.Message.Contains('Both Windows data directories')
+    }
+    Assert-SelfTest -Condition $conflictFailed -Message 'dual profile roots did not fail closed'
+
+    & {
+      $caseRoot = Join-Path $testRoot 'unused-unc-roaming'
+      $caseInstall = Join-Path $caseRoot 'install'
+      $caseLocal = Join-Path $caseRoot 'Local'
+      $unusedUnc = '\\unused.invalid\profile\EchoFlow Code'
+      New-Item -ItemType Directory -Path $caseInstall -Force | Out-Null
+      Write-TestMode -Dir $caseLocal -Value @{ mode = 'default'; portable_dir = $null }
+      # Model an absent redirected profile without contacting a network share.
+      function Test-Path {
+        [CmdletBinding()]
+        param([string]$LiteralPath, [string]$PathType)
+        if ($LiteralPath -eq $unusedUnc) { return $false }
+        return Microsoft.PowerShell.Management\Test-Path @PSBoundParameters
+      }
+      $before = @(Get-TreeManifest -Root $caseRoot)
+      $result = Invoke-LegacyRecovery -InstallDirs @($caseInstall) `
+        -UserDataDir $unusedUnc -LocalUserDataDir $caseLocal `
+        -RecoveryRoot (Join-Path $caseRoot 'recovery') -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck
+      Assert-SelfTest -Condition ($null -eq $result) -Message 'unused UNC Roaming prevented Local profile selection'
+      Assert-TreeManifestsEqual -Expected $before -Actual @(Get-TreeManifest -Root $caseRoot) -Message 'unused UNC selection changed Local data'
+    }
+
+    foreach ($profileKind in @('Local', 'Roaming')) {
+      foreach ($cacheName in @('logs', 'Cache', 'LOGS', 'cache')) {
+        $caseRoot = Join-Path $testRoot "cache-case-$profileKind-$cacheName"
+        # Use distinct fixture parents on case-insensitive Windows filesystems.
+        $caseRoot += if ($cacheName -cin @('logs', 'Cache')) { '-known' } else { '-unknown' }
+        $caseInstall = Join-Path $caseRoot 'install'
+        $caseLocal = Join-Path $caseRoot 'Local'
+        $caseRoaming = Join-Path $caseRoot 'Roaming'
+        $selectedProfile = if ($profileKind -eq 'Local') { $caseLocal } else { $caseRoaming }
+        $otherProfile = if ($profileKind -eq 'Local') { $caseRoaming } else { $caseLocal }
+        New-Item -ItemType Directory -Path $caseInstall, (Join-Path $otherProfile $cacheName) -Force | Out-Null
+        Write-TestMode -Dir $selectedProfile -Value @{ mode = 'default'; portable_dir = $null }
+        $arguments = @{
+          InstallDirs = @($caseInstall); UserDataDir = $caseRoaming; LocalUserDataDir = $caseLocal
+          RecoveryRoot = Join-Path $caseRoot 'recovery'; ProcessName = $ProcessName
+          ActiveConfigDir = ''; SkipProcessCheck = $true
+        }
+        if ($cacheName -cin @('logs', 'Cache')) {
+          $before = @(Get-TreeManifest -Root $caseRoot)
+          $result = Invoke-LegacyRecovery @arguments
+          Assert-SelfTest -Condition ($null -eq $result) -Message 'known cache-only root blocked selection'
+          Assert-TreeManifestsEqual -Expected $before -Actual @(Get-TreeManifest -Root $caseRoot) -Message 'cache-only root selection changed data'
+        } else {
+          try {
+            Assert-TestRecoveryRefused -Root $caseRoot -Arguments $arguments -Message 'Both Windows data directories'
+          } catch { throw "case-variant cache bypassed dual-root protection: $($_.Exception.Message)" }
+        }
+      }
+    }
+
+    $unavailableDrive = $null
+    foreach ($codePoint in (90..68)) {
+      $driveName = [string][char]$codePoint
+      if (-not (Get-PSDrive -Name $driveName -ErrorAction SilentlyContinue)) {
+        $unavailableDrive = "$driveName`:\"
+        break
+      }
+    }
+    Assert-SelfTest -Condition ($null -ne $unavailableDrive) -Message 'no unmounted drive was available for historical journal fixtures'
+    foreach ($profileKind in @('Local', 'Roaming')) {
+      foreach ($stage in @('completed', 'failed', 'cancelled')) {
+        foreach ($selection in (@('historical-selection', 'later-portable', 'later-default') + @('later-portable-without-history', 'later-default-without-mode', 'unavailable-historical-drive'))) {
+          $caseRoot = Join-Path $testRoot "terminal-$profileKind-$stage-$selection"
+          $caseInstall = Join-Path $caseRoot 'install'
+          $oldSource = Join-Path $caseRoot 'historical source'
+          $oldTarget = Join-Path $caseRoot 'historical target'
+          if ($selection -eq 'unavailable-historical-drive') {
+            $oldSource = [IO.Path]::Combine($unavailableDrive, 'historical source')
+            $oldTarget = [IO.Path]::Combine($unavailableDrive, 'historical target')
+          }
+          $currentTarget = Join-Path $caseRoot 'later selection'
+          $caseLocal = Join-Path $caseRoot 'Local'
+          $caseRoaming = Join-Path $caseRoot 'Roaming'
+          $selectedProfile = if ($profileKind -eq 'Local') { $caseLocal } else { $caseRoaming }
+          $journal = New-TestMigrationJournal -Stage $stage -Source $oldSource -Target $oldTarget
+          New-Item -ItemType Directory -Path $caseInstall, $selectedProfile -Force | Out-Null
+          if ($selection -eq 'historical-selection') {
+            New-Item -ItemType Directory -Path $oldSource -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $oldSource 'settings.json') -Value 'source must survive' -NoNewline
+          }
+          if ($selection -in @('historical-selection', 'later-portable')) {
+            New-Item -ItemType Directory -Path $journal.stagingDir -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $journal.stagingDir 'keep') -Value 'historical staging is not installer-owned' -NoNewline
+            # A terminal receipt must not revalidate old manifest hashes after normal app writes.
+            Set-Content -LiteralPath (Join-Path $oldTarget 'settings.json') -Value 'edited after migration' -NoNewline
+          } else {
+            # These historical identities no longer name live directories after a later mode change.
+            $journal.directories = @{
+              source = @{ canonical = $oldSource; dev = '1'; ino = '2' }
+              target = @{ canonical = $oldTarget; dev = '1'; ino = '3' }
+            }
+            $journal.stagingIdentity = @{ canonical = $journal.stagingDir; dev = '1'; ino = '4' }
+          }
+          if ($selection -like 'later-portable*' -or $selection -eq 'unavailable-historical-drive') {
+            $journal.oldMode = $null
+            New-Item -ItemType Directory -Path $currentTarget -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $currentTarget 'settings.json') -Value 'new selection' -NoNewline
+            Write-TestMode -Dir $selectedProfile -Value @{ mode = 'portable'; portable_dir = $currentTarget }
+          } elseif ($selection -eq 'historical-selection' -and $stage -eq 'completed') {
+            Write-TestMode -Dir $selectedProfile -Value @{ mode = 'portable'; portable_dir = $oldTarget }
+          } elseif ($selection -eq 'historical-selection') {
+            [IO.File]::WriteAllText((Join-Path $selectedProfile 'app-mode.json'), $journal.oldMode)
+          } elseif ($selection -ne 'later-default-without-mode') {
+            Write-TestMode -Dir $selectedProfile -Value @{ mode = 'default'; portable_dir = $null; laterPreference = 'keep' }
+          }
+          if ($selection -eq 'later-default-without-mode') {
+            $journal.manifest = @()
+          }
+          if ($selection -eq 'later-portable-without-history') {
+            $journal.manifest += @(@{ relative = 'empty'; kind = 'directory' }, @{ relative = 'link'; kind = 'link'; link = 'old destination' })
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try {
+              $targetHash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($oldTarget.Normalize())))).Replace('-', '').ToLowerInvariant().Substring(0, 8)
+            } finally { $sha.Dispose() }
+            $journal.credentials = @(@{ service = "Claude Code-credentials-$targetHash"; digest = ('b' * 64) })
+            $journal.createdCredentials = $journal.credentials
+          }
+          $journal | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $selectedProfile 'data-migration-v1.json') -Encoding UTF8
+          if ($stage -eq 'completed' -and $selection -eq 'later-default-without-mode') {
+            Assert-TestRecoveryRefused -Root $caseRoot -Arguments @{
+              InstallDirs = @($caseInstall); UserDataDir = $caseRoaming; LocalUserDataDir = $caseLocal
+              RecoveryRoot = Join-Path $caseRoot 'recovery'; ProcessName = $ProcessName
+              ActiveConfigDir = ''; SkipProcessCheck = $true
+            } -Message 'Migrated data startup configuration is unavailable'
+            continue
+          }
+          $before = @(Get-TreeManifest -Root $caseRoot)
+          $result = Invoke-LegacyRecovery -InstallDirs @($caseInstall) `
+            -UserDataDir $caseRoaming -LocalUserDataDir $caseLocal `
+            -RecoveryRoot (Join-Path $caseRoot 'recovery') -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck
+          Assert-SelfTest -Condition ($null -eq $result) -Message "terminal journal unnecessarily recovered external data ($caseRoot)"
+          Assert-TreeManifestsEqual -Expected $before -Actual @(Get-TreeManifest -Root $caseRoot) -Message "terminal journal changed historical or current state ($caseRoot)"
+        }
+
+        foreach ($selection in @('default', 'missing', 'empty-portable')) {
+          $caseRoot = Join-Path $testRoot "terminal-retained-default-$profileKind-$stage-$selection"
+          $caseInstall = Join-Path $caseRoot 'install'
+          $caseSource = Join-Path $caseInstall 'CLAUDE_CONFIG_DIR'
+          $oldTarget = Join-Path $caseRoot 'old target'
+          $caseLocal = Join-Path $caseRoot 'Local'
+          $caseRoaming = Join-Path $caseRoot 'Roaming'
+          $selectedProfile = if ($profileKind -eq 'Local') { $caseLocal } else { $caseRoaming }
+          Write-TestMode -Dir $caseSource -Value @{ mode = 'portable'; portable_dir = $null }
+          Set-Content -LiteralPath (Join-Path $caseSource 'settings.json') -Value 'retained legacy bytes' -NoNewline
+          $journal = New-TestMigrationJournal -Stage $stage -Source $caseSource -Target $oldTarget
+          New-Item -ItemType Directory -Path $selectedProfile, $journal.stagingDir -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $selectedProfile 'settings.json') -Value 'current default data' -NoNewline
+          Set-Content -LiteralPath (Join-Path $oldTarget 'settings.json') -Value 'historical target edited' -NoNewline
+          Set-Content -LiteralPath (Join-Path $journal.stagingDir 'keep') -Value 'historical staging bytes' -NoNewline
+          if ($selection -eq 'default') {
+            Write-TestMode -Dir $selectedProfile -Value @{ mode = 'default'; portable_dir = $null; laterPreference = 'keep' }
+          } elseif ($selection -eq 'empty-portable') {
+            Write-TestMode -Dir $selectedProfile -Value @{ mode = 'portable'; portable_dir = $null }
+          }
+          $journal | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $selectedProfile 'data-migration-v1.json') -Encoding UTF8
+          $expected = if ($stage -eq 'completed' -and $selection -ne 'default') {
+            'Migrated data startup configuration'
+          } else {
+            'Current selection conflicts with retained legacy data after migration'
+          }
+          Assert-TestRecoveryRefused -Root $caseRoot -Arguments @{
+            InstallDirs = @($caseInstall); UserDataDir = $caseRoaming; LocalUserDataDir = $caseLocal
+            RecoveryRoot = Join-Path $caseRoot 'recovery'; ProcessName = $ProcessName
+            ActiveConfigDir = ''; SkipProcessCheck = $true
+          } -Message $expected
+        }
+
+        $caseRoot = Join-Path $testRoot "terminal-discovery-$profileKind-$stage"
+        $caseInstall = Join-Path $caseRoot 'install'
+        $caseSource = Join-Path $caseInstall 'custom data'
+        $caseLocal = Join-Path $caseRoot 'Local'
+        $caseRoaming = Join-Path $caseRoot 'Roaming'
+        $selectedProfile = if ($profileKind -eq 'Local') { $caseLocal } else { $caseRoaming }
+        New-Item -ItemType Directory -Path $caseSource -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $caseSource 'settings.json') -Value 'install-contained sentinel' -NoNewline
+        Write-TestMode -Dir $selectedProfile -Value @{ mode = 'portable'; portable_dir = $caseSource }
+        $journalTarget = if ($stage -eq 'completed') { $caseSource } else { Join-Path $caseRoot 'old target' }
+        $journal = New-TestMigrationJournal -Stage $stage -Source (Join-Path $caseRoot 'old source') -Target $journalTarget
+        $journalFile = Join-Path $selectedProfile 'data-migration-v1.json'
+        $journal | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $journalFile -Encoding UTF8
+        $journalHash = Get-FileSha256 -Path $journalFile
+        $sourceBefore = @(Get-TreeManifest -Root $caseSource)
+        $modeHash = Get-FileSha256 -Path (Join-Path $selectedProfile 'app-mode.json')
+        $result = Invoke-LegacyRecovery -InstallDirs @($caseInstall) `
+          -UserDataDir $caseRoaming -LocalUserDataDir $caseLocal `
+          -RecoveryRoot (Join-Path $caseRoot 'recovery') -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck
+        Assert-SelfTest -Condition (-not [string]::IsNullOrWhiteSpace($result)) -Message 'terminal journal bypassed install-contained discovery'
+        Assert-TreeManifestsEqual -Expected $sourceBefore -Actual @(Get-TreeManifest -Root $result) -Message 'terminal recovery did not copy current source bytes'
+        Assert-TreeManifestsEqual -Expected $sourceBefore -Actual @(Get-TreeManifest -Root $caseSource) -Message 'terminal recovery changed its source'
+        Assert-SelfTest -Condition ((Get-FileSha256 -Path $journalFile) -eq $journalHash) -Message 'terminal recovery rewrote its journal'
+        Assert-SelfTest -Condition ((Read-AppMode -ConfigDir $selectedProfile).PortableDir -eq $result) -Message 'terminal recovery wrote the wrong current selection'
+        $backups = @(Get-ChildItem -LiteralPath $selectedProfile -Filter 'app-mode.pre-recovery.*.bak')
+        Assert-SelfTest -Condition ($backups.Count -eq 1 -and (Get-FileSha256 -Path $backups[0].FullName) -eq $modeHash) -Message 'terminal recovery did not preserve the previous mode'
+
+        foreach ($guard in @('shared-install', 'external-active', 'dual-root', 'retained-source-current-selection', 'process-uncertainty')) {
+          $caseRoot = Join-Path $testRoot "terminal-$guard-$profileKind-$stage"
+          $caseInstall = Join-Path $caseRoot 'install'
+          $caseSource = Join-Path $caseInstall 'CLAUDE_CONFIG_DIR'
+          $caseTarget = Join-Path $caseRoot 'selected external data'
+          $caseLocal = Join-Path $caseRoot 'Local'
+          $caseRoaming = Join-Path $caseRoot 'Roaming'
+          $selectedProfile = if ($profileKind -eq 'Local') { $caseLocal } else { $caseRoaming }
+          $otherProfile = if ($profileKind -eq 'Local') { $caseRoaming } else { $caseLocal }
+          New-Item -ItemType Directory -Path $caseSource, $caseTarget -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $caseSource 'settings.json') -Value 'protected other-user source' -NoNewline
+          Set-Content -LiteralPath (Join-Path $caseTarget 'settings.json') -Value 'current data' -NoNewline
+          Write-TestMode -Dir $selectedProfile -Value @{ mode = 'portable'; portable_dir = $caseTarget }
+          $journal = New-TestMigrationJournal -Stage $stage -Source (Join-Path $caseRoot 'old source') -Target $caseTarget
+          $journal | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $selectedProfile 'data-migration-v1.json') -Encoding UTF8
+          $arguments = @{
+            InstallDirs = @($caseInstall); UserDataDir = $caseRoaming; LocalUserDataDir = $caseLocal
+            RecoveryRoot = Join-Path $caseRoot 'recovery'; ProcessName = $ProcessName
+            ActiveConfigDir = ''; SkipProcessCheck = $true
+          }
+          if ($guard -eq 'shared-install') {
+            # The legacy default location is inactive; only the shared-tree scan can discover this custom directory.
+            Move-Item -LiteralPath $caseSource -Destination (Join-Path $caseInstall 'another users data')
+            $caseSource = Join-Path $caseInstall 'another users data'
+            Write-TestMode -Dir $caseSource -Value @{ mode = 'portable'; portable_dir = $caseSource }
+            $arguments.SharedInstallDirs = @($caseInstall)
+            $expected = 'another Windows user'
+            $guardMessage = 'terminal journal bypassed shared-install protection'
+          } elseif ($guard -eq 'external-active') {
+            Write-TestMode -Dir $caseSource -Value @{ mode = 'portable'; portable_dir = $caseSource }
+            $arguments.ActiveConfigDir = $caseTarget
+            $arguments.ActiveConfigManaged = '1'
+            $expected = 'Current portable selection conflicts with retained legacy data'
+            $guardMessage = 'terminal journal bypassed install-contained discovery'
+          } elseif ($guard -eq 'retained-source-current-selection') {
+            Write-TestMode -Dir $caseSource -Value @{ mode = 'portable'; portable_dir = $caseSource }
+            $journal.status.sourceDir = $caseSource
+            New-Item -ItemType Directory -Path $journal.stagingDir -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $journal.stagingDir 'keep') -Value 'historical staging must survive' -NoNewline
+            $journal | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $selectedProfile 'data-migration-v1.json') -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $caseTarget 'settings.json') -Value 'current data edited after migration' -NoNewline
+            $expected = 'Current portable selection conflicts with retained legacy data'
+            $guardMessage = 'terminal journal overrode current selection with retained source'
+          } elseif ($guard -eq 'process-uncertainty') {
+            Write-TestMode -Dir $selectedProfile -Value @{ mode = 'portable'; portable_dir = $caseSource }
+            $arguments.SkipProcessCheck = $false
+            $expected = 'Cannot verify whether the old application'
+            $guardMessage = 'terminal journal bypassed process uncertainty protection'
+          } else {
+            Write-TestMode -Dir $otherProfile -Value @{ mode = 'default'; portable_dir = $null }
+            # Conflict must win even over an invalid journal in either root.
+            [IO.File]::WriteAllText((Join-Path $otherProfile 'data-migration-v1.json'), '{broken')
+            $expected = 'Both Windows data directories'
+            $guardMessage = 'terminal journal bypassed dual-root protection'
+          }
+          try {
+            if ($guard -eq 'process-uncertainty') {
+              & {
+                function Get-CimInstance { throw 'fixture process query uncertainty' }
+                Assert-TestRecoveryRefused -Root $caseRoot -Arguments $arguments -Message $expected
+              }
+            } else {
+              Assert-TestRecoveryRefused -Root $caseRoot -Arguments $arguments -Message $expected
+            }
+          } catch { throw "$guardMessage`: $($_.Exception.Message)" }
+        }
+      }
+
+      $pendingStages = @('preparing', 'quiescing', 'copying', 'verifying', 'committing', 'restarting')
+      $invalidRecords = @(
+        'broken-json', 'null-record', 'array-record', 'missing-version', 'unknown-version', 'string-version',
+        'missing-status', 'stage-only', 'unknown-stage', 'uppercase-stage', 'unsafe-id', 'relative-source',
+        'relative-target', 'overlapping-paths', 'wrong-staging', 'missing-old-mode', 'invalid-old-mode',
+        'array-old-mode', 'missing-manifest', 'manifest-not-array', 'manifest-traversal', 'manifest-duplicate',
+        'manifest-bad-digest', 'credentials-not-array', 'invalid-credentials', 'invalid-directory-identity',
+        'invalid-staging-identity', 'unreadable-journal', 'missing-selected-target', 'missing-stage', 'missing-id',
+        'missing-source', 'missing-target', 'missing-staging', 'missing-credentials', 'missing-created-credentials',
+        'null-credentials', 'manifest-absolute', 'manifest-empty-segment', 'manifest-invalid-kind', 'manifest-missing-link',
+        'null-directory-identities', 'overlapping-identities', 'null-staging-identity', 'invalid-credential-digest',
+        'duplicate-credentials', 'directory-journal', 'case-mismatched-field', 'missing-selected-unicode-target',
+        'completed-missing-mode', 'completed-directory-mode', 'completed-implicit-mode',
+        'completed-empty-portable', 'completed-relative-portable', 'completed-uppercase-mode'
+      )
+      foreach ($scenario in @($pendingStages) + @($invalidRecords)) {
+        $caseRoot = Join-Path $testRoot "journal-refusal-$profileKind-$scenario"
+        $caseInstall = Join-Path $caseRoot 'install'
+        $caseSource = Join-Path $caseInstall 'custom data'
+        $caseTarget = Join-Path $caseRoot 'target'
+        if ($scenario -eq 'missing-selected-unicode-target') {
+          $caseTarget = Join-Path $caseRoot "missing-$unicodeName"
+        }
+        $caseLocal = Join-Path $caseRoot 'Local'
+        $caseRoaming = Join-Path $caseRoot 'Roaming'
+        $selectedProfile = if ($profileKind -eq 'Local') { $caseLocal } else { $caseRoaming }
+        New-Item -ItemType Directory -Path $caseSource -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $caseSource 'settings.json') -Value 'source must survive refusal' -NoNewline
+        Write-TestMode -Dir $selectedProfile -Value @{ mode = 'portable'; portable_dir = $caseSource }
+        $journal = New-TestMigrationJournal -Stage 'completed' -Source $caseSource -Target $caseTarget
+        if ($scenario -notin @('missing-selected-target', 'missing-selected-unicode-target')) {
+          New-Item -ItemType Directory -Path $journal.stagingDir -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $journal.stagingDir 'keep') -Value 'staging must survive refusal' -NoNewline
+        }
+        if ($scenario -in $pendingStages) {
+          $journal = New-TestMigrationJournal -Stage $scenario -Source $caseSource -Target $caseTarget
+        }
+        switch ($scenario) {
+          'completed-missing-mode' { Remove-Item -LiteralPath (Join-Path $selectedProfile 'app-mode.json') }
+          'completed-directory-mode' {
+            Remove-Item -LiteralPath (Join-Path $selectedProfile 'app-mode.json')
+            New-Item -ItemType Directory -Path (Join-Path $selectedProfile 'app-mode.json') | Out-Null
+          }
+          'completed-implicit-mode' { Write-TestMode -Dir $selectedProfile -Value @{ unknown = 'keep' } }
+          'completed-empty-portable' { Write-TestMode -Dir $selectedProfile -Value @{ mode = 'portable'; portable_dir = $null } }
+          'completed-relative-portable' { Write-TestMode -Dir $selectedProfile -Value @{ mode = 'portable'; portable_dir = 'relative' } }
+          'completed-uppercase-mode' { Write-TestMode -Dir $selectedProfile -Value @{ mode = 'DEFAULT'; portable_dir = $null } }
+          'missing-version' { $journal.Remove('version') }
+          'case-mismatched-field' { $journal.Remove('version'); $journal.Version = 1 }
+          'missing-stage' { $journal.status.Remove('stage') }
+          'missing-id' { $journal.status.Remove('id') }
+          'missing-source' { $journal.status.Remove('sourceDir') }
+          'missing-target' { $journal.status.Remove('targetDir') }
+          'missing-staging' { $journal.Remove('stagingDir') }
+          'missing-credentials' { $journal.Remove('credentials') }
+          'missing-created-credentials' { $journal.Remove('createdCredentials') }
+          'null-credentials' { $journal.credentials = $null }
+          'manifest-absolute' { $journal.manifest[0].relative = $caseSource }
+          'manifest-empty-segment' { $journal.manifest[0].relative = 'nested\\settings.json' }
+          'manifest-invalid-kind' { $journal.manifest[0].kind = 'socket' }
+          'manifest-missing-link' { $journal.manifest = @(@{ relative = 'link'; kind = 'link' }) }
+          'null-directory-identities' { $journal.directories = $null }
+          'overlapping-identities' {
+            $journal.directories = @{
+              source = @{ canonical = $caseSource; dev = '1'; ino = '2' }
+              target = @{ canonical = (Join-Path $caseSource 'nested'); dev = '1'; ino = '3' }
+            }
+          }
+          'null-staging-identity' { $journal.stagingIdentity = $null }
+          { $_ -in @('invalid-credential-digest', 'duplicate-credentials') } {
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try {
+              $targetHash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($caseTarget.Normalize())))).Replace('-', '').ToLowerInvariant().Substring(0, 8)
+            } finally { $sha.Dispose() }
+            $receipt = @{ service = "Claude Code-credentials-$targetHash"; digest = ('a' * 64) }
+            $journal.credentials = @($receipt)
+            if ($scenario -eq 'duplicate-credentials') { $journal.credentials += $receipt }
+            else { $receipt.digest = 'invalid' }
+          }
+          'unknown-version' { $journal.version = 2 }
+          'string-version' { $journal.version = '1' }
+          'missing-status' { $journal.Remove('status') }
+          'stage-only' { $journal = @{ version = 1; status = @{ stage = 'completed' } } }
+          'unknown-stage' { $journal.status.stage = 'unknown' }
+          'uppercase-stage' { $journal.status.stage = 'COMPLETED' }
+          'unsafe-id' { $journal.status.id = '../escape' }
+          'relative-source' { $journal.status.sourceDir = 'relative source' }
+          'relative-target' { $journal.status.targetDir = 'relative target' }
+          'overlapping-paths' {
+            $journal.status.targetDir = Join-Path $caseSource 'nested'
+            $journal.stagingDir = Join-Path $journal.status.targetDir '.cc-haha-migration-installer-fixture'
+          }
+          'wrong-staging' { $journal.stagingDir = $caseTarget }
+          'missing-old-mode' { $journal.Remove('oldMode') }
+          'invalid-old-mode' { $journal.oldMode = '{broken' }
+          'array-old-mode' { $journal.oldMode = '[]' }
+          'missing-manifest' { $journal.Remove('manifest') }
+          'manifest-not-array' { $journal.manifest = @{} }
+          'manifest-traversal' { $journal.manifest[0].relative = '..\settings.json' }
+          'manifest-duplicate' { $journal.manifest += @{ relative = 'SETTINGS.JSON'; kind = 'file'; digest = ('a' * 64) } }
+          'manifest-bad-digest' { $journal.manifest[0].digest = 'not a sha256' }
+          'credentials-not-array' { $journal.credentials = @{} }
+          'invalid-credentials' { $journal.createdCredentials = @(@{ service = 'Claude Code'; digest = ('a' * 64) }) }
+          'invalid-directory-identity' { $journal.directories = @{ source = @{ canonical = $caseSource; dev = 1; ino = '2' } } }
+          'invalid-staging-identity' { $journal.stagingIdentity = @{ canonical = 'relative'; dev = '1'; ino = '2' } }
+          { $_ -in @('missing-selected-target', 'missing-selected-unicode-target') } {
+            Write-TestMode -Dir $selectedProfile -Value @{ mode = 'portable'; portable_dir = $caseTarget }
+          }
+        }
+        $journalText = $journal | ConvertTo-Json -Depth 12
+        switch ($scenario) {
+          'broken-json' { $journalText = '{broken' }
+          'null-record' { $journalText = 'null' }
+          'array-record' { $journalText = "[$journalText]" }
+        }
+        $journalFile = Join-Path $selectedProfile 'data-migration-v1.json'
+        if ($scenario -eq 'directory-journal') { New-Item -ItemType Directory -Path $journalFile | Out-Null }
+        else { [IO.File]::WriteAllText($journalFile, $journalText) }
+        $arguments = @{
+          InstallDirs = @($caseInstall); UserDataDir = $caseRoaming; LocalUserDataDir = $caseLocal
+          RecoveryRoot = Join-Path $caseRoot 'recovery'; ProcessName = $ProcessName
+          ActiveConfigDir = ''; SkipProcessCheck = $true
+        }
+        $lockedFile = if ($scenario -eq 'unreadable-journal') { $journalFile } else { '' }
+        Assert-TestRecoveryRefused -Root $caseRoot -Arguments $arguments -Message 'Finish migration recovery' -LockedFile $lockedFile
+      }
+    }
+
     [Console]::Out.WriteLine('Legacy install data recovery self-test passed.')
   } finally {
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -1144,6 +1810,7 @@ try {
     -InstallDirs @($PerUserInstallDir, $PerMachineInstallDir, $CandidateInstallDir) `
     -SharedInstallDirs @($PerMachineInstallDir) `
     -UserDataDir $UserDataDir `
+    -LocalUserDataDir $LocalUserDataDir `
     -RecoveryRoot $RecoveryRoot `
     -ProcessName $ProcessName `
     -ActiveConfigDir $ActiveConfigDir `

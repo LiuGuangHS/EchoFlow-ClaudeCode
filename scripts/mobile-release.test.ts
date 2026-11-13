@@ -12,6 +12,19 @@ const delivery: Delivery = { schemaVersion: 1, platform: 'ios', tag: 'v1.2.0', c
 const input = { platform: 'ios' as const, tag: 'v1.3.0', commit: 'c'.repeat(40), fingerprint, version: '0.1.0', deliveries: [delivery] }
 
 describe('mobile release planning', () => {
+  test('checks the exact tag identity before installing or delivering mobile inputs', () => {
+    const workflow = parse(readFileSync('.github/workflows/release-mobile.yml', 'utf8'))
+    const steps = workflow.jobs.deliver.steps
+    const checkout = steps.findIndex((step: any) => step.uses === 'actions/checkout@v5')
+    const bun = steps.findIndex((step: any) => step.uses === 'oven-sh/setup-bun@v2')
+    const identity = steps.findIndex((step: any) => step.run === 'bun run check:product-identity')
+    const install = steps.findIndex((step: any) => step.name === 'Install mobile dependencies')
+    expect(steps[checkout].with.ref).toBe('refs/tags/${{ inputs.release_tag }}')
+    expect(identity).toBeGreaterThan(bun)
+    expect(identity).toBeLessThan(install)
+    expect(steps[identity].if).toBeUndefined()
+    expect(steps[identity]['continue-on-error']).toBeUndefined()
+  })
   test('desktop-only shared changes skip mobile while transitive runtime dependencies require a release', () => {
     const sources: Record<string, string> = {
       'mobile/src/app/index.tsx': 'export { value } from "../../../src/shared/mobileEntry"',

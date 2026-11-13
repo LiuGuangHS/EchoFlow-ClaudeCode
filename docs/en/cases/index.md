@@ -1,7 +1,7 @@
 ---
 title: Practical guides: from goal to verification
 nav_title: Guide overview
-description: Five real tasks to practice with cc-haha, from understanding a project to scheduled work and phone access.
+description: Five real tasks to practice with EchoFlow Code, from understanding a project to scheduled work and phone access.
 order: 0
 ---
 

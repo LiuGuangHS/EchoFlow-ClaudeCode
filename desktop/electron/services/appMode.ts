@@ -101,7 +101,7 @@ export function normalizedCustomDir(app: AppModeAppLike, value: string | null | 
 }
 
 function externallyControlled(env: NodeJS.ProcessEnv): boolean {
-  return Boolean(env.CLAUDE_CONFIG_DIR && env.CC_HAHA_APP_PORTABLE_DIR !== '1')
+  return Boolean(env.CLAUDE_CONFIG_DIR && env.CC_HAHA_APP_PORTABLE_DIR !== '1' && env.ECHOFLOW_APP_PORTABLE_DIR !== '1')
 }
 
 // The app-managed portable selection is process-local derived state; the
@@ -110,9 +110,10 @@ function externallyControlled(env: NodeJS.ProcessEnv): boolean {
 // spawned by quitAndInstall()), otherwise the child would trust a snapshot
 // that may no longer match the persisted mode (#1160).
 export function clearAppManagedPortableEnv(env: NodeJS.ProcessEnv = process.env): void {
-  if (env.CC_HAHA_APP_PORTABLE_DIR !== '1') return
+  if (env.CC_HAHA_APP_PORTABLE_DIR !== '1' && env.ECHOFLOW_APP_PORTABLE_DIR !== '1') return
   delete env.CLAUDE_CONFIG_DIR
   delete env.CC_HAHA_APP_PORTABLE_DIR
+  delete env.ECHOFLOW_APP_PORTABLE_DIR
   delete env.WEBVIEW2_USER_DATA_FOLDER
 }
 
@@ -168,9 +169,7 @@ export function getAppMode(
       mode: 'portable',
       portableDir: customDir,
       activeConfigDir: customDir,
-      configDirSource: envConfigDir && env.CC_HAHA_APP_PORTABLE_DIR !== '1'
-        ? 'environment'
-        : 'portable',
+      configDirSource: externallyControlled(env) ? 'environment' : 'portable',
     }
   }
 

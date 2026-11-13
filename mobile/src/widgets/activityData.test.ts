@@ -18,6 +18,27 @@ const sessions = [
   { id: 'one', title: 'Real task' },
   { id: 'two', title: 'Other task' },
 ] as Session[]
+test('local activity URLs preserve special-character targets and only attach actions to requests', () => {
+  const hostId = '电脑 /?#&=+% host'
+  const sessionId = '会话 /?#&=+% session'
+  const requestId = '审批 /?#&=+% request'
+  for (const action of [undefined, 'allow', 'deny'] as const) {
+    const url = new URL(activityUrl(hostId, sessionId, requestId, action))
+    expect(url.protocol).toBe('codemobile:')
+    expect(url.host).toBe('')
+    expect(url.pathname).toBe(`/chat/${encodeURIComponent(sessionId)}`)
+    expect(decodeURIComponent(url.pathname.slice('/chat/'.length))).toBe(sessionId)
+    expect([...url.searchParams]).toEqual([
+      ['host', hostId],
+      ['requestId', requestId],
+      ...(action ? [['notificationAction', action] as [string, string]] : []),
+    ])
+    expect(url.hash).toBe('')
+  }
+  const open = new URL(activityUrl(hostId, sessionId, undefined, 'allow'))
+  expect([...open.searchParams]).toEqual([['host', hostId]])
+})
+
 test('lock screen displays only real sessions and picks waiting approvals ahead of running work', () => {
   const value = taskActivityData(
     host,

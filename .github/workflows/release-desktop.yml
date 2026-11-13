@@ -92,7 +92,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -144,7 +144,7 @@ jobs:
       windows_signed: ${{ steps.validate.outputs.windows_signed }}
     steps:
       - name: Checkout release version
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.release_sha || github.sha }}
           sparse-checkout: |
@@ -260,7 +260,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
           ref: ${{ inputs.release_sha || github.sha }}
@@ -275,6 +275,9 @@ jobs:
       - name: Policy and gate regressions
         run: bun run check:policy
 
+      - name: Product identity consistency
+        run: bun run check:product-identity
+
       - name: Upstream content audit
         run: bun run check:upstream-content
 
@@ -284,7 +287,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
           ref: ${{ inputs.release_sha || github.sha }}
@@ -307,7 +310,7 @@ jobs:
         working-directory: adapters
         run: bun install --frozen-lockfile
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -330,7 +333,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
           ref: ${{ inputs.release_sha || github.sha }}
@@ -350,7 +353,7 @@ jobs:
         working-directory: adapters
         run: bun install --frozen-lockfile
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
 
@@ -450,7 +453,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.release_sha || github.sha }}
 
@@ -483,7 +486,7 @@ jobs:
           bun-version-file: package.json
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
 
@@ -835,7 +838,7 @@ jobs:
       - name: Upload unsigned Windows application executables
         if: matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed == 'true'
         id: upload-unsigned-signpath-application
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: signpath-unsigned-application-${{ matrix.arch }}
           path: ${{ steps.stage-signpath-application.outputs.stage_dir }}
@@ -914,7 +917,7 @@ jobs:
       - name: Upload unsigned Windows installer
         if: matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed == 'true'
         id: upload-unsigned-signpath-installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: signpath-unsigned-installer-${{ matrix.arch }}
           path: ${{ steps.stage-signpath-installer.outputs.stage_dir }}
@@ -1071,14 +1074,14 @@ jobs:
           done
 
       - name: Upload update metadata for merge
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: desktop-update-metadata-${{ matrix.label }}
           path: desktop/build-artifacts/electron/latest*.yml
           if-no-files-found: ignore
 
       - name: Upload release artifacts for final publish
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: desktop-release-artifacts-${{ matrix.label }}
           path: |
@@ -1103,7 +1106,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.release_sha || github.sha }}
 
@@ -1187,7 +1190,7 @@ jobs:
         run: bun install
 
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           pattern: desktop-release-artifacts-*
           path: artifacts/release-assets
@@ -1229,7 +1232,7 @@ jobs:
           fi
 
       - name: Download update metadata artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           pattern: desktop-update-metadata-*
           path: artifacts/update-metadata

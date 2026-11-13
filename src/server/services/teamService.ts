@@ -1513,7 +1513,10 @@ export class TeamService {
     return path.join(this.getLegacyWorkbenchArchiveDir(), `${hash(sessionId)}.json`)
   }
 
-  private async resolveWorkbenchArchivePath(sessionId: string, forWrite = false): Promise<string> {
+  private async resolveWorkbenchArchivePath(
+    sessionId: string,
+    forWrite = false,
+  ): Promise<{ path: string; contents?: Buffer }> {
     const currentPath = this.getWorkbenchArchivePath(sessionId)
     const legacyPath = this.getLegacyWorkbenchArchivePath(sessionId)
     const readIfPresent = async (filePath: string): Promise<Buffer | null> => {
@@ -1524,11 +1527,18 @@ export class TeamService {
         throw error
       }
     }
-    const [current, legacy] = await Promise.all([readIfPresent(currentPath), readIfPresent(legacyPath)])
+    const [current, legacy] = await Promise.all([
+      readIfPresent(currentPath),
+      readIfPresent(legacyPath),
+    ])
     if (current && legacy && (forWrite || !current.equals(legacy))) {
       throw new Error('Conflicting current and legacy Team workbench archives')
     }
-    return current ? currentPath : legacy ? legacyPath : currentPath
+    return current
+      ? { path: currentPath, contents: current }
+      : legacy
+        ? { path: legacyPath, contents: legacy }
+        : { path: currentPath }
   }
 
   // ── List all teams ──────────────────────────────────────────────────────
@@ -2311,10 +2321,9 @@ export class TeamService {
     sessionId: string,
   ): Promise<TeamWorkbenchArchiveDocument | null> {
     try {
-      const archivePath = await this.resolveWorkbenchArchivePath(sessionId)
-      const raw = JSON.parse(
-        await fs.readFile(archivePath, 'utf8'),
-      ) as Record<string, unknown>
+      const archive = await this.resolveWorkbenchArchivePath(sessionId)
+      if (!archive.contents) return null
+      const raw = JSON.parse(archive.contents.toString('utf8')) as Record<string, unknown>
       if (
         raw.schemaVersion !== TEAM_WORKBENCH_ARCHIVE_SCHEMA_VERSION ||
         raw.sessionId !== sessionId ||
@@ -2389,7 +2398,7 @@ export class TeamService {
     filePath: string,
     document: TeamWorkbenchArchiveDocument,
   ): Promise<void> {
-    filePath = await this.resolveWorkbenchArchivePath(document.sessionId, true)
+    filePath = (await this.resolveWorkbenchArchivePath(document.sessionId, true)).path
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     const temporaryPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${crypto.randomBytes(6).toString('hex')}`
     try {

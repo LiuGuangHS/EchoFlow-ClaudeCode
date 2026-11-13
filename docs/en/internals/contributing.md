@@ -13,7 +13,11 @@ See [Execution, data, and trust boundaries](./execution-boundaries.md) for durab
 
 ## Setup
 
-Install root dependencies with Bun:
+Before verification, the operator must perform a preflight: read the expected Bun version from root `package.json`'s `packageManager`, record the executable actually resolved and its version, and check that nested processes launched from the repository resolve the same version; checking a shell alias alone is insufficient. Real binaries installed by version managers are valid; do not reject `mise` / `asdf` directory names. Preserve platform tool paths needed by the selected lanes and test-specific PATH fixtures rather than blindly clearing PATH. Check Node, Rust toolchains, and caches only when selected lanes need them.
+
+Dependency installation and tool/cache preparation below are explicit setup and may need the network; deterministic check execution must not implicitly download missing tools or auto-grant trust. The existing `check:docs` command includes a declared isolated dependency install; distinguish that preparation from the subsequent deterministic build and checks. Report missing prerequisites as `blocked` / `not run` in the handoff with the required setup; automation failures must still exit nonzero, not report success. A common preflight covering every verification entrypoint is not currently implemented; these are operator requirements, not newly enforced checks.
+
+Explicitly install root dependencies with Bun:
 
 ```bash
 bun install
@@ -52,7 +56,7 @@ Do not commit local artifacts such as `artifacts/quality-runs/`, `node_modules/`
 | Local | manual | The narrowest relevant tests, then whatever `bun run check:impact` selects | seconds |
 | PR (required) | `pull_request`, and `push` to `main` after a merge | The deterministic lanes the impact report selects, including `check:agent-flow` and `check:agent-e2e`; coverage is reported, not blocking | no model, no provider, no secret, runs on an untrusted fork |
 | Full sweep | Daily (19:00 UTC) plus maintainer-triggered | Every deterministic lane with no path selection, plus module-graph health and `check:desktop-ui-smoke` | still no model, no secret |
-| Release | maintainer-run `bun run quality:release` (**not** `release-desktop.yml`) | Everything above, plus native/packaging smoke and maintainer-authorized live provider baselines | live models only here, only with explicit authorization |
+| Release | maintainer-run `bun run quality:release` (**not** `release-desktop.yml`) | PR checks, baseline catalog/live, native and current-platform packaging smoke; the full sweep runs separately, not all of its checks are automatically included | live models require explicit maintainer authorization |
 
 Note: `release-desktop.yml` deliberately runs no quality gate — tagging must not be blocked by `bun run verify`, and `scripts/pr/release-workflow.test.ts` guards that decision. Release-time evidence therefore comes from the PRs that were merged, plus whatever full sweeps the maintainer ran, plus the manual `quality:release`. The full sweep runs once a day (maintainer decision, 2026-10); the frequency is pinned in `pr-quality-workflow.test.ts`, so changing it is a maintainer decision too.
 
@@ -123,6 +127,8 @@ Coverage is reported on pull requests but never blocks a merge: `coverage-checks
 
 Completion means implementing the intended behavior, running the checks required for the current diff, and fixing failures caused by the change. Scoped local edits, isolated fixture checks, and related repairs do not need approval at each step. Commits, pushes, releases, repository settings, and live-model quota still follow the root `AGENTS.md` authorization boundaries.
 
+In a shared checkout, assign one writer per file at a time; dependency installs, builds, and full gates run serially under one executor, and readers must not duplicate delegated investigation. On resume, first check existing background tasks and their status, the current candidate, and available evidence; do not blindly replay commands whose side effects may already have completed.
+
 For module iteration, understand the problem before choosing a change: compare expected behavior with actual results, read the module, its callers, existing tests, and relevant logs, and trace the real call chain to locate the cause. Separate observed evidence from hypotheses and unknowns; do not infer defects from filenames or code appearance.
 
 Before editing, define contracts and boundaries: how inputs, outputs, and errors flow; who owns state and when it transitions or persists; who creates, cancels, and releases resources; where permissions are checked across trust boundaries; and which callers, old data, protocols, and user behaviors must remain compatible. For cross-process or execution-engine changes, consult [Execution, Data, and Trust Boundaries](execution-boundaries.md) and carry necessary changes through the call chain without creating hidden execution paths.
@@ -131,7 +137,9 @@ Use the evidence to choose preservation, repair, consolidation, redesign, or ret
 
 Judge quality by intended behavior, clear boundaries, and regression evidence, not mechanical renaming, file splitting, or line counts. Refactor to solve an established problem rather than mixing unrelated structural changes into a fix.
 
-Use `bun run check:impact` to determine the check scope. Run the selected checks for ordinary tasks; use `bun run verify` directly for PR-ready/full validation without first running all of its lanes separately. During repairs, rerun affected focused checks, then complete the evidence needed for the final diff. Do not repeat passing checks without subsequent edits or unresolved risks. Report unrelated existing failures or environment blockers instead of expanding the change merely to make everything green.
+`bun run check:impact` selects checks; it does not prove behavior correct. Run the selected checks for ordinary tasks; use `bun run verify` directly for PR-ready/full validation without first running all of its lanes separately. During repairs, rerun affected focused checks, then complete the evidence needed for the final diff. Do not repeat passing checks without subsequent edits or unresolved risks. Report unrelated existing failures or environment blockers instead of expanding the change merely to make everything green.
+
+Bind verification evidence to a candidate: the full Git SHA, dirty diff, and content fingerprints of relevant untracked source, along with the environment (OS/architecture, tool versions and paths), actual commands, exit statuses, final summaries, and logs; also record SHA-256 for release artifacts. Relevant source, dependency, or environment changes invalidate affected prior evidence. An incomplete run, missing final summary, or unknown background-task state is not `passed`; these recording requirements do not mean the current runner automatically collects all of this information.
 
 When a check fails, consult the evidence for that failure:
 
@@ -139,7 +147,7 @@ When a check fails, consult the evidence for that failure:
 | --- | --- |
 | Failed lane | Summary / Result Matrix in `artifacts/quality-runs/<timestamp>/report.md` and `logs/<lane>.log` |
 | Path-aware PR checks | Check same-area tests, CLI core, and coverage policy; maintainer overrides require an explicit decision |
-| Coverage gate | `artifacts/coverage/<timestamp>/coverage-report.md` or `.json`; address `changedLines.failures` / `failures`, while `targetGaps` signal technical debt |
+| Coverage gate | `artifacts/coverage/<timestamp>/coverage-report.md` or `.json`; address `changedLines.failures` / `failures`, while `targetGaps` signal technical debt. Missing test-discovery results, a final summary, or expected LCOV is a collection failure, not proof of a product defect or insufficient coverage; investigate logs without changing existing blocking policy |
 | Build, types, lint, docs, or native | Fix issues caused by the change identified in the relevant log and rerun affected checks |
 
 Claim PR-ready/full validation only after `bun run verify` passes for the final diff. Do not lower coverage baselines/thresholds or rewrite test expectations to hide failures.
@@ -155,6 +163,7 @@ A same-area test file is the gate's minimum signal; tests also need to prove beh
 - **Cover both dropping and keeping.** Test what a deduplication, merging, or filtering rule should discard and retain. Message deduplication in particular must reject replays and preserve legitimate repeats; forward upstream identities such as `uuid` / `toolUseId` instead of guessing identity from text.
 - **Test the connections across boundaries.** Separate green server, store, and component tests do not prove that messages drive the UI. Exercise callers and dependencies through real entry points and assert the final observable behavior; do not mock the module under test.
 - **Verify failure and recovery.** Cover errors, timeouts, cancellation, retries, or reconnects according to the change's risks. Assert post-failure state and resource cleanup, continued usability after recovery, and that accepted side effects are not repeated or permission boundaries bypassed.
+- **Preserve legacy compatibility when behavior changes.** Add compatibility evidence when the change affects legacy key, path, or marker behavior; ageing names alone do not justify deletion. For migrations, use old fixtures to test retries after partial failure and that, after a successful migration, preferences deliberately cleared by the user are not resurrected from old data on restart. These are test requirements, not a claim that a product defect has been fixed.
 
 Coverage reports have limits: `desktop/vitest.config.ts` collects only `src/**`, excluding the Electron main process. The repository's current Bun coverage baseline has zero branch records, and `coverage.ts` displays `0/0` as 100%; that does not prove all branches were exercised. Inspect current configuration and reports instead of using historical coverage figures as evidence for a new change.
 
@@ -170,7 +179,13 @@ External reference points:
 
 Keep project constraints and entry points in root `AGENTS.md`, specialized rules near the code, and explanations/examples in on-demand documentation. Shared guidance must work for contributors using different models. Revisit duplicated workflows and broad stopping conditions as capabilities change, while preserving current safety and CI contracts. This cleanup draws on Eric Provencher's [Rethinking skills and prompts for GPT-6 Astra](https://x.com/pvncher/status/2095991462416490862) (2026-09-04).
 
+Keep long-term personal preferences in user-level guidance without overriding repository constraints; put module rules in the nearest `AGENTS.md` or applicable directory rules, and complex operational procedures in skills. Rules that must run without exceptions should be enforced by the appropriate permissions, hooks, or CI checks. Natural-language guidance is not implemented enforcement, and new automation must respect configuration and authorization boundaries.
+
+A module README should describe its purpose, responsibilities and non-goals, main entry points, dependencies and data ownership, and development and verification commands. Link detailed designs on demand rather than copying repository-wide rules or storing temporary task logs. When touching a module, proactively compare its documentation with the implementation, report concrete gaps, and fix in-scope documentation without rewriting unrelated modules just to fill a template.
+
 Repository skill descriptions should identify the applicable task and necessary distinctions; put operational detail in the body or referenced files. Use a short router for multiple workflows and avoid broadening triggers just to match more keywords. Model defaults, tool formats, and compaction behavior describe product implementation, so check the source before updating those docs.
+
+Use a bounded feedback loop for reproducible failures or rule conflicts: when code changes, add the smallest behavioral regression, fix the actual shared implementation, run selected checks, then update only the closest existing authoritative rule. Avoid duplicated prose and tests that merely match documentation strings instead of proving behavior. Separate requirements, currently implemented enforcement, and pending engineering. User-requested guidance edits are allowed within scope, but do not autonomously expand permissions, weaken thresholds, retire behavior, change unrequested global configuration, or add endless loops or a new task ledger.
 
 ## Feature Quality Contract
 
@@ -224,7 +239,7 @@ Branch protection on `main` requires the `pr-quality-gate` status check and appl
 The gate is only useful while green means mergeable, so `main` has to stay green:
 
 - **You changed behavior and a test went red**: the gate is working. Update the test in the same PR and say why the old assertion no longer holds.
-- **The failure is not from your change**: check whether the latest PR Quality (push) run and the full sweep on `main` are red too. If so, fix it in a separate PR, or quarantine it in `scripts/quality-gate/quarantine.json` with an owner and a review date (`check:quarantine` fails once it expires). Do not merge around the gate.
+- **The failure is not from your change**: check whether the latest PR Quality (push) run and the full sweep on `main` are red too. If so, fix it in a separate PR; if it cannot be fixed immediately, report a blocker rather than bypassing required deterministic lanes to merge. `scripts/quality-gate/quarantine.json` is only for maintainer baseline/release tracking (owners and expiry dates are audited by `check:quarantine`), not an exemption from required PR gates.
 - **Intermittent failure (flaky)**: `check:server` re-runs each failed file once, alone, and labels it `FLAKY` (passes alone) or `FAILED` (fails again); the gate is red either way. `FLAKY` means a race: fix the race itself (a common cause is asserting on "the last request" or on wall-clock time). Do not hide it with longer timeouts or looser assertions.
 - **The gate itself needs to change**: edit `scripts/pr/change-policy.ts`, the workflow, and their tests (`check:policy`). Keep the `pr-quality-gate` check name stable so branch protection does not need to change.
 
@@ -330,13 +345,25 @@ Before a release, run release mode:
 bun run quality:gate --mode release --allow-live --provider-model <selector>:main
 ```
 
-Release mode composes PR checks, baseline catalog validation, live baseline cases, provider smoke, native checks, and current-platform canonical release `package-smoke --package-kind release`. Reports are written to `artifacts/quality-runs/<timestamp>/`. `release-desktop.yml` builds and publishes artifacts without running `bun run verify`. Pre-release quality evidence comes from PR gates and explicitly run maintainer full checks and release gates.
+Release mode composes PR checks, baseline catalog validation, live baseline cases, provider smoke, native checks, and current-platform canonical release `package-smoke --package-kind release`, but does not run every full-sweep check. Reports are written to `artifacts/quality-runs/<timestamp>/`. `release-desktop.yml` builds and publishes artifacts without running `bun run verify`. Pre-release quality evidence comes from PR gates and explicitly run maintainer full checks and release gates.
 
-In release mode, live lanes are not allowed to be silently skipped. Missing providers, model quota, or external account access will fail the gate and must be recorded as a release blocker.
+Distinguish these evidence layers per target OS/architecture; they are not interchangeable:
+
+| Evidence layer | What it proves |
+| --- | --- |
+| Source / build | Tests, type checks, and builds for an identified candidate; not that a distributed package runs |
+| Package structure | Metadata, resources, sidecars, and update files in an identified artifact; static or cross-platform inspection does not prove native launch |
+| Native packaged runtime | The actual distributed package running on matching OS/architecture, exercising the app, sidecars, and key user paths; mocks or local Electron development smoke are not substitutes |
+| Install / upgrade / data preservation | Actual installation and upgrades from supported older versions, preserving user data, custom directories, and settings |
+| Signing / notarization / launch policy | Signing, notarization, and Gatekeeper as applicable to the platform and current release policy; unsigned Windows packages allowed by existing policy remain allowed |
+
+For each layer, record the candidate (full SHA, dirty diff, and relevant untracked source fingerprints), target, commands, exit statuses, summaries, logs, and artifact SHA-256, linking evidence to the same artifact actually published. Rebuilding or signing changes bytes: relink and revalidate affected evidence. All platforms in the platform matrix below remain supported; one platform's results cannot stand in for other targets or silently remove them. `skipped`, `UNEXERCISED`, and `blocked` / `not run` do not prove those paths covered; valid unrelated skips remain allowed, without changing lane statuses or existing blocking rules.
+
+The current release workflow is not a per-target aggregate gate for all native runtime, installation, and upgrade evidence. This documentation-only revision adds no such gate and changes neither publication policy nor authorization. In release mode, live lanes are not allowed to be silently skipped. Missing providers, model quota, or external account access will fail the gate and must be recorded as a release blocker.
 
 ## Releases and Auto-Update
 
-`desktop/package.json` is the single source of the desktop version number. A real release requires the version, the Git tag, and `release-notes/vX.Y.Z.md` to match exactly.
+`desktop/package.json` is the single source of the desktop version number. A real release requires the version, the Git tag, and `release-notes/vX.Y.Z.md` to match exactly. Mobile has an independent version line: `mobile/package.json` and `mobile/app.json` must agree with each other, not with desktop.
 
 In-app updates are driven by `electron-updater`, with artifacts hosted on GitHub Releases:
 
@@ -351,7 +378,7 @@ The release workflow generates `latest*.yml` inside each platform matrix job, re
 
 ### Artifact names
 
-File names are written for the people downloading them: `Claude-Code-Haha-<version>-macOS-Apple-Silicon.dmg` / `-macOS-Intel.dmg`, `-Windows-x64-Setup.exe` / `-Windows-arm64-Setup.exe`, and `-Linux-x64` / `-Linux-arm64` with `.AppImage`, `.deb` and `.rpm`. The Mac auto-update zips are `-macOS-arm64-update.zip` / `-macOS-x64-update.zip`. Default names live in the `artifactName` of `mac`, `dmg`, `nsis` and `linux` in `desktop/package.json`; the DMG chip names and the uniform Linux `x64` are overridden per row in the release matrix `builder_args`, because electron-builder spells `${arch}` per Linux format (`x86_64`, `amd64`, `aarch64`). Those overrides must stay in single quotes, or the shell expands `${version}` first.
+File names follow `build.artifactName` in `desktop/package.json` and the release workflow's per-platform asset lists, with the prefix `EchoFlow-Code-<version>`. macOS uses `-mac-arm64` / `-mac-x64` with `.dmg` or auto-update `.zip`; Windows uses `-win-x64.exe` / `-win-arm64.exe`. Linux x64 uses `-linux-x86_64.AppImage`, `-linux-amd64.deb`, and `-linux-x86_64.rpm`; Linux ARM64 uses `-linux-arm64.AppImage`, `-linux-arm64.deb`, and `-linux-aarch64.rpm`. Do not assume electron-builder spells `${arch}` identically across Linux formats.
 
 Renames have three hard constraints, each checked by `scripts/pr/release-workflow.test.ts` against electron-updater's selection logic:
 
@@ -359,7 +386,7 @@ Renames have three hard constraints, each checked by `scripts/pr/release-workflo
 - The Apple Silicon zip name must contain `arm64` and the Intel one must not; otherwise Apple Silicon machines get "updated" to the Intel build.
 - Both Windows installers share one `latest.yml`, and the updater picks by the `x64` / `arm64` in the name; without them, ARM devices install the x64 build.
 
-`.blockmap` files are still generated on the runner for package-smoke but no longer published: the app has disabled differential downloads since v0.4.7, and older clients fall back to a full download when a blockmap is missing. Releases also no longer attach `install-macos-unsigned.sh`, since release Mac builds are always signed and notarized.
+`.blockmap` files are published alongside macOS and Windows release artifacts and are also checked by package-smoke on the runner. Differential downloading is disabled by default; it is used only when explicitly enabled and the download feed passes the differential contract, otherwise downloads are full. See `desktop/electron/services/updater.ts` for the decision. After Windows installer signing, `scripts/refresh-windows-update-metadata.ts` rebuilds the blockmap and verifies it matches the final installer; publication checks blockmap and `latest*.yml` version consistency for each architecture. Releases do not attach `install-macos-unsigned.sh`, since release Mac builds are always signed and notarized.
 
 ### Signing secrets
 
@@ -381,7 +408,7 @@ Windows signing goes through SignPath and is off until approval lands: tag pushe
 - `true`: the `SIGNPATH_*` variables and `SIGNPATH_API_TOKEN` are required, and a non-draft release with missing configuration is refused.
 - A manual `Release Desktop` run can override it with the `windows_signing` input: `auto` follows the variable, `unsigned` skips signing for that run, and `signed` forces it (failing if configuration is incomplete), so a draft can be trial-signed before the variable is turned on.
 
-Before turning signing on, update the installer artifact configuration in SignPath to match `.github/signpath/windows-installer.xml` (`Claude-Code-Haha-*-Windows-*-Setup.exe`), then trial-sign a draft. As long as unsigned Windows releases remain possible, never add `publisherName` or `verifyUpdateCodeSignature` to `desktop/package.json`: clients built with either would reject every later unsigned update, with no way to recover in place.
+Before turning signing on, update the installer artifact configuration in SignPath to match `.github/signpath/windows-installer.xml` (`EchoFlow-Code-*-win-*.exe`), then trial-sign a draft. As long as unsigned Windows releases remain possible, never add `publisherName` or `verifyUpdateCodeSignature` to `desktop/package.json`: clients built with either would reject every later unsigned update, with no way to recover in place.
 
 The application artifact configuration must also match `.github/signpath/windows-application.xml`: it includes the source-built `agent-desktop.exe` alongside the main application and sidecar. When signing is enabled, the workflow submits, restores, and verifies all three executables before building the installer. After adding the native runtime, synchronize the SignPath configuration and trial-sign a draft first; signing the installer does not sign its embedded runtime executables.
 
@@ -393,7 +420,7 @@ bun test scripts/pr/release-workflow.test.ts scripts/release-update-metadata.tes
 bun run check:policy
 ```
 
-Confirm `release-notes/v<version>.md` exists before running `bun run scripts/release.ts <version>` for real.
+Before running `bun run scripts/release.ts <version>` for real, confirm `release-notes/v<version>.md` exists and obtain separate authorization to create a branch and commit. A non-dry run creates `release/vX.Y.Z` and commits the version files and release notes; it does not create a tag, push, or publish. By default it updates only desktop; explicitly pass `--mobile <patch|minor|major|x.y.z>` to also increment the independent mobile version.
 
 ### Release steps
 
@@ -408,13 +435,13 @@ Confirm `release-notes/v<version>.md` exists before running `bun run scripts/rel
 Every release should be verified by upgrading from the previous stable build at least once:
 
 1. Install the previous stable release from GitHub Releases.
-2. Push the tag and let the `Release Desktop` workflow finish green.
+2. Publish the candidate through the Release Please process above and confirm its authorized `Release Desktop` workflow finishes green; do not substitute a direct tag push for official publication authorization.
 3. Open the old build and wait for the startup check, or check for updates manually in settings.
 4. Confirm the new version is offered, then install and restart.
 5. After restart, confirm the version in About, and that providers, sessions, skills, agents, memories, custom pets, and a custom data directory all still work.
 6. Confirm historical attachment context, subagent details, and task state restore correctly; open a pet window and check the overlay and current-session navigation.
 
-Platforms differ in what matters: on macOS confirm the release job used the signed artifacts and the launch-policy check passed; on Windows confirm `latest.yml` and both `-Setup.exe` installers are in the release assets, and remember that a SmartScreen prompt on an unsigned build does not mean the updater failed; on Linux verify auto-update through the AppImage, since `.deb` and `.rpm` ship as manual installers only.
+Platforms differ in what matters: on macOS confirm the release job used the signed artifacts and the launch-policy check passed; on Windows confirm `latest.yml` and both `-win-x64.exe` / `-win-arm64.exe` installers are in the release assets, and remember that a SmartScreen prompt on an unsigned build does not mean the updater failed; on Linux verify auto-update through the AppImage, since `.deb` and `.rpm` ship as manual installers only.
 
 ## PR Workflow
 

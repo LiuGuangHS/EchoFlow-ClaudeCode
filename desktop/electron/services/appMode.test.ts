@@ -13,6 +13,7 @@ import {
 } from './appMode'
 
 const tempDirs: string[] = []
+const portableEnvKeys = ['CC_HAHA_APP_PORTABLE_DIR', 'ECHOFLOW_APP_PORTABLE_DIR'] as const
 
 function tempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-app-mode-'))
@@ -129,11 +130,11 @@ describe('Electron app mode service', () => {
     })).toThrow('outside the application install directory')
   })
 
-  it('clears only an app-managed portable selection from a handed-off environment', () => {
+  it.each(portableEnvKeys)('clears only an app-managed portable selection marked by %s', portableEnvKey => {
     const customDir = path.join(tempDir(), 'custom-data')
     const managedEnv: NodeJS.ProcessEnv = {
       CLAUDE_CONFIG_DIR: customDir,
-      CC_HAHA_APP_PORTABLE_DIR: '1',
+      [portableEnvKey]: '1',
       WEBVIEW2_USER_DATA_FOLDER: path.join(customDir, 'EBWebView'),
       APPDATA: 'C:\\Users\\someone\\AppData\\Roaming',
     }
@@ -145,19 +146,20 @@ describe('Electron app mode service', () => {
     expect(externalEnv).toEqual({ CLAUDE_CONFIG_DIR: customDir })
   })
 
-  it('drops inherited app-managed env so switching back to ~/.claude survives relaunch', () => {
+  it.each(portableEnvKeys)('drops inherited %s so switching back to ~/.claude survives relaunch', portableEnvKey => {
     const fakeApp = app()
     writeMode(fakeApp, { mode: 'default', portable_dir: null })
     const oldCustomDir = path.join(fakeApp.root, 'old-custom')
     const env: NodeJS.ProcessEnv = {
       CLAUDE_CONFIG_DIR: oldCustomDir,
-      CC_HAHA_APP_PORTABLE_DIR: '1',
+      [portableEnvKey]: '1',
       WEBVIEW2_USER_DATA_FOLDER: path.join(oldCustomDir, 'EBWebView'),
     }
 
     expect(applyStartupPortableMode(fakeApp, env)).toBeNull()
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
     expect(env.CC_HAHA_APP_PORTABLE_DIR).toBeUndefined()
+    expect(env.ECHOFLOW_APP_PORTABLE_DIR).toBeUndefined()
     expect(env.WEBVIEW2_USER_DATA_FOLDER).toBeUndefined()
     expect(getAppMode(fakeApp, env)).toMatchObject({
       mode: 'default',
@@ -165,19 +167,52 @@ describe('Electron app mode service', () => {
     })
   })
 
-  it('replaces an inherited app-managed env with the newly persisted custom directory', () => {
+  it.each(portableEnvKeys)('replaces inherited %s with the newly persisted custom directory', portableEnvKey => {
     const fakeApp = app()
     const newCustomDir = path.join(fakeApp.root, 'new-custom')
     writeMode(fakeApp, { mode: 'portable', portable_dir: newCustomDir })
     const env: NodeJS.ProcessEnv = {
       CLAUDE_CONFIG_DIR: path.join(fakeApp.root, 'old-custom'),
-      CC_HAHA_APP_PORTABLE_DIR: '1',
+      [portableEnvKey]: '1',
       WEBVIEW2_USER_DATA_FOLDER: path.join(fakeApp.root, 'old-custom', 'EBWebView'),
     }
 
     expect(applyStartupPortableMode(fakeApp, env)).toBe(newCustomDir)
     expect(env.CLAUDE_CONFIG_DIR).toBe(newCustomDir)
+    expect(env.CC_HAHA_APP_PORTABLE_DIR).toBe('1')
+    expect(env.ECHOFLOW_APP_PORTABLE_DIR).toBeUndefined()
     expect(env.WEBVIEW2_USER_DATA_FOLDER).toBe(path.join(newCustomDir, 'EBWebView'))
+  })
+
+  it.each(portableEnvKeys)('treats %s as app-owned when reading or changing mode', portableEnvKey => {
+    const fakeApp = app()
+    const customDir = path.join(fakeApp.root, 'custom-data')
+    const env: NodeJS.ProcessEnv = { CLAUDE_CONFIG_DIR: customDir, [portableEnvKey]: '1' }
+    expect(getAppMode(fakeApp, env)).toMatchObject({ configDirSource: 'portable', activeConfigDir: customDir })
+    setAppMode(fakeApp, { mode: 'default', portableDir: null }, env)
+    expect(JSON.parse(fs.readFileSync(path.join(fakeApp.getPath('userData'), 'app-mode.json'), 'utf8')))
+      .toEqual({ mode: 'default', portable_dir: null })
+  })
+
+  it('clears both app-owned markers together and preserves non-owned external overrides', () => {
+    const fakeApp = app()
+    const customDir = path.join(fakeApp.root, 'external')
+    const managedEnv: NodeJS.ProcessEnv = {
+      CLAUDE_CONFIG_DIR: customDir, CC_HAHA_APP_PORTABLE_DIR: '1', ECHOFLOW_APP_PORTABLE_DIR: '1',
+    }
+    clearAppManagedPortableEnv(managedEnv)
+    expect(managedEnv).toEqual({})
+    const externalEnv: NodeJS.ProcessEnv = {
+      CLAUDE_CONFIG_DIR: customDir, CC_HAHA_APP_PORTABLE_DIR: '0', ECHOFLOW_APP_PORTABLE_DIR: '0',
+    }
+    clearAppManagedPortableEnv(externalEnv)
+    expect(applyStartupPortableMode(fakeApp, externalEnv)).toBeNull()
+    expect(externalEnv).toEqual({
+      CLAUDE_CONFIG_DIR: customDir, CC_HAHA_APP_PORTABLE_DIR: '0', ECHOFLOW_APP_PORTABLE_DIR: '0',
+    })
+    expect(getAppMode(fakeApp, externalEnv).configDirSource).toBe('environment')
+    expect(() => setAppMode(fakeApp, { mode: 'default', portableDir: null }, externalEnv))
+      .toThrow('CLAUDE_CONFIG_DIR is controlled by the launch environment')
   })
 
   it.each([

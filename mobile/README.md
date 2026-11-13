@@ -37,7 +37,9 @@ React Native / Expo 58 / Expo Router 的 iOS、Android 客户端。按「EchoFlo
 | WebSocket 权限审批（`permission_request` / `permission_response`） | `src/core/chatActions.ts` 与原生审批界面；通知动作重新校验后才提交 |
 | 同源校验、限制跳转到别的 origin | `normalizeHostUrl` 只收纯净 http(s) 主机地址；`plugins/withPinnedWebSockets.js` 关闭重定向 |
 | 网页文件上传 | `expo-document-picker` / `expo-image-picker` 选取材料，工作区文件走带认证、带大小限制的原生下载与分享 |
-| `codemobile://` 深链接与应用身份 | `app.json` scheme 不变，Android / iOS 包名统一为 `com.echoflow.code.mobile` |
+| 旧 Android 壳的 `codemobile://` 深链接 | 当前 Expo 应用同样注册 `codemobile`；Android / iOS 包身份统一为 `com.echoflow.code.mobile` |
+
+这里的「scheme 沿用」只针对旧 Android 壳。旧 Expo 应用使用的是 `cchaha`，Android package 为 `app.cchaha.mobile`、iOS Bundle ID 为 `com.yunce.cchaha.mobile`；不能将两条历史混为同一次原地升级。当前应用仅注册 `codemobile`，不会认领旧 Expo 的 `cchaha` 链接。新包身份不自动继承旧 App 沙箱：请在新 App 重新连接 / 扫码配对，并重新授权通知、登记推送和 Live Activity；不承诺跨沙箱自动搬迁凭据。详见 [发布与迁移边界](RELEASING.md#旧安装与新包的迁移边界)。
 
 有意不迁移的旧做法：WebView 容器（新应用是纯原生 UI）、依赖 Google Play 服务的 Google Code Scanner（`plugins/cameraBarcodeAvailability.test.ts` 固化本地解码这一点）、把令牌放进 URL 查询串（现在原生请求走 `Authorization` 头）、以及旧品牌蓝色图标与脚手架占位资源。新应用另外提供旧壳没有的系统推送、Android 前台值守服务、iOS Live Activity、原生文件 / 图片 / 语音、定时任务与工作区等能力。
 

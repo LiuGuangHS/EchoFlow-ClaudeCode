@@ -13,12 +13,12 @@ order: 11
 
 EchoFlow Code 使用自己的版本线。发布版本必须满足：
 
-- `desktop/package.json`、`mobile/package.json` 和 `mobile/app.json` 的版本相同；
+- 桌面版使用 `desktop/package.json` 的版本；移动版独立发布，仅要求 `mobile/package.json` 与 `mobile/app.json` 的 `expo.version` 相同，不要求与桌面版一致；
 - `release-notes/vX.Y.Z.md` 存在，并以 `# EchoFlow Code vX.Y.Z` 开头；
 - 正式 tag 是 `vX.Y.Z`，与 `desktop/package.json` 的版本一致；
 - 根 `package.json` 的 `999.0.0-local` 只用于本地开发，不是产品发布版本。
 
-`desktop/package.json` 是当前版本读取和发布产物命名的基准；`scripts/release.ts` 会从它读取当前版本，并在非 dry-run 发布时更新三个版本文件、提交 release commit，再创建 annotated tag。先确认 release notes 已存在，再执行真正的发布命令。
+`desktop/package.json` 是桌面版本读取和发布产物命名的基准。`scripts/release.ts` 默认只准备桌面版本：非 dry-run 时创建 `release/vX.Y.Z` 分支，更新桌面版本并提交版本文件和已有 release notes，不创建 tag。只有显式传入 `--mobile <patch|minor|major|x.y.z>` 时，才同时递增独立的移动版本。执行前须单独获得创建分支及提交的授权。
 
 预览命令只报告将更新的文件和 release notes 是否存在，不检查远端 Git tag：
 
@@ -26,17 +26,17 @@ EchoFlow Code 使用自己的版本线。发布版本必须满足：
 bun run scripts/release.ts X.Y.Z --dry
 ```
 
-发布脚本会执行提交和创建 tag，属于对本地 Git 的写操作；执行前确认分支、工作区和版本目标都正确：
+以下准备命令会创建分支和提交，属于对本地 Git 的写操作；执行前确认授权、干净工作区、release notes 和版本目标都正确：
 
 ```bash
 bun run scripts/release.ts X.Y.Z
 ```
 
-手动运行 `scripts/release.ts` 并推送 tag 只会触发 `Release Desktop` 的构建与验证 job，不会发布：`publish-release` 仅在 Release Please 的官方 `workflow_call`（`official_release: true`）或手动 draft 的 `workflow_dispatch` 下运行。不要移动已有 tag 或上传本地构建产物。
+准备命令不创建或推送 tag。独立的 `bun run scripts/release.ts --tag X.Y.Z` 会 fetch `origin/main`、验证已合并版本和 release notes，然后只创建本地 annotated tag；它不推送、不发布，也需要单独授权。手动推送 tag 只会触发 `Release Desktop` 的构建与验证 job，不会发布：`publish-release` 仅在 Release Please 的官方 `workflow_call`（`official_release: true`）或手动 draft 的 `workflow_dispatch` 下运行。不要移动已有 tag 或上传本地构建产物。
 
 ## 正式发布入口：Release Please
 
-正式发布由 `.github/workflows/release-please.yml` 在 `main` 收到推送后驱动：它按 `release-please-config.json` 和 `.release-please-manifest.json`（记录上一个已发布版本）生成 release PR，并同步 `desktop/package.json`、`mobile/package.json` 和 `mobile/app.json` 的版本。合并 release PR 后会创建 tag 和 draft Release；`resolve-release` 校验 tag 指向的提交后，以 `official_release: true`、`draft: false` 调用 `release-desktop.yml`。门禁和六平台构建全部通过后，该 workflow 上传完整资产并取消 draft。
+正式发布由 `.github/workflows/release-please.yml` 在 `main` 收到推送后驱动：它按 `release-please-config.json` 和 `.release-please-manifest.json`（记录上一个已发布版本）生成桌面 release PR，并更新 `desktop/package.json` 的版本。当前配置只包含 `desktop`，不自动同步或发布移动版本。合并 release PR 后会创建 tag 和 draft Release；`resolve-release` 校验 tag 指向的提交后，以 `official_release: true`、`draft: false` 调用 `release-desktop.yml`。门禁和六平台构建全部通过后，该 workflow 上传完整资产并取消 draft。
 
 `release-notes/vX.Y.Z.md` 必须在合并 release PR 之前已存在于 `main`，否则 `release-contract` 会失败。
 

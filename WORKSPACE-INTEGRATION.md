@@ -97,3 +97,58 @@ For each batch, record the exact files and decisions, regression tests, commands
 - Editor diagnostics report unresolved Bun/Node globals and a timer comparison in the preexisting proxy test; these are not runtime/typecheck results. Product validation remains pending with the documented dependency/toolchain blockers.
 - Remaining acceptance requires reviewing cumulative diffs, explicit-path staging and staged review for each batch, local commits, no unmerged/staged/untracked paths, and a final baseline-relative verification report. A clean status alone is not proof of quality.
 - 2026-11-09 continuation: committed the N4 remote-browser write boundary as `433d4bb52` after its focused suite passed (12 tests, 62 assertions), and part of N1 as `d31e27579` using the recorded sandboxed run (153 tests). **Both test results exercised the full dirty workspace, not clean commit snapshots.** The N1 commit is incomplete: its socket revocation integration in `src/server/index.ts` remains uncommitted, as do other mixed dependencies; do not treat it as independently verified or complete. The separate authentication hardening in `src/server/middleware/auth.ts` and its test also remain unstaged. These commits do not close their broader batches or unblock the cumulative impact report; no push, dependency install, or environment override was performed.
+
+## 2026-11-10 — 七组提交完成与文档 IA 复核
+
+> 本节记录当前状态。**以下历史陈述已被本节取代；按 `docs/AGENTS.md` 保留原文、不删改**：
+> 第 28–33 行 Batch 1–5 的 `pending`；第 37 行 D0 `in progress`；
+> 第 43 行 `check-docs` 因缺 frontmatter 失败；第 76 行 mobile cleanup `worktree only, uncommitted`；
+> 第 77 行 `No new integration commit has been made`；第 93 行 `final validation has not run`；
+> 第 95 行的文件计数；第 98 行「local commits / no unmerged, staged or untracked paths」的未完成状态。
+
+### 七组本地提交（基线 `11a77fe18`；未 push、未建分支、未发版）
+
+| Commit | 分组 | 文件 | Subject |
+| --- | --- | --- | --- |
+| `245b9d2d7` | A 身份与发布配置 | 12 | `chore(identity): add product.json identity source and release config tests` |
+| `1bd9bc17f` | F 文档与站点 | 46 | `docs: localize repo guidance and restructure computer-use internals` |
+| `abe6823ef` | E 服务端与适配器 | 57 | `refactor(server): update OAuth, plugin and adapter bridge contracts` |
+| `0e251493e` | D 桌面端 | 176 | `refactor(desktop): align Electron host, settings and locales with fork identity` |
+| `3cc79e25b` | C 移动端收敛 | 93 | `refactor(mobile): retire legacy Android shell and unify Expo release path` |
+| `28e346b36` | G 原生模块 | 1 | `chore(native): align CU helper attestation with fork identity` |
+| `5999fa109` | B CI 与质量门禁 | 21 | `ci(quality): update quality lanes and refresh policy contract assertions` |
+
+- 合计 **406 files / +8602 −5592**；每组显式路径暂存并跑 `diff --cached --check`，无夹带。
+- 分组前审查发现 1 个阻断：`check:policy` 712 pass / 1 fail —— `scripts/pr/quality-contract.test.ts:166`
+  仍断言 `rootTestDiscoveryComplete`，而 `scripts/quality-gate/coverage.ts` 重构已改为
+  `evaluateRootCoverage()`。以两条新契约断言替换（不删断言降强度）→ **713 pass / 2 skip / 0 fail**。
+  `updateRangeContract.test.ts` 两处断言反转经复核为夹具对齐产品真实执行路径，属合理修正。
+- Passed：`git diff --check`、`check:upstream-content`、`check:product-identity`、
+  `check-docs`（134 页 / 603 链接 / 22 对双语截图）、`ads.txt` 本站账号、
+  3 个身份生成产物一致性、移动图标引用、VoiceWave 删除后无残留引用。
+- 工作区仅剩 `?? 1`、`?? debug.log` 两个未跟踪文件（未提交、未删除）；暂存区为空。
+- Not run：`verify` 及 `check:impact` 的 13 条 lane；`check:impact` 仍 **Blocked: yes**
+  （CLI-core 需 `allow-cli-core-change` label 与 maintainer approval）。第 70–73 行记录的
+  server / persistence / provider / poster 失败与依赖漂移**未修复、未复跑**，仍是 PR-ready 阻断项；
+  本节提交**不等于**批次验收完成。
+- 遗留：`check:product-identity` 只定义在 `package.json`，未挂任何 CI workflow；
+  3 个 `productIdentity.generated.ts` 全仓零 import（仅被门禁校验）。
+
+### 文档 IA 复核（详见 `artifacts/docs-ia-audit-2026-11-10.md`）
+
+- 公开文档 **134 页**（zh 67 / en 67），frontmatter 与 `order` 覆盖 100%，`check-docs` 通过；
+  `docs/` 共 187 个 md、约 108 MB。
+- `1bd9bc17f` 已按分层规范完成 Computer Use 重组：7 篇中文长文压成 28–37 行摘要、英文补齐、
+  原文归档 `_internal/archive/`；8 页 `order` 12–19 连续、彼此交叉引用，且有回归断言钉住。
+- **结论：分层仍需要做（P0）、合并只限两处明确冗余（P1）、精简不建议再来一轮（P2 只收尾）。**
+  `internals` 23 页占公开中文正文 **52.1%**（2026-09-24 为 55.5%，结构性问题基本未动），
+  且与用户向分区同处主导航；迁移须同步 `site/src/content/docs.js` 的 `LEGACY_ROUTES`。
+- 4 对 MD5 完全相同的 `docs/ui-clone/` ↔ `docs/_internal/archive/ui-clone/` 副本均不发布，
+  属纯仓库冗余；精简后产生 79 张无引用图片 / 15.88 MB，按「不要把移动或删除既有记录当作
+  顺手清理」应单独出清单确认。
+- **比 IA 更紧急**：公开文档 50 处 `cc-haha` 中，38 处为产品自述（应改），12 处为真实
+  legacy 路径/环境变量（应保持，`product.json` 有 `legacyEnvPrefix: "CC_HAHA_"`）。
+  `check:upstream-content` 的 identity 规则仅覆盖 15 个 `IDENTITY_SURFACES` 白名单，
+  `docs/**` 全量只查上游 URL，因此这 38 处漏检 —— 应先扩门禁覆盖再修文案。
+- 工具：`artifacts/docs-audit.mjs` 硬编码 `Z:/...` 改为从 `import.meta.url` 推导，
+  Windows 9P 与 WSL 均可运行；其「对外文档」统计口径仍与生成器不一致，报告已按生成器重算。

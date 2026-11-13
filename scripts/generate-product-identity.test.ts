@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -72,6 +72,40 @@ describe('product identity generator', () => {
     writeFileSync(target, readFileSync(target, 'utf8').replace('EchoFlow Code', 'Tampered'))
 
     expect(check(ROOT, dir)).toEqual([TARGETS[0]])
+  })
+
+  test('checks actual packaging fields even when generated modules are fresh', () => {
+    const root = makeOutDir()
+    writeFileSync(path.join(root, 'product.json'), JSON.stringify(identity))
+    for (const file of ['desktop/package.json', 'mobile/app.json']) {
+      mkdirSync(path.dirname(path.join(root, file)), { recursive: true })
+      writeFileSync(path.join(root, file), readFileSync(path.join(ROOT, file)))
+    }
+    generate(root)
+    expect(check(root)).toEqual([])
+
+    for (const [file, fields] of [
+      ['desktop/package.json', ['build.productName', 'build.appId', 'build.protocols.schemes']],
+      ['mobile/app.json', ['expo.name', 'expo.slug', 'expo.scheme', 'expo.ios.bundleIdentifier', 'expo.android.package']],
+    ] as const) {
+      const original = readFileSync(path.join(root, file), 'utf8')
+      for (const field of fields) {
+        const config = JSON.parse(original)
+        const parts = field.split('.')
+        const parent = parts.slice(0, -1).reduce((value, part) => value[part], config)
+        parent[parts.at(-1)!] = field.endsWith('schemes') ? ['wrong'] : 'wrong'
+        writeFileSync(path.join(root, file), JSON.stringify(config))
+        expect(check(root)).toContain(`${file}: ${field} does not match product.json`)
+        writeFileSync(path.join(root, file), original)
+      }
+      writeFileSync(path.join(root, file), '{invalid')
+      expect(check(root).some(error => error.startsWith(`${file}:`))).toBe(true)
+      writeFileSync(path.join(root, file), '{}')
+      expect(check(root).some(error => error.startsWith(`${file}:`))).toBe(true)
+      rmSync(path.join(root, file))
+      expect(check(root).some(error => error.startsWith(`${file}:`))).toBe(true)
+      writeFileSync(path.join(root, file), original)
+    }
   })
 
   test('check exits 0 for fresh output and 1 for stale output', () => {

@@ -40,13 +40,13 @@ The native permission card guides you through granting two permissions to the ru
 | Accessibility | Read app interfaces and deliver actions to the target app |
 | Screen Recording | Capture the target window or screen |
 
-Follow the card's system-settings instructions, then choose **Recheck Status**. Use **Reopen authorization card** to revisit it. If a new grant has not taken effect, fully quit and reopen cc-haha, then check again. A failed check does not mean permission was granted.
+Follow the card's system-settings instructions, then choose **Recheck Status**. Use **Reopen authorization card** to revisit it. If a new grant has not taken effect, fully quit and reopen EchoFlow Code, then check again. A failed check does not mean permission was granted.
 
 ### Windows and Linux environments
 
 Windows must run in the signed-in user's interactive desktop. Locked screens, the UAC secure desktop, services in Session 0, and another user's desktop are outside the supported environment. Elevated apps may also be restricted by system permission boundaries.
 
-On Linux, launch cc-haha from the graphical session containing the target apps. A plain TTY, SSH without desktop session variables, a container without the session bus, or another user's session does not provide the same app access. If the accessibility bus is unavailable, check the graphical session and AT-SPI service, then recheck.
+On Linux, launch EchoFlow Code from the graphical session containing the target apps. A plain TTY, SSH without desktop session variables, a container without the session bus, or another user's session does not provide the same app access. If the accessibility bus is unavailable, check the graphical session and AT-SPI service, then recheck.
 
 ## Start a task
 
@@ -73,7 +73,7 @@ Use the session's **Stop** button, or **Ctrl+C** in the CLI. Do not rely on pres
 | Message or symptom | What to do |
 |---|---|
 | Native runtime missing | Update or reinstall the complete app, then recheck. Source checkouts must build the native component first; see [architecture and builds](../internals/computer-use.md#build-and-distribution) |
-| Linux accessibility bus unavailable | Confirm cc-haha and the app share the same graphical user session and that AT-SPI is available; repeated restarts do not establish permission |
+| Linux accessibility bus unavailable | Confirm EchoFlow Code and the app share the same graphical user session and that AT-SPI is available; repeated restarts do not establish permission |
 | macOS permission missing or check failed | Reopen the authorization card, follow its instructions, and recheck; fully quit and reopen if needed |
 | Windows background typing refused | Use a supported background value-setting action, or allow foreground physical input; restore minimized windows first |
 | Wayland pointer or window command unsupported | Use semantic actions, or switch to X11 when physical mouse input is required; retries cannot add a missing platform capability |

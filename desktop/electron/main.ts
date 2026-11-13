@@ -39,6 +39,7 @@ import {
 import { DeepSeekHarnessRuntime } from './services/deepseekHarnessRuntime'
 import { discoverRuntimes, probeRuntimePath } from './services/runtimeDiscovery'
 import { DataMigration } from './services/dataMigration'
+import { configureEchoFlowUserData } from './services/echoFlowDataRoot'
 import { areStorageWritesFrozen, setStorageWritesFrozen } from './services/storageMaintenance'
 import { resolveRelocatedAttachmentPath } from '../../src/utils/storageRelocations'
 import { appendHostDiagnostic, electronHostDiagnosticsFile, sanitizeHostDiagnostic } from './services/sidecarManager'
@@ -145,6 +146,15 @@ import {
   MIN_WINDOW_HEIGHT,
   MIN_WINDOW_WIDTH,
 } from './services/windows'
+
+// Resolve the profile before locks, migration journals, or any userData consumers.
+try {
+  configureEchoFlowUserData(app)
+} catch (error) {
+  setStorageWritesFrozen(true)
+  dialog.showErrorBox('数据目录不可用 / Data directory unavailable', error instanceof Error ? error.message : String(error))
+  process.exit(1)
+}
 
 let mainWindow: BrowserWindow | null = null
 let serverRuntime: ElectronServerRuntime | null = null

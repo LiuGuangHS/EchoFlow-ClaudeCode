@@ -535,6 +535,55 @@ const channelOf = (delivery: PushDelivery) => ((delivery.payload.android as { no
 const live = (extra: Partial<PushInput> = {}) => input({ kind: 'liveActivity', deviceToken: 'b'.repeat(64), sessionId: 's', activityId: 'activity-a', name: 'CCHahaTaskActivity', ...extra })
 const props = (delivery: PushDelivery) => JSON.parse(((delivery.payload.aps as Record<string, unknown>)['content-state'] as { props: string }).props) as Record<string, unknown>
 
+test.each([
+  { hostId: 'host-a', sessionId: 'session-a', requestId: 'request-a' },
+  { hostId: '电脑 /?#&=+% host', sessionId: '会话 /?#&=+% session', requestId: '审批 /?#&=+% request' },
+])('Live Activity URLs keep the current scheme and exact targets across updates and end: %j', async ({ hostId, sessionId, requestId }) => {
+  const f = fixture()
+  const registration = live({ hostId, sessionId })
+  expect(validatePushInput(registration)).toBe(true)
+  expect(f.service.register(registration, {}).registered).toBe(true)
+  const assertUrls = (delivery: PushDelivery, request?: string) => {
+    const value = props(delivery)
+    expect(value).toMatchObject({ hostId, sessionId })
+    const base = `codemobile:///chat/${encodeURIComponent(sessionId)}?host=${encodeURIComponent(hostId)}`
+    const target = base + (request ? `&requestId=${encodeURIComponent(request)}` : '')
+    for (const [key, action] of [['openUrl', undefined], ['allowUrl', 'allow'], ['denyUrl', 'deny']] as const) {
+      if (action && !request) {
+        expect(value[key]).toBeUndefined()
+        continue
+      }
+      expect(value[key]).toBe(target + (action ? `&notificationAction=${action}` : ''))
+      const url = new URL(value[key] as string)
+      expect(url.protocol).toBe('codemobile:')
+      expect(url.host).toBe('')
+      expect(url.pathname).toBe(`/chat/${encodeURIComponent(sessionId)}`)
+      expect(decodeURIComponent(url.pathname.slice('/chat/'.length))).toBe(sessionId)
+      expect([...url.searchParams]).toEqual([
+        ['host', hostId],
+        ...(request ? [['requestId', request] as [string, string]] : []),
+        ...(action ? [['notificationAction', action] as [string, string]] : []),
+      ])
+      expect(url.hash).toBe('')
+    }
+  }
+  f.state([{ id: sessionId, activityState: 'waiting', requestId, toolName: 'Bash' }])
+  await f.service.tick()
+  assertUrls(f.sent[0]!, requestId)
+  const nextRequest = `${requestId} next`
+  f.state([{ id: sessionId, activityState: 'waiting', requestId: nextRequest, toolName: 'Bash' }])
+  await f.service.tick()
+  assertUrls(f.sent[1]!, nextRequest)
+  f.state([{ id: sessionId, activityState: 'running' }])
+  await f.service.tick()
+  assertUrls(f.sent[2]!)
+  f.state([{ ...completed(), id: sessionId }])
+  await f.service.tick()
+  assertUrls(f.sent[3]!)
+  expect(f.sent.map(row => (row.payload.aps as Record<string, unknown>).event)).toEqual(['update', 'update', 'update', 'end'])
+  expect(JSON.parse(readFileSync(path.join(f.directory, 'mobile-push.json'), 'utf8')).registrations).toEqual([])
+})
+
 test('delivery validation is strict and optional', () => {
   expect(validatePushInput(input())).toBe(true)
   expect(validatePushInput(input({ delivery: {} }))).toBe(true)

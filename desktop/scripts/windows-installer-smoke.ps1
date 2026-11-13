@@ -15,9 +15,9 @@ if ($env:CI -ne 'true') {
 # actual helper writer and uninstall result handling before touching install state.
 Push-Location (Join-Path $PSScriptRoot '..\..')
 try {
-  & bun test ./scripts/pr/windows-installer-process-check.test.ts
+  & bun test ./scripts/pr/windows-installer-process-check.test.ts ./scripts/pr/windows-installer-recovery.test.ts
   if ($LASTEXITCODE -ne 0) {
-    throw 'Native installer helper write regression failed.'
+    throw 'Native installer helper write or recovery regression failed.'
   }
 } finally {
   Pop-Location
@@ -25,7 +25,7 @@ try {
 
 $resolvedArtifactsDir = (Resolve-Path -LiteralPath $ArtifactsDir).Path
 $installers = @(Get-ChildItem -LiteralPath $resolvedArtifactsDir -File |
-  Where-Object { $_.Name -like "Claude-Code-Haha-*-Windows-$Arch-Setup.exe" })
+  Where-Object { $_.Name -like "EchoFlow-Code-*-win-$Arch.exe" })
 if ($installers.Count -ne 1) {
   throw "Expected exactly one Windows $Arch installer in $resolvedArtifactsDir, found $($installers.Count)."
 }
@@ -392,6 +392,8 @@ function Invoke-LegacyRecoveryDiagnostic {
     $installDir,
     '-UserDataDir',
     (Join-Path $appData 'EchoFlow Code'),
+    '-LocalUserDataDir',
+    (Join-Path $localAppData 'EchoFlow Code'),
     '-RecoveryRoot',
     (Join-Path $userProfile 'EchoFlow Code Data\Recovered'),
     '-ProcessName',
@@ -410,6 +412,97 @@ function Invoke-LegacyRecoveryDiagnostic {
     throw "Direct legacy recovery diagnostic failed with exit code $exitCode."
   }
   [Console]::Out.WriteLine('Direct legacy recovery diagnostic completed successfully.')
+}
+
+function Invoke-NoClrProfileSmoke {
+  $profiles = [ordered]@{
+    Local = Join-Path $localAppData 'EchoFlow Code'
+    Roaming = Join-Path $appData 'EchoFlow Code'
+  }
+  $backupRoot = Join-Path $testRoot 'saved-profile-fixtures'
+  New-Item -ItemType Directory -Path $backupRoot | Out-Null
+  $savedProfiles = @()
+  $fixtureProfiles = @()
+  $savedClr = $env:COMPLUS_Version
+  try {
+    foreach ($kind in $profiles.Keys) {
+      if (Test-Path -LiteralPath $profiles[$kind]) {
+        Move-Item -LiteralPath $profiles[$kind] -Destination (Join-Path $backupRoot $kind)
+        $savedProfiles += $kind
+      }
+    }
+    $fixtureProfiles = @($profiles.Values)
+    # Match JSON.stringify(value, null, 2): LF, UTF-8 without BOM, no final newline.
+    $defaultMode = "{`n  `"mode`": `"default`",`n  `"portable_dir`": null`n}"
+    $utf8 = New-Object Text.UTF8Encoding($false)
+    if (Test-IsProcessElevated) {
+      [Console]::Out.WriteLine('UNEXERCISED: packaged profile-specific success and refusal branches on this elevated runner. These cases verify identity-only refusal; native NSIS fixtures are separate function-level evidence, not packaged trusted-user validation.')
+    }
+    foreach ($kind in $profiles.Keys) {
+      foreach ($scenario in @('default-absent-other', 'default-empty-other', 'default-implicit', 'default-implicit-empty-other', 'dual-root', 'other-root-content', 'portable-mode', 'bad-mode', 'journal')) {
+        foreach ($profile in $fixtureProfiles) {
+          if (Test-Path -LiteralPath $profile) { Remove-Item -LiteralPath $profile -Recurse -Force }
+        }
+        $selected = $profiles[$kind]
+        $other = if ($kind -eq 'Local') { $profiles.Roaming } else { $profiles.Local }
+        New-Item -ItemType Directory -Path $selected -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $selected 'app-mode.json'), $defaultMode, $utf8)
+        [IO.File]::WriteAllText((Join-Path $selected 'sentinel.txt'), 'must-survive-failed-upgrade', $utf8)
+        switch ($scenario) {
+          'default-empty-other' { New-Item -ItemType Directory -Path $other -Force | Out-Null }
+          { $_ -in @('default-implicit', 'default-implicit-empty-other') } {
+            Remove-Item -LiteralPath (Join-Path $selected 'app-mode.json')
+            [IO.File]::WriteAllText((Join-Path $selected 'preferences.json'), '{"theme":"dark"}', $utf8)
+            [IO.File]::WriteAllText((Join-Path $selected 'window-state.json'), '{"width":1000}', $utf8)
+            if ($scenario -eq 'default-implicit-empty-other') { New-Item -ItemType Directory -Path $other -Force | Out-Null }
+          }
+          'dual-root' {
+            New-Item -ItemType Directory -Path $other -Force | Out-Null
+            [IO.File]::WriteAllText((Join-Path $other 'app-mode.json'), $defaultMode, $utf8)
+          }
+          'other-root-content' {
+            New-Item -ItemType Directory -Path (Join-Path $other 'Cache') -Force | Out-Null
+            [IO.File]::WriteAllText((Join-Path $other 'Cache\keep'), 'not provably empty', $utf8)
+          }
+          'portable-mode' { [IO.File]::WriteAllText((Join-Path $selected 'app-mode.json'), '{"mode":"portable","portable_dir":null}', $utf8) }
+          'bad-mode' { [IO.File]::WriteAllText((Join-Path $selected 'app-mode.json'), '{broken', $utf8) }
+          'journal' { [IO.File]::WriteAllText((Join-Path $selected 'data-migration-v1.json'), '{"version":1,"status":{"stage":"completed"}}', $utf8) }
+        }
+        $before = @(Get-ChildItem -LiteralPath @($fixtureProfiles | Where-Object { Test-Path -LiteralPath $_ }) -Recurse -File -Force -ErrorAction Stop | ForEach-Object {
+          "$($_.FullName)|$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
+        } | Sort-Object)
+        $exeHash = (Get-FileHash -LiteralPath $appExe -Algorithm SHA256).Hash
+        Clear-InstallerFallbackProcesses -Context "Before no-CLR $kind-only $scenario reinstall"
+        [Console]::Out.WriteLine("No-CLR profile fixture: $kind-only $scenario")
+        $env:COMPLUS_Version = 'v0.0.0-test-invalid-clr'
+        if (Test-IsProcessElevated) {
+          Invoke-ProcessExpectFailure -FilePath $installer -Stage 'Elevated identity-only refusal without CLR' -ExpectedExitCode 20 -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
+        } elseif ($scenario -like 'default-*') {
+          Invoke-CheckedProcess -FilePath $installer -Stage 'Trusted-user default-mode reinstall without CLR' -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
+        } else {
+          Invoke-ProcessExpectFailure -FilePath $installer -Stage "No-CLR $kind $scenario refusal" -ExpectedExitCode 20 -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
+        }
+        $env:COMPLUS_Version = $savedClr
+        $after = @(Get-ChildItem -LiteralPath @($fixtureProfiles | Where-Object { Test-Path -LiteralPath $_ }) -Recurse -File -Force -ErrorAction Stop | ForEach-Object {
+          "$($_.FullName)|$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
+        } | Sort-Object)
+        if ($before.Count -ne $after.Count -or $null -ne (Compare-Object $before $after -CaseSensitive)) {
+          throw "No-CLR $kind $scenario changed profile fixtures or sentinels."
+        }
+        if (-not (Test-Path -LiteralPath $appExe -PathType Leaf) -or (Get-FileHash -LiteralPath $appExe -Algorithm SHA256).Hash -ne $exeHash) {
+          throw "Reinstall removed the application executable or changed its bytes: $appExe"
+        }
+      }
+    }
+  } finally {
+    $env:COMPLUS_Version = $savedClr
+    foreach ($profile in $fixtureProfiles) {
+      if (Test-Path -LiteralPath $profile) { Remove-Item -LiteralPath $profile -Recurse -Force }
+    }
+    foreach ($kind in $savedProfiles) {
+      Move-Item -LiteralPath (Join-Path $backupRoot $kind) -Destination $profiles[$kind]
+    }
+  }
 }
 
 try {
@@ -487,23 +580,7 @@ try {
   $bundledHelperProcess.Dispose()
   $bundledHelperProcess = $null
 
-  # WaitForExit covers the PID this script started; the fallback matches on the
-  # image name, so it also sees anything left over from earlier steps of this
-  # job (the compiled-sidecar smoke starts 20 sidecars) and any child the probe
-  # spawned. The next two stages expect 20 -- "recovery refused" -- which they can
-  # only reach if nothing matches the name list first.
-  Clear-InstallerFallbackProcesses -Context 'Before no-CLR default-mode reinstall'
-
-  $env:COMPLUS_Version = 'v0.0.0-test-invalid-clr'
-  if (Test-IsProcessElevated) {
-    Invoke-ProcessExpectFailure -FilePath $installer -Stage 'Elevated default-mode reinstall without CLR' -ExpectedExitCode 20 -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
-  } else {
-    Invoke-CheckedProcess -FilePath $installer -Stage 'Trusted-user default-mode reinstall without CLR' -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
-  }
-  Remove-Item Env:COMPLUS_Version -ErrorAction SilentlyContinue
-  if (-not (Test-Path -LiteralPath $appExe -PathType Leaf)) {
-    throw "Reinstall removed the application executable: $appExe"
-  }
+  Invoke-NoClrProfileSmoke
 
   $legacyDir = Join-Path $installDir 'CLAUDE_CONFIG_DIR'
   $legacySentinel = Join-Path $legacyDir 'settings.json'

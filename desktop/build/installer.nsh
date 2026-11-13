@@ -96,11 +96,132 @@ Function CcHahaFinalInstallDir
     Exch $R0
 FunctionEnd
 
+; Stack: mode-file path -> exact default-mode boolean. Keep caller registers and error flag.
+Function CcHahaIsStrictDefaultMode
+  Exch $R0
+  Push $R1
+  Push $R2
+  Push $R3
+  Push $R4
+  StrCpy $R4 0
+  IfErrors 0 +2
+    StrCpy $R4 1
+  StrCpy $R3 0
+  System::Call 'kernel32::GetFileAttributesW(w R0) i.R2'
+  StrCmp $R2 -1 cc_haha_strict_default_done
+  IntOp $R2 $R2 & 0x410
+  StrCmp $R2 0 0 cc_haha_strict_default_done
+  GetFullPathName $R1 "$R0\.."
+  System::Call 'kernel32::GetFileAttributesW(w R1) i.R2'
+  IntOp $R2 $R2 & 0x410
+  StrCmp $R2 16 0 cc_haha_strict_default_done
+  ClearErrors
+  FileOpen $R1 $R0 r
+  IfErrors cc_haha_strict_default_done
+  FileRead $R1 $R2
+  IfErrors cc_haha_strict_default_close
+  StrCmpS $R2 '{$\n' 0 cc_haha_strict_default_close
+  FileRead $R1 $R2
+  IfErrors cc_haha_strict_default_close
+  StrCmpS $R2 '  "mode": "default",$\n' 0 cc_haha_strict_default_close
+  FileRead $R1 $R2
+  IfErrors cc_haha_strict_default_close
+  StrCmpS $R2 '  "portable_dir": null$\n' 0 cc_haha_strict_default_close
+  FileRead $R1 $R2
+  IfErrors cc_haha_strict_default_close
+  StrCmpS $R2 '}' 0 cc_haha_strict_default_close
+  ClearErrors
+  FileRead $R1 $R2
+  IfErrors 0 cc_haha_strict_default_close
+  StrCpy $R3 1
+
+  cc_haha_strict_default_close:
+    FileClose $R1
+  cc_haha_strict_default_done:
+    StrCpy $R0 $R3
+    ClearErrors
+    StrCmp $R4 0 +2
+      SetErrors
+    Pop $R4
+    Pop $R3
+    Pop $R2
+    Pop $R1
+    Exch $R0
+FunctionEnd
+
+; No cache exclusions: access errors, links and any directory contents require PowerShell.
+Function CcHahaIsAbsentOrEmptyDirectory
+  Exch $R0
+  Push $R1
+  Push $R2
+  Push $R3
+  Push $R4
+  Push $R5
+  Push $R6
+  StrCpy $R6 0
+  IfErrors 0 +2
+    StrCpy $R6 1
+  StrCpy $R5 0
+  System::Call 'kernel32::GetFileAttributesW(w R0) i.R1 ?e'
+  Pop $R3
+  StrCmp $R1 -1 cc_haha_empty_missing
+  IntOp $R3 $R1 & 0x410 ; directory and reparse-point bits
+  StrCmp $R3 16 0 cc_haha_empty_done
+  System::Alloc 592 ; WIN32_FIND_DATAW
+  Pop $R2
+  StrCmp $R2 0 cc_haha_empty_done
+  System::Call 'kernel32::FindFirstFileW(w "$R0\*", p R2) p.R1 ?e'
+  Pop $R3
+  StrCmp $R1 -1 cc_haha_empty_first_failed
+
+  cc_haha_empty_next:
+    System::Call '*$R2(i, i, i, i, i, i, i, i, i, i, i, &w260 .R4)'
+    StrCmp $R4 "." cc_haha_empty_advance
+    StrCmp $R4 ".." 0 cc_haha_empty_close
+  cc_haha_empty_advance:
+    System::Call 'kernel32::FindNextFileW(p R1, p R2) i.R4 ?e'
+    Pop $R3
+    StrCmp $R4 0 0 cc_haha_empty_next
+    StrCmp $R3 18 0 cc_haha_empty_close ; ERROR_NO_MORE_FILES, not an enumeration failure
+    StrCpy $R5 1
+  cc_haha_empty_close:
+    System::Call 'kernel32::FindClose(p R1)'
+    Goto cc_haha_empty_free
+  cc_haha_empty_first_failed:
+    StrCmp $R3 2 0 cc_haha_empty_free ; ERROR_FILE_NOT_FOUND in an existing directory
+    StrCpy $R5 1
+  cc_haha_empty_free:
+    System::Free $R2
+    Goto cc_haha_empty_done
+  cc_haha_empty_missing:
+    StrCmp $R3 2 cc_haha_empty_yes
+    StrCmp $R3 3 0 cc_haha_empty_done ; only FILE_NOT_FOUND / PATH_NOT_FOUND prove absence
+  cc_haha_empty_yes:
+    StrCpy $R5 1
+  cc_haha_empty_done:
+    StrCpy $R0 $R5
+    ClearErrors
+    StrCmp $R6 0 +2
+      SetErrors
+    Pop $R6
+    Pop $R5
+    Pop $R4
+    Pop $R3
+    Pop $R2
+    Pop $R1
+    Exch $R0
+FunctionEnd
+
 Function CcHahaCanSkipLegacyRecovery
   Push $R3
   Push $R0
   Push $R1
   Push $R2
+  Push $R4
+  Push $R5
+  StrCpy $R4 0
+  IfErrors 0 +2
+    StrCpy $R4 1
 
   StrCpy $R0 "0"
   ${If} $8 != "trusted-user"
@@ -121,40 +242,81 @@ Function CcHahaCanSkipLegacyRecovery
   ${If} $R1 == ""
     Goto cc_haha_skip_recovery_done
   ${EndIf}
-  ReadEnvStr $R0 CLAUDE_CONFIG_DIR
-  ${If} $R0 != ""
-    StrCpy $R0 "0"
+  ReadEnvStr $R2 LOCALAPPDATA
+  ${If} $R2 == ""
     Goto cc_haha_skip_recovery_done
   ${EndIf}
+  IfFileExists "$R2\EchoFlow Code\data-migration-v1.json" cc_haha_skip_recovery_done 0
+  IfFileExists "$R1\EchoFlow Code\data-migration-v1.json" cc_haha_skip_recovery_done 0
+  ; IfFileExists alone cannot distinguish absence from an access error.
+  System::Call 'kernel32::GetFileAttributesW(w "$R1\EchoFlow Code\data-migration-v1.json") i.R3 ?e'
+  Pop $R5
+  StrCmp $R3 -1 0 cc_haha_skip_recovery_done
+  StrCmp $R5 2 cc_haha_roaming_journal_absent
+  StrCmp $R5 3 0 cc_haha_skip_recovery_done
+  cc_haha_roaming_journal_absent:
+    System::Call 'kernel32::GetFileAttributesW(w "$R2\EchoFlow Code\data-migration-v1.json") i.R3 ?e'
+    Pop $R5
+    StrCmp $R3 -1 0 cc_haha_skip_recovery_done
+    StrCmp $R5 2 cc_haha_local_journal_absent
+    StrCmp $R5 3 0 cc_haha_skip_recovery_done
+  cc_haha_local_journal_absent:
+  ReadEnvStr $R0 CLAUDE_CONFIG_DIR
+  StrCmp $R0 "" cc_haha_no_config_override
   StrCpy $R0 "0"
+  Goto cc_haha_skip_recovery_done
+  cc_haha_no_config_override:
+    StrCpy $R0 "0"
+  ReadEnvStr $R3 CC_HAHA_APP_PORTABLE_DIR
+  StrCmp $R3 "" 0 cc_haha_skip_recovery_done
 
   IfFileExists "$ccHahaPerUserInstallLocation\CLAUDE_CONFIG_DIR\*.*" cc_haha_skip_recovery_done 0
-  IfFileExists "$R1\EchoFlow Code\app-mode.json" cc_haha_check_default_mode 0
-  StrCpy $R0 "1"
-  Goto cc_haha_skip_recovery_done
+  Push "$ccHahaPerUserInstallLocation\CLAUDE_CONFIG_DIR"
+  Call CcHahaIsAbsentOrEmptyDirectory
+  Pop $R3
+  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
 
-  cc_haha_check_default_mode:
-    ClearErrors
-    FileOpen $R2 "$R1\EchoFlow Code\app-mode.json" r
-    IfErrors cc_haha_skip_recovery_done 0
-    FileRead $R2 $R3
-    StrCmp $R3 '{$\n' 0 cc_haha_close_mode_file
-    FileRead $R2 $R3
-    StrCmp $R3 '  "mode": "default",$\n' 0 cc_haha_close_mode_file
-    FileRead $R2 $R3
-    StrCmp $R3 '  "portable_dir": null$\n' 0 cc_haha_close_mode_file
-    FileRead $R2 $R3
-    StrCmp $R3 '}' 0 cc_haha_close_mode_file
-    ClearErrors
-    FileRead $R2 $R3
-    IfErrors 0 cc_haha_close_mode_file
+  Push "$R1\EchoFlow Code"
+  Call CcHahaIsAbsentOrEmptyDirectory
+  Pop $R3
+  StrCmp $R3 "1" cc_haha_check_local_default
+  Push "$R2\EchoFlow Code"
+  Call CcHahaIsAbsentOrEmptyDirectory
+  Pop $R3
+  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
+  StrCpy $R3 $R1
+  Goto cc_haha_check_profile_default
+
+  cc_haha_check_local_default:
+    Push "$R2\EchoFlow Code"
+    Call CcHahaIsAbsentOrEmptyDirectory
+    Pop $R3
+    StrCmp $R3 "1" cc_haha_no_profile_state
+    StrCpy $R3 $R2
+  cc_haha_check_profile_default:
+    System::Call 'kernel32::GetFileAttributesW(w "$R3\EchoFlow Code\app-mode.json") i.R5 ?e'
+    Pop $R1
+    StrCmp $R5 -1 cc_haha_profile_mode_missing
+    Push "$R3\EchoFlow Code\app-mode.json"
+    Call CcHahaIsStrictDefaultMode
+    Pop $R0
+    Goto cc_haha_skip_recovery_done
+  cc_haha_profile_mode_missing:
+    ; Ordinary populated profiles use implicit default mode only when absence is proven.
+    StrCmp $R1 2 0 cc_haha_skip_recovery_done
+    System::Call 'kernel32::GetFileAttributesW(w "$R3\EchoFlow Code") i.R5'
+    IntOp $R5 $R5 & 0x410
+    StrCmp $R5 16 0 cc_haha_skip_recovery_done
+  cc_haha_no_profile_state:
     StrCpy $R0 "1"
-
-  cc_haha_close_mode_file:
-    FileClose $R2
 
   cc_haha_skip_recovery_done:
     StrCpy $R3 $R0
+    ClearErrors
+    StrCmp $R4 0 +2
+      SetErrors
+    Pop $R5
+    Pop $R4
     Pop $R2
     Pop $R1
     Pop $R0
@@ -205,12 +367,18 @@ Function CcHahaRecoverLegacy
   File /oname=$PLUGINSDIR\recover-legacy-install-data.ps1 "${BUILD_RESOURCES_DIR}\recover-legacy-install-data.ps1"
 
   ReadEnvStr $2 APPDATA
+  ReadEnvStr $R2 LOCALAPPDATA
   ReadEnvStr $3 USERPROFILE
   ReadEnvStr $6 CLAUDE_CONFIG_DIR
   ReadEnvStr $7 CC_HAHA_APP_PORTABLE_DIR
   ${If} $2 == ""
     StrCpy $0 "21"
     StrCpy $1 "missing current-user APPDATA"
+    Return
+  ${EndIf}
+  ${If} $R2 == ""
+    StrCpy $0 "21"
+    StrCpy $1 "missing current-user LOCALAPPDATA"
     Return
   ${EndIf}
   ${If} $3 == ""
@@ -220,7 +388,7 @@ Function CcHahaRecoverLegacy
   ${EndIf}
 
   DetailPrint "Checking registered installations for legacy EchoFlow Code data..."
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\recover-legacy-install-data.ps1" -PerUserInstallDir "$4" -PerMachineInstallDir "$5" -CandidateInstallDir "$9" -UserDataDir "$2\EchoFlow Code" -RecoveryRoot "$3\EchoFlow Code Data\Recovered" -ProcessName "${PRODUCT_FILENAME}.exe" -ActiveConfigDir "$6" -ActiveConfigManaged "$7" -InstallerIdentitySafety "$8"'
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\recover-legacy-install-data.ps1" -PerUserInstallDir "$4" -PerMachineInstallDir "$5" -CandidateInstallDir "$9" -UserDataDir "$2\EchoFlow Code" -LocalUserDataDir "$R2\EchoFlow Code" -RecoveryRoot "$3\EchoFlow Code Data\Recovered" -ProcessName "${PRODUCT_FILENAME}.exe" -ActiveConfigDir "$6" -ActiveConfigManaged "$7" -InstallerIdentitySafety "$8"'
   Pop $0
   Pop $1
 FunctionEnd

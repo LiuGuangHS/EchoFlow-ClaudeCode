@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { migrateLegacySidebarWidth } from '../lib/persistenceMigrations'
 import {
   isDarkTheme,
   isDarkThemeMode,
@@ -37,6 +38,7 @@ export function clampSidebarWidth(width: number): number {
 
 function getStoredSidebarWidth(): number {
   try {
+    migrateLegacySidebarWidth(localStorage)
     const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY))
     if (Number.isFinite(stored) && stored > 0) return clampSidebarWidth(stored)
   } catch { /* localStorage unavailable */ }
