@@ -4,6 +4,16 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing draft release tag to recover (vX.Y.Z); run from main only'
+        required: true
+        type: string
+      release_sha:
+        description: 'Full commit SHA already referenced by the release tag'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,6 +21,7 @@ permissions:
 
 jobs:
   release-please:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs['desktop--release_created'] }}
@@ -33,40 +44,50 @@ jobs:
 
   resolve-release:
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    if: always() && (needs.release-please.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
       release_sha: ${{ steps.resolve.outputs.release_sha }}
     steps:
-      - name: Checkout release tag
+      - name: Checkout main release history
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: main
 
       - name: Resolve peeled release commit
         id: resolve
         shell: bash
         env:
-          EXPECTED_SHA: ${{ needs.release-please.outputs.release_sha }}
-          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+          EXPECTED_SHA: ${{ inputs.release_sha || needs.release-please.outputs.release_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag || needs.release-please.outputs.tag_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ ! "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::Release Please did not return a full release SHA."
+          if [[ "$WORKFLOW_REF" != refs/heads/main || ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Publication requires main, a version tag and a full release SHA."
             exit 1
           fi
           release_sha=$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")
           if [ "${release_sha}" != "${EXPECTED_SHA}" ]; then
-            echo "::error::Release Please tag does not peel to its reported release SHA."
+            echo "::error::Release tag does not peel to its expected release SHA."
             exit 1
+          fi
+          git merge-base --is-ancestor "$release_sha" refs/remotes/origin/main
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            # Recovery uses the corrected main workflow but never moves the release tag.
+            gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --slurp |
+              jq -e '[.[][] | select(.tag_name == env.RELEASE_TAG)] | length == 1 and (.[0] | .draft == true and (.id | type == "number" and . > 0 and floor == .))' >/dev/null
           fi
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
           echo "release_sha=${release_sha}" >> "$GITHUB_OUTPUT"
 
   publish-release:
     needs: resolve-release
+    if: always() && needs.resolve-release.result == 'success'
     permissions:
       actions: read
       contents: write

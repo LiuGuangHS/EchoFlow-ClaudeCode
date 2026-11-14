@@ -337,9 +337,9 @@ describe('release desktop workflow', () => {
 
     expect(workflow).toContain('notarize_macos:')
     expect(workflow).toContain("description: 'Notarize macOS artifacts'")
-    expect(gatekeeperStep).toContain("if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed == 'true' && (github.event_name != 'workflow_dispatch' || inputs.notarize_macos == true)")
+    expect(gatekeeperStep).toContain("if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed == 'true' && (inputs.official_release == true || github.event_name != 'workflow_dispatch' || inputs.notarize_macos == true)")
     expect(gatekeeperStep).toContain('bun run test:package-smoke --platform macos --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron --require-macos-gatekeeper')
-    expect(notarizationWarningStep).toContain("if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed == 'true' && github.event_name == 'workflow_dispatch' && inputs.notarize_macos == false")
+    expect(notarizationWarningStep).toContain("if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed == 'true' && inputs.official_release != true && github.event_name == 'workflow_dispatch' && inputs.notarize_macos == false")
     expect(notarizationWarningStep).toContain('Developer ID signed but not notarized')
     expect(unsignedWarningStep).toContain("if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed != 'true'")
     expect(unsignedWarningStep).toContain('Computer Use is unavailable and updates require manual installation')
@@ -363,7 +363,7 @@ describe('release desktop workflow', () => {
     expect(signedBuildStep).toContain('APPLE_ID: ${{ secrets.APPLE_ID }}')
     expect(signedBuildStep).toContain('APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}')
     expect(signedBuildStep).toContain('APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}')
-    expect(signedBuildStep).toContain("MACOS_NOTARIZE: ${{ github.event_name != 'workflow_dispatch' || inputs.notarize_macos }}")
+    expect(signedBuildStep).toContain("MACOS_NOTARIZE: ${{ inputs.official_release == true || github.event_name != 'workflow_dispatch' || inputs.notarize_macos }}")
     expect(signedBuildStep).not.toContain('CSC_IDENTITY_AUTO_DISCOVERY')
     expect(signedBuildStep).toContain('timeout-minutes: 80')
     expect(signedBuildStep).toContain("DEBUG: 'electron-builder,electron-osx-sign,electron-notarize*'")
@@ -865,9 +865,11 @@ elif [[ "$*" == *"/releases/42"* ]]; then
   printf '%s\\n' "$FAKE_RELEASE"
 elif [[ "$*" == *"/releases?"* ]]; then
   [[ "$FAKE_LOOKUP_FAILURE" != true ]] || exit 17
-  # Exercise the real workflow jq expression against paginated fixtures.
-  while [[ "$1" != --jq ]]; do shift; done
-  printf '%s\\n' "$FAKE_RELEASE_PAGES" | jq "$2"
+  if [[ "$*" == *"--slurp"* && "$*" == *"--jq"* ]]; then
+    printf '%s\\n' 'the --slurp option is not supported with --jq' >&2
+    exit 1
+  fi
+  printf '%s\\n' "$FAKE_RELEASE_PAGES"
 else
   exit 88
 fi
