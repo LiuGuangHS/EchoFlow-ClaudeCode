@@ -236,7 +236,6 @@ jobs:
               }
             }
 
-            const marker = '<!-- pr-quality-triage -->'
             const areaText = [...areas].filter((label) => label.startsWith('area:')).sort().join(', ') || 'none'
             const approvalText = cliCoreFiles.length > 0 && !cliCoreApproved
               ? 'Blocked by policy until a maintainer applies `allow-cli-core-change` and approves the PR.'
@@ -257,7 +256,6 @@ jobs:
               : '- none'
 
             const body = [
-              marker,
               '## PR quality triage',
               '',
               `**Changed areas:** ${areaText}`,
@@ -286,26 +284,4 @@ jobs:
               'Hard merge gates come from the deterministic GitHub Actions contract lanes above.',
             ].join('\n')
 
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner,
-              repo,
-              issue_number,
-              per_page: 100,
-            })
-            const existing = comments.find((comment) => comment.body && comment.body.includes(marker))
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              })
-            } else {
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number,
-                body,
-              })
-            }
+            await core.summary.addRaw(body).write()

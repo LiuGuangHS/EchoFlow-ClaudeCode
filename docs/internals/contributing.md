@@ -378,7 +378,7 @@ bun run quality:gate --mode release --allow-live --provider-model <selector>:mai
 | 包结构 | 指定产物的 metadata、资源、sidecar 与更新文件；静态或跨平台检查不证明原生启动 |
 | 原生打包运行 | 在匹配 OS/架构上运行真实分发包，验证主程序、sidecar 和关键用户路径；mock 或本地 Electron 开发 smoke 不替代 |
 | 安装 / 升级 / 数据保留 | 真实安装及从受支持旧版本升级，验证用户数据、自定义目录和设置保留 |
-| 签名 / 公证 / 启动策略 | 按平台及当前发布策略验证签名、公证和 Gatekeeper；现行策略允许的未签名 Windows 包不因此被禁止 |
+| 签名 / 公证 / 启动策略 | 按平台及明确选择的发布模式验证签名、公证和 Gatekeeper；允许注明限制的未签名 macOS / Windows 包，未签名不等于签名验收通过 |
 
 每层记录所用候选（完整 SHA、dirty diff 和相关未跟踪源码指纹）、目标、命令、退出状态、summary、日志及产物 SHA-256，关联到实际发布的同一产物；重建或签名改变字节后须重新关联并验证受影响证据。下方平台矩阵仍全部受支持，不能用单一平台结果代替其他目标，也不能静默移除目标。`skipped`、`UNEXERCISED`、`blocked` / `not run` 不证明相应路径已覆盖；合法的不相关 skip 仍允许，这不改变 lane 状态或现有 blocking 规则。
 
@@ -394,7 +394,7 @@ bun run quality:gate --mode release --allow-live --provider-model <selector>:mai
 
 | 平台 | 安装/更新目标 | Metadata |
 |---|---|---|
-| macOS arm64 / x64 | `dmg` 首次安装，`zip` 供 Squirrel.Mac 更新 | `latest-mac.yml` |
+| macOS arm64 / x64 | `dmg` 安装；signed 模式的 `zip` 供 Squirrel.Mac 更新，unsigned 模式手动更新 | 仅 signed 模式发布 `latest-mac.yml` |
 | Windows x64 / ARM64 | NSIS `.exe` | `latest.yml` |
 | Linux x64 | `.AppImage` 自动更新，`.deb`、`.rpm` 供手动安装 | `latest-linux.yml` |
 | Linux arm64 | `.AppImage` 自动更新，`.deb`、`.rpm` 供手动安装 | `latest-linux-arm64.yml` |
@@ -411,11 +411,13 @@ Release workflow 先在各平台 matrix 里生成 `latest*.yml`，把同名 meta
 - Mac zip 名里，Apple 芯片的必须含 `arm64`，Intel 的不能含 `arm64`；否则 Apple 芯片的机器会被「更新」成 Intel 版。
 - 两个 Windows 安装包共用一份 `latest.yml`，updater 按名字里的 `x64` / `arm64` 选包；少了这两个词，ARM 设备会装上 x64 版。
 
-`.blockmap` 随 macOS 和 Windows 产物一起作为 Release 资产发布，构建机上也会用它跑 package-smoke。差分下载默认关闭；只有显式启用且下载源通过差分契约验证时才使用，否则完整下载，具体判定见 `desktop/electron/services/updater.ts`。Windows 安装包签名后由 `scripts/refresh-windows-update-metadata.ts` 重建 blockmap 并校验其结构与最终安装包一致，发布流程会核对各架构 blockmap 与 `latest*.yml` 的版本一致性。Release 不附 `install-macos-unsigned.sh`，正式版本的 Mac 包总是签名并公证过的。
+`.blockmap` 随 macOS 和 Windows 产物一起作为 Release 资产发布，构建机上也会用它跑 package-smoke。差分下载默认关闭；只有显式启用且下载源通过差分契约验证时才使用，否则完整下载，具体判定见 `desktop/electron/services/updater.ts`。Windows 安装包签名后由 `scripts/refresh-windows-update-metadata.ts` 重建 blockmap 并校验其结构与最终安装包一致，发布流程会核对各架构 blockmap 与 `latest*.yml` 的版本一致性。Release 不附 `install-macos-unsigned.sh`，不通过脚本移除隔离属性或关闭系统保护。unsigned macOS 包仍生成更新文件用于包结构检查，但不向公开更新源发布 macOS channel metadata；保留的 ZIP / blockmap 不是自动更新可用的证明。
 
 ### 签名 Secrets
 
-macOS 的签名与公证依赖以下 GitHub Actions repository secrets：
+macOS 通过 `macos_signing` 明确选择 `unsigned` 或 `signed`，默认 `unsigned`；Release Please 调用时采用仓库变量 `MACOS_SIGNING_MODE`（未设置时为 `unsigned`）。不按凭据是否存在静默降级。unsigned 不包含 Developer ID 签名与 Apple 公证，系统可能提示或阻止安装、启动；现有原生组件验签保持不变，因此 Computer Use 不可用，更新须手动下载安装。发布说明必须披露这些限制。
+
+选择 signed 时，保留完整签名、公证及启动策略门禁，缺少配置直接失败。macOS 的签名与公证依赖以下 GitHub Actions repository secrets：
 
 ```text
 MACOS_CERTIFICATE
@@ -466,7 +468,7 @@ bun run check:policy
 5. 重启后确认「关于」里的版本号正确，且服务商、会话、Skills、Agents、记忆、自定义宠物和自定义数据目录仍然可用。
 6. 确认历史附件上下文、子 Agent 详情和任务状态可以恢复；打开桌宠，验证悬浮窗口与当前会话导航。
 
-各平台的重点不同：macOS 要确认 release job 走的是签名产物且启动策略检查通过；Windows 要确认 `latest.yml` 和 `-win-x64.exe` / `-win-arm64.exe` 两个安装包都在 Release 资产里，未签名时的 SmartScreen 提示不代表 updater 失败；Linux 优先用 AppImage 验证自动更新，`.deb`、`.rpm` 只作手动安装包发布。
+各平台的重点不同：macOS signed 模式要确认 release job 走的是签名产物且启动策略检查通过；unsigned 模式不验收自动更新，而应验证手动安装升级及数据保留，记录系统提示和 Computer Use 不可用的限制；Windows 要确认 `latest.yml` 和 `-win-x64.exe` / `-win-arm64.exe` 两个安装包都在 Release 资产里，未签名时的 SmartScreen 提示不代表 updater 失败；Linux 优先用 AppImage 验证自动更新，`.deb`、`.rpm` 只作手动安装包发布。
 
 ## PR 提交流程
 

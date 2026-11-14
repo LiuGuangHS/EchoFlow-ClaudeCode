@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test'
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
 import { chmod, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -71,6 +71,72 @@ test('project directories REST save/reload reaches new session CLI and preserves
     expect(args).not.toContain('--dangerously-skip-permissions')
   }
   expect((await new SessionService().getSessionLaunchInfo((await create()).sessionId))?.additionalDirectories).toEqual([])
+})
+
+test('placeholder cleanup waits for metadata transfer across service instances', async () => {
+  const writer = new SessionService()
+  const cleaner = new SessionService()
+  const { sessionId } = await writer.createSession(main)
+  const unrelated = await writer.createSession(main)
+  await writer.appendSessionMetadata(sessionId, { workDir: main, additionalDirectories: [extra], customTitle: 'Keep this title' })
+  const worktree = join(main, 'worktree')
+  const transcriptDir = join(process.env.CLAUDE_CONFIG_DIR!, 'projects', sanitizePath(worktree))
+  await mkdir(transcriptDir, { recursive: true })
+  const transcript = join(transcriptDir, `${sessionId}.jsonl`)
+  const conversation = JSON.stringify({ type: 'user', uuid: 'fixture-user', cwd: worktree, message: { role: 'user', content: 'Keep this conversation' } }) + '\n'
+  await writeFile(transcript, conversation)
+
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  let discovered!: () => void
+  const discovery = new Promise<void>(resolve => { discovered = resolve })
+  const internals = writer as any
+  const findSessionFiles = internals.findSessionFiles.bind(writer)
+  const discoverySpy = spyOn(internals, 'findSessionFiles').mockImplementation(async (...args: unknown[]) => {
+    const matches = await findSessionFiles(...args)
+    discovered()
+    await held
+    return matches
+  })
+  const cleanupSpy = spyOn(cleaner as any, 'getProjectsDir')
+  const append = writer.appendSessionMetadata(sessionId, { workDir: worktree })
+  let cleanup: Promise<number> | undefined
+  try {
+    await discovery
+    cleanup = cleaner.deletePlaceholderSessionFiles(sessionId, worktree)
+    expect(cleanupSpy).not.toHaveBeenCalled()
+    await new SessionService().appendSessionMetadata(unrelated.sessionId, { workDir: main, customTitle: 'Independent session' })
+    expect((await new SessionService().getSessionLaunchInfo(unrelated.sessionId))?.customTitle).toBe('Independent session')
+    release()
+    await append
+    expect(await cleanup).toBe(1)
+    const info = await new SessionService().getSessionLaunchInfo(sessionId)
+    expect(info).toMatchObject({ workDir: worktree, additionalDirectories: [extra], customTitle: 'Keep this title' })
+    expect(await readFile(transcript, 'utf8')).toContain(conversation.trim())
+    await expect(readFile(join(process.env.CLAUDE_CONFIG_DIR!, 'projects', sanitizePath(main), `${sessionId}.jsonl`))).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    release()
+    await Promise.allSettled([append, ...(cleanup ? [cleanup] : [])])
+    discoverySpy.mockRestore()
+    cleanupSpy.mockRestore()
+  }
+})
+
+test('a rejected metadata mutation does not block the next writer', async () => {
+  const writer = new SessionService()
+  const { sessionId } = await writer.createSession(main)
+  const failure = new Error('fixture metadata read failed')
+  const readSpy = spyOn(writer, 'getSessionLaunchInfo').mockRejectedValueOnce(failure)
+  try {
+    const rejected = writer.appendSessionMetadata(sessionId, { workDir: main })
+    const next = new SessionService().appendSessionMetadata(sessionId, { workDir: main, customTitle: 'Recovered write' })
+    const results = await Promise.allSettled([rejected, next])
+    expect(results[0]).toEqual({ status: 'rejected', reason: failure })
+    expect(results[1].status).toBe('fulfilled')
+    expect((await new SessionService().getSessionLaunchInfo(sessionId))?.customTitle).toBe('Recovered write')
+  } finally {
+    readSpy.mockRestore()
+  }
 })
 
 test('legacy project and session fixtures default to no auxiliary access and preserve unknown fields', async () => {

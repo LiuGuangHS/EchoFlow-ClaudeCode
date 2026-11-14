@@ -143,19 +143,17 @@ class FakeScm {
 const BASELINE_VERSION = '0.7.2'
 
 // Release state is pinned to the baseline so the proof does not fail after each release.
-function readRepoFiles(): Map<string, string> {
+function readRepoFiles(baselineVersion = BASELINE_VERSION, desktopVersion = baselineVersion): Map<string, string> {
   const files = new Map<string, string>()
   const config = JSON.parse(readFileSync('release-please-config.json', 'utf8'))
-  // A one-off release-as pins the next version; this proof covers the standing policy.
-  delete config.packages.desktop['release-as']
   files.set('release-please-config.json', JSON.stringify(config))
-  files.set('.release-please-manifest.json', JSON.stringify({ desktop: BASELINE_VERSION }))
+  files.set('.release-please-manifest.json', JSON.stringify({ desktop: baselineVersion }))
   for (const path of ['desktop/package.json', 'mobile/package.json', 'mobile/app.json']) {
     const parsed = JSON.parse(readFileSync(path, 'utf8'))
     if (path === 'mobile/app.json') {
       parsed.expo.version = '0.1.3'
     } else {
-      parsed.version = path === 'mobile/package.json' ? '0.1.3' : BASELINE_VERSION
+      parsed.version = path === 'mobile/package.json' ? '0.1.3' : desktopVersion
     }
     files.set(path, JSON.stringify(parsed, null, 2))
   }
@@ -286,6 +284,55 @@ describe('release please offline dry run', () => {
     // A major bump would jump to 1.0.0 and break the 0.x release line.
     expect(pullRequest.version?.major).toBe(0)
     expect(pullRequest.version?.patch).toBe(3)
+  })
+
+  test('uses a one-time footer with a stale manifest, then resumes patch releases', async () => {
+    const files = readRepoFiles('0.7.4', '0.7.7')
+    const recoveryCommit: Commit = {
+      sha: 'sha-recovery',
+      message: 'fix(desktop): repair release version coordination\n\nRelease-As: 0.7.7',
+      files: ['desktop/package.json', 'release-please-config.json'],
+    }
+    const previousRelease: Release = {
+      tagName: 'v0.7.4', sha: 'sha-v0.7.4', name: 'v0.7.4', notes: '',
+    }
+    const previousCommit: Commit = {
+      sha: previousRelease.sha,
+      message: 'chore(main): release 0.7.4',
+      files: ['desktop/package.json', '.release-please-manifest.json'],
+    }
+    const manifest = await buildManifest(new FakeScm(files, [recoveryCommit, previousCommit], [previousRelease]))
+    const pullRequests = await manifest.buildPullRequests()
+    expect(pullRequests).toHaveLength(1)
+    const [pullRequest] = pullRequests
+    expect(pullRequest.version?.toString()).toBe('0.7.7')
+    expect(pullRequest.updates.some(update => update.path.startsWith('mobile/'))).toBe(false)
+    for (const update of pullRequest.updates) {
+      if (files.has(update.path)) {
+        files.set(update.path, update.updater.updateContent(files.get(update.path)!))
+      }
+    }
+    expect(JSON.parse(files.get('.release-please-manifest.json')!).desktop).toBe('0.7.7')
+    expect(JSON.parse(files.get('desktop/package.json')!).version).toBe('0.7.7')
+
+    const releasedCommit: Commit = {
+      sha: 'sha-v0.7.7',
+      message: 'chore(main): release 0.7.7',
+      files: ['desktop/package.json', '.release-please-manifest.json'],
+    }
+    // Keep the old footer in history: the release boundary, not the fixture, must exclude it.
+    const nextManifest = await buildManifest(new FakeScm(files, [
+      { sha: 'sha-next-fix', message: 'fix(desktop): preserve session title', files: ['desktop/src/App.tsx'] },
+      releasedCommit,
+      recoveryCommit,
+      previousCommit,
+    ], [
+      { tagName: 'v0.7.7', sha: releasedCommit.sha, name: 'v0.7.7', notes: '' },
+      previousRelease,
+    ]))
+    const nextPullRequests = await nextManifest.buildPullRequests()
+    expect(nextPullRequests).toHaveLength(1)
+    expect(nextPullRequests[0].version?.toString()).toBe('0.7.8')
   })
 
   test('keeps the config within the pinned releaser schema', () => {

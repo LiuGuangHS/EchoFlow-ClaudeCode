@@ -804,6 +804,24 @@ export function hasMalformedFileHistoryBefore(snapshot: FileHistorySnapshot): bo
 }
 
 export class SessionService {
+  // Startup and init may use different instances; cleanup must wait for metadata transfer.
+  private static readonly metadataMutations = new Map<string, Promise<void>>()
+
+  private async withMetadataMutation<T>(sessionId: string, task: () => Promise<T>): Promise<T> {
+    const key = this.memorySessionKey(sessionId)
+    const previous = SessionService.metadataMutations.get(key) ?? Promise.resolve()
+    const next = previous.then(task)
+    const tail = next.then(() => {}, () => {})
+    SessionService.metadataMutations.set(key, tail)
+    try {
+      return await next
+    } finally {
+      if (SessionService.metadataMutations.get(key) === tail) {
+        SessionService.metadataMutations.delete(key)
+      }
+    }
+  }
+
   private readonly uiFileHistoryReads = new Map<string, Promise<RawEntry[]>>()
   private readonly inspectionSnapshots = new Map<string, Promise<SessionInspectionTranscriptSnapshot | null>>()
 
@@ -5501,206 +5519,210 @@ export class SessionService {
       openAIFastMode?: boolean
     }
   ): Promise<void> {
-    if (isSideChatId(sessionId)) {
-      const side = getSideChat(sessionId)
-      if (side && !side.closed) {
-        Object.assign(side.launchInfo, metadata, {
-          effortLevel: resolveSessionEffortLevel(metadata, side.launchInfo.effortLevel),
-          openAIFastMode: typeof metadata.openAIFastMode === 'boolean' ? metadata.openAIFastMode : side.launchInfo.openAIFastMode,
+    return this.withMetadataMutation(sessionId, async () => {
+      if (isSideChatId(sessionId)) {
+        const side = getSideChat(sessionId)
+        if (side && !side.closed) {
+          Object.assign(side.launchInfo, metadata, {
+            effortLevel: resolveSessionEffortLevel(metadata, side.launchInfo.effortLevel),
+            openAIFastMode: typeof metadata.openAIFastMode === 'boolean' ? metadata.openAIFastMode : side.launchInfo.openAIFastMode,
+          })
+        }
+        return
+      }
+      const persist = this.shouldPersistSession()
+      const storedInfo = await this.getSessionLaunchInfo(sessionId)
+      let additionalDirectories = normalizeAdditionalDirectories(metadata.additionalDirectories ?? storedInfo?.additionalDirectories)
+      if (storedInfo?.agentProfile === 'lean' && metadata.permissionMode === 'plan') throw new Error('Plan mode is unavailable in lean sessions. Choose another permission mode.')
+      if (storedInfo) this.knownSessionKeys.add(this.memorySessionKey(sessionId))
+      const workDir = normalizeDriveRootPathForPlatform(metadata.workDir)
+      const projectDir = this.sanitizePath(workDir)
+      const previousInfo = storedInfo ?? (!persist ? {
+        filePath: path.join(this.getProjectsDir(), projectDir, `${sessionId}.jsonl`),
+        projectDir, workDir, transcriptMessageCount: 0, customTitle: null,
+      } : null)
+      if (previousInfo && (!persist || !this.shouldPersistSession() || this.memoryLaunchInfo.has(this.memorySessionKey(sessionId)))) {
+        const normalizedWorkDir = normalizeDriveRootPathForPlatform(metadata.workDir)
+        const projectDir = this.sanitizePath(normalizedWorkDir)
+        this.memoryLaunchInfo.set(this.memorySessionKey(sessionId), {
+          ...previousInfo,
+          additionalDirectories,
+          workDir: normalizedWorkDir, projectDir,
+          filePath: path.join(this.getProjectsDir(), projectDir, `${sessionId}.jsonl`),
+          ...(metadata.repository ? { repository: metadata.repository } : {}),
+          ...(metadata.customTitle ? { customTitle: metadata.customTitle } : {}),
+          ...(metadata.permissionMode && VALID_SESSION_PERMISSION_MODES.has(metadata.permissionMode)
+            ? { permissionMode: metadata.permissionMode } : {}),
+          ...(metadata.runtimeProviderId !== undefined ? { runtimeProviderId: metadata.runtimeProviderId } : {}),
+          ...(metadata.runtimeModelId ? { runtimeModelId: metadata.runtimeModelId } : {}),
+          effortLevel: resolveSessionEffortLevel(metadata, previousInfo.effortLevel),
+          openAIFastMode: typeof metadata.openAIFastMode === 'boolean' ? metadata.openAIFastMode : previousInfo.openAIFastMode,
         })
       }
-      return
-    }
-    const persist = this.shouldPersistSession()
-    const storedInfo = await this.getSessionLaunchInfo(sessionId)
-    let additionalDirectories = normalizeAdditionalDirectories(metadata.additionalDirectories ?? storedInfo?.additionalDirectories)
-    if (storedInfo?.agentProfile === 'lean' && metadata.permissionMode === 'plan') throw new Error('Plan mode is unavailable in lean sessions. Choose another permission mode.')
-    if (storedInfo) this.knownSessionKeys.add(this.memorySessionKey(sessionId))
-    const workDir = normalizeDriveRootPathForPlatform(metadata.workDir)
-    const projectDir = this.sanitizePath(workDir)
-    const previousInfo = storedInfo ?? (!persist ? {
-      filePath: path.join(this.getProjectsDir(), projectDir, `${sessionId}.jsonl`),
-      projectDir, workDir, transcriptMessageCount: 0, customTitle: null,
-    } : null)
-    if (previousInfo && (!persist || !this.shouldPersistSession() || this.memoryLaunchInfo.has(this.memorySessionKey(sessionId)))) {
-      const normalizedWorkDir = normalizeDriveRootPathForPlatform(metadata.workDir)
-      const projectDir = this.sanitizePath(normalizedWorkDir)
-      this.memoryLaunchInfo.set(this.memorySessionKey(sessionId), {
-        ...previousInfo,
-        additionalDirectories,
-        workDir: normalizedWorkDir, projectDir,
-        filePath: path.join(this.getProjectsDir(), projectDir, `${sessionId}.jsonl`),
-        ...(metadata.repository ? { repository: metadata.repository } : {}),
-        ...(metadata.customTitle ? { customTitle: metadata.customTitle } : {}),
-        ...(metadata.permissionMode && VALID_SESSION_PERMISSION_MODES.has(metadata.permissionMode)
-          ? { permissionMode: metadata.permissionMode } : {}),
-        ...(metadata.runtimeProviderId !== undefined ? { runtimeProviderId: metadata.runtimeProviderId } : {}),
-        ...(metadata.runtimeModelId ? { runtimeModelId: metadata.runtimeModelId } : {}),
-        effortLevel: resolveSessionEffortLevel(metadata, previousInfo.effortLevel),
-        openAIFastMode: typeof metadata.openAIFastMode === 'boolean' ? metadata.openAIFastMode : previousInfo.openAIFastMode,
-      })
-    }
-    if (!persist || !this.shouldPersistSession()) {
-      if (metadata.customTitle) this.rememberPrivateTitle(sessionId, metadata.customTitle)
-      return
-    }
-    const matches = await this.findSessionFiles(sessionId)
-    if (matches.length === 0) return
+      if (!persist || !this.shouldPersistSession()) {
+        if (metadata.customTitle) this.rememberPrivateTitle(sessionId, metadata.customTitle)
+        return
+      }
+      const matches = await this.findSessionFiles(sessionId)
+      if (matches.length === 0) return
 
-    let repository = metadata.repository
-    if (!repository) {
+      let repository = metadata.repository
+      if (!repository) {
+        for (const match of matches) {
+          const candidate = (await this.getMetadataProjection(match.filePath, match.projectDir)).launchInfo.repository
+          if (candidate) {
+            repository = candidate
+            break
+          }
+        }
+      }
+
+      const normalizedWorkDir = normalizeDriveRootPathForPlatform(metadata.workDir)
+      const targetProjectDir = this.sanitizePath(normalizedWorkDir)
+      const requestedFilePath = path.join(this.getProjectsDir(), targetProjectDir, `${sessionId}.jsonl`)
+      // A session has one transcript. Startup can still name the directory it was
+      // launched from after the CLI has moved into its worktree and written the
+      // conversation there; metadata belongs on that file, not on a second copy.
+      let targetFilePath = requestedFilePath
       for (const match of matches) {
-        const candidate = (await this.getMetadataProjection(match.filePath, match.projectDir)).launchInfo.repository
-        if (candidate) {
-          repository = candidate
+        if (match.filePath === requestedFilePath) continue
+        const entries = await this.readJsonlFile(match.filePath)
+        if (this.hasConversationTranscript(entries)) {
+          targetFilePath = match.filePath
           break
         }
       }
-    }
 
-    const normalizedWorkDir = normalizeDriveRootPathForPlatform(metadata.workDir)
-    const targetProjectDir = this.sanitizePath(normalizedWorkDir)
-    const requestedFilePath = path.join(this.getProjectsDir(), targetProjectDir, `${sessionId}.jsonl`)
-    // A session has one transcript. Startup can still name the directory it was
-    // launched from after the CLI has moved into its worktree and written the
-    // conversation there; metadata belongs on that file, not on a second copy.
-    let targetFilePath = requestedFilePath
-    for (const match of matches) {
-      if (match.filePath === requestedFilePath) continue
-      const entries = await this.readJsonlFile(match.filePath)
-      if (this.hasConversationTranscript(entries)) {
-        targetFilePath = match.filePath
-        break
-      }
-    }
-
-    // The CLI can create its worktree transcript before system/init arrives.
-    // That conversation wins file selection, but its launch snapshot still lives
-    // in the placeholder until this write transfers it before placeholder cleanup.
-    const target = matches.find((match) => match.filePath === targetFilePath)
-    const targetDirectories = target
-      ? (await this.getMetadataProjection(target.filePath, target.projectDir)).launchInfo.additionalDirectories
-      : undefined
-    let scopeNeedsTransfer = metadata.additionalDirectories !== undefined && targetDirectories === undefined
-    if (metadata.additionalDirectories === undefined) {
-      if (targetDirectories !== undefined) {
-        additionalDirectories = [...targetDirectories]
-      } else {
-        for (const match of matches) {
-          const candidate = (await this.getMetadataProjection(match.filePath, match.projectDir)).launchInfo.additionalDirectories
-          if (candidate !== undefined) {
-            additionalDirectories = [...candidate]
-            scopeNeedsTransfer = true
-            break
-          }
-        }
-      }
-    }
-
-    // Startup names the directory the session was launched from, so a
-    // collaboration title can land on that placeholder. Once the conversation
-    // lives in another transcript, keep the title with the file that survives
-    // placeholder cleanup instead of letting the only copy be deleted.
-    let customTitle = metadata.customTitle ?? null
-    if (!customTitle) {
+      // The CLI can create its worktree transcript before system/init arrives.
+      // That conversation wins file selection, but its launch snapshot still lives
+      // in the placeholder until this write transfers it before placeholder cleanup.
       const target = matches.find((match) => match.filePath === targetFilePath)
-      const targetTitle = target
-        ? (await this.getMetadataProjection(target.filePath, target.projectDir)).customTitle
-        : null
-      if (!targetTitle) {
-        for (const match of matches) {
-          if (match.filePath === targetFilePath) continue
-          const title = (await this.getMetadataProjection(match.filePath, match.projectDir)).customTitle
-          if (title) {
-            customTitle = title
-            break
+      const targetDirectories = target
+        ? (await this.getMetadataProjection(target.filePath, target.projectDir)).launchInfo.additionalDirectories
+        : undefined
+      let scopeNeedsTransfer = metadata.additionalDirectories !== undefined && targetDirectories === undefined
+      if (metadata.additionalDirectories === undefined) {
+        if (targetDirectories !== undefined) {
+          additionalDirectories = [...targetDirectories]
+        } else {
+          for (const match of matches) {
+            const candidate = (await this.getMetadataProjection(match.filePath, match.projectDir)).launchInfo.additionalDirectories
+            if (candidate !== undefined) {
+              additionalDirectories = [...candidate]
+              scopeNeedsTransfer = true
+              break
+            }
           }
         }
       }
-    }
 
-    if (!scopeNeedsTransfer && !customTitle && !this.memoryLaunchInfo.has(this.memorySessionKey(sessionId))) {
-      if (this.metadataMatchesLaunchInfo(previousInfo, {
-        ...metadata,
-        additionalDirectories,
-        workDir: normalizedWorkDir,
-        repository,
-      })) {
-        return
+      // Startup names the directory the session was launched from, so a
+      // collaboration title can land on that placeholder. Once the conversation
+      // lives in another transcript, keep the title with the file that survives
+      // placeholder cleanup instead of letting the only copy be deleted.
+      let customTitle = metadata.customTitle ?? null
+      if (!customTitle) {
+        const target = matches.find((match) => match.filePath === targetFilePath)
+        const targetTitle = target
+          ? (await this.getMetadataProjection(target.filePath, target.projectDir)).customTitle
+          : null
+        if (!targetTitle) {
+          for (const match of matches) {
+            if (match.filePath === targetFilePath) continue
+            const title = (await this.getMetadataProjection(match.filePath, match.projectDir)).customTitle
+            if (title) {
+              customTitle = title
+              break
+            }
+          }
+        }
       }
-    }
 
-    await fs.mkdir(path.dirname(targetFilePath), { recursive: true })
+      if (!scopeNeedsTransfer && !customTitle && !this.memoryLaunchInfo.has(this.memorySessionKey(sessionId))) {
+        if (this.metadataMatchesLaunchInfo(previousInfo, {
+          ...metadata,
+          additionalDirectories,
+          workDir: normalizedWorkDir,
+          repository,
+        })) {
+          return
+        }
+      }
 
-    await this.appendJsonlEntry(targetFilePath, {
-      type: 'session-meta',
-      isMeta: true,
-      workDir: normalizedWorkDir,
-      additionalDirectories,
-      agentProfile: storedInfo?.agentProfile ?? 'standard',
-      repository,
-      ...(metadata.permissionMode && VALID_SESSION_PERMISSION_MODES.has(metadata.permissionMode)
-        ? { permissionMode: metadata.permissionMode }
-        : {}),
-      ...(metadata.runtimeProviderId !== undefined
-        ? { runtimeProviderId: metadata.runtimeProviderId }
-        : {}),
-      ...(metadata.runtimeModelId ? { runtimeModelId: metadata.runtimeModelId } : {}),
-      ...(metadata.effortLevel && VALID_SESSION_EFFORT_LEVELS.has(metadata.effortLevel)
-        ? { effortLevel: metadata.effortLevel }
-        : {}),
-      ...(typeof metadata.openAIFastMode === 'boolean' ? { openAIFastMode: metadata.openAIFastMode } : {}),
-      timestamp: new Date().toISOString(),
-    })
+      await fs.mkdir(path.dirname(targetFilePath), { recursive: true })
 
-    if (customTitle && this.canPersistTitle(sessionId, customTitle)) {
       await this.appendJsonlEntry(targetFilePath, {
-        type: 'custom-title',
-        customTitle,
+        type: 'session-meta',
+        isMeta: true,
+        workDir: normalizedWorkDir,
+        additionalDirectories,
+        agentProfile: storedInfo?.agentProfile ?? 'standard',
+        repository,
+        ...(metadata.permissionMode && VALID_SESSION_PERMISSION_MODES.has(metadata.permissionMode)
+          ? { permissionMode: metadata.permissionMode }
+          : {}),
+        ...(metadata.runtimeProviderId !== undefined
+          ? { runtimeProviderId: metadata.runtimeProviderId }
+          : {}),
+        ...(metadata.runtimeModelId ? { runtimeModelId: metadata.runtimeModelId } : {}),
+        ...(metadata.effortLevel && VALID_SESSION_EFFORT_LEVELS.has(metadata.effortLevel)
+          ? { effortLevel: metadata.effortLevel }
+          : {}),
+        ...(typeof metadata.openAIFastMode === 'boolean' ? { openAIFastMode: metadata.openAIFastMode } : {}),
         timestamp: new Date().toISOString(),
       })
-      this.syncIndexedSessionTitle(sessionId, customTitle)
-    }
-    this.invalidateSessionListCache()
+
+      if (customTitle && this.canPersistTitle(sessionId, customTitle)) {
+        await this.appendJsonlEntry(targetFilePath, {
+          type: 'custom-title',
+          customTitle,
+          timestamp: new Date().toISOString(),
+        })
+        this.syncIndexedSessionTitle(sessionId, customTitle)
+      }
+      this.invalidateSessionListCache()
+    })
   }
 
   async deletePlaceholderSessionFiles(
     sessionId: string,
     keepWorkDir: string,
   ): Promise<number> {
-    if (!this.isValidSessionId(sessionId)) return 0
+    return this.withMetadataMutation(sessionId, async () => {
+      if (!this.isValidSessionId(sessionId)) return 0
 
-    const projectsDir = this.getProjectsDir()
-    let projectDirs: import('node:fs').Dirent[]
-    try {
-      projectDirs = await fs.readdir(projectsDir, { withFileTypes: true })
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0
-      throw err
-    }
+      const projectsDir = this.getProjectsDir()
+      let projectDirs: import('node:fs').Dirent[]
+      try {
+        projectDirs = await fs.readdir(projectsDir, { withFileTypes: true })
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0
+        throw err
+      }
 
-    const keepProjectDir = this.sanitizePath(normalizeDriveRootPathForPlatform(keepWorkDir))
-    // Windows and default macOS volumes are case-insensitive: `D--repo` and
-    // `d--repo` are one folder, and readdir reports whichever spelling created
-    // it. Compare file identity so the CLI's own transcript, still metadata-only
-    // when init arrives, is never mistaken for a stray placeholder.
-    const keepFile = await statFileIdentity(path.join(projectsDir, keepProjectDir, `${sessionId}.jsonl`))
-    let removed = 0
-    for (const projectDir of projectDirs) {
-      if (!projectDir.isDirectory()) continue
-      if (projectDir.name === keepProjectDir) continue
-      const filePath = path.join(projectsDir, projectDir.name, `${sessionId}.jsonl`)
-      const entries = await this.readJsonlFile(filePath)
-      if (entries.length === 0) continue
+      const keepProjectDir = this.sanitizePath(normalizeDriveRootPathForPlatform(keepWorkDir))
+      // Windows and default macOS volumes are case-insensitive: `D--repo` and
+      // `d--repo` are one folder, and readdir reports whichever spelling created
+      // it. Compare file identity so the CLI's own transcript, still metadata-only
+      // when init arrives, is never mistaken for a stray placeholder.
+      const keepFile = await statFileIdentity(path.join(projectsDir, keepProjectDir, `${sessionId}.jsonl`))
+      let removed = 0
+      for (const projectDir of projectDirs) {
+        if (!projectDir.isDirectory()) continue
+        if (projectDir.name === keepProjectDir) continue
+        const filePath = path.join(projectsDir, projectDir.name, `${sessionId}.jsonl`)
+        const entries = await this.readJsonlFile(filePath)
+        if (entries.length === 0) continue
 
-      if (this.hasConversationTranscript(entries)) continue
-      if (keepFile && isSameFileIdentity(keepFile, await statFileIdentity(filePath))) continue
+        if (this.hasConversationTranscript(entries)) continue
+        if (keepFile && isSameFileIdentity(keepFile, await statFileIdentity(filePath))) continue
 
-      await fs.rm(filePath, { force: true })
-      removed += 1
-    }
-    if (removed > 0) this.invalidateSessionListCache()
-    return removed
+        await fs.rm(filePath, { force: true })
+        removed += 1
+      }
+      if (removed > 0) this.invalidateSessionListCache()
+      return removed
+    })
   }
 
   async trimSessionMessagesFrom(

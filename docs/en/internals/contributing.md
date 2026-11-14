@@ -378,7 +378,7 @@ Distinguish these evidence layers per target OS/architecture; they are not inter
 | Package structure | Metadata, resources, sidecars, and update files in an identified artifact; static or cross-platform inspection does not prove native launch |
 | Native packaged runtime | The actual distributed package running on matching OS/architecture, exercising the app, sidecars, and key user paths; mocks or local Electron development smoke are not substitutes |
 | Install / upgrade / data preservation | Actual installation and upgrades from supported older versions, preserving user data, custom directories, and settings |
-| Signing / notarization / launch policy | Signing, notarization, and Gatekeeper as applicable to the platform and current release policy; unsigned Windows packages allowed by existing policy remain allowed |
+| Signing / notarization / launch policy | Signing, notarization, and Gatekeeper as applicable to the platform and explicitly selected release mode; unsigned macOS / Windows packages are allowed with disclosed limitations, not counted as passing signing acceptance |
 
 For each layer, record the candidate (full SHA, dirty diff, and relevant untracked source fingerprints), target, commands, exit statuses, summaries, logs, and artifact SHA-256, linking evidence to the same artifact actually published. Rebuilding or signing changes bytes: relink and revalidate affected evidence. All platforms in the platform matrix below remain supported; one platform's results cannot stand in for other targets or silently remove them. `skipped`, `UNEXERCISED`, and `blocked` / `not run` do not prove those paths covered; valid unrelated skips remain allowed, without changing lane statuses or existing blocking rules.
 
@@ -394,7 +394,7 @@ In-app updates are driven by `electron-updater`, with artifacts hosted on GitHub
 
 | Platform | Install / update target | Metadata |
 |---|---|---|
-| macOS arm64 / x64 | `dmg` for first install, `zip` for Squirrel.Mac updates | `latest-mac.yml` |
+| macOS arm64 / x64 | `dmg` for installation; signed `zip` for Squirrel.Mac updates, manual updates in unsigned mode | `latest-mac.yml` published only in signed mode |
 | Windows x64 / ARM64 | NSIS `.exe` | `latest.yml` |
 | Linux x64 | `.AppImage` for updates, `.deb` and `.rpm` for manual install | `latest-linux.yml` |
 | Linux arm64 | `.AppImage` for updates, `.deb` and `.rpm` for manual install | `latest-linux-arm64.yml` |
@@ -411,11 +411,13 @@ Renames have three hard constraints, each checked by `scripts/pr/release-workflo
 - The Apple Silicon zip name must contain `arm64` and the Intel one must not; otherwise Apple Silicon machines get "updated" to the Intel build.
 - Both Windows installers share one `latest.yml`, and the updater picks by the `x64` / `arm64` in the name; without them, ARM devices install the x64 build.
 
-`.blockmap` files are published alongside macOS and Windows release artifacts and are also checked by package-smoke on the runner. Differential downloading is disabled by default; it is used only when explicitly enabled and the download feed passes the differential contract, otherwise downloads are full. See `desktop/electron/services/updater.ts` for the decision. After Windows installer signing, `scripts/refresh-windows-update-metadata.ts` rebuilds the blockmap and verifies it matches the final installer; publication checks blockmap and `latest*.yml` version consistency for each architecture. Releases do not attach `install-macos-unsigned.sh`, since release Mac builds are always signed and notarized.
+`.blockmap` files are published alongside macOS and Windows release artifacts and are also checked by package-smoke on the runner. Differential downloading is disabled by default; it is used only when explicitly enabled and the download feed passes the differential contract, otherwise downloads are full. See `desktop/electron/services/updater.ts` for the decision. After Windows installer signing, `scripts/refresh-windows-update-metadata.ts` rebuilds the blockmap and verifies it matches the final installer; publication checks blockmap and `latest*.yml` version consistency for each architecture. Releases do not attach `install-macos-unsigned.sh` or scripts that remove quarantine attributes or disable system protections. Unsigned macOS builds still generate update files for package-structure checks, but do not publish macOS channel metadata to the public update feed; retained ZIP / blockmap files do not establish auto-update availability.
 
 ### Signing secrets
 
-macOS signing and notarization depend on these GitHub Actions repository secrets:
+The `macos_signing` input explicitly selects `unsigned` or `signed`, defaulting to `unsigned`. Release Please uses the `MACOS_SIGNING_MODE` repository variable, falling back to `unsigned` when unset. Missing credentials never cause a silent fallback. Unsigned builds have no Developer ID signature or Apple notarization, and the OS may warn or block installation or launch. Native-component signature checks remain unchanged, so Computer Use is unavailable and updates require manual download and installation. Release notes must disclose these limitations.
+
+Signed mode retains all signing, notarization, and launch-policy gates and fails on missing configuration. macOS signing and notarization depend on these GitHub Actions repository secrets:
 
 ```text
 MACOS_CERTIFICATE
@@ -466,7 +468,7 @@ This is post-publication update-path acceptance, not a pre-publication gate that
 5. After restart, confirm the version in About, and that providers, sessions, skills, agents, memories, custom pets, and a custom data directory all still work.
 6. Confirm historical attachment context, subagent details, and task state restore correctly; open a pet window and check the overlay and current-session navigation.
 
-Platforms differ in what matters: on macOS confirm the release job used the signed artifacts and the launch-policy check passed; on Windows confirm `latest.yml` and both `-win-x64.exe` / `-win-arm64.exe` installers are in the release assets, and remember that a SmartScreen prompt on an unsigned build does not mean the updater failed; on Linux verify auto-update through the AppImage, since `.deb` and `.rpm` ship as manual installers only.
+Platforms differ in what matters: in macOS signed mode, confirm the release job used signed artifacts and the launch-policy check passed; in unsigned mode, verify manual installation/upgrades and data preservation instead of auto-update, recording OS warnings and Computer Use unavailability; on Windows confirm `latest.yml` and both `-win-x64.exe` / `-win-arm64.exe` installers are in the release assets, and remember that a SmartScreen prompt on an unsigned build does not mean the updater failed; on Linux verify auto-update through the AppImage, since `.deb` and `.rpm` ship as manual installers only.
 
 ## PR Workflow
 

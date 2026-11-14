@@ -809,10 +809,15 @@ describe('DingTalk reply delivery through the adapter entrypoint', () => {
       dingtalkDelivery!.delivered.length = 0
       dingtalkDelivery!.failFirstMarkdown = true
       const response = spyOn(dingtalk.bridge, 'sendPermissionResponse').mockReturnValue(permissionState === 'accepted')
-      const warning = spyOn(console, 'warn').mockImplementation(() => {})
+      let noticeFailed!: () => void
+      const failedNotice = new Promise<void>(resolve => { noticeFailed = resolve })
+      const warning = spyOn(console, 'warn').mockImplementation((...args) => {
+        if (args.join(' ').includes('sendText failed')) noticeFailed()
+      })
       try {
         await send('dingtalk', '/allow permission-1', { unauthorized: permissionState === 'unpaired' })
-        await Bun.sleep(0)
+        // Permission notices outlive the chat queue; wait for delivery failure, not a timer tick.
+        await failedNotice
 
         expect(dingtalkDelivery!.markdownAttempts).toBe(1)
         expect(dingtalkDelivery!.delivered).toEqual([])

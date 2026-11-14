@@ -75,6 +75,7 @@ jobs:
     uses: ./.github/workflows/release-desktop.yml
     with:
       official_release: true
+      macos_signing: ${{ vars.MACOS_SIGNING_MODE || 'unsigned' }}
       release_tag: ${{ needs.resolve-release.outputs.release_tag }}
       release_sha: ${{ needs.resolve-release.outputs.release_sha }}
       draft: false

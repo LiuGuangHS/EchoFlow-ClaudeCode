@@ -305,6 +305,7 @@ describe('cu-helper build signing identity', () => {
     { CC_HAHA_LOCAL_UNSIGNED_BUILD: '1' },
     { CC_HAHA_SIGN_IDENTITY: '-', CC_HAHA_LOCAL_UNSIGNED_BUILD: '1', GITHUB_ACTIONS: 'true' },
     { CC_HAHA_SIGN_IDENTITY: '-', CC_HAHA_LOCAL_UNSIGNED_BUILD: '1', CI: 'true' },
+    { CC_HAHA_SIGN_IDENTITY: '-', CC_HAHA_LOCAL_UNSIGNED_BUILD: '1', CI: '1' },
   ])('refuses ad-hoc signing outside explicitly selected local packaging: %j', environment => {
     const result = localSigningFixture(environment)
     expect(result.exitCode).not.toBe(0)
@@ -318,6 +319,23 @@ describe('cu-helper build signing identity', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toBe('-')
     expect(result.stderr).toContain('Computer Use is unavailable')
+  })
+
+  test.each([{ CI: 'true' }, { GITHUB_ACTIONS: 'true' }])('accepts explicitly selected unsigned releases in CI: %j', ci => {
+    const result = localSigningFixture({
+      ...ci, CC_HAHA_SIGN_IDENTITY: '-', ECHOFLOW_MACOS_SIGNING_MODE: 'unsigned',
+    })
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toBe('-')
+    expect(result.stderr).toContain('Computer Use is unavailable')
+  })
+
+  test.each(['signed', 'unknown'])('does not enable ad-hoc CI packaging for release mode %s', mode => {
+    const result = localSigningFixture({
+      CI: 'true', CC_HAHA_SIGN_IDENTITY: '-', CC_HAHA_LOCAL_UNSIGNED_BUILD: '1', ECHOFLOW_MACOS_SIGNING_MODE: mode,
+    })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.signingCalls).toEqual([])
   })
 
   test('keeps a real build-wide signing identity even with a stale local unsigned flag', () => {

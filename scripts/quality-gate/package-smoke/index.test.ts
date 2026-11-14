@@ -668,7 +668,7 @@ describe('packaged artifact inspection', () => {
             ? 'dev.cchaha.cu-helper'
             : isSidecar
               ? 'com.claude-code-haha.desktop.sidecar'
-              : 'com.claude-code-haha.desktop'
+              : 'com.echoflow.code.desktop'
           const authority = isSidecar
             ? sidecarAuthority
             : 'Developer ID Application: Example (TEAM123456)'

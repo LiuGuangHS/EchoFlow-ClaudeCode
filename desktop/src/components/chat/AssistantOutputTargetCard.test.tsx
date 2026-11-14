@@ -1,6 +1,15 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { sessionsApi } from '../../api/sessions'
+import { resetWorkspaceFileStatsForTests } from '../../lib/workspaceFileStats'
+
+beforeEach(() => {
+  resetWorkspaceFileStatsForTests()
+  vi.spyOn(sessionsApi, 'statWorkspaceFiles').mockImplementation(async (_sessionId, paths) => ({
+    files: paths.map((path) => ({ path, state: 'file' as const })),
+  }))
+})
 
 const { openBrowser } = vi.hoisted(() => ({ openBrowser: vi.fn() }))
 // The unified open entry point replaced the per-store `open` / `openPreview`
@@ -92,6 +101,7 @@ const spacedWindowsTarget: AssistantOutputTarget = {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   reportOpenFailure.mockReset()
   openBrowser.mockReset()
   ensureTargets.mockReset().mockResolvedValue(undefined)

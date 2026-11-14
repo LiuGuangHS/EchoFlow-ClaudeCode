@@ -844,7 +844,7 @@ function addMacosComputerUseAttestationCheck(
   }
 
   const targets = [
-    { name: 'host', path: appBundle, identifier: 'com.claude-code-haha.desktop', deep: true },
+    { name: 'host', path: appBundle, identifier: 'com.echoflow.code.desktop', deep: true },
     { name: 'sidecar', path: sidecar, identifier: 'com.claude-code-haha.desktop.sidecar', deep: false },
     { name: 'helper', path: helperApp, identifier: 'dev.cchaha.cu-helper', deep: true },
   ] as const

@@ -345,12 +345,12 @@ describe('ComputerUseSettings', () => {
 
       render(<ComputerUseSettings />)
 
-      expect(await screen.findByText(/Local ad-hoc builds cannot run Computer Use/)).toBeInTheDocument()
+      expect(await screen.findByText(/Unsigned\/ad-hoc builds, including published releases, cannot run Computer Use even with macOS permissions granted/)).toBeInTheDocument()
       expect(screen.getByRole('switch', { name: 'Enabled' })).not.toBeChecked()
       expect(screen.queryByText(/runtime is missing or could not be prepared/)).not.toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: /Recheck Status/ }))
       expect(await screen.findByText('System Permissions')).toBeInTheDocument()
-      expect(screen.queryByText(/Local ad-hoc builds/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/Unsigned\/ad-hoc builds/)).not.toBeInTheDocument()
       expect(screen.getByRole('switch', { name: 'Enabled' })).not.toBeChecked()
       expect(computerUseApiMock.openPermissionCard).not.toHaveBeenCalled()
       expect(computerUseApiMock.setAuthorizedApps).not.toHaveBeenCalled()

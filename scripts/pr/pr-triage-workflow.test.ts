@@ -7,10 +7,14 @@ async function runTriage(filenames: string[], options: { author?: string, labels
   const script = workflow.jobs.triage.steps[0].with.script
   const requests: Array<{ path: string, ref: string }> = []
   const labels: string[] = []
+  const commentRequests: string[] = []
   let body = ''
+  let summaryWritten = false
   const github = {
-    paginate: async (_method: unknown, params: { pull_number?: number }) => params.pull_number
-      ? filenames.map(filename => ({ filename })) : [],
+    paginate: async (method: unknown, params: { pull_number?: number }) => {
+      if (method === github.rest.issues.listComments) commentRequests.push('list')
+      return params.pull_number ? filenames.map(filename => ({ filename })) : []
+    },
     rest: {
       pulls: { listFiles: () => {} },
       repos: { getContent: async (request: { path: string, ref: string }) => {
@@ -24,7 +28,8 @@ async function runTriage(filenames: string[], options: { author?: string, labels
         addLabels: async (request: { labels: string[] }) => { labels.push(...request.labels) },
         removeLabel: async () => {},
         listComments: () => {},
-        createComment: async (request: { body: string }) => { body = request.body },
+        createComment: async () => { commentRequests.push('create') },
+        updateComment: async () => { commentRequests.push('update') },
       },
     },
   }
@@ -33,11 +38,29 @@ async function runTriage(filenames: string[], options: { author?: string, labels
     user: { login: options.author ?? 'contributor' }, labels: (options.labels ?? []).map(name => ({ name })),
   } } }
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-  await new AsyncFunction('github', 'context', 'core', script)(github, context, { warning: () => {} })
-  return { requests, labels, body }
+  await new AsyncFunction('github', 'context', 'core', script)(github, context, {
+    warning: () => {},
+    summary: {
+      addRaw: (text: string) => {
+        body += text
+        return { write: async () => { summaryWritten = true } }
+      },
+    },
+  })
+  return { requests, labels, body, commentRequests, summaryWritten }
 }
 
-describe('PR triage workflow comment', () => {
+describe('PR triage workflow summary', () => {
+  test('writes advisory results to Actions without reading or posting PR comments', async () => {
+    const result = await runTriage(['src/server/example.ts'])
+    expect(result.commentRequests).toEqual([])
+    expect(result.summaryWritten).toBe(true)
+    expect(result.body).toContain('## PR quality triage')
+    expect(result.body).toContain('PR Quality / scope-plan')
+    expect(result.body).toContain('Blocked by policy until a maintainer applies `allow-missing-tests`')
+    expect(result.labels).toContain('needs-maintainer-approval')
+  })
+
   test('uses base SHA routing data, including exclusions and instruction files', async () => {
     const result = await runTriage(['custom/file.md', 'src/server/service.test.ts', 'src/AGENTS.md'], {
       routing: { areas: {

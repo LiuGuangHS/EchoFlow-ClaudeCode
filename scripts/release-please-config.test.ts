@@ -39,6 +39,11 @@ describe('release please configuration', () => {
     expect(config.packages.desktop['release-as']).not.toBe(manifest.desktop)
   })
 
+  test('uses one-time commit footers instead of persistent release-as pins', () => {
+    expect(config['release-as']).toBeUndefined()
+    expect(config.packages.desktop['release-as']).toBeUndefined()
+  })
+
   test('bases the next release on the last published tag', () => {
     // The manifest records the last published version, so its value moves with every release.
     expect(Object.keys(manifest)).toEqual(['desktop'])

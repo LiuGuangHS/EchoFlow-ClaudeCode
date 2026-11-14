@@ -1,4 +1,5 @@
 import { ApiError } from '../api/client'
+import { sessionsApi } from '../api/sessions'
 import { openSideChat } from '@/lib/workspace/openSideChat'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -173,6 +174,7 @@ afterEach(() => {
   cleanup()
   disposeGuests?.()
   disposeGuests = null
+  vi.restoreAllMocks()
   vi.useRealTimers()
   vi.unstubAllGlobals()
   browserHostMocks.available = false
@@ -1991,6 +1993,7 @@ describe('ActiveSession task polling', () => {
   })
 
   it('updates the Team workbench without leaking its DAG, roster, or transcript spawns into main Activity', async () => {
+    vi.spyOn(sessionsApi, 'getFullHistory').mockResolvedValue({ messages: [] })
     const sessionId = 'team-activity-runtime-state-session'
     const teamName = 'runtime-state-team'
     const taskDefinitions = [
@@ -2182,6 +2185,9 @@ describe('ActiveSession task polling', () => {
     await waitFor(() => {
       expect(useActivityPanelStore.getState().isOpen(sessionId)).toBe(false)
     }, { timeout: 4000 })
+    expect(useChatStore.getState().sessions[sessionId]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool_use', toolUseId: 'spawn-late-reviewer' }),
+    ]))
 
     act(() => {
       useChatStore.getState().handleServerMessage(sessionId, {

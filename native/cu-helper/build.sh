@@ -13,6 +13,9 @@
 #   CC_HAHA_LOCAL_UNSIGNED_BUILD=1
 #                        Local desktop packaging only: permits the explicit
 #                        build-wide identity '-' (Computer Use is unavailable).
+#   ECHOFLOW_MACOS_SIGNING_MODE=unsigned
+#                        Explicit unsigned releases also permit '-' in CI;
+#                        runtime attestation still rejects Computer Use.
 #
 # Output: prints "built: <arch-specific abs path>/cc-haha-computer-use.app"
 #
@@ -25,8 +28,8 @@
 # per-build throwaway cert rotates that identity on EVERY rebuild, so the user
 # would have to re-grant both permissions after every `swift build`. To keep the
 # grants alive, Computer Use builds need a STABLE cert and a CONSTANT --identifier.
-# We never auto-select ad-hoc signing. Only the local desktop packaging entrypoint
-# may explicitly request it; that package cannot pass Computer Use attestation.
+# We never auto-select ad-hoc signing. Local packaging or an explicit unsigned
+# release may request it; that package cannot pass Computer Use attestation.
 # Direct helper builds without a stable identity still stop with setup guidance.
 
 set -euo pipefail
@@ -189,11 +192,13 @@ resolve_identity() {
   if [ -n "${CC_HAHA_SIGN_IDENTITY:-}" ]; then
     SIGN_IDENTITY="$CC_HAHA_SIGN_IDENTITY"
     if [ "$SIGN_IDENTITY" = "-" ]; then
-      if [ "${CC_HAHA_LOCAL_UNSIGNED_BUILD:-}" != "1" ] \
-        || [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-        die "Ad-hoc signing requires explicit local unsigned packaging; CI must use a stable signing identity."
+      if [ "${ECHOFLOW_MACOS_SIGNING_MODE:-}" != "unsigned" ]; then
+        if [ "${CC_HAHA_LOCAL_UNSIGNED_BUILD:-}" != "1" ] \
+          || [ "${CI:-}" = "true" ] || [ "${CI:-}" = "1" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+          die "Ad-hoc signing requires explicit local unsigned packaging or an unsigned release mode."
+        fi
       fi
-      log "warning: local ad-hoc helper build; Computer Use is unavailable without a shared signing certificate."
+      log "warning: ad-hoc helper build; Computer Use is unavailable without a shared signing certificate."
     fi
     log "identity: $SIGN_IDENTITY (from CC_HAHA_SIGN_IDENTITY)"
     return 0

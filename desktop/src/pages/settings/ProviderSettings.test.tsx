@@ -53,6 +53,7 @@ describe('DeepSeek preset defaults', () => {
     vi.spyOn(useSettingsStore.getState(), 'fetchAll').mockResolvedValue()
     vi.spyOn(providersApi, 'list').mockResolvedValue({ providers: [], activeId: null })
     vi.spyOn(providersApi, 'getSettings').mockResolvedValue({})
+    vi.spyOn(providersApi, 'updateSettings').mockResolvedValue({ ok: true })
     const create = vi.spyOn(providersApi, 'create').mockImplementation(async (input) => ({
       provider: { ...input, id: 'new-deepseek', apiFormat: input.apiFormat ?? 'anthropic' },
     }))

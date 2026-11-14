@@ -5,6 +5,10 @@ on:
     tags: ['v*.*.*']
   workflow_call:
     inputs:
+      macos_signing:
+        required: false
+        default: unsigned
+        type: string
       official_release:
         required: false
         default: false
@@ -21,6 +25,12 @@ on:
         type: boolean
   workflow_dispatch:
     inputs:
+      macos_signing:
+        description: 'macOS signing: unsigned has no Computer Use or automatic updates'
+        required: false
+        default: unsigned
+        type: choice
+        options: [unsigned, signed]
       release_tag:
         description: 'Release tag to publish (vX.Y.Z)'
         required: false
@@ -185,26 +195,35 @@ jobs:
           SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG }}
           SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG }}
           RELEASE_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true }}
+          MACOS_SIGNING_MODE: ${{ inputs.macos_signing || vars.MACOS_SIGNING_MODE || 'unsigned' }}
           WINDOWS_SIGNING_ENABLED: ${{ vars.WINDOWS_SIGNING_ENABLED == 'true' }}
           WINDOWS_SIGNING_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_signing || 'auto' }}
         run: |
-          # macOS signing + notarization is preferred: Squirrel.Mac auto-update and
-          # first-launch Gatekeeper approval and Computer Use client attestation
-          # require a consistent Developer ID build. Drafts use the same native
-          # runtime, so an unsigned macOS lane would be a knowingly broken app.
-          missing=()
-          [ -n "$CSC_LINK" ] || missing+=("MACOS_CERTIFICATE")
-          [ -n "$CSC_KEY_PASSWORD" ] || missing+=("MACOS_CERTIFICATE_PASSWORD")
-          [ -n "$APPLE_ID" ] || missing+=("APPLE_ID")
-          [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] || missing+=("APPLE_APP_SPECIFIC_PASSWORD")
-          [ -n "$APPLE_TEAM_ID" ] || missing+=("APPLE_TEAM_ID")
-          if [ "${#missing[@]}" -gt 0 ]; then
-            printf '::error::Missing macOS signing/notarization secrets (%s): refusing to build a macOS release whose Computer Use runtime cannot pass client attestation.\n' "${missing[*]}"
-            echo "macos_signed=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          else
-            echo "macos_signed=true" >> "$GITHUB_OUTPUT"
-          fi
+          # Unsigned is an explicit distribution mode, never a missing-secret fallback.
+          case "$MACOS_SIGNING_MODE" in
+            unsigned)
+              echo "::warning::Unsigned macOS release: not notarized; macOS may block launch, Computer Use is unavailable, and updates require manual installation. OS safeguards and client attestation remain enforced."
+              echo "macos_signed=false" >> "$GITHUB_OUTPUT"
+              ;;
+            signed)
+              missing=()
+              [ -n "$CSC_LINK" ] || missing+=("MACOS_CERTIFICATE")
+              [ -n "$CSC_KEY_PASSWORD" ] || missing+=("MACOS_CERTIFICATE_PASSWORD")
+              [ -n "$APPLE_ID" ] || missing+=("APPLE_ID")
+              [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] || missing+=("APPLE_APP_SPECIFIC_PASSWORD")
+              [ -n "$APPLE_TEAM_ID" ] || missing+=("APPLE_TEAM_ID")
+              if [ "${#missing[@]}" -gt 0 ]; then
+                printf '::error::Missing macOS signing/notarization secrets (%s): refusing to downgrade a signed macOS release to unsigned.\n' "${missing[*]}"
+                echo "macos_signed=false" >> "$GITHUB_OUTPUT"
+                exit 1
+              fi
+              echo "macos_signed=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::Unknown macos_signing mode: ${MACOS_SIGNING_MODE}"
+              exit 1
+              ;;
+          esac
           # Windows signing is opt-in while SignPath approval is pending: the
           # WINDOWS_SIGNING_ENABLED repository variable turns it on for every
           # trigger, and a manual run may override it either way (for example
@@ -556,6 +575,15 @@ jobs:
           echo "ECHOFLOW_CI_CERTIFICATE=$certificate_path" >> "$GITHUB_ENV"
           echo "Imported native-runtime signing identity: $identity"
 
+      - name: Select unsigned macOS native runtime identities
+        if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed == 'false'
+        shell: bash
+        run: |
+          echo "ECHOFLOW_SIGN_IDENTITY=-" >> "$GITHUB_ENV"
+          echo "CC_HAHA_SIGN_IDENTITY=-" >> "$GITHUB_ENV"
+          echo "ECHOFLOW_MACOS_SIGNING_MODE=unsigned" >> "$GITHUB_ENV"
+          echo "CU_HELPER_TIMESTAMP_MODE=none" >> "$GITHUB_ENV"
+
       - name: Prepare bundled ripgrep
         working-directory: desktop
         env:
@@ -790,11 +818,16 @@ jobs:
         working-directory: desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Unsigned fallback: do not pass CSC_LINK / APPLE_* / WIN_CSC_* here.
-          # Empty secrets are rendered as empty strings, and electron-builder
-          # treats an empty CSC_LINK key as an explicit certificate path.
+          # Do not pass signing secrets: an empty CSC_LINK is an explicit certificate path.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: node ./node_modules/electron-builder/out/cli/cli.js ${{ matrix.builder_args }} --publish never
+        shell: bash
+        run: |
+          if [ "${{ matrix.smoke_platform }}" = "macos" ]; then
+            unset CSC_NAME CSC_LINK CSC_KEY_PASSWORD CSC_KEYCHAIN CSC_INSTALLER_LINK CSC_INSTALLER_KEY_PASSWORD
+            node ./node_modules/electron-builder/out/cli/cli.js ${{ matrix.builder_args }} --publish never -c.mac.identity=- -c.mac.notarize=false -c.mac.timestamp=none
+          else
+            node ./node_modules/electron-builder/out/cli/cli.js ${{ matrix.builder_args }} --publish never
+          fi
 
       # A real NSIS target is intentional here. electron-builder writes
       # resources/app-update.yml only while packaging an updater-capable target;
@@ -981,7 +1014,7 @@ jobs:
 
       - name: Warn unsigned macOS launch policy skipped
         if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed != 'true'
-        run: echo "::warning::Skipping macOS Gatekeeper package-smoke because this build is unsigned; users would need install-macos-unsigned.sh or xattr to open it."
+        run: echo "::warning::Unsigned macOS artifacts have structural checks only, not Gatekeeper approval. macOS may block launch; Computer Use is unavailable and updates require manual installation. OS safeguards remain enabled."
 
       - name: Validate matrix release asset set
         shell: bash
@@ -1100,6 +1133,7 @@ jobs:
     needs:
       - build
       - release-verify-gate
+      - signing-preflight
     runs-on: ubuntu-latest
     outputs:
       release_tag: v${{ steps.version.outputs.value }}
@@ -1238,18 +1272,30 @@ jobs:
           path: artifacts/update-metadata
           merge-multiple: true
 
+      - name: Exclude unsigned macOS update metadata
+        if: needs.signing-preflight.outputs.macos_signed == 'false'
+        shell: bash
+        run: rm -f artifacts/update-metadata/latest-mac*.yml
+
       - name: Merge standard update metadata
         run: bun run scripts/release-update-metadata.ts --metadata-dir artifacts/update-metadata --out-dir artifacts/update-metadata-standard
 
       - name: Validate standard update metadata set
         shell: bash
+        env:
+          MACOS_SIGNED: ${{ needs.signing-preflight.outputs.macos_signed }}
         run: |
           expected=(
-            "latest-mac.yml"
             "latest-linux.yml"
             "latest-linux-arm64.yml"
             "latest.yml"
           )
+          if [ "$MACOS_SIGNED" = "true" ]; then
+            expected+=("latest-mac.yml")
+          elif [ -f "artifacts/update-metadata-standard/latest-mac.yml" ]; then
+            echo "::error::Unsigned macOS releases must not publish automatic update metadata."
+            exit 1
+          fi
           missing=()
           for file in "${expected[@]}"; do
             [ -f "artifacts/update-metadata-standard/$file" ] || missing+=("$file")
@@ -1268,6 +1314,7 @@ jobs:
           RELEASE_TAG: v${{ steps.version.outputs.value }}
           RELEASE_NAME: EchoFlow Code v${{ steps.version.outputs.value }}
           RELEASE_BODY: ${{ steps.release_notes.outputs.body }}
+          MACOS_SIGNED: ${{ needs.signing-preflight.outputs.macos_signed }}
         run: |
           release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")
           current_id=$(jq -r '.id' <<<"$release_json")
@@ -1279,6 +1326,14 @@ jobs:
           fi
           gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
             -f "name=${RELEASE_NAME}" -f "body=${RELEASE_BODY}" -F draft=true -F prerelease=false >/dev/null
+          # A previous signed draft may have left an updater channel behind.
+          if [ "$MACOS_SIGNED" = "false" ]; then
+            assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")
+            asset_id=$(jq -r '.[] | select(.name == "latest-mac.yml") | .id' <<<"$assets")
+            if [ -n "$asset_id" ]; then
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" >/dev/null
+            fi
+          fi
           shopt -s nullglob
           files=(
             artifacts/release-assets/*.dmg

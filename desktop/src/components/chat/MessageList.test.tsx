@@ -8503,6 +8503,10 @@ describe('MessageList nested tool calls', () => {
   })
 
   it('rewinds a failed continue through the authoritative conversation-only target', async () => {
+    resetWorkspaceFileStatsForTests()
+    vi.spyOn(sessionsApi, 'statWorkspaceFiles').mockResolvedValue({
+      files: [{ path: 'src/kept.ts', state: 'file' }],
+    })
     const initialChatStore = useChatStore.getInitialState()
     useChatStore.setState({
       reloadHistory: initialChatStore.reloadHistory,

@@ -4,6 +4,10 @@ import type { Locale } from '../i18n/locale'
 import terminalSettingsV1 from '../test/fixtures/terminal-settings-v1.json'
 import { browserHost } from '../lib/desktopHost/browserHost'
 
+vi.mock('../api/traces', () => ({
+  tracesApi: { getSettings: vi.fn().mockResolvedValue({ enabled: true, storageDir: '/tmp/test-traces' }) },
+}))
+
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
   let reject!: (reason?: unknown) => void

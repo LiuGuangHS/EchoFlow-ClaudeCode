@@ -342,7 +342,10 @@ describe('release desktop workflow', () => {
     expect(notarizationWarningStep).toContain("if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed == 'true' && github.event_name == 'workflow_dispatch' && inputs.notarize_macos == false")
     expect(notarizationWarningStep).toContain('Developer ID signed but not notarized')
     expect(unsignedWarningStep).toContain("if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed != 'true'")
-    expect(unsignedWarningStep).toContain('install-macos-unsigned.sh')
+    expect(unsignedWarningStep).toContain('Computer Use is unavailable and updates require manual installation')
+    expect(unsignedWarningStep).toContain('OS safeguards remain enabled')
+    expect(unsignedWarningStep).not.toContain('install-macos-unsigned.sh')
+    expect(unsignedWarningStep).not.toContain('xattr')
     expect(workflow.indexOf('Verify macOS launch policy')).toBeLessThan(workflow.indexOf('Upload release artifacts for final publish'))
   })
 
@@ -437,7 +440,7 @@ describe('release desktop workflow', () => {
     )
   })
 
-  test('release workflow requires signed macOS Computer Use and preserves SignPath draft policy', () => {
+  test('release workflow preserves signed macOS requirements and SignPath draft policy', () => {
     const workflow = readReleaseWorkflow()
     const signingJob = workflow.match(
       /signing-preflight:[\s\S]*?(?:\n {2}[a-zA-Z0-9_-]+:|$)/,
@@ -469,7 +472,7 @@ describe('release desktop workflow', () => {
       expect(signingJob).toContain(setting)
     }
     expect(signingJob).toContain('Missing macOS signing/notarization secrets')
-    expect(signingJob).toContain('refusing to build a macOS release whose Computer Use runtime cannot pass client attestation')
+    expect(signingJob).toContain('refusing to downgrade a signed macOS release to unsigned')
     expect(signingJob).toContain("RELEASE_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true }}")
     expect(signingJob).toContain('macos_signed=false')
     expect(signingJob).toContain('macos_signed=true')
@@ -489,6 +492,84 @@ describe('release desktop workflow', () => {
     expect(buildJob).toContain('- signing-preflight')
     expect(workflow.indexOf('signing-preflight:')).toBeLessThan(workflow.indexOf('build:'))
     expect(workflow.indexOf('signing-preflight:')).toBeLessThan(workflow.indexOf('Upload release artifacts for final publish'))
+  })
+
+  test('macOS release mode is explicit across reusable, manual and tag entrypoints', () => {
+    const workflow = parse(readReleaseWorkflow())
+    expect(workflow.on.workflow_call.inputs.macos_signing).toEqual({ required: false, default: 'unsigned', type: 'string' })
+    expect(workflow.on.workflow_dispatch.inputs.macos_signing).toMatchObject({ default: 'unsigned', type: 'choice', options: ['unsigned', 'signed'] })
+    const preflight = workflow.jobs['signing-preflight'].steps.find((step: { id?: string }) => step.id === 'validate')
+    expect(preflight.env.MACOS_SIGNING_MODE).toBe("${{ inputs.macos_signing || vars.MACOS_SIGNING_MODE || 'unsigned' }}")
+    const caller = parse(readFileSync('.github/workflows/release-please.yml', 'utf8'))
+    expect(caller.jobs['publish-release'].with.macos_signing).toBe("${{ vars.MACOS_SIGNING_MODE || 'unsigned' }}")
+    const prepare = extractStep(readReleaseWorkflow(), 'Select unsigned macOS native runtime identities')
+    expect(prepare).toContain("needs.signing-preflight.outputs.macos_signed == 'false'")
+    for (const assignment of ['ECHOFLOW_SIGN_IDENTITY=-', 'CC_HAHA_SIGN_IDENTITY=-', 'ECHOFLOW_MACOS_SIGNING_MODE=unsigned']) {
+      expect(prepare).toContain(assignment)
+    }
+    expect(readReleaseWorkflow().indexOf('Select unsigned macOS native runtime identities')).toBeLessThan(readReleaseWorkflow().indexOf('- name: Build sidecars'))
+    const unsignedBuild = extractStep(readReleaseWorkflow(), 'Build unsigned Electron release artifacts')
+    expect(unsignedBuild).toContain('-c.mac.identity=- -c.mac.notarize=false -c.mac.timestamp=none')
+  })
+
+  test('unsigned macOS packaging pins ad-hoc options and does not import stale credentials', () => {
+    const workflow = parse(readReleaseWorkflow())
+    const step = workflow.jobs.build.steps.find((step: { name: string }) => step.name === 'Build unsigned Electron release artifacts')
+    const directory = mkdtempSync(join(tmpdir(), 'unsigned-mac-builder-'))
+    try {
+      for (const platform of ['macos', 'windows', 'linux']) {
+        const output = join(directory, platform)
+        const run = step.run.replaceAll('${{ matrix.smoke_platform }}', platform).replaceAll('${{ matrix.builder_args }}', '--fixture-target')
+        const result = Bun.spawnSync(['bash', '-e', '-c', `node() { printf '%s\\n' "$@" "CSC_NAME=\${CSC_NAME-unset}" "CSC_LINK=\${CSC_LINK-unset}" > "$OUTPUT"; }\n${run}`], {
+          cwd: directory,
+          env: { PATH: process.env.PATH, HOME: directory, OUTPUT: output, CSC_NAME: 'stale', CSC_LINK: 'stale' },
+        })
+        expect(result.exitCode).toBe(0)
+        const args = readFileSync(output, 'utf8')
+        if (platform === 'macos') {
+          for (const argument of ['-c.mac.identity=-', '-c.mac.notarize=false', '-c.mac.timestamp=none', 'CSC_NAME=unset', 'CSC_LINK=unset']) {
+            expect(args).toContain(argument)
+          }
+        } else {
+          expect(args).not.toContain('-c.mac.')
+        }
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('unsigned macOS metadata is kept for smoke but excluded from publication', () => {
+    const workflow = parse(readReleaseWorkflow())
+    const steps = workflow.jobs['publish-release'].steps
+    const exclude = steps.find((step: { name: string }) => step.name === 'Exclude unsigned macOS update metadata')
+    expect(exclude).toBeDefined()
+    expect(exclude.if).toBe("needs.signing-preflight.outputs.macos_signed == 'false'")
+    expect(steps.indexOf(exclude)).toBeLessThan(steps.findIndex((step: { name: string }) => step.name === 'Merge standard update metadata'))
+    const validate = steps.find((step: { name: string }) => step.name === 'Validate standard update metadata set')
+    expect(validate.env.MACOS_SIGNED).toBe('${{ needs.signing-preflight.outputs.macos_signed }}')
+    const directory = mkdtempSync(join(tmpdir(), 'unsigned-mac-metadata-'))
+    try {
+      const source = join(directory, 'artifacts/update-metadata')
+      const output = join(directory, 'artifacts/update-metadata-standard')
+      mkdirSync(source, { recursive: true })
+      mkdirSync(output, { recursive: true })
+      const names = ['latest-mac-macOS-ARM64.yml', 'latest-mac-macOS-x64.yml', 'latest-linux.yml', 'latest-linux-arm64.yml', 'latest.yml']
+      for (const name of names) writeFileSync(join(source, name), 'fixture')
+      const run = (script: string, signed = 'false') => Bun.spawnSync(['bash', '-e', '-c', script], {
+        cwd: directory, env: { PATH: process.env.PATH, HOME: directory, MACOS_SIGNED: signed },
+      }).exitCode
+      expect(run(exclude.run)).toBe(0)
+      expect(readdirSync(source).sort()).toEqual(['latest-linux-arm64.yml', 'latest-linux.yml', 'latest.yml'])
+      for (const name of readdirSync(source)) writeFileSync(join(output, name), 'fixture')
+      expect(run(validate.run)).toBe(0)
+      expect(run(validate.run, 'true')).not.toBe(0)
+      writeFileSync(join(output, 'latest-mac.yml'), 'fixture')
+      expect(run(validate.run, 'true')).toBe(0)
+      expect(run(validate.run)).not.toBe(0)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   test('Windows signing stays off until the repository variable or a manual run asks for it', async () => {
@@ -522,17 +603,26 @@ describe('release desktop workflow', () => {
       { name: 'enabled draft missing SignPath', env: { WINDOWS_SIGNING_ENABLED: 'true', RELEASE_DRAFT: 'true', SIGNPATH_API_TOKEN: '' }, code: 0, outputs: unsigned },
       { name: 'manual trial missing SignPath', env: { WINDOWS_SIGNING_MODE: 'signed', RELEASE_DRAFT: 'true', SIGNPATH_API_TOKEN: '' }, code: 1, outputs: 'macos_signed=true\n' },
       { name: 'unknown manual mode', env: { WINDOWS_SIGNING_MODE: 'sometimes' }, code: 1, outputs: 'macos_signed=true\n' },
-      { name: 'unsigned Windows still requires macOS credentials', env: { CSC_LINK: '' }, code: 1, outputs: 'macos_signed=false\n' },
+      { name: 'unsigned Windows still requires signed macOS credentials', env: { CSC_LINK: '' }, code: 1, outputs: 'macos_signed=false\n' },
+      ...['CSC_LINK', 'CSC_KEY_PASSWORD', 'APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID'].map(secret => ({
+        name: `signed macOS fails without ${secret}`, env: { [secret]: '' }, code: 1, outputs: 'macos_signed=false\n',
+      })),
+      { name: 'explicit unsigned macOS needs no Apple credentials', env: { MACOS_SIGNING_MODE: 'unsigned', CSC_LINK: '', CSC_KEY_PASSWORD: '', APPLE_ID: '', APPLE_APP_SPECIFIC_PASSWORD: '', APPLE_TEAM_ID: '' }, code: 0, outputs: 'macos_signed=false\nwindows_signed=false\n' },
+      { name: 'unsigned macOS does not skip requested Windows signing', env: { MACOS_SIGNING_MODE: 'unsigned', WINDOWS_SIGNING_MODE: 'signed' }, code: 0, outputs: 'macos_signed=false\nwindows_signed=true\n' },
+      { name: 'unsigned macOS does not hide Windows signing failure', env: { MACOS_SIGNING_MODE: 'unsigned', WINDOWS_SIGNING_MODE: 'signed', SIGNPATH_API_TOKEN: '' }, code: 1, outputs: 'macos_signed=false\n' },
+      { name: 'unknown macOS mode is rejected', env: { MACOS_SIGNING_MODE: 'sometimes' }, code: 1, outputs: '' },
     ]
     try {
       for (const [index, scenario] of cases.entries()) {
         const output = join(directory, `output-${index}`)
         const logPath = join(directory, `log-${index}`)
+        writeFileSync(output, '')
         // Capture inside the shell so Bun's test-output pipes cannot affect echo/printf exit codes.
         const result = Bun.spawn(['bash', '-e', '-c', 'exec > "$PREFLIGHT_LOG" 2>&1\n' + preflight.run], {
           env: {
             ...configured,
             RELEASE_DRAFT: 'false',
+            MACOS_SIGNING_MODE: 'signed',
             WINDOWS_SIGNING_ENABLED: 'false',
             WINDOWS_SIGNING_MODE: 'auto',
             ...scenario.env,
@@ -770,7 +860,7 @@ elif [[ "$*" == *"--method POST"* ]]; then
 elif [[ "$*" == *"--method DELETE"* ]]; then
   printf '{}'
 elif [[ "$*" == *"/releases/42/assets?"* ]]; then
-  printf '[{"id":99,"name":"EchoFlow-Code-1.2.3-win-x64.exe"}]'
+  printf '[{"id":99,"name":"EchoFlow-Code-1.2.3-win-x64.exe"},{"id":100,"name":"latest-mac.yml"}]'
 elif [[ "$*" == *"/releases/42"* ]]; then
   printf '%s\\n' "$FAKE_RELEASE"
 elif [[ "$*" == *"/releases?"* ]]; then
@@ -802,6 +892,7 @@ fi
           RELEASE_NAME: 'EchoFlow Code v1.2.3',
           RELEASE_BODY: 'Fixture release',
           OFFICIAL_RELEASE: 'true',
+          MACOS_SIGNED: 'false',
           FAKE_RELEASE: JSON.stringify(release),
           FAKE_RELEASE_PAGES: JSON.stringify([[], [release]]),
           FAKE_LOOKUP_FAILURE: 'false',
@@ -840,6 +931,8 @@ fi
       expect(uploaded.code).toBe(0)
       expect(uploaded.log).toContain('-F draft=true')
       expect(uploaded.log).toContain('--method DELETE repos/fixture/release/releases/assets/99')
+      expect(uploaded.log).toContain('--method DELETE repos/fixture/release/releases/assets/100')
+      expect(run(upload, { MACOS_SIGNED: 'true' }).log).not.toContain('--method DELETE repos/fixture/release/releases/assets/100')
       expect(uploaded.log).toContain('https://uploads.github.com/repos/fixture/release/releases/42/assets?name=EchoFlow-Code-1.2.3-win-x64.exe')
       expect(uploaded.log).toContain('assets?name=latest.yml')
       expect(uploaded.log).toContain('assets?name=EchoFlow-Code-1.2.3-win-x64.exe.blockmap')
@@ -917,7 +1010,7 @@ fi
     const lanes = ['verify-governance', 'verify-runtime', 'verify-desktop']
     const packageScripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts as Record<string, string>
 
-    expect(jobs['publish-release'].needs).toEqual(['build', 'release-verify-gate'])
+    expect(jobs['publish-release'].needs).toEqual(['build', 'release-verify-gate', 'signing-preflight'])
 
     const gate = jobs['release-verify-gate']
     expect(gate, 'release-verify-gate job').toBeDefined()

@@ -6,8 +6,7 @@
       "include-component-in-tag": false,
       "include-v-in-tag": true,
       "skip-changelog": true,
-      "versioning": "always-bump-patch",
-      "release-as": "0.7.7"
+      "versioning": "always-bump-patch"
     }
   },
   "bump-patch-for-minor-pre-major": true,
