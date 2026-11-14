@@ -931,6 +931,7 @@ fi
       const upload = 'Publish existing GitHub release by ID'
       const uploaded = run(upload)
       expect(uploaded.code).toBe(0)
+      expect(uploaded.log).toContain('-f tag_name=v1.2.3')
       expect(uploaded.log).toContain('-F draft=true')
       expect(uploaded.log).toContain('--method DELETE repos/fixture/release/releases/assets/99')
       expect(uploaded.log).toContain('--method DELETE repos/fixture/release/releases/assets/100')
@@ -989,7 +990,9 @@ fi
     const undraft = extractStep(publishJob ?? '', 'Publish GitHub release after complete upload')
     expect(undraft).toContain('if: inputs.official_release == true')
     expect(undraft).toContain('RELEASE_ID: ${{ steps.release.outputs.release_id }}')
-    expect(undraft).toContain('"repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" -F draft=false')
+    expect(undraft).toContain('"repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"')
+    expect(undraft).toContain('-f "tag_name=${RELEASE_TAG}"')
+    expect(undraft).toContain('-F draft=false')
     expect(publishJob).not.toContain('gh release edit')
     expect(publishJob).toContain('Keep workflow-dispatch release as draft')
     expect(publishJob).toContain("if: github.event_name == 'workflow_dispatch' && inputs.draft == true")

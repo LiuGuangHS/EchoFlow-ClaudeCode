@@ -1325,7 +1325,7 @@ jobs:
             exit 1
           fi
           gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
-            -f "name=${RELEASE_NAME}" -f "body=${RELEASE_BODY}" -F draft=true -F prerelease=false >/dev/null
+            -f "tag_name=${RELEASE_TAG}" -f "name=${RELEASE_NAME}" -f "body=${RELEASE_BODY}" -F draft=true -F prerelease=false >/dev/null
           # A previous signed draft may have left an updater channel behind.
           if [ "$MACOS_SIGNED" = "false" ]; then
             assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")
@@ -1397,7 +1397,8 @@ jobs:
             echo "::error::Verified release identity or draft state changed before publication."
             exit 1
           fi
-          undrafted_id=$(gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" -F draft=false --jq 'select(.draft == false) | .id')
+          undrafted_id=$(gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -f "tag_name=${RELEASE_TAG}" -F draft=false --jq 'select(.draft == false) | .id')
           if [ "$undrafted_id" != "$RELEASE_ID" ]; then
             echo "::error::The verified release ID was not undrafted."
             exit 1
