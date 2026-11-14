@@ -1323,6 +1323,8 @@ function runHeadlessStreaming(
     | 'finally_post_flush'
     | undefined
   let inputClosed = false
+  let outputClosing = false
+  let mailboxPolls = 0
   let shutdownPromptInjected = false
   const leadMailboxPoll = createLeadMailboxPollState()
   const teamFinishedReminder: TeamFinishedReminderState = {}
@@ -2216,7 +2218,7 @@ function runHeadlessStreaming(
   })
 
   const run = async () => {
-    if (running) {
+    if (running || outputClosing) {
       return
     }
 
@@ -2768,7 +2770,9 @@ function runHeadlessStreaming(
     // Check for unread teammate messages and process them
     // This mirrors what useInboxPoller does in interactive REPL mode
     // Poll until no more messages (teammates may still be working)
-    {
+    // Command draining has released `running`, but mailbox I/O still owns output.
+    mailboxPolls += 1
+    try {
       const currentAppState = getAppState()
       const teamContext = currentAppState.teamContext
 
@@ -2778,7 +2782,7 @@ function runHeadlessStreaming(
         // Keep polling until the team is shut down
         const POLL_INTERVAL_MS = 500
 
-        while (true) {
+        while (!outputClosing) {
           // Check if teammates are still active
           const refreshedState = getAppState()
           const teamName = refreshedState.teamContext?.teamName
@@ -2911,6 +2915,7 @@ function runHeadlessStreaming(
 
           // No messages - check if we need to prompt for shutdown
           // If input is closed and teammates are active, inject shutdown prompt once
+          if (inputClosed && !hasTeammatesRequiringShutdown(getAppState())) break
           if (inputClosed && !shutdownPromptInjected) {
             shutdownPromptInjected = true
             logForDebugging(
@@ -2927,6 +2932,7 @@ function runHeadlessStreaming(
             teamFinishedReminder,
             teamName,
           )
+          if (inputClosed && !hasTeammatesRequiringShutdown(getAppState())) break
           if (teamFinishedPrompt) {
             logForDebugging(
               '[print.ts] Approved team finished, reminding the lead to shut it down',
@@ -2940,9 +2946,11 @@ function runHeadlessStreaming(
           await sleep(POLL_INTERVAL_MS)
         }
       }
+    } finally {
+      mailboxPolls -= 1
     }
 
-    if (inputClosed) {
+    if (inputClosed && !outputClosing && !running && mailboxPolls === 0) {
       // Check for active swarm that needs shutdown
       const hasActiveSwarm = await (async () => {
         // Wait for any working in-process team members to finish
@@ -2956,11 +2964,13 @@ function runHeadlessStreaming(
         return hasTeammatesRequiringShutdown(refreshedAppState)
       })()
 
+      if (outputClosing || running || mailboxPolls > 0) return
       if (hasActiveSwarm) {
         // Team members are idle or pane-based - inject prompt to shut down team
         enqueue(createShutdownTeamPrompt())
         void run()
       } else {
+        outputClosing = true
         // Wait for any in-flight push suggestion before closing the output stream.
         if (suggestionState.inflightPromise) {
           await Promise.race([suggestionState.inflightPromise, sleep(5000)])
@@ -4653,7 +4663,8 @@ function runHeadlessStreaming(
     }
     inputClosed = true
     cronScheduler?.stop()
-    if (!running) {
+    if (!running && !outputClosing && mailboxPolls === 0) {
+      outputClosing = true
       // If a push-suggestion is in-flight, wait for it to emit before closing
       // the output stream (5 s safety timeout to prevent hanging).
       if (suggestionState.inflightPromise) {

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildProviderManagedEnv } from '../../../src/server/services/providerRuntimeEnv'
+import { isShutdownRequest } from '../../../src/utils/teammateMailbox'
+import { parseTeammateMessages } from '../../../src/components/messages/UserTeammateMessage'
 import { createQualityGateSandbox } from '../sandbox'
 import { startMockLlmServer } from './server'
 import type { MockReply, MockRequest } from './scriptedModel'
@@ -22,6 +24,7 @@ export function isExpectedRoutingCliExit(exitCode: number, signalCode: string | 
 type RoutingCase = {
   id: string
   teammate?: boolean
+  shutdownOnEof?: boolean
   parentModel?: string
   builtIn?: boolean
   manualOverride?: string
@@ -39,7 +42,7 @@ const routingCases: RoutingCase[] = [
   { id: 'explicit-preset-over-tool-alias', presetModel: PRO, toolModel: 'opus', opusModel: FLASH, expectedModel: PRO },
   { id: 'built-in-default', builtIn: true, opusModel: PRO, expectedModel: FLASH },
   { id: 'built-in-manual-override', builtIn: true, manualOverride: PRO, toolModel: 'opus', opusModel: FLASH, expectedModel: PRO },
-  { id: 'teammate-manual-pro', teammate: true, builtIn: true, manualOverride: 'opus', opusModel: PRO, expectedModel: PRO },
+  { id: 'teammate-manual-pro', teammate: true, shutdownOnEof: true, builtIn: true, manualOverride: 'opus', opusModel: PRO, expectedModel: PRO },
   { id: 'teammate-manual-flash', teammate: true, builtIn: true, parentModel: PRO, manualOverride: 'haiku', opusModel: PRO, expectedModel: FLASH },
   { id: 'teammate-automatic-alias', teammate: true, toolModel: 'opus', opusModel: PRO, expectedModel: FLASH },
 ]
@@ -94,24 +97,47 @@ export async function runAgentModelRoutingScenario(rootDir: string, artifactDir:
     let rootFinished = false
     let receivedRootResult = false
     let completedRootTurn = false
+    let requestedShutdown = false
+    let approvedShutdown = false
+    let receivedShutdownApproval = false
     const replyFor = (request: MockRequest): MockReply => {
       const last = request.messages?.at(-1)?.content
-      const childPrompt = typeof last === 'string'
-        ? last.includes(`${childMarker}_PROMPT`)
-        : last?.some(block => block.type === 'text' && block.text?.includes(`${childMarker}_PROMPT`))
+      // Later child turns carry mailbox messages, not the original spawn prompt.
+      const childPrompt = request.messages?.some(message => typeof message.content === 'string'
+        ? message.content.includes(`${childMarker}_PROMPT`)
+        : message.content?.some(block => block.type === 'text' && block.text?.includes(`${childMarker}_PROMPT`)))
       if (JSON.stringify(request.system ?? '').includes(childMarker) || childPrompt) {
         childModels.push(request.model)
         if (rootFinished) completedRootTurn = true
+        if (testCase.shutdownOnEof && requestedShutdown && !approvedShutdown) {
+          const text = typeof last === 'string' ? last : last?.map(block => block.type === 'text' ? block.text : '').join('\n') ?? ''
+          const shutdown = parseTeammateMessages(text).map(message => isShutdownRequest(message.content)).find(Boolean)
+          if (shutdown) {
+            approvedShutdown = true
+            return {
+              kind: 'message', content: [{ type: 'tool_use', id: 'routing_shutdown_approve', name: 'SendMessage',
+                input: { to: 'team-lead', message: { type: 'shutdown_response', request_id: shutdown.requestId, approve: true } } }], stopReason: 'tool_use',
+            }
+          }
+        }
         return textReply(childReply)
       }
       // Title/summary calls do not execute the Agent tool and are auxiliary.
       if (!request.tools?.some(tool => tool.name === 'Agent')) return textReply('Mock auxiliary reply')
       rootModels.push(request.model)
+      receivedShutdownApproval ||= JSON.stringify(last).includes('shutdown_approved')
       if (testCase.teammate && !emittedTeam) {
         emittedTeam = true
         return {
           kind: 'message', content: [{ type: 'tool_use', id: 'routing_team_create', name: 'TeamCreate',
             input: { team_name: 'routing-fixture-team' } }], stopReason: 'tool_use',
+        }
+      }
+      if (testCase.shutdownOnEof && !requestedShutdown && JSON.stringify(last).includes('Shut down your team')) {
+        requestedShutdown = true
+        return {
+          kind: 'message', content: [{ type: 'tool_use', id: 'routing_shutdown_request', name: 'SendMessage',
+            input: { to: 'routing-worker', message: { type: 'shutdown_request', reason: 'EOF fixture complete' } } }], stopReason: 'tool_use',
         }
       }
       if (emittedAgent) {
@@ -205,9 +231,8 @@ export async function runAgentModelRoutingScenario(rootDir: string, artifactDir:
         // it immediately can end print mode before the first turn is consumed.
         while ((!completedRootTurn || !receivedRootResult) && child.exitCode === null && !timedOut) await Bun.sleep(50)
         child.stdin.end()
-        // Teammates keep their inbox loop alive after EOF. Once both the parent
-        // result and the outgoing child request are observed, stop this fixture.
-        if (testCase.teammate && completedRootTurn && receivedRootResult && child.exitCode === null) {
+        // Routing-only cases stop their idle worker; the EOF case must shut down naturally.
+        if (testCase.teammate && !testCase.shutdownOnEof && completedRootTurn && receivedRootResult && child.exitCode === null) {
           stoppedTeammate = true
           child.kill('SIGTERM')
         }
@@ -220,6 +245,10 @@ export async function runAgentModelRoutingScenario(rootDir: string, artifactDir:
         assert.ok(rootModels.every(model => model === parentModel), `${testCase.id}: parent left ${parentModel}: ${rootModels}`)
         assert.ok(receivedAgentResult, `${testCase.id}: Agent failed or its result was not returned upstream`)
         assert.ok(receivedRootResult, `${testCase.id}: CLI did not report the completed parent turn`)
+        if (testCase.shutdownOnEof) {
+          assert.ok(requestedShutdown && approvedShutdown && receivedShutdownApproval, 'EOF must deliver the shutdown turn and receive the worker approval')
+          assert.equal(exitCode, 0, 'The team must finish naturally after EOF without a termination signal')
+        }
         assert.ok(stdout.includes(doneMarker), `${testCase.id}: CLI did not complete the root turn`)
         assert.ok(childModels.length > 0, `${testCase.id}: no child request reached the mock upstream`)
         assert.ok(childModels.every(model => model === testCase.expectedModel),

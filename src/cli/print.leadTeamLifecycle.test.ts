@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, expect, mock, test } from 'bun:test'
+import { afterAll, beforeEach, expect, mock, spyOn, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -39,7 +39,7 @@ const { __runHeadlessStreamingForTests, TEAM_FINISHED_SETTLE_MS } = await import
 const { StructuredIO } = await import('./structuredIO.js')
 const { Stream } = await import('../utils/stream.js')
 const { getDefaultAppState } = await import('../state/AppStateStore.js')
-const { clearCommandQueue } = await import('../utils/messageQueueManager.js')
+const { clearCommandQueue, getCommandQueue, subscribeToCommandQueue } = await import('../utils/messageQueueManager.js')
 const { setIsInteractive, getIsInteractive } = await import(
   '../bootstrap/state.js'
 )
@@ -147,6 +147,8 @@ function startLead(team: string) {
   return {
     say: (content: string) => send({ type: 'user', message: { role: 'user', content } }),
     teamName: () => state.teamContext?.teamName,
+    endInput: () => input.done(),
+    finished: drained,
     async control(subtype: string, fields: Record<string, unknown> = {}) {
       const id = `${subtype}-${Math.random()}`
       send({ type: 'control_request', request_id: id, request: { subtype, ...fields } })
@@ -226,6 +228,100 @@ test('a paused team is not reminded while the host holds its lead', async () => 
     await lead.close()
   }
 }, 30_000)
+
+test.each([false, true])('EOF preserves a pending mailbox turn and team shutdown (mail: %s)', async withMail => {
+  const team = `eof-pending-poll-${withMail}`
+  await finishedTeam(team)
+  if (withMail) {
+    await mailbox.writeToMailbox('team-lead', {
+      from: 'worker', text: 'final worker report', timestamp: new Date().toISOString(),
+    }, team)
+  }
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  const claimed = Promise.withResolvers<void>()
+  const originalRead = mailbox.readUnreadMessages
+  const originalClaim = mailbox.claimMailboxMessages
+  let held = false
+  const read = spyOn(mailbox, 'readUnreadMessages').mockImplementation(async (agentName, teamName) => {
+    const messages = await originalRead(agentName, teamName)
+    if (teamName === team && !held) {
+      held = true
+      entered.resolve()
+      await release.promise
+    }
+    return messages
+  })
+  const claim = spyOn(mailbox, 'claimMailboxMessages').mockImplementation(async (...args) => {
+    const messages = await originalClaim(...args)
+    if (args[1] === team) claimed.resolve()
+    return messages
+  })
+  const lead = startLead(team)
+  let closed = false
+  void lead.finished.then(() => { closed = true })
+  try {
+    lead.say('start')
+    await entered.promise
+    lead.endInput()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    release.resolve()
+    if (withMail) {
+      await claimed.promise
+      expect(await originalRead('team-lead', team)).toEqual([])
+      await until(() => closed || prompts.some(prompt => prompt.text.includes('final worker report')))
+      expect(prompts.some(prompt => prompt.text.includes('final worker report'))).toBe(true)
+    }
+    await until(() => closed || prompts.some(prompt => prompt.text.includes('Shut down your team')))
+    expect(prompts.some(prompt => prompt.text.includes('Shut down your team'))).toBe(true)
+    expect(closed).toBe(false)
+  } finally {
+    release.resolve()
+    await lead.close()
+    read.mockRestore()
+    claim.mockRestore()
+  }
+}, 10_000)
+
+test('a closed lead cannot enqueue a turn when its pending mailbox read returns', async () => {
+  const team = 'closed-output-pending-poll'
+  await finishedTeam(team)
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  const originalRead = mailbox.readUnreadMessages
+  let held = false
+  const read = spyOn(mailbox, 'readUnreadMessages').mockImplementation(async (agentName, teamName) => {
+    const messages = await originalRead(agentName, teamName)
+    if (teamName === team && !held) {
+      held = true
+      entered.resolve()
+      await release.promise
+    }
+    return messages
+  })
+  const lateCommands: unknown[] = []
+  let closed = false
+  const unsubscribe = subscribeToCommandQueue(() => {
+    if (closed) lateCommands.push(...getCommandQueue().map(command => command.value))
+  })
+  const lead = startLead(team)
+  try {
+    lead.say('start')
+    await entered.promise
+    const closing = lead.close()
+    release.resolve()
+    await closing
+    closed = true
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(lateCommands).toEqual([])
+    expect(prompts.map(prompt => prompt.text)).toEqual(['start'])
+  } finally {
+    release.resolve()
+    await lead.close()
+    read.mockRestore()
+    unsubscribe()
+  }
+}, 10_000)
 
 test('a lead lets go of a team the host ended, and only that team', async () => {
   const team = 'host-ended-team'
