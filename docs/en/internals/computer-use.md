@@ -7,7 +7,7 @@ order: 12
 
 # Computer Use Architecture
 
-Computer Use exposes interface observation and desktop actions to the Coding Agent through a built-in MCP server. macOS keeps its existing JavaScript session and Swift `cu-helper` engine; Windows and Linux use a pinned copy of Vercel Labs `agent-desktop`. Start with the [user guide](../desktop/computer-use.md) for setup.
+Computer Use exposes interface observation and desktop actions to the Coding Agent through a built-in MCP server. macOS keeps its existing JavaScript session and Swift `cu-helper` engine; Windows and Linux use a pinned copy of Vercel Labs `agent-desktop`. Start with the [user guide](../desktop/computer-use.md) for setup and [contracts and verification](computer-use-contracts.md) for observation, window input, and evidence boundaries.
 
 ## Call paths
 
@@ -25,6 +25,8 @@ Model / MCP client
 `setupComputerUseMCP()` registers tools only on supported platforms when the relevant binary resolves. The Settings API additionally performs a real native status probe: Windows/Linux return `engine: "agent-desktop"`, `runtime: "agent-desktop"`, and an `agentDesktop` status. A missing binary, denied accessibility service, or unresponsive Linux bus must not appear ready. Ready means the runtime is available, not that every command or app is supported.
 
 Desktop sessions refresh the Computer Use tool list before each turn. When the user explicitly requests Computer Use, the CLI checks the final tool list before sampling the model. An unavailable tool produces a specific error. When the tool is available, the turn uses native tools for desktop actions.
+
+<a id="preserve-boundaries-while-investigating"></a>
 
 ## One application authorization boundary
 
@@ -98,6 +100,8 @@ Turn cleanup disables the native cursor. A teardown failure or timeout marks the
 
 ## Build and distribution
 
+The macOS host, sidecar, and helper must satisfy existing signing-identity and shared-certificate checks. Unsigned/ad-hoc distribution packages lack the signing certificate required by this attestation, so Computer Use is unavailable and updates require manual installation. A completed build does not establish Gatekeeper approval, notarization, or installed-app CU acceptance. Do not disable OS safeguards or relax helper attestation to restore functionality.
+
 The pinned source is Vercel Labs `agent-desktop` **1.0.2**, commit `9eb9b296192fcb70bda25e918cd6dd66abfa3d0d`. `native/agent-desktop/UPSTREAM.json` records the revision and original copied-file hashes; `PATCHES.md` records local changes such as the product cursor shape.
 
 Prepare the stable Rust toolchain, target standard library, system linker dependencies, and locked Cargo cache before the offline build. Initial cache preparation can use:
@@ -116,6 +120,9 @@ bun desktop/scripts/native-agent-desktop.ts --target-triple x86_64-unknown-linux
 
 The development resolver can read the source tree's Cargo targets; the packaged resolver reads the app's binaries directory. Electron places these files in `app.asar.unpacked`, with `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES`, `UPSTREAM.json`, and `PATCHES.md` under `agent-desktop-licenses/`. Original upstream code retains its Apache-2.0 license. Dependencies keep their own licenses. Distributing an executable alone does not replace the required notices.
 
+<a id="computer-use-source-navigation"></a>
+<a id="from-entry-points-to-native-engines"></a>
+
 ## Source entry points
 
 | Path | Responsibility |
@@ -124,11 +131,16 @@ The development resolver can read the source tree's Cargo targets; the packaged 
 | `src/vendor/computer-use-mcp/mcpServer.ts`, `src/utils/computerUse/wrapper.tsx` | Session binding, async context, cancellation, product lock |
 | `src/vendor/computer-use-mcp/agentDesktopTools.ts`, `agentDesktopProtocol.ts`, `agentDesktopDispatch.ts` | Single MCP tool, complete command schema, queue |
 | `src/utils/computerUse/agentDesktopBridge.ts`, `agentDesktopBinary.ts`, `agentDesktopProcess.ts`, `agentDesktopResult.ts` | Native sessions, resolution, bounded child processes, image delivery |
+| `src/utils/computerUse/replRuntime.ts`, `replWorker.ts`, `replCompiler.ts`, `src/vendor/computer-use-mcp/replApi.ts` | macOS JavaScript sessions, worker, App API |
 | `native/cu-helper/` | macOS AX, targeted events, focus, window capture |
 | `native/agent-desktop/` | Pinned upstream Rust workspace and platform implementations |
 | `src/server/api/computer-use.ts` | Runtime status, global config, macOS permission-card API |
 | `desktop/src/pages/ComputerUseSettings.tsx` | Platform status, global enablement consent, recovery guidance |
 
-Regression tests use temporary config directories, fake runners, or loopback transports to prove argument, state, and result boundaries. They must not use a person's desktop, live providers, or user configuration as fixtures. Platform smoke tests are separate evidence; macOS compilation or mocks do not establish Windows/Linux input behavior.
+<a id="evidence-after-changes"></a>
+
+Regression tests use temporary config directories, fake runners, or loopback transports to prove argument, state, and result boundaries. They must not use a person's desktop, live providers, or user configuration as fixtures. Platform smoke tests are separate evidence; macOS compilation or mocks do not establish Windows/Linux input behavior. See [contracts and verification](computer-use-contracts.md) for observation, failure semantics, and acceptance dimensions.
+
+When investigating, check the selected engine, session identity, and observation result first. Do not silently switch execution paths and replay after failure.
 
 Session identity belongs to the host. Run explicit `session start` / `session end` as standalone calls; lifecycle changes inside `batch` are rejected so later commands cannot retain an ended session or orphan a cursor.

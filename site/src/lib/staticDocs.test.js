@@ -18,6 +18,16 @@ test('static Markdown exposes prose, resolves source-relative links and images, 
   assert.match(html, /&lt;script&gt;/)
 })
 
+test('English docs resolve a shared diagram outside their locale directory', () => {
+  const html = renderStaticDoc({
+    ...records[0],
+    sourcePath: 'docs/en/internals/agent.md',
+    path: '/en/internals/agent',
+    body: '![Overview](../../internals/images/01-agent-overview.png)',
+  }, records)
+  assert.match(html, /src="\/internals\/images\/01-agent-overview.png"/)
+})
+
 test('machine-readable index preserves source directories and bilingual section grouping', () => {
   assert.equal(markdownPath(records[0]), '/en/start/index.md')
   const index = llmsIndex(records, 'https://code.echoflow.cn')

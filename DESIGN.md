@@ -7,7 +7,7 @@
 - `desktop/src/theme/globals.css` 负责主题值和语义设计 token。
 - `desktop/src/components/AGENTS.md` 负责组件选择、实现、无障碍、本地化和测试契约。
 - 本文件负责视觉原则、页面角色和一致性决策。
-- `desktop/docs/redesign-paper-ink-seal.md` 是历史设计交接，其旧尺寸与实现清单不是现行权威依据。
+- [「纸·墨·印」历史交接](docs/_internal/archive/desktop-design.md#paper-ink-seal)的旧尺寸与实现清单不是现行权威依据。
 
 这些文档看似冲突时，主题值由 `globals.css` 负责，实现规则由组件指南负责，产品级视觉决策由本文件负责。应更新负责该事项的来源，而不是复制数值；涉及行为冲突时仍遵循根规范的调查规则。
 

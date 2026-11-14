@@ -9,7 +9,7 @@ order: 4
 
 Let Claude Code orchestrate multiple specialized agents to handle complex tasks in parallel.
 
-![Multi-Agent System Overview](./images/01-agent-overview.png)
+![Multi-Agent System Overview](../../internals/images/01-agent-overview.png)
 
 ## What Is the Multi-Agent System?
 
@@ -26,7 +26,7 @@ Core philosophy: **Break large tasks into specialized subtasks, execute them in 
 
 ## Six Built-in Agents
 
-![Six Built-in Agents](./images/02-agent-types.png)
+![Six Built-in Agents](../../internals/images/02-agent-types.png)
 
 Claude Code ships with 6 specialized agent types, each with a specific tool pool and intended use case:
 
@@ -207,7 +207,7 @@ Agent({
 
 ## Background Task Management
 
-![Agent Spawn Flow](./images/03-spawn-flow.png)
+![Agent Spawn Flow](../../internals/images/03-spawn-flow.png)
 
 ### Task States
 
@@ -248,7 +248,7 @@ When the `tengu_auto_background_agents` feature flag is enabled, foreground agen
 
 ## Agent Teams — Multi-Agent Collaboration
 
-![Agent Teams Collaboration](./images/04-agent-teams.png)
+![Agent Teams Collaboration](../../internals/images/04-agent-teams.png)
 
 Agent Teams is an advanced multi-agent collaboration mode where multiple agents work as a team, coordinating tasks through message-based communication.
 

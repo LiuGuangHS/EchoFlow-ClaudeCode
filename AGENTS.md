@@ -8,8 +8,6 @@
 
 - 编辑前运行 `git status --short`，并保留已有用户改动。
 - 将请求的结果贯穿实现、相关验证以及修复由改动造成的失败。范围内允许本地编辑和使用一次性 fixture 的确定性检查；首次实现或每次测试后无需等待审批。
-- 调查受影响行为及其调用方。必要时跨边界跟进修复以完成请求；仅在需要产品决策或超出授权范围的操作时提问。
-- 有帮助时使用子 Agent 进行独立调查或非重叠实现。给出具体问题或文件归属及预期证据；主 Agent 负责整合和最终验证。
 - 工具访问是能力，不是授权。除非用户明确请求，不得创建 / 切换分支、提交、推送、打开或合并 PR、发布版本、修改仓库设置或消耗在线 provider 额度。对话中已有授权仍然有效。
 
 ## 仓库地图
@@ -36,7 +34,6 @@
 
 ## 实现规则
 
-- 让改动紧贴请求的行为。复用既有 utilities、stores、services 和 test harness；仅在任务需要时添加依赖或抽象。
 - 保持 EchoFlow 产品所有权与执行引擎分离：项目、工作区、会话、任务、团队、计划、记忆、扩展、通知和 IM 都是产品能力。不要添加第二个 `RuntimeHost`、session writer 或隐藏执行循环。提交前选择一个 execution binding；接受后或消费状态不确定时，不得静默切换引擎并重放副作用。见[执行、数据与信任边界](docs/internals/execution-boundaries.md)。
 - Computer Use 在 macOS 和 Windows 都只有一个应用授权边界：在设置中启用并确认 consent dialog 后，授权所有应用。不得在该同意之后添加按应用 prompt、allowlist、denylist、分类访问等级或 host/helper 例外。全局禁用、OS 权限以及目标 / 进程有效性检查仍然适用。
 - `src/`、`desktop/src/` 或 `adapters/` 下的可执行 JS/TS 生产改动需要同区域回归测试，除非维护者明确批准例外。对于 bug，要复现失败或添加因预期原因失败的测试；无法复现时要报告。测试行为及受影响边界。见[测试设计](docs/internals/contributing.md#回归测试设计)和[执行边界](docs/internals/execution-boundaries.md)，获取状态转换、重放、持久化和信任边界证据。

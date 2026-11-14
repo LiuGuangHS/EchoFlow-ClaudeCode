@@ -1,0 +1,156 @@
+> 迁移说明（2026-11-14）：原根目录 `WORKSPACE-INTEGRATION.md` 移至本目录。以下正文逐字保留；其中日期、行号、授权、环境和验证结果属于当时的记录，不是本轮授权或当前候选的验收证据。未关闭项仍按原状态保留，不能因文档搬迁视为完成。原文中的代码与 `artifacts/` 路径均相对仓库根目录。
+
+# Workspace Integration Ledger
+
+## Scope and baseline
+
+- Baseline: `9062989d3f90f0e6a84ac2d26625f48e9b9a3e7a` on `integrate/cc-haha-overlay`.
+- Initial frozen inventory: 2,805 tracked modifications and 4,674 untracked files (7,479 paths total); 1,708 tracked files had content diffs, while 1,097 tracked paths were CRLF-only worktree differences against LF index content. No staged changes, unmerged entries, or mode changes were present.
+- Full machine-readable path/hash/index/EOL snapshot and original tracked diff are retained under ignored `artifacts/workspace-integration/`. Do not overwrite the initial snapshot. It is local audit material, not a substitute for reviewing each change.
+- Work proceeds in the approved batches. Product quality and a clean Git status are separate acceptance criteria. Local commits are authorized; push, release, live-provider usage, dependency installation, branch changes, and real-user-state access are not.
+
+## Batch 0 — inventory and validation prerequisites
+
+| Group | Decision / evidence | State |
+| --- | --- | --- |
+| Tracked CRLF-only paths | All 1,097 candidates matched their initial hashes, modes, and `i/lf w/crlf attr/text=auto eol=lf` attributes. Guarded normalization produced exactly the current index blob bytes for every file; the complete index was unchanged. Audit: `artifacts/workspace-integration/normalization.json`. | Completed; no source-content changes |
+| `src/server/__tests__/proxy-network-settings.test.ts` | Removed the extra blank line at EOF; the full preexisting functional diff remains for the server batch. | Whitespace repaired; repository `git diff --check` passed |
+| `.bun/install/cache/` | Added only `/.bun/install/cache/` to `.gitignore`. All 97 initial cache files remain on disk with their initial hashes. | Precisely ignored and preserved |
+| Root `package-lock.json` | Stale, untracked npm lock; current root manifest uses Bun and its tracked `bun.lock` is primary. Local history shows this path was removed in `575029383`. Added only `/package-lock.json` to `.gitignore`; file hash unchanged. | Precisely ignored and preserved |
+| Root issue notes | `issue-1672-remediation-plan.md` and `issue-triage-after-v0.5.5.md` are untracked local scratch/history notes with no tracked consumers or history. Added only their exact root paths to `.gitignore`; file hashes unchanged. | Precisely ignored and preserved |
+| `native/agent-desktop/` | Vendored Rust/C source, lockfiles, patches, and licenses are deliverable source, not generated output. | Retain and review in native batch |
+| `desktop/pnpm-lock.yaml` | Tracked but stale and no active install consumer found; do not delete during inventory. Reassess as a tracked change in desktop dependency integration and verify any claim against current scripts. | Pending |
+| `desktop/build/check-install-processes.nsh` | Generated-looking but directly included by installer and pinned by test; retain. Do not ignore `desktop/build/` broadly. | Classified; retain |
+| Active lockfiles | Root/desktop/adapters/mobile Bun locks and site/harness npm locks serve distinct current install paths; retain. | Classified |
+| Existing ignored local output | `artifacts/`, `.research/`, `.superpowers/`, `.workbuddy/`, `.playwright-mcp/` already excluded; do not broaden ignore patterns. | Classified |
+| Environment | Bun 1.3.14 vs required 1.4.3; root installed SDK 0.80.0 vs lock 0.128.0 and axios 1.14.0 vs lock 1.15.2; mobile dependencies absent; adapters missing `proxy-agent`; `cargo` and `swift` unavailable; `actionlint` available. Do not install or alter toolchain in this task without authorization. | Confirmed environment blockers; lane-specific validation pending |
+
+## Integration batches
+
+- Batch 1 — identity, path/config migration, provider/API and account contracts: pending.
+- Batch 2 — runtime, sessions, agents and scheduling: pending.
+- Batch 3 — desktop host, persistence, adapters, native/vendor/signing: pending.
+- Batch 4 — one Expo/React Native iOS/Android App and its shared H5 interface; absorb valuable hand-written Android capabilities before retiring duplicate entry points: pending.
+- Batch 5 — docs, site, release, CI and poster: pending. Existing legal notices remain intact; licensing investigations and external upstream provenance research are outside this integration task.
+- Batch 6 — optional enhancements only after batches 0–5: pending.
+
+For each batch, record the exact files and decisions, regression tests, commands and observed results, and resulting local commit. Never record skipped or blocked checks as passed.
+
+## D0 — documentation boundaries and executable guidance (in progress)
+
+- Scope: root/mobile/site guidance and contributor entry points; bilingual module-iteration and RED → GREEN → refactor guidance; README policy/advisory routing; bilingual mobile product guides; site generator and local-link CLI regressions. Existing mixed diffs still require cumulative review before staging.
+- Product contract: one Expo/React Native App, not a second Android compatibility product. H5 reuses its interface/protocol but does not provide native-only capabilities. Current mobile guides distinguish source capability, offline tests, device verification and release evidence, and do not promise immediate revocation of all existing H5 connections.
+- Observed RED → GREEN: independent README routing/advisory cases; repository-root and encoded README links; unknown public sections; required metadata; CRLF frontmatter; missing Chinese or English counterpart preserving existing generated output; public docs linking to unpublished internal/repository files. README repository-file links remain supported. Fixture errors encountered during RED were repaired before counting intended failures.
+- Passed: latest sandboxed `node --test site/src/**/*.test.js` — 94 tests, 0 failures; sandboxed `bun --no-env-file test ./scripts/pr/change-policy.test.ts ./scripts/pr/quality-contract.test.ts` — 79 tests, 0 failures, 425 expectations. Latest combined log: `artifacts/workspace-integration/d0-final-validation.log`. The two dedicated docs-script fixtures account for 22 passing tests within the site total.
+- Failed: sandboxed `node site/scripts/check-docs.mjs` currently stops at `docs/internals/computer-use-cef-injection.md` missing required frontmatter. Read-only classification confirmed seven public copies duplicate existing internal/archive documents; the public native manual QA has four unique unverified cases that must be preserved internally before removal. No metadata exception was added. Attempts to remove those public copies were denied by the execution permission boundary, so all copies remain untouched.
+- Earlier delegated `bun run check:policy` failed before the validator repair; its parser defect is now fixed and the focused validator suite passed (see continued evidence below). The full policy command was rerun in a temporary HOME after the repair and **failed** in `scripts/release-please-config.test.ts`: desktop version `0.7.4` did not match mobile version `0.1.3`. The repaired command validator cases passed in that run; the command did not reach a successful quarantine completion. No full policy pass is claimed.
+- Impact: `PR_BASE_REF=9062989d3f90f0e6a84ac2d26625f48e9b9a3e7a bun --no-env-file run check:impact` exited 0 and selected 13 checks across 6,293 paths; **Blocked: yes**, CLI-core maintainer approval/label absent. Report: `artifacts/workspace-integration/final-impact.log`. Exit 0 is report generation, not approval or validation of selected checks.
+- Blocked/not run: `check:docs` and `verify` include unauthorized dependency installation; native/device/signing/release and live-provider checks have not run. No installation, override label, branch change, staging, commit or push was performed in D0.
+- Isolation caveat: latest focused checks use the disposable runner built on `createSandboxedTestEnvironment`, propagate any child failure and clean up. Earlier direct fixture/CRLF runs and delegated checks were not all launched through that runner; their evidence is not represented as equivalent sandbox compliance.
+- Scoped `git diff --check` passed before this ledger update. Complete contribution-file and cumulative integration diff review remains unfinished. N2–N5 remain pending; the documentation dependency blocker does not postpone implementation work.
+
+## N1 — H5 authorization revocation (focused behavior green; broader lanes blocked/failed)
+
+- Router-equivalent path RED reproduced: H5 bearer token reached `/api//h5-access` and its trailing-slash form; it could read/update the desktop-only control plane. `isH5AccessControlPath` now uses the existing `normalizeApiPath`; retains `/verify` exception and neighbor paths. Final sandboxed `h5-access-policy.test.ts`: 29 pass; `h5-access-auth.test.ts`: 65 pass.
+- Main-listener H5 sockets now carry the authorization source identity returned by actual validation, including force-auth fallback. Per-config-root in-memory subscriptions span service instances; successful serialized managed-settings writes notify after rename and before releasing the write lock. Disable/rotation/origin changes revoke; unrelated setting edits and persistence failures do not. Captured settings file path preserves config-root ownership through an async queued mutation. No persistent schema changed.
+- Revoke closes matching active main-listener sockets, prevents messages/drain forwarding, ends attached and detached H5 resumable streams in a distinct identity namespace, and rejects auth that completes after the grant was revoked. Server stop/failure disposes subscriptions; shutdown terminates the bound sockets. Desktop and SDK/pet/public-device namespaces are not assigned H5 identity.
+- Added deterministic RED→GREEN tests for path normalization + real HTTP, cross-instance/root subscriptions, successful-write ordering, rename failure/retry, captured-root interleaving, authorization race, active phone socket disable/rotation in H5 and forceAuth modes, desktop socket survival, repeated shutdown/bind failure cleanup, detached stream revocation and resume rejection. Final sandboxed focused run: policy 29, H5 HTTP/auth 65, H5 service 32, resumable stream unit 21, middleware auth 6; all passed (153 tests total). The real detached-H5-resume loopback regression is included in the 65 HTTP/auth tests. Log: `artifacts/workspace-integration/n1-final-focused.log`.
+- Broader selected provider-contract lane **failed** at `src/services/api/claudeRequiredThinking.test.ts`: 60 pass, 2 fail because installed SDK reports `x-stainless-package-version: 0.80.0`, expected locked/declared `0.128.0`. This is the already-known dependency drift; no installation or source workaround. The provider-contract lane did not continue beyond this suite.
+- Source limitation: revocation notification is in-process and scoped to config root; edits made by an external process directly to the settings file do not emit this event. No cross-process file watcher is claimed.
+- Not yet run: full `check:server`, chat/agent E2E lanes, persistence upgrade (no schema changed), browser/device, live provider. The full cumulative impact report is policy-blocked for missing CLI-core maintainer approval. The H5 revocation implementation and focused tests were isolated and committed as `d31e27579`; broader lanes remain unresolved.
+
+## N2 — cron history serialization (implementation present; race regressions pending)
+
+- Earlier repair agent did not implement N2. A later scoped change now routes `cleanupStaleRuns`'s whole read/modify/write through existing `mutateRunsFile` with captured `RunsFileMutationTarget`; no-op returns `false` so cleanup avoids writing/trimming unchanged history while other mutations retain prior trimming behavior.
+- Focused sandbox runner result: `cron-scheduler.test.ts` + `scheduledTaskRuntime.test.ts` **59 pass, 0 fail**, exit 0 (`artifacts/workspace-integration/n2-green-focused.log`). This is the existing suite only, not RED/GREEN evidence for the lost-update race. Independent review inspected source and the log, did not rerun it, and found no issue in the production change.
+- A first test-only workflow completed without changes or execution because it could not establish safe barriers. A later workflow added cleanup-vs-append and cleanup-vs-completed-receipt tests in untracked `src/server/services/scheduledTaskRuntime.test.ts`; focused runs reported 21 pass / 0 fail (80 assertions) plus 40 pass / 0 fail (104 assertions), but independent review found the tests release the cleanup gate immediately after starting the competitor, so they do not force the interleaving. RED was not run. The tests are under a tightening/review pass; until the barriers demonstrably force the competing history mutation and the assertions detect the stale-snapshot overwrite, N2 is not complete.
+
+## 2026-11-09 — continued integration evidence
+
+- Policy-command validator repaired in `scripts/pr/pr-quality-workflow.test.ts`: use the existing `shell-quote` parser instead of whitespace splitting, validate test paths separately, and require the success-chained quarantine command. Sandboxed RED reproduced `&&` being treated as a path (1 fail); GREEN ran the complete file: **48 pass, 0 fail, 459 expectations**, exit 0. Logs: `artifacts/workspace-integration/policy-parser-{red,green}.log`. This supersedes the earlier delegated parser report, not the remaining full-policy failures.
+- Authentication hardening restored in `src/server/middleware/auth.ts`, retaining N1 authorization-source/H5 behavior. Subprocess-isolated regression instruments `timingSafeEqual` and UTF-8 byte-length boundaries, not elapsed time. Delegated RED: **6 pass, 1 fail** (crypto comparator not called); GREEN across middleware auth, local-access auth and H5 auth: **76 pass, 0 fail, 301 expectations**, exit 0. Independent review inspected code and GREEN evidence, without rerunning tests. LAN cases with conditional early returns do not establish distinct external-peer coverage.
+- Full server baseline **failed**, including **37 failed files** after its diagnostic reruns. Causes include missing exports/integration wiring, behavior assertion failures, SDK/axios dependency drift and missing adapter `proxy-agent`; not all failures are environment-only. No aggregate server pass is claimed.
+- Chat-contract `conversations.test.ts`: an earlier full run had **136 pass, 1 fail** in completed-transcript first-turn title refresh. The failure was reproduced in a focused RED run (8-second timeout); a later focused GREEN run passed that same case (**1 pass**, 4 expectations), and `title-service.test.ts` passed **23 tests**, 72 expectations. The full chat-contract lane has not been rerun since this focused pass, so suite-level status remains unresolved; the investigation agent failed with inference-gateway HTTP 502. Logs: `artifacts/workspace-integration/title-{focused-red,focused-green,service-green,chat-contract}.log`. Deterministic agent-flow: **9/9 mock scenarios passed**; not live-model evidence.
+- Poster baseline: **6 pass, 9 errors** of 15 tests; all nine errors report missing Python `PIL`. No Pillow installation, network download or rendered-poster acceptance. `actionlint` exited 0; this does not establish release-contract correctness. `check:persistence-upgrade` exited 0 as baseline evidence; rerun after any subsequent persisted-shape changes.
+- An earlier N2 repair/review was blocked before required status inspection by the safety-classifier outage. A subsequent scoped change put cleanup on the existing queue and passed existing focused tests, but its first implementation/review workflow omitted the requested race regressions. The next test-only workflow also ended without changes or test execution because it could not establish deterministic barriers; see N2 above. A later focused attempt is now active; no result is assumed.
+- N3/N4 implementation workflows ended with inference-gateway HTTP 502 and null results; journals record failed agents, not completed implementations. A later read-only N3 audit found no concrete same-ID lifecycle defect and reported 122 focused tests passing across 10 files, but no typecheck or impact-selected lane; this does not close the broader N3 contract. N4 provider/router closure is in a separate implementation/review workflow; no result is assumed. Desktop release-contract repair also failed before a final result. These failures are not authorization to change tools, permissions, providers or dependency versions.
+- N5 remains pending: Expo/RN is the single App target; current configuration retains upstream identities/account bindings and the old native-contract test contradicts the Expo migration. No mobile edits, prebuild, dependency installation, native/device/EAS/signing or release validation is claimed.
+- 2026-11-10 mobile single-app cleanup (worktree only, uncommitted; supersedes the mobile part of the N5 note above): 旧 Android WebView 壳（`mobile/legacy-webview/`，及 HEAD 形态的 `mobile/android/**`、`mobile/test/native-contract.test.ts`）与 `.github/workflows/release-mobile-apk.yml` 已移除，唯一移动端实现是 Expo 58 应用，唯一发布链路是 `.github/workflows/release-mobile.yml` + `scripts/mobile-release.ts`。旧壳 17 项用户功能经逐条核对无必须迁移项，其有价值约束由 `mobile/src/core/mobileParity.test.ts` 与 `mobile/plugins/singleMobileApp.test.ts` 固化为回归契约，功能对照见 `mobile/README.md` 的「单一移动端实现」。`bun run check:mobile` 1349 tests / 162 files / 0 fail（含 `export:h5`）。Batch 4 的「吸收手写 Android 能力后退役重复入口」已在工作区兑现；未做 prebuild、依赖安装、真机 / EAS / 签名 / 上架验证，新链路也尚未进入正式 tag，`MOBILE_RELEASE_ENABLED` 及账号凭据仍待配置。
+- Latest pre-edit whole-tree `git diff --check` exited 0. The prior status command showed **2,465 short-status entries** (collapsed directories, not a full file count), empty staged diff and no unmerged entries. This is not a clean tree or a cumulative content review. No new integration commit has been made.
+
+## N4 — EchoFlow remote authorization and legacy provider metadata
+
+- Scope: `src/server/api/echoflow.ts`, its new `echoflow.remoteBrowser.test.ts`, the scoped additions in `src/server/__tests__/echoflow-api.test.ts`, and the credential-source migration/regression in `persistentStorageMigrations.ts` / `persistence-upgrade.test.ts`. Existing mixed changes elsewhere remain untouched.
+- Remote POST/PUT/PATCH/DELETE actions return `403 desktop_only` before body parsing, credential use, gateway requests or writes. Tests exercise the real router, token read/create, account mutations, provider/model actions and credential bridge; desktop account binding and token retrieval remain functional. Delegated RED reproduced 10 remote cases reaching later processing; a separate local fixture mismatch was corrected before GREEN.
+- GET review: the suspected raw-account leak was refuted by inspecting `getAccounts()` → `toPublicAccount()` → `toTokenSummary()`. These existing white-list projections omit management/session/bearer credentials and raw token keys. Keep the read-only status contract; the new remote GET regression checks both account aliases, the bound management credential, raw token key and masked preview. No GET production behavior was changed.
+- Migration: valid `echoflow-token` sources with missing, empty or whitespace-only `tokenName` receive the saved provider name; populated token names remain unchanged. The v9 fixture exercises migration, `ProviderService.listProviders()` and a rename/rewrite, including preservation of an unknown source field during migration. Delegated RED failed on the missing name; expanded final fixture cases are GREEN.
+- Final deterministic focused run: `bun --no-env-file test --max-concurrency=1` over the EchoFlow API/router, persistence and provider-runtime files, launched through `createSandboxedTestEnvironment` with a disposable HOME/config: **110 pass, 0 fail, 542 expectations, 7 files**. Log: `artifacts/workspace-integration/n4-final-focused.log`. Earlier direct runs are not represented as equivalent outer-sandbox evidence; one intermediate test edit had a duplicate closing brace and failed parsing, then was repaired before this final run.
+- `bun run check:persistence-upgrade`, rerun inside a disposable environment: **failed**, one check (`cleanup racing with append retains the newly appended run`); its server persistent JSON suite **35 pass**. Session-collaboration migration/recovery cases passed in this run. Log: `artifacts/workspace-integration/n4-final-persistence-gate.log`. Do not equate the focused migration pass with an aggregate gate pass.
+- `bun --no-env-file run check:provider-contract`: **failed** in `claudeRequiredThinking.test.ts` (60 pass, 2 fail, installed SDK header `0.80.0` versus expected `0.128.0`), after 14 earlier suites passed. The runner stopped there. Log: `artifacts/workspace-integration/n4-final-provider-contract.log`. No dependency installation or source workaround.
+- Final baseline-relative `check:impact` exited 0 but reports **Blocked: yes**, 6,301 paths and all 13 checks selected, CLI-core maintainer approval absent. No policy override. Reuse prior failed full-server evidence; full `check:server`, typecheck, browser/device smoke and `verify` were not rerun for this focused fix. Existing full-server failures include behavior/wiring failures and are not only environment issues. No live provider, push, release, signing, installation or mobile-version repair.
+- Commit isolation: the remote-browser mutation boundary was isolated into `433d4bb52 fix(security): block remote EchoFlow mutations` (`src/server/api/echoflow.ts` and its dedicated regression test); the 12-test focused suite passed with 62 assertions. The mixed `src/server/__tests__/echoflow-api.test.ts` changes were deliberately left out. Provider migration remains **unstaged**: its files contain identity/scheduler/image migrations and the v10 schema prerequisite is not in HEAD (HEAD still permits optional token names). Do not commit entire mixed migration files. Whole-tree whitespace check passed. Focused GREEN is not PR-ready/full-N4 acceptance; migration and broader N4 acceptance remain pending, with no push or release.
+
+## Verification and commits
+
+- Baseline-relative final commands are planned as `PR_BASE_REF=9062989d3f90f0e6a84ac2d26625f48e9b9a3e7a bun run check:impact` and `PR_BASE_REF=9062989d3f90f0e6a84ac2d26625f48e9b9a3e7a bun run verify`; initial impact selection is recorded below, but final validation has not run. The inventory commit preserves the preexisting `.gitignore` additions for `/.issue-router/` and `CLAUDE.md`; no ignored artifacts are staged.
+- Batch 0 checks: `python3 artifacts/workspace-integration/normalize-eol.py` completed all 1,097 guarded normalizations; `git -c core.safecrlf=false diff --check` passed; hash assertions and `git check-ignore -q` verified all 100 newly ignored initial files remain unchanged. No product tests were run for mechanical cleanup; no product behavior was changed by these repairs.
+- After cleanup: 1,708 tracked modifications and 4,575 untracked files (including this ledger), no staged changes. The original snapshot is unchanged. The EOF repair stays with the server batch; only `.gitignore` and this ledger form the inventory commit.
+- Initial baseline-relative `bun --no-env-file run check:impact` exited 0 and selected all 13 listed checks for 6,283 paths. Its report is **policy-blocked**, not passed: CLI core changes require the `allow-cli-core-change` label and maintainer approval. No label override was supplied. `check:docs` invokes dependency installation; `verify` has not been executed because installation remains unauthorized. Full report: `artifacts/workspace-integration/batch0-impact.txt`.
+- Editor diagnostics report unresolved Bun/Node globals and a timer comparison in the preexisting proxy test; these are not runtime/typecheck results. Product validation remains pending with the documented dependency/toolchain blockers.
+- Remaining acceptance requires reviewing cumulative diffs, explicit-path staging and staged review for each batch, local commits, no unmerged/staged/untracked paths, and a final baseline-relative verification report. A clean status alone is not proof of quality.
+- 2026-11-09 continuation: committed the N4 remote-browser write boundary as `433d4bb52` after its focused suite passed (12 tests, 62 assertions), and part of N1 as `d31e27579` using the recorded sandboxed run (153 tests). **Both test results exercised the full dirty workspace, not clean commit snapshots.** The N1 commit is incomplete: its socket revocation integration in `src/server/index.ts` remains uncommitted, as do other mixed dependencies; do not treat it as independently verified or complete. The separate authentication hardening in `src/server/middleware/auth.ts` and its test also remain unstaged. These commits do not close their broader batches or unblock the cumulative impact report; no push, dependency install, or environment override was performed.
+
+## 2026-11-10 — 七组提交完成与文档 IA 复核
+
+> 本节记录当前状态。**以下历史陈述已被本节取代；按 `docs/AGENTS.md` 保留原文、不删改**：
+> 第 28–33 行 Batch 1–5 的 `pending`；第 37 行 D0 `in progress`；
+> 第 43 行 `check-docs` 因缺 frontmatter 失败；第 76 行 mobile cleanup `worktree only, uncommitted`；
+> 第 77 行 `No new integration commit has been made`；第 93 行 `final validation has not run`；
+> 第 95 行的文件计数；第 98 行「local commits / no unmerged, staged or untracked paths」的未完成状态。
+
+### 七组本地提交（基线 `11a77fe18`；未 push、未建分支、未发版）
+
+| Commit | 分组 | 文件 | Subject |
+| --- | --- | --- | --- |
+| `245b9d2d7` | A 身份与发布配置 | 12 | `chore(identity): add product.json identity source and release config tests` |
+| `1bd9bc17f` | F 文档与站点 | 46 | `docs: localize repo guidance and restructure computer-use internals` |
+| `abe6823ef` | E 服务端与适配器 | 57 | `refactor(server): update OAuth, plugin and adapter bridge contracts` |
+| `0e251493e` | D 桌面端 | 176 | `refactor(desktop): align Electron host, settings and locales with fork identity` |
+| `3cc79e25b` | C 移动端收敛 | 93 | `refactor(mobile): retire legacy Android shell and unify Expo release path` |
+| `28e346b36` | G 原生模块 | 1 | `chore(native): align CU helper attestation with fork identity` |
+| `5999fa109` | B CI 与质量门禁 | 21 | `ci(quality): update quality lanes and refresh policy contract assertions` |
+
+- 合计 **406 files / +8602 −5592**；每组显式路径暂存并跑 `diff --cached --check`，无夹带。
+- 分组前审查发现 1 个阻断：`check:policy` 712 pass / 1 fail —— `scripts/pr/quality-contract.test.ts:166`
+  仍断言 `rootTestDiscoveryComplete`，而 `scripts/quality-gate/coverage.ts` 重构已改为
+  `evaluateRootCoverage()`。以两条新契约断言替换（不删断言降强度）→ **713 pass / 2 skip / 0 fail**。
+  `updateRangeContract.test.ts` 两处断言反转经复核为夹具对齐产品真实执行路径，属合理修正。
+- Passed：`git diff --check`、`check:upstream-content`、`check:product-identity`、
+  `check-docs`（134 页 / 603 链接 / 22 对双语截图）、`ads.txt` 本站账号、
+  3 个身份生成产物一致性、移动图标引用、VoiceWave 删除后无残留引用。
+- 工作区仅剩 `?? 1`、`?? debug.log` 两个未跟踪文件（未提交、未删除）；暂存区为空。
+- Not run：`verify` 及 `check:impact` 的 13 条 lane；`check:impact` 仍 **Blocked: yes**
+  （CLI-core 需 `allow-cli-core-change` label 与 maintainer approval）。第 70–73 行记录的
+  server / persistence / provider / poster 失败与依赖漂移**未修复、未复跑**，仍是 PR-ready 阻断项；
+  本节提交**不等于**批次验收完成。
+- 遗留：`check:product-identity` 只定义在 `package.json`，未挂任何 CI workflow；
+  3 个 `productIdentity.generated.ts` 全仓零 import（仅被门禁校验）。
+
+### 文档 IA 复核（详见 `artifacts/docs-ia-audit-2026-11-10.md`）
+
+- 公开文档 **134 页**（zh 67 / en 67），frontmatter 与 `order` 覆盖 100%，`check-docs` 通过；
+  `docs/` 共 187 个 md、约 108 MB。
+- `1bd9bc17f` 已按分层规范完成 Computer Use 重组：7 篇中文长文压成 28–37 行摘要、英文补齐、
+  原文归档 `_internal/archive/`；8 页 `order` 12–19 连续、彼此交叉引用，且有回归断言钉住。
+- **结论：分层仍需要做（P0）、合并只限两处明确冗余（P1）、精简不建议再来一轮（P2 只收尾）。**
+  `internals` 23 页占公开中文正文 **52.1%**（2026-09-24 为 55.5%，结构性问题基本未动），
+  且与用户向分区同处主导航；迁移须同步 `site/src/content/docs.js` 的 `LEGACY_ROUTES`。
+- 4 对 MD5 完全相同的 `docs/ui-clone/` ↔ `docs/_internal/archive/ui-clone/` 副本均不发布，
+  属纯仓库冗余；精简后产生 79 张无引用图片 / 15.88 MB，按「不要把移动或删除既有记录当作
+  顺手清理」应单独出清单确认。
+- **比 IA 更紧急**：公开文档 50 处 `cc-haha` 中，38 处为产品自述（应改），12 处为真实
+  legacy 路径/环境变量（应保持，`product.json` 有 `legacyEnvPrefix: "CC_HAHA_"`）。
+  `check:upstream-content` 的 identity 规则仅覆盖 15 个 `IDENTITY_SURFACES` 白名单，
+  `docs/**` 全量只查上游 URL，因此这 38 处漏检 —— 应先扩门禁覆盖再修文案。
+- 工具：`artifacts/docs-audit.mjs` 硬编码 `Z:/...` 改为从 `import.meta.url` 推导，
+  Windows 9P 与 WSL 均可运行；其「对外文档」统计口径仍与生成器不一致，报告已按生成器重算。

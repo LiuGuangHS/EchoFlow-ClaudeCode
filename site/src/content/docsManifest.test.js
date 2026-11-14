@@ -75,7 +75,11 @@ test('internal docs never reach generated modules or static publication', async 
     await fs.mkdir(path.dirname(image), { recursive: true })
     await fs.writeFile(image, '<svg xmlns="http://www.w3.org/2000/svg"/>')
     await fs.appendFile(source, '\n![Diagram](./images/diagram.svg)\n')
+    const shared = locale ? '../../internals/images/shared.svg' : './images/shared.svg'
+    await fs.appendFile(source, `\n![Shared diagram](${shared})\n`)
   }
+  const sharedImage = 'internals/images/shared.svg'
+  await fs.writeFile(path.join(root, 'docs', sharedImage), '<svg xmlns="http://www.w3.org/2000/svg"><title>Shared</title></svg>')
 
   const shell = '<html lang="zh-CN"><head><title>Fixture</title><meta name="description" content="Fixture"></head><body></body></html>'
   await fs.writeFile(path.join(siteDir, 'index.html'), shell)
@@ -98,6 +102,16 @@ test('internal docs never reach generated modules or static publication', async 
     const sitemap = await fs.readFile(path.join(distDir, 'sitemap.xml'), 'utf8')
     const routes = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => new URL(match[1]).pathname)
     assert.deepEqual(routes.sort(), ['/', '/en', '/download', '/en/download', ...expectedRoutes].sort())
+  })
+
+  await t.test('both locales publish the shared diagram once without an English copy', async () => {
+    assert.deepEqual(
+      await fs.readFile(path.join(distDir, sharedImage)),
+      await fs.readFile(path.join(root, 'docs', sharedImage)),
+    )
+    await assert.rejects(fs.access(path.join(distDir, 'en', sharedImage)), { code: 'ENOENT' })
+    const englishContent = await fs.readFile(path.join(generatedDir, 'content/en-internals-index.js'), 'utf8')
+    assert.ok(englishContent.includes('../../internals/images/shared.svg'))
   })
 
   await t.test('CRLF source frontmatter has the same metadata and body as LF', async () => {
@@ -168,20 +182,14 @@ test('internal docs never reach generated modules or static publication', async 
     })
   }
 
-  await t.test('Computer Use summaries retain bilingual routes without publishing maintainer records', async () => {
-    const names = [
-      'computer-use-cef-injection', 'computer-use-codex-impl-blueprint',
-      'computer-use-codex-parity-review', 'computer-use-codex-redesign',
-      'computer-use-handoff', 'computer-use-native-manual-qa', 'computer-use-native-swift-design',
-    ]
-    const routes = []
+  await t.test('consolidated Computer Use docs retain bilingual legacy routes, anchors and static entries', async () => {
+    const routes = ['', '/en'].flatMap((locale) => [
+      `${locale}/internals/computer-use`, `${locale}/internals/computer-use-contracts`,
+    ])
     for (const locale of ['', 'en/']) {
-      for (const name of names) {
-        const relative = `${locale}internals/${name}.md`
-        const target = path.join(root, 'docs', relative)
-        await fs.mkdir(path.dirname(target), { recursive: true })
-        await fs.copyFile(new URL(`../../../docs/${relative}`, import.meta.url), target)
-        routes.push(`/${relative.replace(/\.md$/, '')}`)
+      const directory = new URL(`../../../docs/${locale}internals/`, import.meta.url)
+      for (const name of (await fs.readdir(directory)).filter((name) => /^computer-use.*\.md$/.test(name))) {
+        await fs.copyFile(new URL(name, directory), path.join(root, 'docs', locale, 'internals', name))
       }
     }
     const internalQA = await fs.readFile(new URL('../../../docs/_internal/computer-use-native-manual-qa.md', import.meta.url), 'utf8')
@@ -189,17 +197,61 @@ test('internal docs never reach generated modules or static publication', async 
       assert.ok(internalQA.includes(`| ${id} |`), `missing preserved QA case ${id}`)
     }
     await fs.writeFile(path.join(root, 'docs/_internal/computer-use-native-manual-qa.md'), internalQA)
-    await run(process.execPath, [path.join(scriptsDir, 'generate-docs-manifest.mjs')], { cwd: root })
-    const { docsIndex, docsContent } = await import(`${pathToFileURL(path.join(generatedDir, 'docs-index.js'))}?computer-use`)
+    await run(process.execPath, [path.join(scriptsDir, 'prepare-static-output.mjs')], { cwd: root })
+    const indexURL = pathToFileURL(path.join(generatedDir, 'docs-index.js')).href
+    const { docsIndex, docsContent } = await import(`${indexURL}?computer-use`)
     const { default: searchIndex } = await import(`${pathToFileURL(path.join(generatedDir, 'search-index.js'))}?computer-use`)
+    assert.deepEqual(docsIndex.filter((doc) => doc.path.includes('/computer-use')).map((doc) => doc.path).sort(), routes.sort())
+
+    // Load the production router against this fixture without Vite or shared generated output.
+    const routerSource = (await fs.readFile(new URL('./docs.js', import.meta.url), 'utf8'))
+      .replace('import.meta.env.BASE_URL', "'/'")
+      .replace("'../generated/docs-index'", JSON.stringify(`${indexURL}?computer-use`))
+      .replace("'marked'", JSON.stringify(import.meta.resolve('marked')))
+      .replace("'dompurify'", JSON.stringify(import.meta.resolve('dompurify')))
+    const router = await import(`data:text/javascript;base64,${Buffer.from(routerSource).toString('base64')}`)
+    const anchors = new Map()
     for (const route of routes) {
-      const record = docsIndex.find((doc) => doc.path === route)
+      const record = router.findDoc(route)
       assert.ok(record, `missing public route ${route}`)
       assert.ok(record.title && record.navTitle && record.description)
       const { default: body } = await docsContent[route]()
+      assert.equal(await router.loadDocContent(route), body)
       assert.doesNotMatch(body, /\]\([^)]*_internal|\/Users\/|wf_32a4859d|quizzical-lehmann/)
-      assert.match(body, /\]\(computer-use\.md\)/)
+      anchors.set(route, new Set([
+        ...[...body.matchAll(/^#{1,6} (.+)$/gm)].map((match) => router.slugifyHeading(match[1])),
+        ...[...body.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]),
+      ]))
+      const html = await fs.readFile(path.join(distDir, route.slice(1), 'index.html'), 'utf8')
+      assert.ok(html.includes(`<title>${record.title} ·`))
+      assert.ok(html.includes(`rel="canonical" href="https://code.echoflow.cn${route}"`))
     }
+    const legacy = [
+      ['cef-injection', 'contracts', '进程窗口与坐标是一条链', 'process-window-and-coordinates-form-one-chain'],
+      ['codex-impl-blueprint', 'contracts', 'javascript-与原生边界', 'javascript-and-native-boundaries'],
+      ['codex-parity-review', 'contracts', '分开报告证据', 'report-evidence-separately'],
+      ['codex-redesign', 'contracts', '视觉反馈不是定位依据', 'visual-feedback-is-not-targeting-evidence'],
+      ['handoff', '', '从入口走到原生引擎', 'from-entry-points-to-native-engines'],
+      ['native-manual-qa', 'contracts', '需要单独观察的边界', 'boundaries-needing-separate-observation'],
+      ['native-swift-design', 'contracts', '权限与签名', 'permissions-and-signing'],
+    ]
+    for (const [name, target, zhAnchor, enAnchor] of legacy) {
+      for (const locale of ['', '/en']) {
+        const oldRoute = `${locale}/internals/computer-use-${name}`
+        const expected = `${locale}/internals/computer-use${target ? `-${target}` : ''}`
+        const anchor = locale ? enAnchor : zhAnchor
+        for (const suffix of ['', '/', '.md', '.html', `#${encodeURIComponent(anchor)}`]) {
+          assert.equal(router.resolveLegacyRoute(`${oldRoute}${suffix}`), expected)
+        }
+        assert.equal(router.findDoc(oldRoute), null)
+        assert.equal(router.alternateLocaleRoute(router.findDoc(expected)), locale ? expected.slice(3) : `/en${expected}`)
+        assert.ok(anchors.get(expected).has(anchor), `missing legacy anchor ${oldRoute}#${anchor}`)
+        assert.equal(await fs.readFile(path.join(distDir, oldRoute.slice(1), 'index.html'), 'utf8'), shell)
+      }
+    }
+    const sitemap = await fs.readFile(path.join(distDir, 'sitemap.xml'), 'utf8')
+    const published = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => new URL(match[1]).pathname)
+    assert.deepEqual(published.filter((route) => route.includes('/computer-use')).sort(), routes)
     assert.ok(!JSON.stringify(docsIndex).includes('_internal'))
     assert.ok(!JSON.stringify(searchIndex).includes('focusSettleMs = 800'))
   })

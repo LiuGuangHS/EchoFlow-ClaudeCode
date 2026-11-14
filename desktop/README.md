@@ -11,6 +11,8 @@
 
 桌面端的目录级规则见 [desktop/AGENTS.md](AGENTS.md)；可复用组件规则见 [src/components/AGENTS.md](src/components/AGENTS.md)。跨产品执行、持久化和信任边界见 [执行、数据与信任边界](../docs/internals/execution-boundaries.md)。
 
+配置导入的使用说明见[配置分享](../docs/desktop/config-sharing.md)，对接字段和校验规则见[深链接协议](../docs/desktop/deep-link-protocol.md)。
+
 ## 开发
 
 在仓库根目录或 `desktop/` 安装锁定依赖后，在 `desktop/` 执行：

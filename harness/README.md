@@ -48,7 +48,7 @@ dsh 升级指南提醒预览版本可能包含破坏性变更，所以升级必�
 
 本节记录既有分阶段计划，不因翻译而授权迁移或证明当前产品已接入。
 
-后续计划位于 `docs/superpowers/plans/2026-10-29-dsh-wave1-runtime-contract-driver.md`：在 `src/server/runtime/` 建立运行时契约和 dsh ACP 驱动。它**不会**把桌面的 `npx` sidecar 替换为此接缝。该 sidecar 提供 dsh 网页 UI 窗口，而 ACP 驱动有意不提供；在就绪工作和可选原生 dsh 引擎决定其去向前，它仍是过渡实现。
+运行时契约和 dsh ACP 驱动的现行说明见[运行时层](../src/server/runtime/README.md)。它**不会**把桌面的 `npx` sidecar 替换为此接缝。该 sidecar 提供 dsh 网页 UI 窗口，而 ACP 驱动有意不提供；在就绪工作和可选原生 dsh 引擎决定其去向前，它仍是过渡实现。
 
 三项工作交给后续阶段：
 

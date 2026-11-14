@@ -2,13 +2,6 @@
 
 这些规则适用于 `docs/` 改动，并叠加根目录规则。
 
-## 文档读者
-
-文档只面向两类读者：
-
-- **使用应用的人**：`start/`、`cases/`、`desktop/`、`mobile/`、`im/`。不预设代码知识。
-- **阅读源码的人**：`internals/`、`cli/`。包含架构、实现和贡献流程。
-
 ## 文档放置
 
 公开页面解释产品或源码，不是任务日志。可复用的架构和边界规则放在 `internals/`，贡献流程放在 `internals/contributing.md`，代码入口规则放在适用的 `AGENTS.md`。分别记录要求与已验证实现；审计发现、计划或单元测试通过都不能证明整项功能可用。
@@ -17,7 +10,7 @@
 
 ## 结构
 
-顶层固定为七个区段：`start/`、`cases/`、`desktop/`、`mobile/`、`im/`、`cli/`、`internals/`。新增区段必须在 `site/scripts/generate-docs-manifest.mjs` 的 `sections` 数组中登记。
+公开区固定七个区段：`start/`、`cases/`、`desktop/`、`mobile/`、`im/` 面向应用用户，`cli/`、`internals/` 面向源码读者。新增区段必须在 `site/scripts/generate-docs-manifest.mjs` 的 `sections` 数组中登记。
 
 `docs/en/` 与中文目录逐文件对应。存在英文页面时，保持中文页和 `docs/en/` 对应页内容结构一致；业务英文产品镜像不因本规范中文化任务翻译。
 
@@ -33,10 +26,6 @@ order: 2                # 区段内位置；index.md 使用 0
 ```
 
 站点会把 H1 后的第一段作为导语；请写普通段落，不要写成引用块。
-
-## 中文排版
-
-中文字符与相邻的拉丁字母或数字之间留空格，例如「一枚 6 位码」「回填 App ID」。渲染流程不会自动补空格，源文件必须直接写入。标点前后不需要空格。
 
 ## 截图
 

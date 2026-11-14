@@ -90,7 +90,7 @@ Default                            -> Enabled
 
 ## System Prompt Injection
 
-![Prompt Injection Flow](./images/07-prompt-injection.png)
+![Prompt Injection Flow](../../internals/images/07-prompt-injection.png)
 
 ### Entry Point: `loadMemoryPrompt()`
 
@@ -147,7 +147,7 @@ The prompt explicitly tells the model the directory already exists, avoiding was
 
 ## Automatic Memory Extraction
 
-![Auto-Extraction Flow](./images/08-auto-extraction.png)
+![Auto-Extraction Flow](../../internals/images/08-auto-extraction.png)
 
 ### Trigger Timing
 

@@ -2,9 +2,9 @@
  * The EchoFlow runtime contract.
  *
  * Product code and drivers meet here and nowhere else: engine-native payloads
- * travel inside `native`, and no engine SDK type appears in this file. Shapes
- * follow docs/superpowers/specs/2026-10-29-multi-runtime-deconstruction.md
- * §3.2-3.8; the blocks marked "Wave 1" fill gaps the spec leaves open.
+ * travel inside `native`, and no engine SDK type appears in this file.
+ * See src/server/runtime/README.md and docs/internals/execution-boundaries.md
+ * for the current runtime contract and product ownership boundaries.
  */
 
 export type EngineId = 'echoflow-agent' | 'dsh' | 'claude-code' | 'codex'

@@ -9,7 +9,7 @@ order: 5
 
 A deep dive into the architecture, spawn flow, context passing, and collaboration mechanisms of multi-agent orchestration.
 
-![Implementation Architecture Overview](./images/05-architecture.png)
+![Implementation Architecture Overview](../../internals/images/05-architecture.png)
 
 ## Architecture Overview
 
@@ -144,7 +144,7 @@ registerAsyncAgent()
 
 **Core optimization**: Achieves **prompt cache hits** through byte-level consistent API request prefixes.
 
-![Fork Cache Optimization](./images/10-fork-cache.png)
+![Fork Cache Optimization](../../internals/images/10-fork-cache.png)
 
 **Flow**:
 
@@ -201,7 +201,7 @@ runAgent(promptMessages, toolUseContext, options)
 
 ## Tool Pool System — Three-Layer Filtering
 
-![Tool Pool System](./images/07-tool-pool.png)
+![Tool Pool System](../../internals/images/07-tool-pool.png)
 
 ### Layer 1: Global Disallow List
 
@@ -270,7 +270,7 @@ All available tools
 
 ## Context Passing Mechanism
 
-![Context Passing](./images/06-context-passing.png)
+![Context Passing](../../internals/images/06-context-passing.png)
 
 ### CacheSafeParams — Cache-Safe Parameters
 
@@ -425,7 +425,7 @@ agentDefinition.model               ← Agent definition
 
 ### Mailbox System
 
-![Teams Mailbox System](./images/09-teams-mailbox.png)
+![Teams Mailbox System](../../internals/images/09-teams-mailbox.png)
 
 **Storage path**: `~/.claude/teams/{team_name}/inboxes/{agent_name}.json`
 
@@ -511,7 +511,7 @@ SendMessage({ to, message })
 
 ## Background Task Engine
 
-![Background Task Engine](./images/08-background-task.png)
+![Background Task Engine](../../internals/images/08-background-task.png)
 
 ### LocalAgentTask State Machine
 

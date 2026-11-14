@@ -7,7 +7,7 @@ order: 14
 
 # 配置分享
 
-外部服务或管理员可以按[深链接协议](./deep-link-protocol.md)生成导入链接。接收者打开链接后，EchoFlow Code 会显示确认窗口并新增 Provider。
+外部服务或管理员可以按[深链接协议](./deep-link-protocol.md)生成导入链接，应用不再内置链接生成器。接收者打开链接后，EchoFlow Code 会显示确认窗口并新增 Provider。
 
 **配置模板分享 Provider 连接参数和模型映射，不含 API Key。** 兼容的 `provider/add` 链接可以单独携带 API Key，因此只打开可信来源发送的链接。
 

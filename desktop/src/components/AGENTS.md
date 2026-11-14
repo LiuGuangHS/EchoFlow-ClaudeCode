@@ -4,7 +4,7 @@
 
 规则优先级：根 `AGENTS.md` < `desktop/AGENTS.md` < 本文件。冲突时以本文件为准。
 
-配套文档：[`desktop/docs/component-library-plan.md`](../../docs/component-library-plan.md) 记录审计证据与后续计划。
+历史审计与实施记录见[桌面设计归档](../../../docs/_internal/archive/desktop-design.md#component-library-plan)，不作为待执行计划。
 
 ---
 
@@ -204,27 +204,7 @@ style={{ zIndex: 'var(--z-dialog)' }}
 
 ## 七、测试
 
-新组件必须有对应的 `.test.tsx`。三个可复制的模板：
-
-```tsx
-// 1. 无障碍契约
-it('names the button for screen readers from label', () => {
-  render(<IconButton icon={<span />} label="Open settings" />)
-  expect(screen.getByRole('button', { name: 'Open settings' })).toBeInTheDocument()
-})
-
-// 2. props 矩阵
-it.each(SIZES)('pins an explicit height for size=%s', (size) => {
-  const { container } = render(<Button size={size}>Label</Button>)
-  expect(container.firstElementChild?.className).toMatch(/\bh-\d/)
-})
-
-// 3. 回归锚点：注释写清楚原来坏在哪
-it('defaults to type="button" so it cannot submit a surrounding form', () => {
-  render(<Button>Run</Button>)
-  expect(screen.getByRole('button', { name: 'Run' })).toHaveAttribute('type', 'button')
-})
-```
+新组件必须有对应的 `.test.tsx`，覆盖可访问名、props 变体和调用方行为；用现有组件测试作模板，不在文档重复维护测试代码。
 
 **jsdom 的三个已知偏差**，别在这上面浪费时间：
 
@@ -249,12 +229,3 @@ cd desktop && bun run dev
 ## 八、验证与交付
 
 迭代时运行相关组件测试；最终按根规则运行 `bun run check:impact` 选中的检查。`bun run check:desktop` 已包含 lint、完整 test 和 build，不必先重复跑一遍 lint / test。需要 PR-ready 或完整验证时使用 `bun run verify`；没有后续改动或未解决风险时，已通过的检查无需重跑。
-
-自查清单：
-
-- [ ] 没有新建与第一节表格重复的组件
-- [ ] 新组件放在正确目录（第二节决策树）
-- [ ] 颜色、圆角、层级都来自 token
-- [ ] 有 focus ring；图标按钮有名字；输入控件有 label
-- [ ] 有对应测试，且浮层组件测过函数组件 trigger
-- [ ] 视觉改动在 gallery 里三个主题都看过

@@ -7,7 +7,7 @@ order: 12
 
 # Computer Use 架构
 
-Computer Use 通过内置 MCP 把界面观察与桌面操作交给 Coding Agent。macOS 保留现有 JavaScript 会话与 Swift `cu-helper` 引擎；Windows 和 Linux 使用本仓库固定版本的 Vercel Labs `agent-desktop`。开启步骤见[使用指南](../desktop/computer-use.md)。
+Computer Use 通过内置 MCP 把界面观察与桌面操作交给 Coding Agent。macOS 保留现有 JavaScript 会话与 Swift `cu-helper` 引擎；Windows 和 Linux 使用本仓库固定版本的 Vercel Labs `agent-desktop`。开启步骤见[使用指南](../desktop/computer-use.md)，观察、窗口输入和证据边界见[协议与验证](computer-use-contracts.md)。
 
 ## 调用路径
 
@@ -25,6 +25,8 @@ Computer Use 通过内置 MCP 把界面观察与桌面操作交给 Coding Agent�
 `setupComputerUseMCP()` 只在受支持的平台且对应二进制可解析时注册工具。设置 API 另行执行真实的原生状态探测：Windows/Linux 返回 `engine: "agent-desktop"`、`runtime: "agent-desktop"` 与 `agentDesktop` 状态。缺二进制、辅助功能服务拒绝或 Linux 总线无响应都不能显示为就绪。就绪表示运行组件可用，不保证每个命令或每个应用都受支持。
 
 桌面会话逐轮刷新 Computer Use 工具。显式指定 Computer Use 时，CLI 在发起模型请求前检查最终工具清单。不可用时返回具体原因。可用时，本轮的桌面动作通过原生工具执行。
+
+<a id="排查时保留边界"></a>
 
 ## 一个全局应用授权入口
 
@@ -98,6 +100,8 @@ turn 清理会关闭当前 native 光标，清理失败或超时会把宿主状�
 
 ## 构建与分发
 
+macOS 的 host、sidecar 与 helper 必须通过现有签名身份及证书链一致性校验。unsigned/ad-hoc 分发包没有该验签所需的签名证书，因此 Computer Use 不可用，且需要手动安装更新。构建完成不代表通过 Gatekeeper、公证或安装版 CU 验证；不要通过关闭系统安全保护或放宽 helper 验签来恢复功能。
+
 固定来源为 Vercel Labs `agent-desktop` **1.0.2**，commit `9eb9b296192fcb70bda25e918cd6dd66abfa3d0d`。`native/agent-desktop/UPSTREAM.json` 记录固定版本及复制文件摘要，`PATCHES.md` 记录产品光标外形等本地改动。
 
 准备 stable Rust 工具链、目标标准库、系统链接依赖和锁定的 Cargo 缓存后，构建脚本离线执行。首次准备缓存可用：
@@ -116,6 +120,9 @@ bun desktop/scripts/native-agent-desktop.ts --target-triple x86_64-unknown-linux
 
 开发 resolver 可读取源码树下的 Cargo target；打包 resolver 从应用的 binaries 目录读取。Electron 将这些文件放在 `app.asar.unpacked`，同时携带 `agent-desktop-licenses/` 下的 `LICENSE`、`NOTICE`、`THIRD-PARTY-NOTICES`、`UPSTREAM.json` 与 `PATCHES.md`。上游原有代码保留 Apache-2.0 许可；依赖保留各自许可。不能删掉这些声明后仅分发可执行文件。
 
+<a id="computer-use-源码导航"></a>
+<a id="从入口走到原生引擎"></a>
+
 ## 主要源码入口
 
 | 路径 | 职责 |
@@ -124,11 +131,16 @@ bun desktop/scripts/native-agent-desktop.ts --target-triple x86_64-unknown-linux
 | `src/vendor/computer-use-mcp/mcpServer.ts`、`src/utils/computerUse/wrapper.tsx` | 会话绑定、异步上下文、取消与产品锁 |
 | `src/vendor/computer-use-mcp/agentDesktopTools.ts`、`agentDesktopProtocol.ts`、`agentDesktopDispatch.ts` | 单 MCP 工具、完整命令 schema 与队列 |
 | `src/utils/computerUse/agentDesktopBridge.ts`、`agentDesktopBinary.ts`、`agentDesktopProcess.ts`、`agentDesktopResult.ts` | native session、解析、受控子进程与图像交付 |
+| `src/utils/computerUse/replRuntime.ts`、`replWorker.ts`、`replCompiler.ts`、`src/vendor/computer-use-mcp/replApi.ts` | macOS JavaScript 会话、worker 与 App API |
 | `native/cu-helper/` | macOS AX、定向事件、焦点与窗口捕获 |
 | `native/agent-desktop/` | 固定上游 Rust workspace 与平台实现 |
 | `src/server/api/computer-use.ts` | 状态、全局配置与 macOS 权限卡 API |
 | `desktop/src/pages/ComputerUseSettings.tsx` | 平台状态、全局启用确认与恢复说明 |
 
-回归测试应使用临时配置目录、fake runner 或 loopback transport，验证参数、状态与结果边界；不得拿真人桌面、真实 provider 或用户配置当测试夹具。平台真机 smoke 是另一类证据，不能用 macOS 构建或 mock 结果代替 Windows/Linux 输入验证。
+<a id="修改后的证据"></a>
+
+回归测试应使用临时配置目录、fake runner 或 loopback transport，验证参数、状态与结果边界；不得拿真人桌面、真实 provider 或用户配置当测试夹具。平台真机 smoke 是另一类证据，不能用 macOS 构建或 mock 结果代替 Windows/Linux 输入验证。观察、失败语义与验收维度统一见[协议与验证](computer-use-contracts.md)。
+
+排查时先核对所选引擎、会话身份和观察结果，不把失败静默转到另一条执行链重放。
 
 Session 身份由宿主管理。显式 `session start` / `session end` 必须单独调用；`batch` 内的生命周期变更会被拒绝，避免后续命令继续绑定已结束的 session 或留下旧光标。
