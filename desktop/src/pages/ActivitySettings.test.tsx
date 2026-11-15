@@ -118,7 +118,7 @@ describe('ActivitySettings', () => {
       preferences: {
         schemaVersion: 2,
         profile: {
-          displayName: 'cc-haha',
+          displayName: 'EchoFlow Code',
           subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
           avatarFile: null,
           avatarUpdatedAt: null,
@@ -156,7 +156,7 @@ describe('ActivitySettings', () => {
       preferences: {
         schemaVersion: 2,
         profile: {
-          displayName: 'cc-haha',
+          displayName: 'EchoFlow Code',
           subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
           avatarFile: 'profile/avatar.png',
           avatarUpdatedAt: '2026-05-09T12:00:00.000Z',
@@ -175,7 +175,7 @@ describe('ActivitySettings', () => {
       preferences: {
         schemaVersion: 2,
         profile: {
-          displayName: 'cc-haha',
+          displayName: 'EchoFlow Code',
           subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
           avatarFile: null,
           avatarUpdatedAt: null,
@@ -203,9 +203,9 @@ describe('ActivitySettings', () => {
 
     expect(getStatsMock).toHaveBeenCalledWith('all')
     expect(screen.getByRole('heading', { name: 'Token usage' })).toBeInTheDocument()
-    expect(screen.getByText('cc-haha')).toBeInTheDocument()
-    expect(screen.getByAltText('cc-haha avatar')).toHaveAttribute('src', '/app-icon.png')
-    expect(screen.getByAltText('cc-haha avatar')).toHaveClass('scale-[1.28]')
+    expect(screen.getByText('EchoFlow Code')).toBeInTheDocument()
+    expect(screen.getByAltText('EchoFlow Code avatar')).toHaveAttribute('src', '/app-icon.png')
+    expect(screen.getByAltText('EchoFlow Code avatar')).toHaveClass('scale-[1.28]')
     expect(screen.getByRole('link', { name: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode' })).toHaveAttribute(
       'href',
       'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode',
@@ -216,6 +216,32 @@ describe('ActivitySettings', () => {
     expect(screen.getByText(/Total tokens · 20 active days/)).toBeInTheDocument()
     // The exact figure and the other family's notation are one hover away.
     expect(screen.getByTestId('token-total-value').closest('[title]')).toHaveAttribute('title', '2,864,000 · 286万')
+  })
+
+  it.each([false, true])('uses product defaults for invalid profile fields (browser: %s)', async (browserMode) => {
+    const profile = { displayName: null, subtitle: '   ', avatarDataUrl: null }
+    getPreferencesMock.mockResolvedValueOnce({ exists: true, preferences: { profile } })
+    getProfileMock.mockResolvedValueOnce({ profile })
+    render(<ActivitySettings browserMode={browserMode} />)
+    await flushActivityLoad()
+
+    expect(screen.getByRole('heading', { name: 'EchoFlow Code' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode' })).toHaveAttribute(
+      'href', 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode',
+    )
+    expect(updateProfilePreferencesMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps a custom profile with a legacy name and a different link', async () => {
+    getPreferencesMock.mockResolvedValueOnce({
+      exists: true,
+      preferences: { profile: { displayName: 'cc-haha', subtitle: 'operator.example', avatarFile: null, avatarUpdatedAt: null } },
+    })
+    render(<ActivitySettings />)
+    await flushActivityLoad()
+
+    expect(screen.getByRole('heading', { name: 'cc-haha' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'operator.example' })).toHaveAttribute('href', 'https://operator.example')
   })
 
   it('counts in 万 for Chinese readers and keeps the exact figure on hover', async () => {
@@ -548,7 +574,7 @@ describe('ActivitySettings', () => {
     await flushActivityLoad()
 
     expect(deleteProfileAvatarMock).toHaveBeenCalled()
-    expect(screen.getByAltText('cc-haha avatar')).toHaveAttribute('src', '/app-icon.png')
+    expect(screen.getByAltText('EchoFlow Code avatar')).toHaveAttribute('src', '/app-icon.png')
   })
 
   it('shows localized duration and the Chinese streak figures', async () => {

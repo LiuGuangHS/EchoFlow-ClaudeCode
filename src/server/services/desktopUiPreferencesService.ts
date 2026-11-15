@@ -257,10 +257,14 @@ function normalizeProfilePreferences(value: unknown): DesktopProfilePreferences 
   }
 
   const record = value as Record<string, unknown>
+  // Old defaults were persisted by unrelated UI preference writes before the rebrand.
+  // Match the complete pair so either user-customized identity field is preserved.
+  const isLegacyDefault = record.displayName === 'cc-haha'
+    && record.subtitle === 'github.com/NanmiCoder/cc-haha'
   return {
     ...record,
-    displayName: normalizeProfileDisplayName(record.displayName),
-    subtitle: normalizeProfileSubtitle(record.subtitle),
+    displayName: isLegacyDefault ? PRODUCT_NAME : normalizeProfileDisplayName(record.displayName),
+    subtitle: isLegacyDefault ? DEFAULT_PROFILE_SUBTITLE : normalizeProfileSubtitle(record.subtitle),
     avatarFile: normalizeAvatarFile(record.avatarFile),
     avatarUpdatedAt: typeof record.avatarUpdatedAt === 'string' ? record.avatarUpdatedAt : null,
   }

@@ -22,7 +22,14 @@ export const DEFAULT_PROFILE: DesktopProfilePreferences = {
 export const DEFAULT_AVATAR_SRC = publicAssetPath('app-icon.png')
 
 function withProfileDefaults(profile: Partial<DisplayProfile> | null | undefined): DisplayProfile {
-  return { ...DEFAULT_PROFILE, ...profile }
+  return {
+    ...DEFAULT_PROFILE,
+    ...profile,
+    displayName: typeof profile?.displayName === 'string' && profile.displayName.trim()
+      ? profile.displayName : DEFAULT_PROFILE.displayName,
+    subtitle: typeof profile?.subtitle === 'string' && profile.subtitle.trim()
+      ? profile.subtitle : DEFAULT_PROFILE.subtitle,
+  }
 }
 
 /** A second line that looks like a URL (with or without a scheme) becomes a link. */

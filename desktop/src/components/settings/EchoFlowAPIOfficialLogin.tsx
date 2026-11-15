@@ -334,11 +334,12 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
               <Button variant="secondary" size="sm" onClick={() => setShowCredentialEditor(true)}>
                 {t('echoflowApiOfficialLogin.updateToken')}
               </Button>
-              {account.live === false ? (
-                <Button variant="primary" size="sm" onClick={() => void signIn()} loading={isSigningIn}>
+              {canSignIn && (
+                <Button variant={account.live === false ? 'primary' : 'secondary'} size="sm" onClick={() => void signIn()} loading={isSigningIn}>
                   {t('echoflowApiOfficialLogin.signIn')}
                 </Button>
-              ) : (
+              )}
+              {account.live !== false && (
                 <Button variant="secondary" size="sm" icon={<RefreshCw className="h-4 w-4" />} onClick={() => void refreshAccount()} loading={isRefreshing}>
                   {t('echoflowApiOfficialLogin.refresh')}
                 </Button>
