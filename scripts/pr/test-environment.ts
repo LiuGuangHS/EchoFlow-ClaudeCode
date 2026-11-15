@@ -140,5 +140,6 @@ export function removeTestSandbox(directory: string, label: string, warn: (messa
   } catch (error) {
     const prefix = process.env.GITHUB_ACTIONS === 'true' ? '::warning::' : ''
     warn(`${prefix}${label}: could not remove test sandbox ${directory}: ${describeCleanupError(error)}; stage=${stage}; initial=${describeCleanupError(initialError)}; platform=${process.platform}; bun=${process.versions.bun ?? 'none'}; remaining=${describeSandboxRemainder(directory)}`)
+    return { error }
   }
 }

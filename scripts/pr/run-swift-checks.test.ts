@@ -1,5 +1,6 @@
 import { describe, expect, mock, spyOn, test } from 'bun:test'
 import * as fs from 'node:fs'
+import * as childProcess from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
@@ -121,6 +122,72 @@ describe('sandbox cleanup diagnostics', () => {
       remove.mockRestore()
       stat.mockRestore()
       rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('Swift EROFS system cleanup', () => {
+  test.skipIf(process.platform === 'win32').each([
+    'success', 'failure', 'false-success', 'replacement', 'replacement-directory', 'spawn-error', 'other-error',
+  ])('limits fallback to the owned sandbox and retains failures: %s', async scenario => {
+    const outside = mkdtempSync(join(tmpdir(), 'swift-cleanup-external-'))
+    writeFileSync(join(outside, 'keep'), 'external fixture')
+    let home = ''
+    const originalRemove = fs.rmSync
+    const remove = spyOn(fs, 'rmSync')
+    const spawn = spyOn(childProcess, 'spawnSync')
+    const warn = spyOn(console, 'warn').mockImplementation(() => {})
+    const log = spyOn(console, 'log').mockImplementation(() => {})
+    if (scenario === 'failure' || scenario === 'false-success') {
+      spawn.mockReturnValue({ status: scenario === 'failure' ? 1 : 0, signal: null, stderr: 'fixture system error' } as ReturnType<typeof childProcess.spawnSync>)
+    }
+    if (scenario === 'spawn-error') spawn.mockImplementation(() => { throw new Error('fixture launch error') })
+    try {
+      expect(await runSwiftChecks({
+        platform: 'darwin',
+        run: async (_command, options) => {
+          home = options.env.HOME
+          symlinkSync(outside, join(home, 'outside-link'), 'dir')
+          if (scenario.startsWith('replacement')) {
+            fs.renameSync(home, join(outside, 'original-sandbox'))
+            if (scenario === 'replacement') symlinkSync(outside, home, 'dir')
+            else mkdirSync(home)
+          }
+          const code = scenario === 'other-error' ? 'EACCES' : 'EROFS'
+          remove.mockImplementationOnce(() => { throw Object.assign(new Error('first failure'), { code }) })
+          remove.mockImplementationOnce(() => { throw Object.assign(new Error('retry failure'), { code }) })
+          return 7
+        },
+      })).toBe(7)
+      expect(existsSync(join(outside, 'keep'))).toBe(true)
+      if (scenario === 'success') {
+        expect(existsSync(home)).toBe(false)
+        expect(warn).not.toHaveBeenCalled()
+        expect(log.mock.calls.flat().join(' ')).toContain('recovered sandbox cleanup with /bin/rm')
+      } else {
+        expect(warn).toHaveBeenCalledTimes(1)
+        expect(warn.mock.calls.flat().join(' ')).toContain('could not remove test sandbox')
+        expect(existsSync(home)).toBe(true)
+      }
+      if (scenario.startsWith('replacement') || scenario === 'other-error') {
+        expect(spawn).not.toHaveBeenCalled()
+      } else {
+        expect(spawn).toHaveBeenCalledTimes(1)
+        expect(spawn.mock.calls[0]?.[0]).toBe('/bin/rm')
+        expect(spawn.mock.calls[0]?.[1]).toEqual(['-rf', '--', home])
+        expect(spawn.mock.calls[0]?.[2]).toMatchObject({ env: {}, timeout: 10_000 })
+      }
+      if (scenario === 'failure') expect(warn.mock.calls.flat().join(' ')).toContain('fixture system error')
+      if (scenario === 'false-success') expect(warn.mock.calls.flat().join(' ')).toContain('sandbox remains')
+      if (scenario === 'spawn-error') expect(warn.mock.calls.flat().join(' ')).toContain('fixture launch error')
+      if (scenario.startsWith('replacement')) expect(warn.mock.calls.flat().join(' ')).toContain('identity changed')
+    } finally {
+      remove.mockRestore()
+      spawn.mockRestore()
+      warn.mockRestore()
+      log.mockRestore()
+      if (home) originalRemove(home, { recursive: true, force: true })
+      originalRemove(outside, { recursive: true, force: true })
     }
   })
 })
