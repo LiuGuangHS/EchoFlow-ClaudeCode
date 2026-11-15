@@ -73,7 +73,8 @@ describe('explicit profile conflict recovery', () => {
   it('relaunches only the explicitly selected profile without persisting or merging state', async () => {
     const f = fixture(2, true)
     await recoverProfileConflict(f.app, f.dialog, f.conflict, ['app.cjs', '--existing-option'])
-    expect(f.app.relaunch).toHaveBeenCalledExactlyOnceWith({ args: ['app.cjs', '--existing-option', '--user-data-dir=/fixture/Roaming/legacy'] })
+    expect(f.app.relaunch).toHaveBeenCalledTimes(1)
+    expect(f.app.relaunch).toHaveBeenCalledWith({ args: ['app.cjs', '--existing-option', '--user-data-dir=/fixture/Roaming/legacy'] })
     expect(f.app.exit).toHaveBeenCalledWith(0)
   })
 

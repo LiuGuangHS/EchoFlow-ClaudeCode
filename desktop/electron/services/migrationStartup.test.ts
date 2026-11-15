@@ -30,6 +30,10 @@ function startupFixture(
     async stopAllAndWait() { step('stop'); if (failure === 'shutdown') throw new Error('Runtime process did not exit') },
   }
   const context = {
+    startupProfileError: null,
+    nativeMenuNavigation: { navigate: vi.fn() },
+    trayServiceStatus: 'unavailable',
+    readLocalePreference: () => 'en',
     app: { whenReady: () => Promise.resolve(), on: vi.fn() },
     process: { env, platform: 'win32' },
     applyWindowsAppUserModelId: () => {}, clearAppManagedPortableEnv: () => step('clearEnv'),
@@ -42,7 +46,7 @@ function startupFixture(
     getServerRuntime: () => runtime, serverRuntime: runtime as typeof runtime | null,
     getPublicAccessManager: vi.fn(() => ({ restore: async () => { step('publicAccess'); await options.restore } })),
     installApplicationMenu: vi.fn(async () => {}), shouldInstallTray: () => options.tray ?? false,
-    installTray: vi.fn(async () => ({ dispose: vi.fn() })), trayController: null,
+    installTray: vi.fn(async () => ({ dispose: vi.fn(), update: vi.fn() })), trayController: null,
     appRoot: () => '/fixture/desktop', showMainWindow: vi.fn(), isQuitting: false,
     scheduleNotificationSmoke: vi.fn(), Notification: {}, emitNotificationAction: () => {},
     console: { error: vi.fn() },
