@@ -6,14 +6,30 @@ import path from 'node:path'
 import { createSandboxedTestEnvironment } from './test-environment'
 
 describe('Windows installer recovery prerequisites', () => {
+  test('checks both package aliases before taking the branded-profile fast path', () => {
+    const hook = readFileSync('desktop/build/installer.nsh', 'utf8').replace(/\r\n/g, '\n')
+    const helper = readFileSync('desktop/build/recover-legacy-install-data.ps1', 'utf8')
+    const fastPath = hook.match(/Function CcHahaCanSkipLegacyRecovery\r?\n([\s\S]*?)FunctionEnd/)?.[1] ?? ''
+    expect(hook).toContain('!include "${BUILD_RESOURCES_DIR}\\product-identity.generated.nsh"')
+    for (const root of ['$R1', '$R2']) {
+      for (const name of ['ECHOFLOW_PRODUCT_SLUG', 'ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME']) {
+        expect(fastPath).toContain(`Push "${root}\\\${${name}}"\n  Call CcHahaIsAbsentOrEmptyDirectory\n  Pop $R3\n  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done`)
+      }
+    }
+    expect(hook).toContain('-DesktopPackageName "${ECHOFLOW_PRODUCT_SLUG}" -LegacyDesktopPackageName "${ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME}"')
+    expect(helper).toContain('-ProfileNames @($DesktopPackageName, $LegacyDesktopPackageName)')
+    expect(helper).toContain('package profile pointer was not recovered')
+    expect(helper).toContain('package profile journal was bypassed')
+  })
+
   test('resolves both profile roots and validates journals before legacy discovery', () => {
     const hook = readFileSync('desktop/build/installer.nsh', 'utf8')
     const helper = readFileSync('desktop/build/recover-legacy-install-data.ps1', 'utf8')
     expect(hook).toContain('ReadEnvStr $R2 LOCALAPPDATA')
     for (const root of ['$R1', '$R2']) {
-      expect(hook).toContain(`IfFileExists "${root}\\EchoFlow Code\\data-migration-v1.json" cc_haha_skip_recovery_done`)
+      expect(hook).toContain(`IfFileExists "${root}\\\${ECHOFLOW_PRODUCT_NAME}\\data-migration-v1.json" cc_haha_skip_recovery_done`)
     }
-    expect(hook).toContain('-LocalUserDataDir "$R2\\EchoFlow Code"')
+    expect(hook).toContain('-LocalUserDataDir "$R2\\${ECHOFLOW_PRODUCT_NAME}"')
     expect(helper).toContain('function Resolve-UserDataDirectory')
     expect(helper).toContain('function Assert-MigrationJournalAllowsRecovery')
     const recovery = helper.slice(helper.indexOf('function Invoke-LegacyRecovery {'), helper.indexOf('function Assert-SelfTest {'))
@@ -100,7 +116,7 @@ describe('Windows installer recovery prerequisites', () => {
     const hook = readFileSync('desktop/build/installer.nsh', 'utf8')
     const fastPath = hook.match(/Function CcHahaCanSkipLegacyRecovery\r?\n([\s\S]*?)FunctionEnd/)?.[1] ?? ''
     expect(fastPath).toContain('cc_haha_check_profile_default:')
-    expect(fastPath).toContain('GetFileAttributesW(w "$R3\\EchoFlow Code\\app-mode.json")')
+    expect(fastPath).toContain('GetFileAttributesW(w "$R3\\${ECHOFLOW_PRODUCT_NAME}\\app-mode.json")')
     expect(fastPath).toMatch(/cc_haha_profile_mode_missing:[\s\S]*StrCmp \$R1 2 0 cc_haha_skip_recovery_done[\s\S]*IntOp \$R5 \$R5 & 0x410[\s\S]*StrCmp \$R5 16 0 cc_haha_skip_recovery_done/)
   })
 
@@ -222,9 +238,9 @@ describe('Windows installer recovery prerequisites', () => {
     for (const root of ['$R1', '$R2']) {
       expect(fastPath).toContain(`StrCpy $R3 ${root}`)
     }
-    expect(fastPath).toContain('Push "$R3\\EchoFlow Code\\app-mode.json"')
+    expect(fastPath).toContain('Push "$R3\\${ECHOFLOW_PRODUCT_NAME}\\app-mode.json"')
     expect(fastPath.match(/Call CcHahaIsStrictDefaultMode/g)).toHaveLength(1)
-    expect(fastPath).not.toContain('IfFileExists "$R2\\EchoFlow Code\\app-mode.json" cc_haha_skip_recovery_done')
+    expect(fastPath).not.toContain('IfFileExists "$R2\\${ECHOFLOW_PRODUCT_NAME}\\app-mode.json" cc_haha_skip_recovery_done')
     expect(installerHook).toMatch(
       /Call CcHahaCanSkipLegacyRecovery[\s\S]*No legacy data candidates found for the registered per-user installation[\s\S]*UAC_AsUser_Call Function CcHahaRecoverLegacy/,
     )
@@ -245,6 +261,9 @@ describe('Windows installer recovery prerequisites', () => {
       }).join('\n')
     const root = mkdtempSync(path.join(tmpdir(), 'echoflow-nsis-recovery-'))
     const defaultMode = '{\n  "mode": "default",\n  "portable_dir": null\n}'
+    const identity = JSON.parse(readFileSync('product.json', 'utf8'))
+    const aliasScenarios = [identity.slug, identity.legacyDesktopPackageName].flatMap(name =>
+      ['empty', 'default', 'portable', 'journal', 'file', 'junction'].map(state => `alias-${name}-${state}`))
     const scenarios = [
       'default', 'empty-other', 'absent-mode', 'implicit-default', 'implicit-default-empty-other',
       'implicit-default-dual-root', 'implicit-default-journal', 'implicit-default-legacy',
@@ -252,6 +271,7 @@ describe('Windows installer recovery prerequisites', () => {
       'portable', 'broken', 'crlf', 'bom', 'final-newline', 'extra-field', 'uppercase', 'truncated', 'locked-mode',
       'journal', 'other-journal', 'journal-directory', 'legacy-data', 'elevated', 'inner-uac',
       'different-install', 'machine-install', 'machine-uninstaller', 'config-env', 'managed-env',
+      ...aliasScenarios,
     ]
     const executable = path.join(root, 'probe.exe')
     const trace = path.join(root, 'trace.txt')
@@ -305,7 +325,20 @@ describe('Windows installer recovery prerequisites', () => {
             mkdirSync(path.join(install, 'CLAUDE_CONFIG_DIR'))
             writeFileSync(path.join(install, 'CLAUDE_CONFIG_DIR', 'settings.json'), 'must survive')
           }
+          if (scenario.startsWith('alias-')) {
+            const name = [identity.slug, identity.legacyDesktopPackageName].find(name => scenario.startsWith(`alias-${name}-`))!
+            const state = scenario.slice(`alias-${name}-`.length)
+            const alias = path.join(fixture, kind, name)
+            if (state === 'file') writeFileSync(alias, 'not a directory')
+            else if (state === 'junction') symlinkSync(install, alias, 'junction')
+            else {
+              mkdirSync(alias, { recursive: true })
+              if (state === 'journal') writeFileSync(path.join(alias, 'data-migration-v1.json'), '{broken')
+              if (state === 'default' || state === 'portable') writeFileSync(path.join(alias, 'app-mode.json'), defaultMode.replace('default', state))
+            }
+          }
           const succeeds = ['default', 'empty-other', 'absent-mode', 'implicit-default', 'implicit-default-empty-other'].includes(scenario)
+            || (scenario.startsWith('alias-') && scenario.endsWith('-empty'))
           const errorFlag = scenarios.indexOf(scenario) % 2
           expected.push(`${name}|${Number(succeeds)}|${errorFlag}|r0|r1|r2|r3|r4|r5|r6`)
           sections.push(String.raw`
@@ -351,6 +384,7 @@ SilentInstall silent
 Name "Isolated recovery fast-path regression"
 OutFile "${executable}"
 !include "LogicLib.nsh"
+!include "${path.resolve('desktop/build/product-identity.generated.nsh')}"
 Var ccHahaPerUserInstallLocation
 Var ccHahaPerMachineInstallLocation
 Var ccHahaPerMachineUninstallString
@@ -375,6 +409,17 @@ SectionEnd
       rmSync(root, { recursive: true, force: true })
     }
   }, 90_000)
+
+  test('keeps legacy-profile startup and relaunch evidence separate from external config overrides', () => {
+    const smoke = readFileSync('desktop/scripts/windows-installer-smoke.ps1', 'utf8')
+    expect(smoke).toContain("foreach ($launch in @('startup', 'relaunch'))")
+    expect(smoke).toContain('-ExpectedPortableDir $legacyPortable')
+    expect(smoke).toMatch(/if \(\$ExpectedPortableDir\) \{\s*Remove-Item Env:CLAUDE_CONFIG_DIR/)
+    expect(smoke).toContain('Legacy-package profile reinstall')
+    expect(smoke).toContain('created competing state')
+    expect(smoke).toContain("@($windowLog, $serverStateFile)")
+    expect(smoke).toContain("'legacy-profile', 'package-profile'")
+  })
 
   test('keeps no-CLR default and portable upgrade cases in Windows smoke', () => {
     const installerSmoke = readFileSync(

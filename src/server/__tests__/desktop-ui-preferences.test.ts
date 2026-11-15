@@ -4,6 +4,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { handleDesktopUiApi } from '../api/desktop-ui.js'
 import { DesktopUiPreferencesService } from '../services/desktopUiPreferencesService.js'
+import { PRODUCT_NAME, PRODUCT_REPO_URL } from '../../utils/productIdentity.generated.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -75,6 +76,8 @@ describe('DesktopUiPreferencesService', () => {
     const result = await service.readPreferences()
 
     expect(result.exists).toBe(false)
+    expect(result.preferences.profile.displayName).toBe(PRODUCT_NAME)
+    expect(result.preferences.profile.subtitle).toBe(PRODUCT_REPO_URL.replace(/^https?:\/\//, ''))
     expect(result.preferences).toEqual({
       schemaVersion: 7,
       profile: {

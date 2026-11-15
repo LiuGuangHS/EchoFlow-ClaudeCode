@@ -6,6 +6,7 @@ import path from 'node:path'
 
 import {
   TARGETS,
+  NSIS_TARGET,
   check,
   generate,
   readIdentity,
@@ -47,7 +48,10 @@ describe('product identity generator', () => {
     const dir = makeOutDir()
     const files = generate(ROOT, dir)
 
-    expect(files).toEqual(TARGETS.map(target => path.join(dir, target)))
+    expect(files).toEqual([...TARGETS, NSIS_TARGET].map(target => path.join(dir, target)))
+    const nsis = readFileSync(path.join(dir, NSIS_TARGET), 'utf8')
+    expect(nsis).toContain(`!define ECHOFLOW_PRODUCT_SLUG "${identity.slug}"`)
+    expect(nsis).toContain(`!define ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME "${identity.legacyDesktopPackageName}"`)
 
     const contents = TARGETS.map(target =>
       readFileSync(path.join(dir, target), 'utf8'),
@@ -77,7 +81,7 @@ describe('product identity generator', () => {
   test('checks actual packaging fields even when generated modules are fresh', () => {
     const root = makeOutDir()
     writeFileSync(path.join(root, 'product.json'), JSON.stringify(identity))
-    for (const file of ['desktop/package.json', 'mobile/app.json']) {
+    for (const file of ['desktop/package.json', 'mobile/app.json', 'desktop/src-tauri/tauri.conf.json', 'desktop/src-tauri/Cargo.toml']) {
       mkdirSync(path.dirname(path.join(root, file)), { recursive: true })
       writeFileSync(path.join(root, file), readFileSync(path.join(ROOT, file)))
     }
@@ -85,8 +89,9 @@ describe('product identity generator', () => {
     expect(check(root)).toEqual([])
 
     for (const [file, fields] of [
-      ['desktop/package.json', ['build.productName', 'build.appId', 'build.protocols.schemes']],
+      ['desktop/package.json', ['name', 'productName', 'build.productName', 'build.appId', 'build.protocols.schemes', 'build.artifactName']],
       ['mobile/app.json', ['expo.name', 'expo.slug', 'expo.scheme', 'expo.ios.bundleIdentifier', 'expo.android.package']],
+      ['desktop/src-tauri/tauri.conf.json', ['productName', 'identifier', 'app.windows.0.title']],
     ] as const) {
       const original = readFileSync(path.join(root, file), 'utf8')
       for (const field of fields) {
@@ -106,6 +111,21 @@ describe('product identity generator', () => {
       expect(check(root).some(error => error.startsWith(`${file}:`))).toBe(true)
       writeFileSync(path.join(root, file), original)
     }
+  })
+
+  test('rejects installer directive injection in identity names', () => {
+    const root = makeOutDir()
+    for (const key of ['name', 'slug', 'legacyDesktopPackageName']) {
+      writeFileSync(path.join(root, 'product.json'), JSON.stringify({ ...identity, [key]: 'bad"\n!include evil' }))
+      expect(() => generate(root)).toThrow('not a safe filesystem/installer name')
+    }
+  })
+
+  test('detects installer constants drifting from the central identity', () => {
+    const dir = makeOutDir()
+    generate(ROOT, dir)
+    writeFileSync(path.join(dir, NSIS_TARGET), '; stale')
+    expect(check(ROOT, dir)).toEqual([NSIS_TARGET])
   })
 
   test('check exits 0 for fresh output and 1 for stale output', () => {

@@ -1,12 +1,30 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MenuItemConstructorOptions } from 'electron'
 import { ELECTRON_EVENT_CHANNELS } from '../ipc/channels'
+import { PRODUCT_NAME } from '../../src/lib/productIdentity.generated'
 import {
   buildApplicationMenuTemplate,
+  createNativeMenuNavigation,
   buildRendererContextMenuTemplate,
   installApplicationMenu,
   installRendererContextMenu,
 } from './menu'
+
+describe('native menu readiness', () => {
+  it('retains the latest destination until the renderer subscribes and takes it once', () => {
+    const show = vi.fn()
+    const notify = vi.fn()
+    const navigation = createNativeMenuNavigation(show, notify)
+    navigation.navigate('settings')
+    navigation.navigate('mobile-connection')
+    expect(show).toHaveBeenCalledTimes(2)
+    expect(notify).toHaveBeenCalledTimes(2)
+    expect(navigation.take()).toBe('mobile-connection')
+    expect(navigation.take()).toBeNull()
+    navigation.navigate('about')
+    expect(navigation.take()).toBe('about')
+  })
+})
 
 const menuMocksKey = '__electronMenuMocks'
 
@@ -272,16 +290,17 @@ describe('Electron application menu service', () => {
     expect(fileSubmenu.some(item => item.label === 'Settings...')).toBe(true)
   })
 
-  it('installs a native menu that forwards settings navigation to the renderer event channel', async () => {
+  it('installs a centrally named native menu that delegates navigation to the readiness queue', async () => {
     const menuMocks = getElectronMenuMocks()
     menuMocks.buildFromTemplate.mockClear()
     menuMocks.setApplicationMenu.mockClear()
-    const send = vi.fn()
+    const navigate = vi.fn()
 
     await installApplicationMenu(
-      { name: 'EchoFlow Code' } as never,
-      () => ({ webContents: { send } }) as never,
+      { name: 'Legacy Product' } as never,
+      () => null,
       'darwin',
+      navigate,
     )
 
     expect(menuMocks.buildFromTemplate).toHaveBeenCalledTimes(1)
@@ -296,7 +315,8 @@ describe('Electron application menu service', () => {
 
     expect(settingsItem).toBeDefined()
     settingsItem?.click?.({} as never, {} as never, {} as never)
-    expect(send).toHaveBeenCalledWith(ELECTRON_EVENT_CHANNELS.nativeMenuNavigate, 'settings')
+    expect(navigate).toHaveBeenCalledWith('settings')
+    expect(template[0]?.label).toBe(PRODUCT_NAME)
   })
 
   it('clears the native application menu on Windows so custom chrome owns the top bar', async () => {
@@ -308,6 +328,7 @@ describe('Electron application menu service', () => {
       { name: 'EchoFlow Code' } as never,
       () => ({ webContents: { send: vi.fn() } }) as never,
       'win32',
+      vi.fn(),
     )
 
     expect(menuMocks.buildFromTemplate).not.toHaveBeenCalled()
@@ -324,6 +345,7 @@ describe('Electron application menu service', () => {
       { name: 'EchoFlow Code' } as never,
       () => ({ webContents: { send } }) as never,
       'linux',
+      vi.fn(),
     )
 
     expect(menuMocks.buildFromTemplate).toHaveBeenCalledTimes(1)
@@ -351,6 +373,7 @@ describe('Electron application menu service', () => {
       { name: 'EchoFlow Code', hide: appHide } as never,
       () => window as never,
       'darwin',
+      vi.fn(),
     )
 
     const template = menuMocks.buildFromTemplate.mock.calls[0]?.[0] as MenuItemConstructorOptions[]
@@ -382,6 +405,7 @@ describe('Electron application menu service', () => {
       { name: 'EchoFlow Code' } as never,
       () => window as never,
       'darwin',
+      vi.fn(),
     )
 
     const template = menuMocks.buildFromTemplate.mock.calls[0]?.[0] as MenuItemConstructorOptions[]
@@ -400,7 +424,7 @@ it('routes the Close Tab accelerator to the workspace controller without closing
   const window = { close: vi.fn(), webContents: { send: vi.fn() } }
   const mocks = getElectronMenuMocks()
   mocks.buildFromTemplate.mockClear()
-  await installApplicationMenu({ name: 'Test App' } as never, () => window as never, 'darwin')
+  await installApplicationMenu({ name: 'Test App' } as never, () => window as never, 'darwin', vi.fn())
   const template = mocks.buildFromTemplate.mock.calls[0]?.[0] as MenuItemConstructorOptions[]
   const item = template.flatMap(item => (item.submenu as MenuItemConstructorOptions[] | undefined) ?? []).find(item => item.label === 'Close Tab')!
   expect(item.accelerator).toBe('CmdOrCtrl+W')

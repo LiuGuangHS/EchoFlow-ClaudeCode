@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parse } from 'yaml'
+import { PRODUCT_IDENTITY } from '../src/utils/productIdentity.generated'
 import { buildMessage, carryForwardApk, deliverBuild, EAS_CLI_VERSION, findReusableBuild, fingerprintInputs, isBuildInput, parseDelivery, planDelivery, selectReusableBuild, submissionAlreadyFinished, type Delivery } from './mobile-release'
 
 const commit = 'a'.repeat(40)
@@ -89,6 +90,19 @@ describe('mobile release planning', () => {
   test('unchanged marketing version with new inputs and rollback both fail before spending quota', () => {
     expect(() => planDelivery({ ...input, fingerprint: 'd'.repeat(64) })).toThrow('version bump')
     expect(() => planDelivery({ ...input, version: '0.0.9' })).toThrow('older mobile version')
+  })
+  test('manifest reader accepts current branding and preserves historical APK names without relaxing asset validation', () => {
+    const android = { ...delivery, platform: 'android', destination: 'github-release', sha256: fingerprint }
+    for (const asset of [`${PRODUCT_IDENTITY.slug}-mobile-0.1.0-test.apk`, 'cc-haha-mobile-0.1.0-test.apk']) {
+      expect(parseDelivery({ ...android, asset }).asset).toBe(asset)
+    }
+    for (const asset of ['other-mobile-test.apk', `${PRODUCT_IDENTITY.slug}-mobile-../test.apk`, `${PRODUCT_IDENTITY.slug}-mobile-test.aab`, `${PRODUCT_IDENTITY.slug}-mobile-.apk`]) {
+      expect(() => parseDelivery({ ...android, asset })).toThrow('Invalid')
+    }
+  })
+  test('new APK uploads use the central public artifact prefix', () => {
+    expect(PRODUCT_IDENTITY.mobileArtifactPrefix).toBe(`${PRODUCT_IDENTITY.slug}-mobile`)
+    expect(readFileSync('scripts/mobile-release.ts', 'utf8')).toContain('`${PRODUCT_IDENTITY.mobileArtifactPrefix}-${version}-${finished.id}.apk`')
   })
   test('manifest reader rejects unknown schema, malformed records and missing APK integrity metadata', () => {
     expect(parseDelivery(delivery)).toEqual(delivery)
@@ -223,7 +237,8 @@ afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: tru
 function fixtureRepo(tag: string, gh: string) {
   const root = mkdtempSync(join(tmpdir(), 'mobile-release-test-'))
   dirs.push(root)
-  for (const dir of ['scripts/pr', 'mobile', 'bin', 'home', 'runner']) mkdirSync(join(root, dir), { recursive: true })
+  for (const dir of ['scripts/pr', 'src/utils', 'mobile', 'bin', 'home', 'runner']) mkdirSync(join(root, dir), { recursive: true })
+  writeFileSync(join(root, 'src/utils/productIdentity.generated.ts'), readFileSync('src/utils/productIdentity.generated.ts'))
   writeFileSync(join(root, 'scripts/pr/module-graph.ts'), readFileSync('scripts/pr/module-graph.ts'))
   writeFileSync(join(root, 'scripts/mobile-release.ts'), readFileSync('scripts/mobile-release.ts'))
   writeFileSync(join(root, 'package.json'), JSON.stringify({ packageManager: 'bun@1.4.3' }))

@@ -100,6 +100,51 @@ describe('release desktop workflow', () => {
     return findUpdateFile(files, 'zip', processArch, ['pkg', 'dmg'])
   }
 
+  test('delivery summary always reports publication, site sync and native pipeline outcomes without claiming delivery', () => {
+    const workflow = parse(readReleaseWorkflow())
+    const job = workflow.jobs['delivery-summary']
+    expect(job).toBeDefined()
+    expect(job.if).toBe('always()')
+    expect(job.needs).toEqual(['publish-release', 'site-release-sync', 'release-mobile'])
+    expect(job.permissions).toEqual({})
+    expect(job.steps).toHaveLength(1)
+    const step = job.steps[0]
+    expect(step.env).toMatchObject({
+      DESKTOP_RESULT: '${{ needs.publish-release.result }}',
+      SITE_RESULT: '${{ needs.site-release-sync.result }}',
+      MOBILE_RESULT: '${{ needs.release-mobile.result }}',
+      MOBILE_ENABLED: '${{ vars.MOBILE_RELEASE_ENABLED }}',
+      MOBILE_PLATFORM: "${{ vars.MOBILE_RELEASE_PLATFORM || 'all' }}",
+      OFFICIAL_RELEASE: '${{ inputs.official_release == true }}',
+    })
+    expect(step.run).not.toContain('${{')
+    const root = mkdtempSync(join(tmpdir(), 'delivery-summary-'))
+    try {
+      for (const [result, platform, official] of [['skipped', 'all', 'false'], ['failure', 'all', 'true'], ['success', 'android', 'true'], ['cancelled', 'ios', 'true']]) {
+        const summary = join(root, 'summary.md')
+        writeFileSync(summary, '')
+        const run = Bun.spawnSync(['bash', '-euo', 'pipefail', '-c', step.run], {
+          env: { PATH: process.env.PATH, HOME: root, XDG_CONFIG_HOME: root, CLAUDE_CONFIG_DIR: root,
+            GITHUB_STEP_SUMMARY: summary, DESKTOP_RESULT: result, SITE_RESULT: result,
+            MOBILE_RESULT: result, MOBILE_ENABLED: official, MOBILE_PLATFORM: platform, OFFICIAL_RELEASE: official },
+        })
+        expect(run.exitCode, run.stderr.toString()).toBe(0)
+        const text = readFileSync(summary, 'utf8')
+        expect(text).toContain(`| Desktop publication job | ${result}`)
+        expect(text).toContain(`| Site release sync | ${result} |`)
+        for (const native of ['android', 'ios']) {
+          expect(text).toContain(`| ${native} pipeline | ${platform === 'all' || platform === native ? result : 'skipped (not selected)'}`)
+        }
+        expect(text).toContain(`Mobile enabled: ${official}; requested platforms: ${platform}; official release: ${official}`)
+        expect(text).toContain('Aggregate mobile pipeline result is not proof of APK delivery or TestFlight availability')
+        expect(text).toContain('Per-platform results and delivery records must be checked in Release Mobile')
+        if (official === 'false') expect(text).toContain('Public desktop publication is not confirmed for a non-official run')
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   test('release packaging does not run the PR-quality gate', () => {
     const workflow = readReleaseWorkflow()
 

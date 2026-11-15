@@ -9,6 +9,14 @@ import {
 } from './capabilities'
 
 describe('Electron IPC capabilities', () => {
+  it('only lets native navigation be drained without renderer-supplied destinations', () => {
+    const channel = ELECTRON_IPC_CHANNELS.windowTakeNativeMenuNavigation
+    expect(validateElectronIpcPayload(channel, undefined)).toBe(true)
+    for (const payload of [null, 'settings', {}, { destination: 'mobile-connection' }]) {
+      expect(validateElectronIpcPayload(channel, payload)).toBe(false)
+    }
+    expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
+  })
   it('accepts only boolean power preferences and denies the pet renderer access', () => {
     const channel = ELECTRON_IPC_CHANNELS.powerSetPreventSleepWhileRunning
     expect(validateElectronIpcPayload(channel, true)).toBe(true)

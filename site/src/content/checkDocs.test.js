@@ -23,6 +23,7 @@ test('the docs CLI checks all README links and screenshot locales', async (t) =>
   for (const relative of ['start/index.md', 'en/start/index.md']) {
     await write(`docs/${relative}`, '---\ntitle: Start\nnav_title: Start\ndescription: Start here\norder: 0\n---\n# Start\n')
   }
+  await write('product.json', JSON.stringify({ docsUrl: 'https://docs.example.test' }))
   await write('site/src/lib/locale.js', "const LOCALE_STORAGE_KEY = 'locale'\nconst DEFAULT_LOCALE = 'en'\n")
   await write('site/index.html', `<title>Fixture</title><meta name="description" content="Start here">
     localStorage.getItem('locale'); navigator.languages && navigator.languages[0]; navigator.language;
@@ -116,22 +117,24 @@ test('the docs CLI checks all README links and screenshot locales', async (t) =>
     }
   })
 
-  await t.test('an unavailable desktop TestFlight channel may link to official public documentation', async () => {
-    await write('desktop/src/pages/settings/mobileAppLinks.ts', "android: 'https://example.test/app.apk', testFlight: null")
-    const landing = 'site/src/pages/home/landingContent.ts'
-    const original = await fs.readFile(path.join(root, landing), 'utf8')
-    try {
-      await write(landing, original.replace('https://example.test/ios', 'https://code.echoflow.cn/en/start'))
-      assert.match((await check()).stdout, /Documentation check passed/)
-      for (const target of ['https://testflight.apple.com/join/unverified', 'https://code.echoflow.cn/missing', 'https://code.echoflow.cn/en']) {
-        await write(landing, original.replace('https://example.test/ios', target))
-        await assert.rejects(check(), (error) => error.code === 1 && error.stderr.includes('testFlight'))
+  for (const [channel, url] of [['android', 'https://example.test/app.apk'], ['testFlight', 'https://example.test/ios']]) {
+    await t.test(`an unavailable desktop ${channel} channel may link only to official public documentation`, async () => {
+      await write('desktop/src/pages/settings/mobileAppLinks.ts', downloads.replace(`${channel}: '${url}'`, `${channel}: null`))
+      const landing = 'site/src/pages/home/landingContent.ts'
+      const original = await fs.readFile(path.join(root, landing), 'utf8')
+      try {
+        await write(landing, original.replace(url, 'https://docs.example.test/en/start'))
+        assert.match((await check()).stdout, /Documentation check passed/)
+        for (const target of ['https://testflight.apple.com/join/unverified', 'https://docs.example.test/missing', 'https://docs.example.test/en', 'https://code.echoflow.cn/en/start']) {
+          await write(landing, original.replace(url, target))
+          await assert.rejects(check(), (error) => error.code === 1 && error.stderr.includes(channel))
+        }
+      } finally {
+        await write(landing, original)
+        await write('desktop/src/pages/settings/mobileAppLinks.ts', downloads)
       }
-    } finally {
-      await write(landing, original)
-      await write('desktop/src/pages/settings/mobileAppLinks.ts', downloads)
-    }
-  })
+    })
+  }
 
   for (const [target, fixture] of [
     ['../_internal/design.md', 'docs/_internal/design.md'],

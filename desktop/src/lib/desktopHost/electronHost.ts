@@ -208,7 +208,29 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
       focus: () => invoke(ELECTRON_IPC_CHANNELS.windowFocus),
       isMaximized: () => invoke(ELECTRON_IPC_CHANNELS.windowIsMaximized),
       onResized: handler => subscribe(ELECTRON_EVENT_CHANNELS.windowResized, handler),
-      onNativeMenuNavigate: handler => subscribe(ELECTRON_EVENT_CHANNELS.nativeMenuNavigate, handler),
+      async onNativeMenuNavigate(handler) {
+        let disposed = false
+        const drain = async () => {
+          if (disposed) return
+          const destination = await invoke<string | null>(ELECTRON_IPC_CHANNELS.windowTakeNativeMenuNavigation)
+          if (!disposed && destination) handler(destination)
+        }
+        // Subscribe before draining so a click during renderer startup is not lost.
+        const unlisten = await subscribe(ELECTRON_EVENT_CHANNELS.nativeMenuNavigate, () => {
+          void drain().catch(() => {})
+        })
+        try {
+          await drain()
+        } catch (error) {
+          disposed = true
+          unlisten()
+          throw error
+        }
+        return () => {
+          disposed = true
+          unlisten()
+        }
+      },
     },
     terminal: {
       supportsStartupCorrelation: true,

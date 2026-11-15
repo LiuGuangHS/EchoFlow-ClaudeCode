@@ -7,13 +7,14 @@ import {
 } from '../../api/desktopUiPreferences'
 import { useTranslation } from '../../i18n'
 import { publicAssetPath } from '../../lib/publicAsset'
+import { PRODUCT_NAME, PRODUCT_REPO_URL } from '../../lib/productIdentity.generated'
 import { isPublicAccessRuntime } from '../../lib/publicAccessRuntime'
 
 type DisplayProfile = DesktopProfilePreferences & { avatarDataUrl?: string | null }
 
 export const DEFAULT_PROFILE: DesktopProfilePreferences = {
-  displayName: 'EchoFlow Code',
-  subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
+  displayName: PRODUCT_NAME,
+  subtitle: PRODUCT_REPO_URL.replace(/^https?:\/\//, ''),
   avatarFile: null,
   avatarUpdatedAt: null,
 }

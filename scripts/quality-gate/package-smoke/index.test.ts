@@ -37,7 +37,7 @@ function createRepoRoot() {
   writeFileSync(
     join(rootDir, 'desktop', 'package.json'),
     JSON.stringify({
-      name: 'claude-code-desktop',
+      name: 'echoflow-code',
       version: '0.3.1',
       build: {
         productName: 'Claude Code Haha',
@@ -923,7 +923,7 @@ describe('packaged artifact inspection', () => {
 
     writeFile(rootDir, 'desktop/build-artifacts/linux-x64/Claude-Code-Haha-0.3.1-x64.AppImage')
     writeFile(rootDir, 'desktop/build-artifacts/linux-x64/Claude-Code-Haha-0.3.1-x64.AppImage.blockmap')
-    writeFile(rootDir, 'desktop/build-artifacts/linux-x64/claude-code-desktop_0.3.1_amd64.deb')
+    writeFile(rootDir, 'desktop/build-artifacts/linux-x64/echoflow-code_0.3.1_amd64.deb')
     writeFile(rootDir, 'desktop/build-artifacts/linux-x64/linux-unpacked/resources/app.asar')
     writeFile(rootDir, 'desktop/build-artifacts/linux-x64/linux-unpacked/resources/app-update.yml')
     writeFile(rootDir, 'desktop/build-artifacts/linux-x64/linux-unpacked/resources/app.asar.unpacked/src-tauri/binaries/claude-sidecar-x86_64-unknown-linux-gnu')
@@ -947,7 +947,7 @@ describe('packaged artifact inspection', () => {
 
     writeFile(rootDir, 'desktop/build-artifacts/linux-arm64/Claude-Code-Haha-0.3.1-arm64.AppImage')
     writeFile(rootDir, 'desktop/build-artifacts/linux-arm64/Claude-Code-Haha-0.3.1-arm64.AppImage.blockmap')
-    writeFile(rootDir, 'desktop/build-artifacts/linux-arm64/claude-code-desktop_0.3.1_arm64.deb')
+    writeFile(rootDir, 'desktop/build-artifacts/linux-arm64/echoflow-code_0.3.1_arm64.deb')
     writeFile(rootDir, 'desktop/build-artifacts/linux-arm64/linux-unpacked/resources/app.asar')
     writeFile(rootDir, 'desktop/build-artifacts/linux-arm64/linux-unpacked/resources/app-update.yml')
     writeFile(rootDir, 'desktop/build-artifacts/linux-arm64/linux-unpacked/resources/app.asar.unpacked/src-tauri/binaries/claude-sidecar-aarch64-unknown-linux-gnu')

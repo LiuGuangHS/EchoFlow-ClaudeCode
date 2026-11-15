@@ -17,6 +17,9 @@ import path from 'node:path'
 export type ProductIdentity = {
   name: string
   slug: string
+  legacyDesktopPackageName: string
+  mobileArtifactPrefix: string
+  legacyMobileArtifactPrefix: string
   appId: string
   mobilePackage: string
   mobileBundleId: string
@@ -36,7 +39,19 @@ export const TARGETS = [
   'mobile/src/config/productIdentity.generated.ts',
 ] as const
 
+export const NSIS_TARGET = 'desktop/build/product-identity.generated.nsh'
+
 const HEADER = '// GENERATED FROM product.json — do not edit. Run `bun run product:identity`.\n'
+
+export function renderNsis(identity: ProductIdentity): string {
+  const values = {
+    ECHOFLOW_PRODUCT_NAME: identity.name,
+    ECHOFLOW_PRODUCT_SLUG: identity.slug,
+    ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME: identity.legacyDesktopPackageName,
+  }
+  return '; GENERATED FROM product.json — do not edit.\n' + Object.entries(values)
+    .map(([key, value]) => `!define ${key} "${value}"\n`).join('')
+}
 
 export function render(identity: ProductIdentity): string {
   const entries = Object.entries(identity)
@@ -66,18 +81,30 @@ export function readIdentity(root: string): ProductIdentity {
   const required: Array<keyof ProductIdentity> = [
     'name', 'slug', 'appId', 'mobilePackage', 'mobileBundleId', 'scheme',
     'protocol', 'repoUrl', 'docsUrl', 'envPrefix', 'legacyEnvPrefix',
-    'configDir', 'adsPublisherId',
+    'configDir', 'adsPublisherId', 'legacyDesktopPackageName',
+    'mobileArtifactPrefix', 'legacyMobileArtifactPrefix',
   ]
   const missing = required.filter(key => typeof raw[key] !== 'string' || raw[key].length === 0)
   if (missing.length > 0) {
     throw new Error(`product.json is missing required string fields: ${missing.join(', ')}`)
   }
+  for (const key of ['name', 'slug', 'legacyDesktopPackageName'] as const) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]*$/.test(raw[key])) {
+      throw new Error(`product.json: ${key} is not a safe filesystem/installer name`)
+    }
+  }
   return raw
 }
 
+function generatedFiles(identity: ProductIdentity): Record<string, string> {
+  return {
+    ...Object.fromEntries(TARGETS.map(target => [target, render(identity)])),
+    [NSIS_TARGET]: renderNsis(identity),
+  }
+}
+
 export function generate(root: string, outDir = root): string[] {
-  const content = render(readIdentity(root))
-  return TARGETS.map(target => {
+  return Object.entries(generatedFiles(readIdentity(root))).map(([target, content]) => {
     const file = path.join(outDir, target)
     mkdirSync(path.dirname(file), { recursive: true })
     writeFileSync(file, content, 'utf8')
@@ -87,19 +114,26 @@ export function generate(root: string, outDir = root): string[] {
 
 export function check(root: string, outDir = root): string[] {
   const identity = readIdentity(root)
-  const expected = render(identity)
-  const errors: string[] = TARGETS.filter(target => {
+  const errors: string[] = Object.entries(generatedFiles(identity)).filter(([target, expected]) => {
     try {
       return readFileSync(path.join(outDir, target), 'utf8') !== expected
     } catch {
       return true
     }
-  })
+  }).map(([target]) => target)
   const packagingFields: Record<string, Record<string, string | string[]>> = {
     'desktop/package.json': {
+      name: identity.slug,
+      productName: identity.name,
+      'build.artifactName': `${identity.name.replaceAll(' ', '-')}-\${version}-\${os}-\${arch}.\${ext}`,
       'build.productName': identity.name,
       'build.appId': identity.appId,
       'build.protocols.schemes': [identity.protocol],
+    },
+    'desktop/src-tauri/tauri.conf.json': {
+      productName: identity.name,
+      identifier: identity.appId,
+      'app.windows.0.title': identity.name,
     },
     'mobile/app.json': {
       'expo.name': identity.name,
@@ -121,6 +155,13 @@ export function check(root: string, outDir = root): string[] {
     } catch (error) {
       errors.push(`${file}: ${error instanceof Error ? error.message : String(error)}`)
     }
+  }
+  try {
+    const cargo = Bun.TOML.parse(readFileSync(path.join(root, 'desktop/src-tauri/Cargo.toml'), 'utf8')) as { package: { name: string }, lib: { name: string } }
+    if (cargo.package.name !== identity.slug) errors.push('desktop/src-tauri/Cargo.toml: package.name does not match product.json')
+    if (cargo.lib.name !== `${identity.slug.replaceAll('-', '_')}_lib`) errors.push('desktop/src-tauri/Cargo.toml: lib.name does not match product.json')
+  } catch (error) {
+    errors.push(`desktop/src-tauri/Cargo.toml: ${error instanceof Error ? error.message : String(error)}`)
   }
   return errors
 }

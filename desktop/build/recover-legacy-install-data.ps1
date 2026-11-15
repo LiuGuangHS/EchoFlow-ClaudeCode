@@ -5,6 +5,8 @@ param(
   [string]$CandidateInstallDir = '',
   [string]$UserDataDir = '',
   [string]$LocalUserDataDir = '',
+  [string]$DesktopPackageName = '',
+  [string]$LegacyDesktopPackageName = '',
   [string]$RecoveryRoot = '',
   [string]$ProcessName = 'EchoFlow Code.exe',
   [string]$ActiveConfigDir = $env:CLAUDE_CONFIG_DIR,
@@ -716,30 +718,43 @@ function Write-AppModeAtomically {
 function Resolve-UserDataDirectory {
   param(
     [Parameter(Mandatory = $true)][string]$Current,
-    [AllowEmptyString()][string]$Published
+    [AllowEmptyString()][string]$Published,
+    [string[]]$ProfileNames = @()
   )
 
-  # Profile selection matches the app's lexical comparison; recovery paths still require canonical identities.
-  if ([string]::IsNullOrWhiteSpace($Published) -or
-      [IO.Path]::GetFullPath($Current).TrimEnd('\', '/').Equals(
-        [IO.Path]::GetFullPath($Published).TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
-    return $Current
+  $candidates = @([IO.Path]::GetFullPath($Current))
+  if (-not [string]::IsNullOrWhiteSpace($Published)) {
+    $candidates += [IO.Path]::GetFullPath($Published)
+  }
+  foreach ($profile in @($candidates)) {
+    foreach ($name in $ProfileNames) {
+      if ([string]::IsNullOrWhiteSpace($name)) { continue }
+      if ($name -notmatch '\A[a-z0-9][a-z0-9-]*\z') { throw "Invalid package profile name: $name" }
+      $candidates += [IO.Path]::Combine([IO.Path]::GetDirectoryName($profile), $name)
+    }
   }
   # Keep this small cache-only exclusion in sync with echoFlowDataRoot.ts.
   $caches = @('Cache', 'Code Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'ShaderCache', 'GrShaderCache', 'Crashpad', 'logs')
-  $populated = @($Current, $Published | Where-Object {
+  $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+  $populated = @($candidates | Where-Object {
     $directory = $_
-    if (Test-Path -LiteralPath $directory) {
-      if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+    if ($seen.Add($directory) -and (Test-Path -LiteralPath $directory -ErrorAction Stop)) {
+      if (-not (Test-Path -LiteralPath $directory -PathType Container -ErrorAction Stop)) {
         throw "The user data path is not a directory: $directory"
       }
       @(Get-ChildItem -LiteralPath $directory -Force -ErrorAction Stop | Where-Object { $caches -cnotcontains $_.Name }).Count -gt 0
     }
   })
   if ($populated.Count -gt 1) {
-    throw "Both Windows data directories contain user state. Back up and resolve the conflict manually before upgrading: $Current; $Published"
+    # A single redirected profile needs no local-volume proof until recovery actually copies data.
+    $seen.Clear()
+    $populated = @($populated | Where-Object { $seen.Add((Get-CanonicalPathIdentity $_)) })
+  }
+  if ($populated.Count -gt 1) {
+    throw "Both Windows data directories contain user state (or multiple profile aliases). Back up and resolve the conflict manually before upgrading: $($populated -join '; ')"
   }
   if ($populated.Count -eq 1) { return $populated[0] }
+  if ([string]::IsNullOrWhiteSpace($Published)) { return $Current }
   return $Published
 }
 
@@ -876,6 +891,7 @@ function Invoke-LegacyRecovery {
     [AllowEmptyCollection()][AllowEmptyString()][string[]]$SharedInstallDirs = @(),
     [Parameter(Mandatory = $true)][string]$UserDataDir,
     [AllowEmptyString()][string]$LocalUserDataDir = '',
+    [string[]]$ProfileNames = @(),
     [Parameter(Mandatory = $true)][string]$RecoveryRoot,
     [Parameter(Mandatory = $true)][string]$ProcessName,
     [AllowEmptyString()][string]$ActiveConfigDir,
@@ -894,7 +910,7 @@ function Invoke-LegacyRecovery {
     return $null
   }
 
-  $UserDataDir = Resolve-UserDataDirectory -Current $UserDataDir -Published $LocalUserDataDir
+  $UserDataDir = Resolve-UserDataDirectory -Current $UserDataDir -Published $LocalUserDataDir -ProfileNames $ProfileNames
   $hasTerminalJournal = Assert-MigrationJournalAllowsRecovery -UserDataDir $UserDataDir
 
   $source = Get-UnsafeLegacySource `
@@ -1390,6 +1406,55 @@ function Run-SelfTest {
       }
     }
 
+    foreach ($profileKind in @('Local', 'Roaming')) {
+      foreach ($profileName in @('echoflow-code', 'claude-code-desktop')) {
+        foreach ($scenario in @('default', 'portable', 'journal', 'conflict')) {
+          $caseRoot = Join-Path $testRoot "package-$profileKind-$profileName-$scenario"
+          $caseInstall = Join-Path $caseRoot 'install'
+          $caseSource = Join-Path $caseInstall 'custom data'
+          $caseLocal = Join-Path $caseRoot 'Local\EchoFlow Code'
+          $caseRoaming = Join-Path $caseRoot 'Roaming\EchoFlow Code'
+          $selected = Join-Path (Join-Path $caseRoot $profileKind) $profileName
+          New-Item -ItemType Directory -Path $caseInstall -Force | Out-Null
+          Write-TestMode -Dir $selected -Value @{ mode = 'default'; portable_dir = $null }
+          $arguments = @{
+            InstallDirs = @($caseInstall); UserDataDir = $caseRoaming; LocalUserDataDir = $caseLocal
+            ProfileNames = @('echoflow-code', 'claude-code-desktop')
+            RecoveryRoot = Join-Path $caseRoot 'recovery'; ProcessName = $ProcessName
+            ActiveConfigDir = ''; SkipProcessCheck = $true
+          }
+          if ($scenario -eq 'portable') {
+            New-Item -ItemType Directory -Path $caseSource -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $caseSource 'settings.json') -Value 'package sentinel' -NoNewline
+            Write-TestMode -Dir $selected -Value @{ mode = 'portable'; portable_dir = $caseSource }
+            $beforeSource = @(Get-TreeManifest -Root $caseSource)
+            $result = Invoke-LegacyRecovery @arguments
+            Assert-SelfTest -Condition ((Read-AppMode -ConfigDir $selected).PortableDir -eq $result) -Message 'package profile pointer was not recovered'
+            Assert-TreeManifestsEqual -Expected $beforeSource -Actual @(Get-TreeManifest -Root $result) -Message 'package recovery copy differs'
+            Assert-TreeManifestsEqual -Expected $beforeSource -Actual @(Get-TreeManifest -Root $caseSource) -Message 'package recovery changed its source'
+          } elseif ($scenario -eq 'journal') {
+            [IO.File]::WriteAllText((Join-Path $selected 'data-migration-v1.json'), '{broken')
+            try {
+              Assert-TestRecoveryRefused -Root $caseRoot -Arguments $arguments -Message 'Finish migration recovery'
+            } catch { throw "package profile journal was bypassed: $($_.Exception.Message)" }
+          } elseif ($scenario -eq 'conflict') {
+            Write-TestMode -Dir $caseLocal -Value @{ mode = 'default'; portable_dir = $null }
+            Assert-TestRecoveryRefused -Root $caseRoot -Arguments $arguments -Message 'Both Windows data directories'
+          } else {
+            $before = @(Get-TreeManifest -Root $caseRoot)
+            $result = Invoke-LegacyRecovery @arguments
+            Assert-SelfTest -Condition ($null -eq $result) -Message 'default package profile unnecessarily recovered'
+            Assert-SelfTest -Condition ((Resolve-UserDataDirectory -Current $caseRoaming -Published $caseLocal -ProfileNames $arguments.ProfileNames) -eq $selected) -Message 'default package profile was not selected'
+            Assert-TreeManifestsEqual -Expected $before -Actual @(Get-TreeManifest -Root $caseRoot) -Message 'default package profile changed'
+          }
+          Assert-SelfTest -Condition (-not (Test-Path -LiteralPath $caseRoaming)) -Message 'recovery created a competing Roaming profile'
+          if ($scenario -ne 'conflict') {
+            Assert-SelfTest -Condition (-not (Test-Path -LiteralPath $caseLocal)) -Message 'recovery created a competing Local profile'
+          }
+        }
+      }
+    }
+
     $conflictLocal = Join-Path $testRoot 'conflict Local'
     $conflictRoaming = Join-Path $testRoot 'conflict Roaming'
     Write-TestMode -Dir $conflictLocal -Value @{ mode = 'default'; portable_dir = $null }
@@ -1811,6 +1876,7 @@ try {
     -SharedInstallDirs @($PerMachineInstallDir) `
     -UserDataDir $UserDataDir `
     -LocalUserDataDir $LocalUserDataDir `
+    -ProfileNames @($DesktopPackageName, $LegacyDesktopPackageName) `
     -RecoveryRoot $RecoveryRoot `
     -ProcessName $ProcessName `
     -ActiveConfigDir $ActiveConfigDir `

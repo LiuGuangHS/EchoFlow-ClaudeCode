@@ -3,6 +3,8 @@ import path from 'node:path'
 import { existsSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import * as dataRoot from './echoFlowDataRoot'
+import { PRODUCT_IDENTITY } from '../../src/lib/productIdentity.generated'
+import { createSandboxedTestEnvironment } from '../../../scripts/pr/test-environment'
 import { determineStartupPortableDir } from './appMode'
 import { DataMigration } from './dataMigration'
 import {
@@ -29,7 +31,9 @@ function fixture() {
     mkdirSync(directory, { recursive: true })
     writeFileSync(path.join(directory, name), text)
   }
-  const env = { LOCALAPPDATA: path.dirname(local) }
+  const env = createSandboxedTestEnvironment(root, {
+    APPDATA: path.dirname(roaming), LOCALAPPDATA: path.dirname(local),
+  }, {})
   return { root, local, roaming, app, put, env }
 }
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -48,10 +52,10 @@ describe('Electron EchoFlow data root', () => {
     expect(readFileSync(path.join(f.local, 'app-mode.json'), 'utf8')).toBe(pointer)
   })
 
-  describe.each(['win32', 'linux'] as const)('explicit %s user-data-dir', platform => {
+  describe.each(['win32', 'linux', 'darwin'] as const)('explicit %s user-data-dir', platform => {
     it.each([false, true])('keeps the selected profile and its own portable choice (populated: %s)', populated => {
       const f = fixture()
-      const published = platform === 'win32' ? f.local : path.join(f.root, '.local', 'share', 'echoflow-code')
+      const published = defaultEchoFlowDataRoot(f.env, platform, f.root)
       const pointer = JSON.stringify({ mode: 'portable', portable_dir: path.join(f.root, 'published-portable') })
       const ownPortable = path.join(f.root, 'selected-portable')
       const ownPointer = JSON.stringify({ mode: 'portable', portable_dir: ownPortable })
@@ -72,7 +76,7 @@ describe('Electron EchoFlow data root', () => {
 
     it('does not inspect an unusable automatic root', () => {
       const f = fixture()
-      const published = platform === 'win32' ? f.local : path.join(f.root, '.local', 'share', 'echoflow-code')
+      const published = defaultEchoFlowDataRoot(f.env, platform, f.root)
       mkdirSync(path.dirname(published), { recursive: true })
       writeFileSync(published, 'not a directory')
       f.app.commandLine.hasSwitch.mockImplementation(name => name === 'user-data-dir')
@@ -215,7 +219,90 @@ describe('Electron EchoFlow data root', () => {
     expect(readFileSync(path.join(published, 'data-migration-v1.json'), 'utf8')).toBe(journal)
   })
 
-  it('does not change macOS Electron roots', () => {
+  describe.each(['win32', 'linux', 'darwin'] as const)('%s bounded profile discovery', platform => {
+    const names = [PRODUCT_IDENTITY.name, PRODUCT_IDENTITY.slug, 'claude-code-desktop']
+    it.each(names)('resumes %s state and portable selection across relaunch without moving it', name => {
+      const f = fixture()
+      const profileRoot = platform === 'win32' ? f.env.APPDATA!
+        : platform === 'darwin' ? path.join(f.root, 'Library', 'Application Support') : f.env.XDG_CONFIG_HOME!
+      const legacy = path.join(profileRoot, name)
+      const current = defaultEchoFlowDataRoot(f.env, platform, f.root)
+      const pointer = JSON.stringify({ mode: 'portable', portable_dir: path.join(f.root, 'custom'), future: 1 })
+      f.put(legacy, 'app-mode.json', pointer)
+      f.put(legacy, 'data-migration-v1.json', '{"pending":"preserve"}')
+      if (current !== legacy) f.put(path.join(current, 'Cache'), 'cache')
+      f.app.setPath('userData', current)
+      f.app.setPath.mockClear()
+      for (let launch = 0; launch < 2; launch++) {
+        dataRoot.configureEchoFlowUserData(f.app, f.env, platform, f.root)
+        expect(f.app.getPath('userData')).toBe(legacy)
+        expect(determineStartupPortableDir(f.app, {})).toBe(path.join(f.root, 'custom'))
+      }
+      expect(readFileSync(path.join(legacy, 'app-mode.json'), 'utf8')).toBe(pointer)
+      expect(readFileSync(path.join(legacy, 'data-migration-v1.json'), 'utf8')).toBe('{"pending":"preserve"}')
+      expect(readdirSync(legacy).sort()).toEqual(['app-mode.json', 'data-migration-v1.json'])
+    })
+
+    it('blocks multiple aliases even when current already equals published', () => {
+      const f = fixture()
+      const published = defaultEchoFlowDataRoot(f.env, platform, f.root)
+      const profileRoot = platform === 'win32' ? f.env.APPDATA!
+        : platform === 'darwin' ? path.dirname(published) : f.env.XDG_CONFIG_HOME!
+      const legacy = path.join(profileRoot, 'claude-code-desktop')
+      f.put(legacy, 'Preferences', 'legacy bytes')
+      f.put(published, 'Preferences', 'new bytes')
+      f.app.setPath('userData', published)
+      f.app.setPath.mockClear()
+      let conflict: unknown
+      try { dataRoot.configureEchoFlowUserData(f.app, f.env, platform, f.root) } catch (error) { conflict = error }
+      expect(conflict).toBeInstanceOf(dataRoot.UserDataProfileConflictError)
+      expect(conflict).toMatchObject({ directories: [published, legacy], platform })
+      expect(f.app.setPath).not.toHaveBeenCalled()
+      expect(readFileSync(path.join(legacy, 'Preferences'), 'utf8')).toBe('legacy bytes')
+      expect(readFileSync(path.join(published, 'Preferences'), 'utf8')).toBe('new bytes')
+    })
+
+    it('ignores unrelated sibling profiles', () => {
+      const f = fixture()
+      const root = platform === 'win32' ? f.env.APPDATA!
+        : platform === 'darwin' ? path.join(f.root, 'Library', 'Application Support') : f.env.XDG_CONFIG_HOME!
+      f.put(path.join(root, 'unrelated-app'), 'Preferences')
+      expect(() => dataRoot.configureEchoFlowUserData(f.app, f.env, platform, f.root)).not.toThrow()
+    })
+
+    it('propagates an unusable legacy alias instead of offering it as a conflict choice', () => {
+      const f = fixture()
+      const root = platform === 'win32' ? f.env.APPDATA!
+        : platform === 'darwin' ? path.join(f.root, 'Library', 'Application Support') : f.env.XDG_CONFIG_HOME!
+      mkdirSync(root, { recursive: true })
+      writeFileSync(path.join(root, 'claude-code-desktop'), 'not a directory')
+      f.put(f.roaming, 'Preferences', 'keep')
+      expect(() => dataRoot.configureEchoFlowUserData(f.app, f.env, platform, f.root)).toThrow(expect.objectContaining({ code: 'ENOTDIR' }))
+      expect(f.app.setPath).not.toHaveBeenCalled()
+      expect(readFileSync(path.join(f.roaming, 'Preferences'), 'utf8')).toBe('keep')
+    })
+  })
+
+  it.skipIf(process.platform !== 'linux')('keeps an empty Windows profile alias to the published directory', () => {
+    const f = fixture()
+    mkdirSync(f.local, { recursive: true })
+    mkdirSync(path.dirname(f.roaming), { recursive: true })
+    symlinkSync(f.local, f.roaming, 'dir')
+    dataRoot.configureEchoFlowUserData(f.app, f.env, 'win32', f.root)
+    expect(f.app.getPath('userData')).toBe(f.roaming)
+    expect(f.app.setPath).not.toHaveBeenCalled()
+    expect(lstatSync(f.roaming).isSymbolicLink()).toBe(true)
+  })
+
+  it('discovers a Local package-name profile even when Roaming is empty', () => {
+    const f = fixture()
+    const legacy = path.join(f.env.LOCALAPPDATA!, 'claude-code-desktop')
+    f.put(legacy, 'Preferences')
+    dataRoot.configureEchoFlowUserData(f.app, f.env, 'win32', f.root)
+    expect(f.app.getPath('userData')).toBe(legacy)
+  })
+
+  it('does not change fresh macOS Electron roots', () => {
     const f = fixture()
     dataRoot.configureEchoFlowUserData(f.app, f.env, 'darwin', f.root)
     expect(f.app.setPath).not.toHaveBeenCalled()
@@ -228,8 +315,24 @@ describe('Electron EchoFlow data root', () => {
     expect(select).toBeGreaterThan(-1)
     expect(select).toBeLessThan(source.indexOf('if (!acquireSingleInstanceLock'))
     expect(select).toBeLessThan(source.indexOf('await getDataMigration().recover()'))
-    expect(source.slice(select, source.indexOf('let mainWindow'))).toContain('setStorageWritesFrozen(true)')
-    expect(source.slice(select, source.indexOf('let mainWindow'))).toContain('process.exit(1)')
+    const earlyRecovery = source.slice(select, source.indexOf('let mainWindow'))
+    expect(earlyRecovery).toContain('startupProfileError = error instanceof Error ? error : new Error(String(error))')
+    expect(earlyRecovery).toMatch(/setStorageWritesFrozen\(true\)[\s\S]*cleanupProfileRecovery = prepareProfileRecovery\(app\)[\s\S]*catch[\s\S]*process\.exit\(1\)/)
+    expect(earlyRecovery).not.toContain('dialog.')
+
+    const guardedStartup = source.slice(source.indexOf('if (!startupProfileError)'), source.indexOf('app.whenReady().then'))
+    expect(guardedStartup).toMatch(/^if \(!startupProfileError\) \{[\s\S]*if \(!acquireSingleInstanceLock/)
+    for (const operation of ["app.setAsDefaultProtocolClient('echoflowcode'", "app.on('open-url'", 'extractDeepLinkFromArgs(process.argv)', 'registerIpcHandlers()']) {
+      expect(guardedStartup).toContain(operation)
+    }
+
+    const ready = source.slice(source.indexOf('app.whenReady().then'))
+    const recovery = ready.slice(0, ready.indexOf('applyWindowsAppUserModelId(app)'))
+    expect(recovery).toMatch(/if \(startupProfileError\) \{\s*if \(startupProfileError instanceof UserDataProfileConflictError\)/)
+    expect(recovery).toContain('await recoverProfileConflict(app, dialog, startupProfileError, undefined, cleanupProfileRecovery)')
+    expect(recovery).toMatch(/else \{[\s\S]*dialog\.showErrorBox[\s\S]*cleanupProfileRecovery\?\.\(\)[\s\S]*app\.exit\(1\)\s*\}\s*return\s*\}/)
+    expect(recovery).not.toContain('getDataMigration()')
+    expect(recovery).not.toContain('createMainWindow()')
   })
 
   it('keeps Electron userData separate without changing Claude config storage', () => {

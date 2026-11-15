@@ -3,6 +3,9 @@
 export const PRODUCT_IDENTITY = {
   name: "EchoFlow Code",
   slug: "echoflow-code",
+  legacyDesktopPackageName: "claude-code-desktop",
+  mobileArtifactPrefix: "echoflow-code-mobile",
+  legacyMobileArtifactPrefix: "cc-haha-mobile",
   appId: "com.echoflow.code.desktop",
   mobilePackage: "com.echoflow.code.mobile",
   mobileBundleId: "com.echoflow.code.mobile",

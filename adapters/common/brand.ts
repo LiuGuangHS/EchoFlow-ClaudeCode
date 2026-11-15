@@ -1,1 +1,1 @@
-export const ECHOFLOW_PRODUCT_NAME = 'EchoFlow Code'
+export { PRODUCT_NAME as ECHOFLOW_PRODUCT_NAME } from '../../src/utils/productIdentity.generated'

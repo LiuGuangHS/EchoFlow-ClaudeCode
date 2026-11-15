@@ -1430,3 +1430,41 @@ jobs:
       release_tag: ${{ needs.publish-release.outputs.release_tag }}
     secrets:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+  delivery-summary:
+    needs: [publish-release, site-release-sync, release-mobile]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Summarize delivery outcomes
+        env:
+          DESKTOP_RESULT: ${{ needs.publish-release.result }}
+          SITE_RESULT: ${{ needs.site-release-sync.result }}
+          MOBILE_RESULT: ${{ needs.release-mobile.result }}
+          MOBILE_ENABLED: ${{ vars.MOBILE_RELEASE_ENABLED }}
+          MOBILE_PLATFORM: ${{ vars.MOBILE_RELEASE_PLATFORM || 'all' }}
+          OFFICIAL_RELEASE: ${{ inputs.official_release == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf '## Delivery outcomes\n\n'
+            printf 'Mobile enabled: %s; requested platforms: %s; official release: %s\n\n' "${MOBILE_ENABLED:-unset}" "$MOBILE_PLATFORM" "$OFFICIAL_RELEASE"
+            printf '| Stage | Result |\n| --- | --- |\n'
+            printf '| Desktop publication job | %s |\n' "$DESKTOP_RESULT"
+            printf '| Site release sync | %s |\n' "$SITE_RESULT"
+            for platform in android ios; do
+              case "$MOBILE_PLATFORM" in
+                all|"$platform") result="$MOBILE_RESULT (aggregate reusable workflow result)" ;;
+                android|ios) result='skipped (not selected)' ;;
+                *) result='unknown (invalid platform selection)' ;;
+              esac
+              printf '| %s pipeline | %s |\n' "$platform" "$result"
+            done
+            printf '\nAggregate mobile pipeline result is not proof of APK delivery or TestFlight availability. Per-platform results and delivery records must be checked in Release Mobile.\n'
+            printf 'A skipped mobile run establishes no new delivery or availability; check mobile enablement, platform selection and upstream publication results.\n'
+            if [ "$OFFICIAL_RELEASE" != 'true' ]; then
+              printf '\nPublic desktop publication is not confirmed for a non-official run; inspect its draft/artifact outcome.\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

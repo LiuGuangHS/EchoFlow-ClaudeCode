@@ -407,6 +407,7 @@ export const ELECTRON_IPC_VALIDATORS = {
   [ELECTRON_IPC_CHANNELS.windowStartDragging]: noPayload,
   [ELECTRON_IPC_CHANNELS.windowRequestAttention]: noPayload,
   [ELECTRON_IPC_CHANNELS.windowFocus]: noPayload,
+  [ELECTRON_IPC_CHANNELS.windowTakeNativeMenuNavigation]: noPayload,
   [ELECTRON_IPC_CHANNELS.windowIsMaximized]: noPayload,
   [ELECTRON_IPC_CHANNELS.terminalSpawn]: terminalSpawn,
   [ELECTRON_IPC_CHANNELS.terminalWrite]: terminalWrite,

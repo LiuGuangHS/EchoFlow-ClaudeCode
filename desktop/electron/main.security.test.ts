@@ -34,6 +34,39 @@ const workspaceBrowserServiceSource = mainSource.slice(
 )
 
 describe('Electron preview security boundary', () => {
+  it('blocks normal startup and defers profile recovery until Electron is ready', () => {
+    const setup = mainSource.slice(mainSource.indexOf('// Resolve the profile'), mainSource.indexOf('let mainWindow:'))
+    expect(setup).toContain('startupProfileError = error')
+    expect(setup).toContain('setStorageWritesFrozen(true)')
+    expect(setup).toContain('cleanupProfileRecovery = prepareProfileRecovery(app)')
+    expect(setup).toContain('process.exit(1)')
+    expect(setup).not.toContain('dialog.showErrorBox')
+    const registrations = mainSource.slice(mainSource.indexOf('if (!startupProfileError)'), mainSource.indexOf('app.whenReady().then'))
+    expect(registrations).toContain('acquireSingleInstanceLock(')
+    expect(registrations).toContain('registerIpcHandlers()')
+    expect(registrations).toContain("app.on('open-url'")
+    const ready = mainSource.slice(mainSource.indexOf('app.whenReady().then(async () => {'))
+    expect(ready).toMatch(/async \(\) => \{\s+if \(startupProfileError\)/)
+    expect(ready.indexOf('await recoverProfileConflict(app, dialog, startupProfileError, undefined, cleanupProfileRecovery)')).toBeGreaterThan(0)
+    expect(ready.indexOf('await recoverProfileConflict(app, dialog, startupProfileError, undefined, cleanupProfileRecovery)')).toBeLessThan(ready.indexOf('await getDataMigration().recover()'))
+    expect(ready).toMatch(/app\.exit\(1\)[\s\S]*?return\s+\}/)
+  })
+  it('wires native navigation through the main-frame-only queue and current tray state', () => {
+    const navigationHandler = mainSource.slice(
+      mainSource.indexOf('registerHandler(ELECTRON_IPC_CHANNELS.windowTakeNativeMenuNavigation'),
+      mainSource.indexOf('registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen'),
+    )
+    expect(navigationHandler).toContain('requireMainWindow(event)')
+    expect(navigationHandler).toContain('event.senderFrame !== event.sender.mainFrame')
+    expect(navigationHandler).toContain('return nativeMenuNavigation.take()')
+    expect(mainSource).toContain("openSettings: () => nativeMenuNavigation.navigate('settings')")
+    expect(mainSource).toContain("openMobileConnection: () => nativeMenuNavigation.navigate('mobile-connection')")
+    expect(mainSource).toContain('process.platform, nativeMenuNavigation.navigate)')
+    expect(mainSource).toContain("onServerReady: () => {\n      updateTrayServiceStatus('ready')")
+    expect(mainSource).toContain("onServerUnavailable: () => {\n      updateTrayServiceStatus('unavailable')")
+    expect(mainSource).toContain('function broadcastLocaleChanged(locale: Locale) {\n  trayController?.update({ locale })')
+    expect(mainSource).toContain('trayController?.update({ serviceStatus: trayServiceStatus })')
+  })
   it('restricts public access management to the main desktop frame', () => {
     expect(mainSource).toContain("channel.startsWith('desktop:public-access:')")
     expect(mainSource).toContain('senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame')
