@@ -211,7 +211,7 @@ foreach ($scenario in @('elevated', 'early-failure', 'cleanup-failure')) {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
-  })
+  }, 40_000) // Allow the 30s PowerShell budget plus assertions and fixture cleanup.
 
   test('validates historical staging names without a mounted drive', () => {
     const helper = readFileSync('desktop/build/recover-legacy-install-data.ps1', 'utf8')
