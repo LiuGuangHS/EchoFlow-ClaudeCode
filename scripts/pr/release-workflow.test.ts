@@ -1364,17 +1364,21 @@ fi
     expect(build.appId).toBe('com.echoflow.code.desktop')
   })
 
-  test('Windows NSIS installer lets users choose the install directory', () => {
+  test('Windows NSIS installer defaults to all users while retaining scope and directory choices', () => {
     const desktopPackage = JSON.parse(readFileSync('desktop/package.json', 'utf8')) as {
       build: {
         nsis?: {
           oneClick?: boolean
+          perMachine?: boolean
+          selectPerMachineByDefault?: boolean
           allowToChangeInstallationDirectory?: boolean
         }
       }
     }
 
     expect(desktopPackage.build.nsis?.oneClick).toBe(false)
+    expect(desktopPackage.build.nsis?.selectPerMachineByDefault).toBe(true)
+    expect(desktopPackage.build.nsis?.perMachine).not.toBe(true)
     expect(desktopPackage.build.nsis?.allowToChangeInstallationDirectory).toBe(true)
   })
 
