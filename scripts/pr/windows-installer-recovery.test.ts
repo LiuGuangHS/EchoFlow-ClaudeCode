@@ -142,13 +142,15 @@ describe('Windows installer recovery prerequisites', () => {
     expect(smoke).toContain("@{ source = $hostDiagnostics; name = 'host.log' }")
     expect(smoke).not.toMatch(/Copy-Item[^\r\n]*-Recurse/)
     expect(smoke).toContain('launch-$launchNumber-$($entry.name)')
-    expect(smoke.indexOf('Copy-Item -LiteralPath $entry.source')).toBeLessThan(smoke.indexOf('Remove-Item -LiteralPath $testRoot'))
+    expect(smoke).toContain(`'/currentuser', "_?=$installDir") -TimeoutSeconds 120`)
+    expect(smoke).toContain('Remove-SmokeFixture')
+    expect(smoke.indexOf('Copy-Item -LiteralPath $entry.source')).toBeLessThan(smoke.lastIndexOf('Remove-SmokeFixture'))
   })
 
   test.skipIf(process.platform !== 'win32')('writes honest smoke JSON and Actions summaries in isolated fixtures', () => {
     // Execute only the reporting functions, never the CI-only installer body.
     const smoke = readFileSync('desktop/scripts/windows-installer-smoke.ps1', 'utf8')
-    const functions = ['New-SmokeResults', 'Write-SmokeReport'].map(name => {
+    const functions = ['New-SmokeResults', 'Write-SmokeReport', 'Write-SmokeDiagnostic', 'Remove-SmokeFixture'].map(name => {
       const body = smoke.match(new RegExp(`function ${name} \\{[\\s\\S]*?^\\}`, 'm'))?.[0]
       if (!body) throw new Error(`Missing reporting function ${name}`)
       return body
@@ -182,6 +184,31 @@ foreach ($scenario in @('elevated', 'early-failure', 'cleanup-failure')) {
   }
   Write-SmokeReport -Results $results -Directory $directory -Failure $failure -CleanupFailure $cleanupFailure
 }
+# Deterministic contention: no installer, real process, or wall-clock delay.
+$evidenceDir = ${quote(root)}
+$cleanupProbes = @{}
+function Remove-Item {
+  param($LiteralPath, [switch]$Recurse, [switch]$Force, $ErrorAction)
+  if ($LiteralPath -ne $testRoot) { throw 'Cleanup escaped its owned fixture' }
+  $script:attempts += 1
+  if ($script:cleanupScenario -eq 'permanent' -or $script:attempts -eq 1) {
+    throw [IO.IOException]::new('simulated directory not empty or busy')
+  }
+  Microsoft.PowerShell.Management\\Remove-Item -LiteralPath $LiteralPath -Recurse -Force -ErrorAction Stop
+}
+foreach ($cleanupScenario in @('transient', 'permanent')) {
+  $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('cc-haha-installer-smoke-' + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $testRoot | Out-Null
+  Set-Content -LiteralPath (Join-Path $testRoot 'sentinel.txt') -Value 'fixture-only'
+  $attempts = 0
+  $cleanupError = ''
+  try { Remove-SmokeFixture -MaxAttempts 3 -RetryDelayMilliseconds 0 } catch { $cleanupError = $_.Exception.Message }
+  $cleanupProbes[$cleanupScenario] = @{ attempts = $attempts; error = $cleanupError; remains = (Test-Path -LiteralPath $testRoot) }
+}
+$testRoot = Join-Path ([IO.Path]::GetTempPath()) 'not-owned-fixture'
+$attempts = 0
+try { Remove-SmokeFixture -MaxAttempts 3 -RetryDelayMilliseconds 0 } catch { $cleanupProbes['unowned'] = @{ attempts = $attempts; error = $_.Exception.Message } }
+$cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path ${quote(root)} 'cleanup-probes.json') -Encoding UTF8
 `
       const encoded = Buffer.from(script, 'utf16le').toString('base64')
       const run = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
@@ -190,6 +217,15 @@ foreach ($scenario in @('elevated', 'early-failure', 'cleanup-failure')) {
       expect(run.error, run.stderr || run.stdout).toBeUndefined()
       expect(run.status, run.stderr || run.stdout).toBe(0)
       const report = (name: string) => JSON.parse(readFileSync(path.join(root, name, 'result.json'), 'utf8').replace(/^\uFEFF/, ''))
+      const probes = JSON.parse(readFileSync(path.join(root, 'cleanup-probes.json'), 'utf8').replace(/^\uFEFF/, ''))
+      expect(probes.transient).toEqual({ attempts: 2, error: '', remains: false })
+      expect(probes.permanent.attempts).toBe(3)
+      expect(probes.permanent.remains).toBe(true)
+      expect(probes.permanent.error).toContain('failed after 3 attempts; remaining fixture:')
+      expect(probes.permanent.error).toContain('simulated directory not empty or busy')
+      expect(probes.unowned.attempts).toBe(0)
+      expect(probes.unowned.error).toContain('Refusing unexpected smoke fixture cleanup path')
+      expect(readFileSync(path.join(root, 'diagnostics.log'), 'utf8')).toContain('cleanup attempt 3/3 failed')
       const elevated = report('elevated')
       expect(elevated.status).toBe('passed')
       expect(elevated.coverage).toBe('unexercised')

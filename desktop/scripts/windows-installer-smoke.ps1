@@ -19,6 +19,40 @@ function Write-SmokeDiagnostic {
   Add-Content -LiteralPath (Join-Path $evidenceDir 'diagnostics.log') -Value $Message -Encoding UTF8 -ErrorAction Continue
 }
 
+function Remove-SmokeFixture {
+  param([int]$MaxAttempts = 31, [int]$RetryDelayMilliseconds = 1000)
+
+  # Only the GUID fixture created by this invocation may be removed. Never
+  # broaden cleanup to the runner's profile or another process's temporary tree.
+  $ownedRoot = [IO.Path]::GetFullPath($testRoot)
+  $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
+  if ([IO.Path]::GetDirectoryName($ownedRoot) -ne $tempRoot -or
+      [IO.Path]::GetFileName($ownedRoot) -notmatch '^cc-haha-installer-smoke-[a-f0-9]{32}$' -or
+      $MaxAttempts -lt 1 -or $RetryDelayMilliseconds -lt 0) {
+    throw "Refusing unexpected smoke fixture cleanup path or retry budget: $ownedRoot"
+  }
+  for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+    if (-not (Test-Path -LiteralPath $ownedRoot -ErrorAction Stop)) { return }
+    if ((Get-Item -LiteralPath $ownedRoot -Force -ErrorAction Stop).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+      throw "Refusing reparse-point smoke fixture cleanup: $ownedRoot"
+    }
+    try {
+      Remove-Item -LiteralPath $ownedRoot -Recurse -Force -ErrorAction Stop
+      Write-SmokeDiagnostic ("Smoke fixture removed on attempt ${attempt}: $ownedRoot")
+      return
+    } catch {
+      # Windows may still be releasing uninstall/background file handles. Retry
+      # filesystem contention only; programming and other errors fail immediately.
+      if ($_.Exception -isnot [IO.IOException] -and $_.Exception -isnot [UnauthorizedAccessException]) { throw }
+      Write-SmokeDiagnostic ("Smoke fixture cleanup attempt $attempt/$MaxAttempts failed: $($_.Exception.Message)")
+      if ($attempt -eq $MaxAttempts) {
+        throw "Smoke fixture cleanup failed after $MaxAttempts attempts; remaining fixture: $ownedRoot; last error: $($_.Exception.Message)"
+      }
+      Start-Sleep -Milliseconds $RetryDelayMilliseconds
+    }
+  }
+}
+
 function New-SmokeResults {
   $results = [ordered]@{}
   foreach ($name in @('native-helper-regressions', 'packaged-smoke', 'packaged-profile-no-clr', 'elevated-identity-no-clr', 'cleanup')) {
@@ -752,7 +786,10 @@ try {
     }
   }
   if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
-    Invoke-CheckedProcess -FilePath $uninstaller -Stage 'Cleanup uninstall' -Arguments @('/S', '/KEEP_APP_DATA', '/currentuser') -TimeoutSeconds 120
+    # NSIS _?= runs the uninstaller in place instead of returning after spawning
+    # a temporary copy. It must be the last argument, with its path unquoted;
+    # the fixture cleanup below removes the uninstaller left behind in place.
+    Invoke-CheckedProcess -FilePath $uninstaller -Stage 'Cleanup uninstall' -Arguments @('/S', '/KEEP_APP_DATA', '/currentuser', "_?=$installDir") -TimeoutSeconds 120
   }
   } catch {
     $cleanupFailure = [string]$_.Exception.Message
@@ -768,7 +805,7 @@ try {
           [Environment]::SetEnvironmentVariable($name, [string]$value, 'Process')
         }
       }
-      if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction Stop }
+      Remove-SmokeFixture
       if (-not $cleanupFailure) {
         $results['cleanup'] = [ordered]@{ status = 'passed'; reason = 'Probe disposal, uninstall, environment restoration and fixture removal completed.'; evidence = 'See diagnostics.log and transcript.log.' }
       }
