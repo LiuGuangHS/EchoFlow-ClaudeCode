@@ -871,7 +871,7 @@ jobs:
       - name: Upload unsigned Windows application executables
         if: matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed == 'true'
         id: upload-unsigned-signpath-application
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: signpath-unsigned-application-${{ matrix.arch }}
           path: ${{ steps.stage-signpath-application.outputs.stage_dir }}
@@ -950,7 +950,7 @@ jobs:
       - name: Upload unsigned Windows installer
         if: matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed == 'true'
         id: upload-unsigned-signpath-installer
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: signpath-unsigned-installer-${{ matrix.arch }}
           path: ${{ steps.stage-signpath-installer.outputs.stage_dir }}
@@ -1000,6 +1000,16 @@ jobs:
         timeout-minutes: 10
         working-directory: desktop
         run: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/windows-installer-smoke.ps1 -ArtifactsDir ./build-artifacts/electron -Arch x64
+
+      - name: Upload Windows installer diagnostics
+        if: always() && matrix.smoke_platform == 'windows' && matrix.arch == 'x64'
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-installer-diagnostics-${{ matrix.arch }}
+          path: desktop/build-artifacts/electron/windows-installer-smoke-x64/
+          retention-days: 14
+          # Earlier build failures may prevent the smoke from starting.
+          if-no-files-found: ignore
 
       - name: Verify packaged app structure
         run: bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron ${{ matrix.smoke_platform == 'linux' && '--max-linux-glibc 2.28' || '' }}
@@ -1107,14 +1117,14 @@ jobs:
           done
 
       - name: Upload update metadata for merge
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: desktop-update-metadata-${{ matrix.label }}
           path: desktop/build-artifacts/electron/latest*.yml
           if-no-files-found: ignore
 
       - name: Upload release artifacts for final publish
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: desktop-release-artifacts-${{ matrix.label }}
           path: |
@@ -1224,7 +1234,7 @@ jobs:
         run: bun install
 
       - name: Download release artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           pattern: desktop-release-artifacts-*
           path: artifacts/release-assets
@@ -1266,7 +1276,7 @@ jobs:
           fi
 
       - name: Download update metadata artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           pattern: desktop-update-metadata-*
           path: artifacts/update-metadata

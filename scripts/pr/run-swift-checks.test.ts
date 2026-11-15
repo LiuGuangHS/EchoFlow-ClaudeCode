@@ -1,7 +1,10 @@
-import { describe, expect, mock, test } from 'bun:test'
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { describe, expect, mock, spyOn, test } from 'bun:test'
+import * as fs from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { runSwiftChecks } from './run-swift-checks'
+import { removeTestSandbox } from './test-environment'
 
 describe('Swift platform checks', () => {
   test.each(['linux', 'win32'] as const)('does not invoke the macOS-only package on %s', async platform => {
@@ -69,5 +72,55 @@ describe('Swift platform checks', () => {
       },
     })).rejects.toThrow('swift executable unavailable')
     expect(existsSync(home)).toBe(false)
+  })
+})
+
+describe('sandbox cleanup diagnostics', () => {
+  test('keeps both removal errors and bounded metadata without following links', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'swift-cleanup-diagnostic-'))
+    const outside = mkdtempSync(join(tmpdir(), 'swift-cleanup-outside-'))
+    const warnings: string[] = []
+    writeFileSync(join(outside, 'private-content'), 'must never appear in diagnostics')
+    symlinkSync(outside, join(directory, '00-link'), process.platform === 'win32' ? 'junction' : 'dir')
+    for (let index = 0; index < 14; index++) mkdirSync(join(directory, `entry-${index}`))
+    const remove = spyOn(fs, 'rmSync')
+    remove.mockImplementationOnce(() => { throw Object.assign(new Error('first removal failed'), { code: 'EROFS', syscall: 'rm', path: directory }) })
+    remove.mockImplementationOnce(() => { throw Object.assign(new Error('second removal failed'), { code: 'EROFS', syscall: 'rm', path: directory }) })
+    try {
+      expect(() => removeTestSandbox(directory, 'swift-checks', message => warnings.push(message))).not.toThrow()
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0]).toContain('could not remove test sandbox')
+      expect(warnings[0]).toContain('stage=retry-rm')
+      expect(warnings[0]).toContain('first removal failed')
+      expect(warnings[0]).toContain('second removal failed')
+      expect(warnings[0]).toContain('"code":"EROFS"')
+      expect(warnings[0]).toContain('"type":"symlink"')
+      expect(warnings[0]).toContain('"omitted":3')
+      expect(warnings[0]).not.toContain('private-content')
+      expect(warnings[0]).not.toContain('must never appear')
+      expect(existsSync(join(outside, 'private-content'))).toBe(true)
+    } finally {
+      remove.mockRestore()
+      rmSync(directory, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  test('reports permission-repair failures separately from removal failures', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'swift-cleanup-stage-'))
+    const warnings: string[] = []
+    const remove = spyOn(fs, 'rmSync').mockImplementationOnce(() => { throw new Error('initial removal') })
+    const stat = spyOn(fs, 'lstatSync').mockImplementationOnce(() => { throw new Error('cannot inspect directory') })
+    try {
+      expect(() => removeTestSandbox(directory, 'swift-checks', message => warnings.push(message))).not.toThrow()
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0]).toContain('stage=open-directory-tree')
+      expect(warnings[0]).toContain('initial removal')
+      expect(warnings[0]).toContain('cannot inspect directory')
+    } finally {
+      remove.mockRestore()
+      stat.mockRestore()
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })

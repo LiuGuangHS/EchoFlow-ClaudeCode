@@ -294,7 +294,7 @@ jobs:
         run: bun run check:agent-flow
       - name: Upload agent flow artifacts
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: agent-flow
           path: artifacts/agent-flow/
@@ -319,7 +319,7 @@ jobs:
         run: bun run check:agent-e2e
       - name: Upload agent e2e artifacts
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: agent-e2e
           path: artifacts/agent-e2e/
@@ -496,7 +496,7 @@ jobs:
           fi
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-report
           path: artifacts/coverage/

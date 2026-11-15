@@ -189,6 +189,22 @@ describe('release desktop workflow', () => {
     expect(releasePublishers).toEqual(['release-desktop.yml'])
   })
 
+  test('desktop builds retain installer diagnostics without accepting missing installers', () => {
+    for (const workflowPath of [
+      '.github/workflows/build-desktop-dev.yml',
+      '.github/workflows/release-desktop.yml',
+    ]) {
+      const workflow = readFileSync(workflowPath, 'utf8')
+      const step = extractStep(workflow, 'Upload Windows installer diagnostics')
+      expect(step).toContain("if: always() && matrix.smoke_platform == 'windows' && matrix.arch == 'x64'")
+      expect(step).toContain('actions/upload-artifact@v6')
+      expect(step).toContain('path: desktop/build-artifacts/electron/windows-installer-smoke-x64/')
+      expect(step).toContain('retention-days: 14')
+    }
+    const dev = readFileSync('.github/workflows/build-desktop-dev.yml', 'utf8')
+    expect(extractStep(dev, 'Upload artifacts')).toContain('if-no-files-found: error')
+  })
+
   test('desktop build workflows keep Bun compile cache on the runner work drive', () => {
     for (const workflowPath of [
       '.github/workflows/build-desktop-dev.yml',
@@ -813,7 +829,7 @@ describe('release desktop workflow', () => {
     expect(buildJob).toContain('Upload release artifacts for final publish')
     // Blockmaps ship with installers so installed clients can use differential updates.
     expect(extractStep(buildJob ?? '', 'Upload release artifacts for final publish')).toContain('desktop/build-artifacts/electron/*.blockmap')
-    expect(buildJob).toContain('actions/upload-artifact@v5')
+    expect(buildJob).toContain('actions/upload-artifact@v6')
     expect(buildJob).toContain('name: desktop-release-artifacts-${{ matrix.label }}')
     expect(buildJob).not.toContain('softprops/action-gh-release@v2')
     expect(buildJob).not.toContain('Load release notes')
@@ -1012,7 +1028,7 @@ fi
     expect(publishJob).toContain('needs:')
     expect(publishJob).toContain('- build')
     expect(publishJob).toContain('- release-verify-gate')
-    expect(publishJob).toContain('actions/download-artifact@v6')
+    expect(publishJob).toContain('actions/download-artifact@v7')
     expect(publishJob).toContain('pattern: desktop-release-artifacts-*')
     expect(publishJob).toContain('pattern: desktop-update-metadata-*')
     expect(publishJob).toContain('Validate complete release asset set')

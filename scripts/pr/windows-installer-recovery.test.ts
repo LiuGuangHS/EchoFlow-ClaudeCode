@@ -127,6 +127,92 @@ describe('Windows installer recovery prerequisites', () => {
     expect(smoke).toMatch(/if \(Test-IsProcessElevated\) \{\s*Invoke-ProcessExpectFailure[^\n]*identity-only[\s\S]*\} elseif \(\$scenario -like 'default-\*'\)/)
   })
 
+  test('persists bounded smoke diagnostics and reports coverage even after failures', () => {
+    const smoke = readFileSync('desktop/scripts/windows-installer-smoke.ps1', 'utf8')
+    expect(smoke).toContain('windows-installer-smoke-$Arch')
+    expect(smoke).toContain("Join-Path $evidenceDir 'diagnostics.log'")
+    expect(smoke).toContain("status = 'unexercised'; reason = 'Elevated runner refuses at identity gate")
+    expect(smoke).toContain("$results[$script:activeCheck] = [ordered]@{ status = 'passed'")
+    expect(smoke).toContain('$completedCases += 1')
+    expect(smoke).not.toContain('no-CLR default reinstall, and fail-closed portable reinstall smoke passed')
+    expect(smoke).toMatch(/\} finally \{\s*try \{\s*Write-SmokeReport/)
+    expect(smoke).toContain('if (-not $failure) { throw }')
+    expect(smoke).toContain('if (-not $failure -and -not $cleanupFailure)')
+    expect(smoke).toContain("@{ source = $windowLog; name = 'window.jsonl' }")
+    expect(smoke).toContain("@{ source = $hostDiagnostics; name = 'host.log' }")
+    expect(smoke).not.toMatch(/Copy-Item[^\r\n]*-Recurse/)
+    expect(smoke).toContain('launch-$launchNumber-$($entry.name)')
+    expect(smoke.indexOf('Copy-Item -LiteralPath $entry.source')).toBeLessThan(smoke.indexOf('Remove-Item -LiteralPath $testRoot'))
+  })
+
+  test.skipIf(process.platform !== 'win32')('writes honest smoke JSON and Actions summaries in isolated fixtures', () => {
+    // Execute only the reporting functions, never the CI-only installer body.
+    const smoke = readFileSync('desktop/scripts/windows-installer-smoke.ps1', 'utf8')
+    const functions = ['New-SmokeResults', 'Write-SmokeReport'].map(name => {
+      const body = smoke.match(new RegExp(`function ${name} \\{[\\s\\S]*?^\\}`, 'm'))?.[0]
+      if (!body) throw new Error(`Missing reporting function ${name}`)
+      return body
+    }).join('\n')
+    const root = mkdtempSync(path.join(tmpdir(), 'echoflow-smoke-report-'))
+    try {
+      const quote = (value: string) => `'${value.replaceAll("'", "''")}'`
+      const summary = path.join(root, 'actions-summary.md')
+      const script = `${functions}
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$env:GITHUB_STEP_SUMMARY = ${quote(summary)}
+foreach ($scenario in @('elevated', 'early-failure', 'cleanup-failure')) {
+  $directory = Join-Path ${quote(root)} $scenario
+  New-Item -ItemType Directory -Path $directory | Out-Null
+  $results = New-SmokeResults
+  $failure = ''
+  $cleanupFailure = ''
+  if ($scenario -eq 'elevated') {
+    foreach ($name in @('native-helper-regressions', 'packaged-smoke', 'elevated-identity-no-clr', 'cleanup')) {
+      $results[$name] = @{ status = 'passed'; reason = 'Fixture assertions completed'; evidence = 'Fixture evidence' }
+    }
+    $results['packaged-profile-no-clr'].reason = 'Elevated identity gate; profile branches unexercised'
+  } else {
+    $failure = "original | failure\nsecond line"
+    $results['native-helper-regressions'] = @{ status = 'failed'; reason = $failure; evidence = 'Fixture failure' }
+    if ($scenario -eq 'cleanup-failure') {
+      $cleanupFailure = 'cleanup failed separately'
+      $results['cleanup'] = @{ status = 'failed'; reason = $cleanupFailure; evidence = 'Fixture cleanup' }
+    }
+  }
+  Write-SmokeReport -Results $results -Directory $directory -Failure $failure -CleanupFailure $cleanupFailure
+}
+`
+      const encoded = Buffer.from(script, 'utf16le').toString('base64')
+      const run = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+        env: createSandboxedTestEnvironment(path.join(root, 'home')), encoding: 'utf8', timeout: 30_000,
+      })
+      expect(run.error, run.stderr || run.stdout).toBeUndefined()
+      expect(run.status, run.stderr || run.stdout).toBe(0)
+      const report = (name: string) => JSON.parse(readFileSync(path.join(root, name, 'result.json'), 'utf8').replace(/^\uFEFF/, ''))
+      const elevated = report('elevated')
+      expect(elevated.status).toBe('passed')
+      expect(elevated.coverage).toBe('unexercised')
+      expect(elevated.checks['packaged-profile-no-clr'].status).toBe('unexercised')
+      expect(elevated.checks['elevated-identity-no-clr'].status).toBe('passed')
+      const early = report('early-failure')
+      expect(early.status).toBe('failed')
+      expect(early.coverage).toBe('failed')
+      expect(early.checks['packaged-smoke'].status).toBe('unexercised')
+      const cleanup = report('cleanup-failure')
+      expect(cleanup.failure).toBe('original | failure\nsecond line')
+      expect(cleanup.cleanupFailure).toBe('cleanup failed separately')
+      expect(cleanup.checks.cleanup.status).toBe('failed')
+      const markdown = readFileSync(summary, 'utf8')
+      expect(markdown.match(/## Windows installer smoke/g)).toHaveLength(3)
+      expect(markdown).toContain('original &#124; failure second line')
+      expect(markdown).toContain('ordinary-user packaged branches on an elevated runner')
+      expect(readFileSync(path.join(root, 'elevated', 'summary.md'), 'utf8')).toContain('coverage: **unexercised**')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   test('validates historical staging names without a mounted drive', () => {
     const helper = readFileSync('desktop/build/recover-legacy-install-data.ps1', 'utf8')
     expect(helper).toContain('[IO.Path]::Combine($status.targetDir, ".cc-haha-migration-$($status.id)")')
