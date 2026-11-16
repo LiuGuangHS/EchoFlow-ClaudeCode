@@ -9,7 +9,7 @@
 - **构建与质量脚本**：`scripts/`，包含 Electron、sidecar、node-pty、ripgrep、cloudflared、预览 agent 和打包目录检查。
 - **H5 移动端导出**：`build:h5-mobile` 调用 `mobile/scripts/export-h5.ts`，产物由桌面服务端托管；它不是第二个移动原生应用。
 
-桌面端的目录级规则见 [desktop/AGENTS.md](AGENTS.md)；可复用组件规则见 [src/components/AGENTS.md](src/components/AGENTS.md)。跨产品执行、持久化和信任边界见 [执行、数据与信任边界](../docs/internals/execution-boundaries.md)。
+桌面开发遵循[根规则](../AGENTS.md#桌面)；可复用组件与视觉契约见[设计规范](../DESIGN.md)。跨产品执行、持久化和信任边界见[执行、数据与信任边界](../docs/internals/execution-boundaries.md)。
 
 配置导入的使用说明见[配置分享](../docs/desktop/config-sharing.md)，对接字段和校验规则见[深链接协议](../docs/desktop/deep-link-protocol.md)。
 

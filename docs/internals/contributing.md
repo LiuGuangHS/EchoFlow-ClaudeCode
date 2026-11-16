@@ -7,9 +7,9 @@ order: 14
 
 # 参与贡献与质量门禁
 
-这份文档说明贡献代码前应该如何在本地安装、开发、测试和运行质量门禁。目标是让维护者和贡献者都能在提交 PR 前回答一个问题：这次改动有没有破坏核心 Coding Agent 工作流。
+这份文档说明本地安装、开发与模块验证，以及 GitHub Actions 上的 PR 和全量门禁。目标是让维护者和贡献者用对应候选的证据回答：这次改动有没有破坏核心 Coding Agent 工作流。
 
-产品能力、执行绑定、持久化和外部输入的长期约束见[执行、数据与信任边界](./execution-boundaries.md)。本页维护检查流程和测试设计；任务进度、审计清单及临时验证记录不作为已实现架构发布。
+日常工作、授权、安全和验证基本规则统一见[根 AGENTS.md](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/AGENTS.md)，桌面设计见 [DESIGN.md](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/DESIGN.md)。产品能力、执行绑定、持久化和外部输入的长期约束见[执行、数据与信任边界](./execution-boundaries.md)。本页维护检查流程和测试设计；任务进度、审计清单及临时验证记录不作为已实现架构发布。
 
 ## 环境准备
 
@@ -53,14 +53,14 @@ bun install
 
 | 层级 | 触发 | 运行内容 | 约束 |
 | --- | --- | --- | --- |
-| 本地迭代 | 手动 | 最窄的相关测试；`bun run check:impact` 选中的命令 | 秒级反馈 |
+| 本地迭代 | 手动 | 最窄的相关测试；`bun run check:impact` 选中的模块检查 | WSL 只做定向/模块验证，不重复云端全量 |
 | PR（必过） | `pull_request`，以及合入 `main` 后的 `push` | impact 选中的确定性 lane，含 `check:agent-flow`、`check:agent-e2e`；覆盖率只报告不阻塞 | 无模型、无 provider、无 secret、fork 可跑 |
 | 全量 | `nightly-quality.yml` 每天定时（北京时间 03:00）+ 维护者手动触发 | 无路径选择地运行 workflow 列出的确定性检查、独立 macOS Swift 检查和模块图健康度；含 `check:desktop-ui-smoke` | 无模型、无 secret；手动 `skip_coverage` 默认关闭，UI smoke 缺依赖会明确跳过 |
 | Release | 维护者手动 `bun run quality:release -- --allow-live --provider-model <selector>:main` | PR checks、baseline catalog/live、native 与当前平台打包 smoke；全量层另行执行，非自动包含其全部检查 | 真实模型需维护者显式授权；不是发布 workflow 本身 |
 
 `release-desktop.yml` 不直接调用 `bun run verify`，但有发布门禁：`verify-governance`（`check:policy`、`check:product-identity`、`check:upstream-content`）、`verify-runtime`（`check:server`、`check:agent-flow`、`check:adapters`）和 `verify-desktop`（`check:desktop`、`check:persistence-upgrade`）汇入 `release-verify-gate`。`publish-release` 同时依赖构建矩阵与该汇总门禁，任一验证组不成功就不能发布。各 job 绑定同一 release SHA；这不是完整 `verify`、全量层或手动 live release gate 的替代品。`scripts/pr/release-workflow.test.ts` 分别守卫不直接调用 `verify` 和实际发布依赖。全量层每天一次的频率由 `pr-quality-workflow.test.ts` 固定，改频率需维护者决定。
 
-分层原则：**PR 只跑改动能影响到的范围**，因此它天然无法覆盖"没有 PR 碰过的检查"和"只有全套一起跑才暴露的问题"——这两个盲区交给每天的全量层；**真实模型/额度只出现在 Release 与维护者手动 smoke**，任何贡献者在没有 provider 的情况下都必须能跑通 PR 层的全部门禁。
+分层原则：**PR 只跑改动能影响到的范围**，因此它天然无法覆盖"没有 PR 碰过的检查"和"只有全套一起跑才暴露的问题"——这两个盲区交给每天的全量层；**真实模型/额度只用于 Release 与经显式授权的维护者手动 smoke，均须明确授权额度**，任何贡献者在没有 provider 的情况下都必须能跑通 PR 层的全部门禁。
 
 ## 普通 PR 的影响面检查
 
@@ -102,13 +102,13 @@ bun run check:desktop-ui-smoke # 真实桌面 UI + 真实权限对话框 + mock 
 
 所有会启动真实 server 的 quality-gate lane 都跑在沙箱配置目录里（`scripts/quality-gate/sandbox.ts`），并在结束时校验没有写过开发者真实的 `~/.claude`；写了就判定 lane 失败。
 
-开发时运行 impact report 选中的窄命令即可。需要声明 PR-ready 或完整验证时，直接使用统一入口，无需先单独执行其全部 lane：
+WSL 本地运行定向回归、impact report 和受影响模块检查；全量交给 GitHub Actions，不要求在本地重复。`bun run verify` 不是 WSL 默认动作，也不是提交或推送前置条件。只有明确需要在本地运行统一 PR 验证时才使用：
 
 ```bash
 bun run verify
 ```
 
-`bun run verify` 等价于 `bun run quality:pr`，会按改动范围执行被选中的 policy、desktop、mobile、server、adapter、native、provider contract、chat contract、persistence、docs 和 coverage lane。它不调用真实大模型。小范围外部贡献者不需要在本机运行无关模块；GitHub CI 会再次执行精确的 path-aware gate。
+`bun run verify` 仍等价于 `bun run quality:pr`，会按改动范围执行被选中的 policy、desktop、mobile、server、adapter、native、provider contract、chat contract、persistence、docs 和 coverage lane。它不调用真实大模型，也不等于无路径选择的 nightly 全量或 release 验收；本次分工不改变命令、lane 选择或失败语义。GitHub Actions 独立执行候选对应的 path-aware PR gate。
 
 主质量报告会内嵌当前测试范围、结果矩阵、覆盖率摘要，并链接完整 coverage/JUnit/log artifact：
 
@@ -121,25 +121,17 @@ artifacts/coverage/<timestamp>/coverage-report.md
 artifacts/coverage/<timestamp>/coverage-report.json
 ```
 
-PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quality:verify` 仍然保留给习惯显式质量命名的用户，但推荐文档和 AI prompt 都使用 `bun run verify`。
+PR 描述里请分别贴出本地实际运行的命令与 summary，以及 Actions run 链接和候选 SHA。`quality:pr` / `quality:verify` 别名继续保留；明确请求统一的本地验证时使用 `bun run verify`，不要把它扩成 WSL 日常默认要求。
 
 本地 `bun run verify` 的 coverage lane 被选中时是阻塞项，失败会使本地验证失败；不要把托管 PR 的提示性策略套用于本地。托管覆盖率在 PR 上只报告、不阻塞合并：`coverage-checks` 作为独立 check 显示结果，不在 `pr-quality-gate` 的 `needs` 里，必过状态不等它跑完（它约 25 分钟）；它仍然执行四件事：按源码口径统计覆盖率、执行 baseline ratchet、报告 75-80%+ 的目标差距，并对新增/变更的可执行生产代码行执行 changed-line coverage。当前 baseline 记录在 `scripts/quality-gate/coverage-baseline.json`，CI 会优先对比 base branch 的 baseline，新增 PR 不允许覆盖率下降超过允许窗口。`coverage-baseline.json` 或 `coverage-thresholds.json` 变更必须由维护者加 `allow-coverage-baseline-change` 后才能合并。Quarantine 只用于维护者的 baseline/release 追踪，不得隐藏确定性的 provider/chat 契约测试；当前普通 PR gate 不依赖 quarantine 才能通过。
 
 ## AI Coding Agent 修复循环
 
-任务的完成标准是实现目标行为、运行当前 diff 必需的验证，并修复由本次改动造成的失败。任务范围内的本地编辑、隔离 fixture 检查和相关失败修复无需逐步请求批准；提交、推送、发布、仓库设置及真实模型额度仍遵循根 `AGENTS.md` 的授权边界。
+日常诊断、实现闭环、共享 checkout 协作和定向验证复用遵循[根规则](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/AGENTS.md)；本节说明证据及失败诊断。`bun run check:impact` 只选择范围，不证明行为正确。PR-ready/push-ready 必须注明是「本地模块验证完成，可提交/推送供 CI 验证」还是「候选的 PR Actions 门禁已通过」；前者不代表可合并，也不授予提交或推送权限。
 
-共享 checkout 中，同一文件同一时间只有一个写入者；依赖安装、构建和完整门禁只由一个执行者串行运行，读者不重复已委派的调查。恢复任务时先核对已有后台任务及其状态、当前候选和已有证据；副作用是否完成不明时，不盲目重放命令。
+PR 门禁通过须有候选完整 SHA 对应的 Actions run 链接、最终 `pr-quality-gate` 结果和所选 job 结果；同时记录实际测试的 checkout/merge SHA 与 PR head/base 的对应关系。未提交工作区、后续修改或其他 SHA 不能复用旧 CI 绿灯，尚无对应运行时标为 `not run` / pending。full validation 必须注明范围及对应 Actions 证据；nightly 只证明该 SHA 的确定性全量，不替代 PR 门禁或 release 的 live、各平台产物、安装/升级及发布验收。
 
-模块迭代先理解问题，再决定改法：对照预期行为与实际结果，阅读模块、调用方、已有测试和相关日志，沿真实调用链定位原因；把已观察到的证据、待验证的推测和未知项分开，不从文件名或代码外观推断缺陷。
-
-改动前明确契约与边界：输入、输出和错误如何传递；状态由谁持有、何时迁移和持久化；资源由谁创建、取消和释放；权限在哪个信任边界校验；哪些调用方、旧数据、协议与用户行为必须兼容。涉及跨进程或执行引擎时，对照[执行、数据与信任边界](execution-boundaries.md)，沿调用链完成必要修改，不另建隐藏执行路径。
-
-根据证据选择保留、修复、合并、重设计或验证后退役：保留行为正确且职责清晰的实现；修复已定位的缺陷；合并重复职责但保留原有校验和错误处理；只有现有契约无法满足目标时才重设计。退役前确认调用方和入口已迁移或不再使用，验证旧数据兼容、状态交接与资源清理，不能仅因命名陈旧或实现复杂就删除。
-
-质量看目标行为、边界是否清晰以及回归证据，不以机械改名、拆文件或代码行数衡量。重构服务于已确认的问题，不把与目标无关的结构调整混入修复。
-
-`bun run check:impact` 只选择检查范围，不证明行为正确；普通任务运行选中的检查，需要 PR-ready/full validation 时直接使用 `bun run verify`，不必先单独重复执行其全部 lane。修复期间先重跑受影响的窄检查，交付时补齐最终 diff 的所需证据。没有后续改动或未解决风险时，不要反复运行已经通过的检查。无关的现有失败或环境阻塞应准确报告，而不是为了让结果变绿擅自扩大修改范围。
+实现、兼容与退役遵循[根规则的实现与兼容边界](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/AGENTS.md#实现与兼容边界)。诊断应沿调用链对照预期、实际结果与日志，区分观察、推测与未知，不从命名推断缺陷；保留校验与错误处理，只有现有契约不能满足目标时才重设计。
 
 验证证据须绑定候选：完整 Git SHA、dirty diff 及相关未跟踪源码的内容指纹，并记录环境（OS/架构、工具版本与路径）、实际命令、退出状态、最终 summary 和日志；发布产物还须记录 SHA-256。相关源码、依赖或环境变化会使受影响的旧证据失效。运行未完成、缺最终 summary 或后台任务状态不明均不是 `passed`。
 
@@ -173,8 +165,6 @@ Changed-line 数字必须连同 `changedLines.scope` 阅读：它记录 `strateg
 
 Dirty fallback 仍只在存在未暂存 tracked 改动时触发；staged-only 可能选择 branch fallback，或在 main 上没有 diff。dirty coverage 不是整条分支覆盖率。diff/scope 采集失败会注明 unknown，但现有 empty-fallback 评分未改变；此时零行不证明没有变更，也不能宣称全分支达标。
 
-只有最终 diff 的 `bun run verify` 报告通过，才能声明 PR-ready/full validation。不要通过降低 coverage baseline/threshold 或改写测试预期掩盖失败。
-
 ## 回归测试设计
 
 缺陷修复遵循 **RED → GREEN → 重构**：先补能通过真实入口复现缺陷的最小回归测试，运行并确认它因目标缺陷失败（RED），而不是因环境或 fixture 错误失败；再做最小修复让它通过（GREEN），最后在测试保持通过的前提下重构。无法复现时，如实记录尝试过的输入、环境、观察结果和证据缺口；不要把一直通过的测试说成已复现，也不要据此宣称缺陷已被证实修复。
@@ -200,9 +190,9 @@ Dirty fallback 仍只在存在未暂存 tracked 改动时触发；staged-only �
 
 ## 维护 Agent 指导
 
-根 `AGENTS.md` 保留项目约束与入口，专项规则留在对应目录，解释和示例按需放到文档。共享指导应适用于贡献者使用的不同模型；能力升级后重新核对重复流程和宽泛停止条件，不能据此跳过现行安全或 CI 契约。这次整理参考了 Eric Provencher 的 [Rethinking skills and prompts for GPT-6 Astra](https://x.com/pvncher/status/2095991462416490862)（2026-09-04）。
+第一方 Agent 规则以[根 AGENTS.md](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/AGENTS.md)为统一入口，按改动领域查阅其链接的契约与专项文档；组件设计见 [DESIGN.md](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/DESIGN.md)，执行与数据契约见[执行、数据与信任边界](./execution-boundaries.md)。共享指导应适用于贡献者使用的不同模型；能力升级后重新核对重复流程和宽泛停止条件，不能据此跳过现行安全或 CI 契约。
 
-长期个人偏好放用户级指导，不覆盖仓库约束；模块规则放最近的 `AGENTS.md` 或适用的目录规则，复杂操作流程放 skill。必须零例外执行的规则应由适用的权限、hook 或 CI 检查落实；自然语言指导不是已实现的强制门禁，新增自动化仍须遵守配置与授权边界。
+长期个人偏好放用户级指导，不覆盖仓库约束；通用规则与区域适用范围由根入口维护，领域契约、实现细节和操作示例在既有权威文档中按需链接，不重复维护规则副本；复杂操作流程放 skill。必须零例外执行的规则应由适用的权限、hook 或 CI 检查落实；自然语言指导不是已实现的强制门禁，新增自动化仍须遵守配置与授权边界。
 
 模块 README 应说明模块功能、职责与非职责、主要入口、依赖和数据归属，以及开发与验证命令；详细设计按需链接，不复制总仓库规则或保存临时任务日志。触达模块时主动核对说明与实现是否一致，报告实际缺口并修正范围内文档，不为凑齐模板批量重写无关模块。
 
@@ -215,7 +205,7 @@ Dirty fallback 仍只在存在未暂存 tracked 改动时触发；staged-only �
 所有新功能、bugfix 和行为变化都必须带着可验证证据交付。这条规则同时约束人和 AI Coding Agent：
 
 - 先声明变更面：`desktop`、`mobile`、`server`、`adapter`、`native`、`docs`、`provider/runtime`、`agent-loop` 或 `release`。
-- 可执行 JS/TS 生产代码变更必须同 PR 带同区域测试；`scripts/pr/change-policy.ts` 分别检查 `desktop/src/`、`src/server/`、其余 `src/` 和 `adapters/` 四个区域，除非维护者显式加 `allow-missing-tests`。文案或 CSS 等非可执行文件不因这一规则单独要求新增测试，仍需完成 impact 选中的检查。
+- 可执行 JS/TS 生产代码变更必须同 PR 带同区域测试；`scripts/pr/change-policy.ts` 分别检查 `desktop/src/`、`src/server/`、其余 `src/` 和 `adapters/` 四个区域，只有维护者确认不适合自动化测试并显式加 `allow-missing-tests` 时才可例外。文案或 CSS 等非可执行文件不因这一规则单独要求新增测试，仍需完成 impact 选中的检查。
 - 纯逻辑写单元测试；server/API/provider/runtime 写 API 或 request-shape 测试；桌面 UI/store/API 写 Vitest/Testing Library；跨 UI、WebSocket、provider proxy、native sidecar、发布打包的用户流程要补 E2E 或桌面 UI smoke。
 - agent loop、工具调用、provider 路由、模型选择、文件编辑、权限、会话恢复、桌面聊天改动，PR 内必须有 mock/fixture 测试；live smoke 或 baseline 仅在确定性检查通过且维护者明确授权额度后运行。发现本机 provider 不代表获得授权，未运行时如实说明。
 - 覆盖率是功能的一部分。本项目按 Google/Microsoft 风格执行：生成物/构建产物不计入产品覆盖率，维护中的产品区域要逐步达到 75-80%+，新增或变更的可执行生产代码行必须满足 `coverage-thresholds.json` 里的 changed-line coverage 门槛。
@@ -224,7 +214,7 @@ Dirty fallback 仍只在存在未暂存 tracked 改动时触发；staged-only �
 
 ## 本机 Push 前提醒
 
-push 不再自动运行本地质量门禁。需要质量检查时，请手动运行：
+push 不再自动运行本地质量门禁。WSL 默认按影响面做模块验证；若明确需要额外的本地 PR gate 快捷检查，可手动运行：
 
 ```bash
 bun run quality:push
@@ -238,18 +228,7 @@ bun run quality:push
 bun run hooks:install
 ```
 
-拥有可信仓库环境和模型额度的维护者可以手动运行真实 provider smoke 和桌面 agent-browser smoke：
-
-```bash
-bun run quality:providers
-bun run quality:smoke -- --provider-model minimax:main:minimax-main
-```
-
-需要完整 live baseline 时使用：
-
-```bash
-bun run quality:gate --mode baseline --allow-live --provider-model minimax:main:minimax-main
-```
+维护者获明确额度授权后，按[真实模型 Baseline](#真实模型-baseline)运行 live 检查。
 
 ## PR CI 合并门禁
 
@@ -284,9 +263,7 @@ bun run check:quarantine  # 维护者 baseline/release quarantine 审计
 bun run check:coverage    # root、desktop、adapters 覆盖率报告和 ratchet 门禁
 ```
 
-如果只改了很窄的文件，先跑对应的定向测试即可；只有在声明 PR-ready/full validation 时才需要本地再跑 `bun run verify`，托管 CI 仍会执行所有被选中的必需 lane。
-
-可执行 JS/TS 生产代码改动必须带对应测试文件；同区域划分见上文 功能质量契约 和 `scripts/pr/change-policy.ts`，缺失时会触发阻断。只有维护者确认不适合自动化测试时，才能使用 `allow-missing-tests`。覆盖率 baseline/threshold 变更同样需要维护者确认并加 `allow-coverage-baseline-change`。
+本地按影响面选择模块命令，不逐个运行全部 lane；全量由 Actions 承担，证据范围按上文「AI Coding Agent 修复循环」区分。同区域测试与维护者例外要求见[功能质量契约](#功能质量契约)。
 
 ## 真实模型 Baseline
 
@@ -447,7 +424,7 @@ bun test scripts/pr/release-workflow.test.ts scripts/release-update-metadata.tes
 bun run check:policy
 ```
 
-正式执行 `bun run scripts/release.ts <version>` 前，先确认对应的 `release-notes/v<version>.md` 已经存在，并单独取得创建分支和提交的授权。非 dry-run 会创建 `release/vX.Y.Z` 分支并提交版本与 release notes，不创建 tag、不推送、不发布；默认只更新桌面版本，只有显式传入 `--mobile <patch|minor|major|x.y.z>` 才同时递增独立的移动版本。
+正式执行 `bun run scripts/release.ts <version>` 前，先确认对应的 `release-notes/v<version>.md` 已经存在，并核对当前已有授权是否覆盖创建分支和提交的副作用；只有未覆盖时才补充确认。非 dry-run 会创建 `release/vX.Y.Z` 分支并提交版本与 release notes，不创建 tag、不推送、不发布；默认只更新桌面版本，只有显式传入 `--mobile <patch|minor|major|x.y.z>` 才同时递增独立的移动版本。
 
 ### 发版步骤
 
@@ -472,14 +449,13 @@ bun run check:policy
 
 ## PR 提交流程
 
-1. 新建普通产品分支，例如 `fix/session-reconnect` 或 `feat/provider-quality-gate`。
-2. 安装依赖并完成改动。
-3. 为行为变化补测试。
-4. 运行相关定向测试。
-5. 可选：运行 `bun run hooks:install`，让后续 push 显示非阻塞提醒。
-6. 如果要声明 PR-ready/full validation，运行 `bun run verify`。
-7. 高风险改动由可信维护者运行 live baseline；外部贡献者记录未运行原因即可。
-8. 在 PR 描述里写清楚用户影响、测试命令、覆盖率/质量报告 summary、已知风险。
+创建或切换分支、提交、推送、打开或合并 PR 前，先核对已有明确授权是否覆盖该操作；同一范围不重复确认，未覆盖的操作须先取得授权。
+
+1. 在授权范围内使用普通产品分支，例如 `fix/session-reconnect`；安装依赖并完成改动与行为回归测试。
+2. 按根规则完成定向回归、影响面分析和本地模块验证，记录证据及未运行项；不要求 WSL 重复全量。可选安装的 hook 仅作非阻塞提醒。
+3. 高风险改动由可信维护者在确定性检查通过、额度授权覆盖后补 live baseline；外部贡献者记录未运行原因。
+4. 按 [PR 模板](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/.github/pull_request_template.md)记录用户影响、变更文件、测试、覆盖率/质量报告、未运行项与风险，再执行已获授权的提交、推送和 PR 操作。
+5. 收集该候选对应的 PR Actions 结果；按上文证据规则更新 PR 状态，所需门禁未通过不得声明可合并。全量使用既有 Actions 流程，不默认手动触发，也不以 nightly 代替 release 验收。
 
 ## 常见问题
 

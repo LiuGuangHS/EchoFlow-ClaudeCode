@@ -749,7 +749,7 @@ describe('full quality workflow', () => {
     // Agent and skill discovery lists files through ripgrep. A job that runs the
     // runtime suites without it reports "create agent" as a 500, which kept the
     // full sweep red on every run while the PR gate, which installs it, stayed green.
-    for (const file of ['.github/workflows/pr-quality.yml', '.github/workflows/nightly-quality.yml']) {
+    for (const file of ['.github/workflows/pr-quality.yml', '.github/workflows/nightly-quality.yml', '.github/workflows/push-quality.yml']) {
       for (const [name, job] of Object.entries(workflowJobs(readFileSync(file, 'utf8')))) {
         const steps = job.steps ?? []
         const check = steps.findIndex(step => /\bcheck:(server|coverage|native)\b/.test(step.run ?? ''))
@@ -767,7 +767,67 @@ describe('full quality workflow', () => {
     const runs = (jobs['selection-drift'].steps ?? []).map((step) => step.run ?? '')
 
     expect(runs.some((run) => run.includes('module-graph.test.ts'))).toBe(true)
-    expect(runs.some((run) => run.includes('check:impact'))).toBe(true)
+    expect(runs.some((run) => run.includes('scripts/pr/change-policy.ts') && run.includes('--files0') && run.includes('--plan-only'))).toBe(true)
+  })
+
+  test('plans every tracked path without truncation or filename loss and propagates failures', () => {
+    const root = mkdtempSync(join(tmpdir(), 'nightly-full-tree-'))
+    try {
+      const repo = join(root, 'repo')
+      const bin = join(root, 'bin')
+      const scratch = join(root, 'runner temp')
+      for (const directory of [repo, bin, scratch]) mkdirSync(directory)
+      const capture = join(root, 'captured.json')
+      // Execute the workflow's real shell/Git collection, but never launch a suite.
+      writeFileSync(join(bin, 'bun'), `#!${process.execPath}
+import { readFileSync, writeFileSync } from 'node:fs'
+const args = process.argv.slice(2)
+const nul = args.indexOf('--files0')
+const files = nul >= 0
+  ? readFileSync(args[nul + 1], 'utf8').split('\\0').filter(Boolean)
+  : (args[args.indexOf('--files') + 1] ?? '').split(',').filter(Boolean)
+writeFileSync(process.env.CAPTURE, JSON.stringify({ args, files }))
+process.exit(Number(process.env.FIXTURE_EXIT ?? 0))
+`)
+      chmodSync(join(bin, 'bun'), 0o755)
+      const env = createSandboxedTestEnvironment(join(root, 'home'), {
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        GIT_CONFIG_GLOBAL: join(root, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1',
+        RUNNER_TEMP: scratch, CAPTURE: capture,
+      })
+      const git = (args: string[], input?: string) => {
+        const result = spawnSync('git', args, { cwd: repo, env, input, encoding: 'utf8' })
+        expect(result.status, result.stderr).toBe(0)
+        return result.stdout.trim()
+      }
+      git(['init', '-b', 'main'])
+      const blob = git(['hash-object', '-w', '--stdin'], '')
+      const paths = [
+        ...Array.from({ length: 405 }, (_, index) => `src/fixture-${index}.ts`),
+        'desktop/src/view.tsx', 'adapters/chat.ts', 'mobile/src/screen.tsx',
+        '.github/workflows/quality.yml', 'native/helper.rs', 'docs/中文.md',
+        'scripts/pr/late.ts', 'src/comma,name.ts', 'src/line\nbreak.ts', 'src/tab\tquote".ts',
+      ]
+      git(['update-index', '--add', '-z', '--index-info'], paths.map(name => `100644 ${blob}\t${name}\0`).join(''))
+      const job = workflowJobs(readFileSync('.github/workflows/nightly-quality.yml', 'utf8'))['selection-drift']
+      const script = job.steps!.find(step => step.name === 'Impact report on the full tree')!.run!
+      const run = (cwd: string, overrides = {}) => spawnSync('bash', ['-e', '-o', 'pipefail', '-c', script], {
+        cwd, env: { ...env, ...overrides }, encoding: 'utf8',
+      })
+      const result = run(repo)
+      expect(result.status, result.stderr).toBe(0)
+      const collected = JSON.parse(readFileSync(capture, 'utf8'))
+      expect(collected.files.length).toBe(paths.length)
+      expect(new Set(collected.files)).toEqual(new Set(paths))
+      expect(collected.args).toEqual(['run', 'scripts/pr/change-policy.ts', '--files0', join(scratch, 'full-tree.nul'), '--plan-only'])
+      expect(run(repo, { FIXTURE_EXIT: '17' }).status).toBe(17)
+      rmSync(capture)
+      const missingRepo = run(scratch)
+      expect(missingRepo.status).not.toBe(0)
+      expect(existsSync(capture)).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 

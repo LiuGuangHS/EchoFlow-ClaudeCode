@@ -7,9 +7,9 @@ order: 14
 
 # Contributing and Quality Gates
 
-This guide explains how to install, develop, test, and run the local quality gates before opening a PR. The goal is to help maintainers and contributors answer one question before review: did this change break the core Coding Agent workflow?
+This guide covers local setup, development, and module validation, plus PR gates and full sweeps on GitHub Actions. The goal is to help maintainers and contributors use candidate-specific evidence to answer: did this change break the core Coding Agent workflow?
 
-See [Execution, data, and trust boundaries](./execution-boundaries.md) for durable rules on product capabilities, execution binding, persistence, and external input. This page owns the check workflow and test design; task progress, audit lists, and temporary validation records are not published as implemented architecture.
+Follow the [root AGENTS.md](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/AGENTS.md) for shared working, authorization, safety, and verification rules, and [DESIGN.md](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/DESIGN.md) for desktop design. See [Execution, data, and trust boundaries](./execution-boundaries.md) for durable rules on product capabilities, execution binding, persistence, and external input. This page owns the check workflow and test design; task progress, audit lists, and temporary validation records are not published as implemented architecture.
 
 ## Setup
 
@@ -53,14 +53,14 @@ Do not commit local artifacts such as `artifacts/quality-runs/`, `node_modules/`
 
 | Tier | Trigger | What runs | Constraint |
 | --- | --- | --- | --- |
-| Local | manual | The narrowest relevant tests, then whatever `bun run check:impact` selects | seconds |
+| Local | manual | The narrowest relevant tests and module checks selected by `bun run check:impact` | WSL runs focused/module validation only, not a duplicate of the cloud full sweep |
 | PR (required) | `pull_request`, and `push` to `main` after a merge | The deterministic lanes the impact report selects, including `check:agent-flow` and `check:agent-e2e`; coverage is reported, not blocking | no model, no provider, no secret, runs on an untrusted fork |
 | Full sweep | `nightly-quality.yml`, daily (19:00 UTC) plus maintainer-triggered | The workflow's configured deterministic checks without path selection, separate macOS Swift checks, and module-graph health; includes `check:desktop-ui-smoke` | no model, no secret; manual `skip_coverage` defaults off, and UI smoke explicitly skips missing dependencies |
 | Release | maintainer-run `bun run quality:release -- --allow-live --provider-model <selector>:main` | PR checks, baseline catalog/live, native and current-platform packaging smoke; the full sweep runs separately, not all of its checks are automatically included | live models require explicit maintainer authorization; this is not the publication workflow |
 
 `release-desktop.yml` does not directly invoke `bun run verify`, but it does gate publication: `verify-governance` (`check:policy`, `check:product-identity`, `check:upstream-content`), `verify-runtime` (`check:server`, `check:agent-flow`, `check:adapters`), and `verify-desktop` (`check:desktop`, `check:persistence-upgrade`) feed `release-verify-gate`. `publish-release` depends on both the build matrix and that aggregate gate; any verification group without a successful result prevents publication. Jobs bind to the same release SHA; these checks do not replace complete `verify`, the full sweep, or the manual live release gate. `scripts/pr/release-workflow.test.ts` separately guards the absence of a direct `verify` invocation and the actual publication dependencies. The daily frequency is pinned in `pr-quality-workflow.test.ts`; changing it requires a maintainer decision.
 
-The split follows from what each tier can prove. A per-PR gate only ever covers what the diff reaches, so it is structurally blind to checks no recent PR selected and to failures that only appear when the whole suite runs together — the daily full sweep closes both. Live model quota is spent only at release time, so every contributor can pass the required gate with no provider at all.
+The split follows from what each tier can prove. A per-PR gate only ever covers what the diff reaches, so it is structurally blind to checks no recent PR selected and to failures that only appear when the whole suite runs together — the daily full sweep closes both. Live model quota is used only for releases and explicitly authorized maintainer-run smoke checks, with explicit quota authorization required in both cases, so every contributor can pass the required gate with no provider at all.
 
 ## Path-Aware PR Checks
 
@@ -102,13 +102,13 @@ A hand-written mock can only stream what its author imagined a model sends: fixe
 
 Every quality-gate lane that boots the real server runs against a sandbox config dir (`scripts/quality-gate/sandbox.ts`) and fails if it wrote to the developer's real `~/.claude`.
 
-Run the selected focused commands while developing. For PR-ready or full validation, use the unified entrypoint directly without first running all of its lanes separately:
+On WSL, run focused regressions, the impact report, and affected module checks; leave full sweeps to GitHub Actions without repeating them locally. `bun run verify` is neither the WSL default nor a prerequisite for committing or pushing. Use it only when explicitly choosing unified local PR verification:
 
 ```bash
 bun run verify
 ```
 
-`bun run verify` is equivalent to `bun run quality:pr`. It runs the selected policy, desktop, mobile, server, adapter, native, provider contract, chat contract, persistence, docs, and coverage lanes, without calling real models. Small external contributions do not need to run unrelated modules locally; GitHub CI runs the exact path-aware gate again.
+`bun run verify` remains equivalent to `bun run quality:pr`. It runs the selected policy, desktop, mobile, server, adapter, native, provider contract, chat contract, persistence, docs, and coverage lanes without real models. It is neither the path-independent nightly full sweep nor release acceptance; this division of work changes no command, lane selection, or failure semantics. GitHub Actions independently runs the candidate's path-aware PR gate.
 
 The main quality report embeds the current test scope, result matrix, coverage summary, and links to the full coverage/JUnit/log artifacts:
 
@@ -121,25 +121,17 @@ artifacts/coverage/<timestamp>/coverage-report.md
 artifacts/coverage/<timestamp>/coverage-report.json
 ```
 
-Include the commands you ran and the report summary in your PR description. `quality:pr` / `quality:verify` remain available for contributors who prefer explicit quality command names, but docs and AI prompts should prefer `bun run verify`.
+Record local commands and summaries separately from Actions run links and candidate SHAs in the PR description. The `quality:pr` / `quality:verify` aliases remain available; use `bun run verify` when unified local verification is explicitly requested, not as a routine WSL requirement.
 
 In local `bun run verify`, the selected coverage lane is blocking: a failure fails local verification. Do not apply the hosted PR advisory policy to local runs. Hosted coverage is reported on pull requests but never blocks a merge: `coverage-checks` reports as its own check and is not in `pr-quality-gate`'s `needs`, so the required status does not wait for its ~25 minutes. It still does four things: measures source-only coverage, enforces the baseline ratchet, reports target gaps against 75-80%+ maintained-area goals, and enforces changed-line coverage for new or modified executable production lines. The current baseline lives in `scripts/quality-gate/coverage-baseline.json`, and CI compares against the base branch baseline when available. New PRs must not lower coverage beyond the allowed window. Changes to `coverage-baseline.json` or `coverage-thresholds.json` require the maintainer-only `allow-coverage-baseline-change` label. Quarantine is reserved for maintainer baseline/release tracking and must never hide deterministic provider/chat contract tests; the normal PR gate does not depend on quarantine to pass.
 
 ## AI Coding Agent Fix Loop
 
-Completion means implementing the intended behavior, running the checks required for the current diff, and fixing failures caused by the change. Scoped local edits, isolated fixture checks, and related repairs do not need approval at each step. Commits, pushes, releases, repository settings, and live-model quota still follow the root `AGENTS.md` authorization boundaries.
+Follow the [root rules](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/AGENTS.md) for diagnosis, completing scoped work, shared-checkout coordination, and reusing focused verification. This section covers evidence and failure diagnosis. `bun run check:impact` selects scope; it does not prove behavior correct. Qualify PR-ready/push-ready as either “local module validation complete, ready to commit/push for CI” or “the candidate's PR Actions gate passed.” The former proves neither merge readiness nor authorization to commit or push.
 
-In a shared checkout, assign one writer per file at a time; dependency installs, builds, and full gates run serially under one executor, and readers must not duplicate delegated investigation. On resume, first check existing background tasks and their status, the current candidate, and available evidence; do not blindly replay commands whose side effects may already have completed.
+A passed PR gate requires an Actions run link for the full candidate SHA, the final `pr-quality-gate` result, and selected job results; also record how the tested checkout/merge SHA maps to the PR head/base. An uncommitted worktree, later edits, or another SHA cannot reuse an old green CI result; report `not run` / pending when no corresponding run exists. Qualify full validation with its scope and corresponding Actions evidence. Nightly proves only the deterministic full sweep for its SHA, not the PR gate or release live checks, per-platform artifacts, installation/upgrades, or publication acceptance.
 
-For module iteration, understand the problem before choosing a change: compare expected behavior with actual results, read the module, its callers, existing tests, and relevant logs, and trace the real call chain to locate the cause. Separate observed evidence from hypotheses and unknowns; do not infer defects from filenames or code appearance.
-
-Before editing, define contracts and boundaries: how inputs, outputs, and errors flow; who owns state and when it transitions or persists; who creates, cancels, and releases resources; where permissions are checked across trust boundaries; and which callers, old data, protocols, and user behaviors must remain compatible. For cross-process or execution-engine changes, consult [Execution, Data, and Trust Boundaries](execution-boundaries.md) and carry necessary changes through the call chain without creating hidden execution paths.
-
-Use the evidence to choose preservation, repair, consolidation, redesign, or retirement after verification. Preserve correct implementations with clear responsibilities; repair located defects; consolidate duplicate responsibilities while retaining validation and error handling; redesign only when the existing contract cannot meet the goal. Before retirement, confirm callers and entry points have migrated or are unused, and verify old-data compatibility, state handoff, and resource cleanup. Ageing names or implementation complexity alone do not justify deletion.
-
-Judge quality by intended behavior, clear boundaries, and regression evidence, not mechanical renaming, file splitting, or line counts. Refactor to solve an established problem rather than mixing unrelated structural changes into a fix.
-
-`bun run check:impact` selects checks; it does not prove behavior correct. Run the selected checks for ordinary tasks; use `bun run verify` directly for PR-ready/full validation without first running all of its lanes separately. During repairs, rerun affected focused checks, then complete the evidence needed for the final diff. Do not repeat passing checks without subsequent edits or unresolved risks. Report unrelated existing failures or environment blockers instead of expanding the change merely to make everything green.
+Follow the [implementation and compatibility boundaries in the root rules](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/AGENTS.md#实现与兼容边界) for implementation, compatibility, and retirement. Diagnose expected versus actual behavior and logs along the call chain, separating observations, hypotheses, and unknowns; names alone do not establish defects. Retain validation and error handling, and redesign only when the existing contract cannot meet the goal.
 
 Bind verification evidence to a candidate: the full Git SHA, dirty diff, and content fingerprints of relevant untracked source, along with the environment (OS/architecture, tool versions and paths), actual commands, exit statuses, final summaries, and logs; also record SHA-256 for release artifacts. Relevant source, dependency, or environment changes invalidate affected prior evidence. An incomplete run, missing final summary, or unknown background-task state is not `passed`.
 
@@ -173,8 +165,6 @@ Read changed-line numbers with `changedLines.scope`: it records `strategy`, opti
 
 Dirty fallback still triggers only for unstaged tracked changes; staged-only changes may select branch fallback or no diff on main. Dirty coverage is not whole-branch coverage. Failed diff/scope collection is explicitly unknown, but existing empty-fallback scoring is unchanged; zero lines in that case prove neither an absence of changes nor whole-branch compliance.
 
-Claim PR-ready/full validation only after `bun run verify` passes for the final diff. Do not lower coverage baselines/thresholds or rewrite test expectations to hide failures.
-
 ## Regression Test Design
 
 For defects, follow **RED → GREEN → refactor**: first add the smallest regression test that reproduces the defect through a real entry point. Run it and confirm it fails because of the intended defect (RED), not an environment or fixture error. Then make the smallest fix that passes it (GREEN), and only then refactor while keeping tests green. If reproduction is unavailable, record the inputs and environment tried, observed results, and evidence gaps. Do not present an always-passing test as a reproduction or claim it proves the defect is fixed.
@@ -200,9 +190,9 @@ External reference points:
 
 ## Maintaining Agent Instructions
 
-Keep project constraints and entry points in root `AGENTS.md`, specialized rules near the code, and explanations/examples in on-demand documentation. Shared guidance must work for contributors using different models. Revisit duplicated workflows and broad stopping conditions as capabilities change, while preserving current safety and CI contracts. This cleanup draws on Eric Provencher's [Rethinking skills and prompts for GPT-6 Astra](https://x.com/pvncher/status/2095991462416490862) (2026-09-04).
+Use the [root AGENTS.md](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/AGENTS.md) as the unified entry point for first-party Agent rules, following its links to contracts and specialized documentation for the changed area. See [DESIGN.md](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/DESIGN.md) for component design and [Execution, data, and trust boundaries](./execution-boundaries.md) for execution and data contracts. Shared guidance must work for contributors using different models. Revisit duplicated workflows and broad stopping conditions as capabilities change, while preserving current safety and CI contracts.
 
-Keep long-term personal preferences in user-level guidance without overriding repository constraints; put module rules in the nearest `AGENTS.md` or applicable directory rules, and complex operational procedures in skills. Rules that must run without exceptions should be enforced by the appropriate permissions, hooks, or CI checks. Natural-language guidance is not implemented enforcement, and new automation must respect configuration and authorization boundaries.
+Keep long-term personal preferences in user-level guidance without overriding repository constraints. Maintain shared rules and area applicability at the root entry point; link domain contracts, implementation details, and operational examples on demand from existing authoritative documentation rather than duplicating rules. Keep complex operational procedures in skills. Rules that must run without exceptions should be enforced by the appropriate permissions, hooks, or CI checks. Natural-language guidance is not implemented enforcement, and new automation must respect configuration and authorization boundaries.
 
 A module README should describe its purpose, responsibilities and non-goals, main entry points, dependencies and data ownership, and development and verification commands. Link detailed designs on demand rather than copying repository-wide rules or storing temporary task logs. When touching a module, proactively compare its documentation with the implementation, report concrete gaps, and fix in-scope documentation without rewriting unrelated modules just to fill a template.
 
@@ -215,7 +205,7 @@ Use a bounded feedback loop for reproducible failures or rule conflicts: when co
 Every feature, bugfix, and behavior change must ship with verifiable evidence. This rule applies to human authors and AI coding agents:
 
 - Name the changed surface first: `desktop`, `mobile`, `server`, `adapter`, `native`, `docs`, `provider/runtime`, `agent-loop`, or `release`.
-- Executable JS/TS production changes must include same-area tests in the same PR. `scripts/pr/change-policy.ts` checks four areas separately: `desktop/src/`, `src/server/`, the rest of `src/`, and `adapters/`, unless a maintainer explicitly applies `allow-missing-tests`. Non-executable files such as prose or CSS do not independently require new tests under this rule; all impact-selected checks still apply.
+- Executable JS/TS production changes must include same-area tests in the same PR. `scripts/pr/change-policy.ts` checks four areas separately: `desktop/src/`, `src/server/`, the rest of `src/`, and `adapters/`, with an exception only when a maintainer confirms automated testing is unsuitable and explicitly applies `allow-missing-tests`. Non-executable files such as prose or CSS do not independently require new tests under this rule; all impact-selected checks still apply.
 - Pure logic needs unit tests. Server/API/provider/runtime behavior needs API or request-shape tests. Desktop UI/store/API behavior needs Vitest or Testing Library coverage. Cross-boundary user flows through UI, WebSocket, provider proxying, native sidecars, or release packaging need E2E or desktop UI smoke.
 - Agent loop, tool execution, provider routing, model selection, file editing, permissions, session resume, and desktop chat changes need mock/fixture tests in PR. Run live smoke or baseline only after deterministic checks pass and a maintainer explicitly authorizes quota use. Finding a local provider is not authorization; report when live checks were not run.
 - Coverage is part of the feature. This project follows a Google/Microsoft-style policy: generated/build output is not counted as product coverage, maintained product areas should move toward 75-80%+, and new or changed executable production lines must pass the changed-line coverage threshold in `coverage-thresholds.json`.
@@ -224,7 +214,7 @@ Every feature, bugfix, and behavior change must ship with verifiable evidence. T
 
 ## Local Pre-Push Reminder
 
-push no longer runs a local quality gate. Run checks manually when needed:
+push no longer runs a local quality gate. WSL defaults to impact-selected module validation; when explicitly choosing an additional local PR-gate shortcut, run:
 
 ```bash
 bun run quality:push
@@ -238,18 +228,7 @@ You can still install the local pre-push hook, but it only prints a non-blocking
 bun run hooks:install
 ```
 
-Maintainers with a trusted repository environment and model quota can run real provider smoke and desktop agent-browser smoke manually:
-
-```bash
-bun run quality:providers
-bun run quality:smoke -- --provider-model minimax:main:minimax-main
-```
-
-To run the full live baseline, use:
-
-```bash
-bun run quality:gate --mode baseline --allow-live --provider-model minimax:main:minimax-main
-```
+After explicit quota authorization, maintainers can follow [Live Model Baseline](#live-model-baseline) for live checks.
 
 ## PR CI Merge Gate
 
@@ -284,9 +263,7 @@ bun run check:quarantine  # Maintainer baseline/release quarantine audit
 bun run check:coverage    # Root, desktop, and adapter coverage reports plus ratchet enforcement
 ```
 
-Focused tests are the normal development loop. Run `bun run verify` locally when claiming PR-ready/full validation; hosted CI still executes every selected required lane.
-
-Executable JS/TS production changes must include matching tests. See the Feature Quality Contract above and `scripts/pr/change-policy.ts` for area boundaries; missing same-area tests block the change unless a maintainer applies `allow-missing-tests`. Coverage baseline/threshold changes are also blocked unless a maintainer applies `allow-coverage-baseline-change`.
+Select local module commands by impact rather than running every lane; Actions owns full sweeps. Distinguish evidence scope as described in AI Coding Agent Fix Loop above. See [Feature Quality Contract](#feature-quality-contract) for same-area tests and maintainer exceptions.
 
 ## Live Model Baseline
 
@@ -447,7 +424,7 @@ bun test scripts/pr/release-workflow.test.ts scripts/release-update-metadata.tes
 bun run check:policy
 ```
 
-Before running `bun run scripts/release.ts <version>` for real, confirm `release-notes/v<version>.md` exists and obtain separate authorization to create a branch and commit. A non-dry run creates `release/vX.Y.Z` and commits the version files and release notes; it does not create a tag, push, or publish. By default it updates only desktop; explicitly pass `--mobile <patch|minor|major|x.y.z>` to also increment the independent mobile version.
+Before running `bun run scripts/release.ts <version>` for real, confirm `release-notes/v<version>.md` exists and check whether existing authorization covers the branch-creation and commit side effects; ask only if those actions are not already covered. A non-dry run creates `release/vX.Y.Z` and commits the version files and release notes; it does not create a tag, push, or publish. By default it updates only desktop; explicitly pass `--mobile <patch|minor|major|x.y.z>` to also increment the independent mobile version.
 
 ### Release steps
 
@@ -472,14 +449,13 @@ Platforms differ in what matters: in macOS signed mode, confirm the release job 
 
 ## PR Workflow
 
-1. Create a product branch such as `fix/session-reconnect` or `feat/provider-quality-gate`.
-2. Install dependencies and make the change.
-3. Add tests for behavior changes.
-4. Run focused checks for the affected area.
-5. Optional: run `bun run hooks:install` to show a non-blocking reminder before later pushes.
-6. Run `bun run verify` if you are claiming PR-ready/full validation.
-7. A trusted maintainer runs the live baseline for high-risk changes; external contributors only record why it was not run.
-8. In the PR description, include user impact, verification commands, coverage/quality report summary, and known risks.
+Before creating or switching branches, committing, pushing, opening or merging a PR, check that existing explicit authorization covers the operation. Do not ask again within the same scope; obtain authorization before an uncovered action.
+
+1. Work on an authorized product branch such as `fix/session-reconnect`; install dependencies and implement the change with behavior regression tests.
+2. Complete focused regressions, impact analysis, and local module validation under the root rules, recording evidence and checks not run; WSL need not repeat the full sweep. The optional local hook only prints a non-blocking reminder.
+3. For high-risk changes, a trusted maintainer adds live baseline evidence after deterministic checks pass and quota use is authorized; external contributors record why it was not run.
+4. Use the [PR template](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/.github/pull_request_template.md) to record user impact, changed files, tests, coverage/quality reports, checks not run, and risks, then perform the authorized commit, push, and PR operations.
+5. Collect PR Actions results for that candidate and update the PR status under the evidence rules above; do not claim merge readiness before required gates pass. Use existing Actions workflows for full sweeps without triggering them manually by default or treating nightly as release acceptance.
 
 ## FAQ
 

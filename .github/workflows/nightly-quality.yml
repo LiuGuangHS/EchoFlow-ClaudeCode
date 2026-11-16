@@ -46,11 +46,21 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: harness/package-lock.json
+          cache-dependency-path: |
+            harness/package-lock.json
+            site/package-lock.json
       # Agent and skill discovery lists files through ripgrep; without it the
       # runtime suites see every created agent as missing (HTTP 500).
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -201,6 +211,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Run macOS Swift XCTest and helper probes
@@ -223,6 +241,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       # A dependency graph that silently stops resolving would quietly downgrade the
@@ -231,4 +257,6 @@ jobs:
       - name: Module graph health
         run: bun test ./scripts/pr/module-graph.test.ts
       - name: Impact report on the full tree
-        run: bun run check:impact --files "$(git ls-files 'src/*' 'desktop/*' 'adapters/*' 'mobile/*' | head -400 | tr '\n' ',')"
+        run: |
+          git ls-files -z > "$RUNNER_TEMP/full-tree.nul"
+          bun run scripts/pr/change-policy.ts --files0 "$RUNNER_TEMP/full-tree.nul" --plan-only

@@ -2,7 +2,7 @@
 
 本页合并原 `desktop/docs/component-library-plan.md` 与 `desktop/docs/redesign-paper-ink-seal.md`。保留审计、API 草稿、实施偏离和当时的验证结果；**以下内容是历史快照，不是现行规范或待执行计划，也不代表当前版本已通过验证。** 原文中的“现状”“已定稿”“不允许”等措辞仅描述当时任务。
 
-现行入口：[产品视觉原则](../../../DESIGN.md)、[组件与实现契约](../../../desktop/src/components/AGENTS.md)、[主题值与 token](../../../desktop/src/theme/globals.css)。旧主题数量、尺寸与组件清单不得覆盖这些来源。
+现行入口：[产品视觉原则](../../../DESIGN.md)、[组件与实现契约](../../../DESIGN.md#组件实现契约)、[主题值与 token](../../../desktop/src/theme/globals.css)。旧主题数量、尺寸与组件清单不得覆盖这些来源。
 
 归档时只调整标题层级、相对链接与本机交接路径占位符；未删减历史实施证据。
 

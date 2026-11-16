@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 
 describe('feature quality contract', () => {
   test('keeps root agent guidance small, high-signal, and layered', () => {
@@ -25,31 +25,35 @@ describe('feature quality contract', () => {
     expect(agents).toContain('实际运行的命令及观察结果')
   })
 
-  test('keeps specialized agent guidance next to the affected code', () => {
-    const policy = readFileSync('.github/AGENTS.md', 'utf8')
-    const runtime = readFileSync('src/AGENTS.md', 'utf8')
-    const desktop = readFileSync('desktop/AGENTS.md', 'utf8')
-    const adapters = readFileSync('adapters/AGENTS.md', 'utf8')
-    const docs = readFileSync('docs/AGENTS.md', 'utf8')
-
-    expect(policy).toContain('`scripts/pr/change-policy.ts` 是路径到检查路由的唯一事实来源')
-    expect(policy).toContain('`pull_request_target`')
-    expect(policy).toContain('`pr-quality-gate`')
-    expect(runtime).toContain('`bun run check:server`')
-    expect(runtime).toContain('临时 `HOME`/`CLAUDE_CONFIG_DIR`')
-    expect(runtime).toContain('`bun run check:provider-contract`')
-    expect(desktop).toContain('`bun run check:desktop`')
-    expect(desktop).toContain('`bun run check:chat-contract`')
-    expect(adapters).toContain('`bun run check:adapters`')
-    expect(docs).toContain('`bun run check:docs`')
+  test('keeps area contracts in one first-party rule file without losing validation entrypoints', () => {
+    const agents = readFileSync('AGENTS.md', 'utf8')
+    for (const section of ['CLI 与 IM', '桌面', '移动端', '文档与站点', 'CI 与仓库策略']) {
+      expect(agents).toContain(`### ${section}`)
+    }
+    expect(agents).toContain('`scripts/pr/change-policy.ts` 是路径到检查路由的唯一事实来源')
+    expect(agents).toContain('`pull_request_target`')
+    expect(agents).toContain('`pr-quality-gate`')
+    expect(agents).toContain('临时 `HOME`/`CLAUDE_CONFIG_DIR`')
+    expect(agents).toContain('`ChatPort`')
+    expect(agents).toContain('所有发布产物必须排除')
+    for (const directory of ['.github', 'src', 'desktop', 'desktop/src/components', 'adapters', 'docs', 'mobile', 'site']) {
+      expect(existsSync(`${directory}/AGENTS.md`)).toBe(false)
+    }
+    expect(existsSync('native/agent-desktop/AGENTS.md')).toBe(true)
+    const design = readFileSync('DESIGN.md', 'utf8')
+    expect(design).toContain('useDismissable')
+    expect(design).toContain('aria-describedby')
+    const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'))
+    for (const lane of ['server', 'provider-contract', 'desktop', 'chat-contract', 'adapters', 'docs']) {
+      expect(typeof scripts[`check:${lane}`]).toBe('string')
+    }
   })
 
-  test('routes mobile work to its specialized guidance', () => {
+  test('keeps mobile contracts and its existing check entrypoint', () => {
     const agents = readFileSync('AGENTS.md', 'utf8')
-    const mobile = readFileSync('mobile/AGENTS.md', 'utf8')
-
-    expect(agents).toMatch(/\[[^\]]+\]\(mobile\/AGENTS\.md\)/)
-    expect(mobile).toContain('`bun run check:mobile`')
+    expect(agents).toContain('(mobile/RELEASING.md)')
+    expect(agents).toContain('`bunx expo install`')
+    expect(agents).toContain('development build')
     const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'))
     expect(scripts['check:mobile']).toMatch(/^bun(?: --no-env-file)? run scripts\/pr\/run-mobile-checks\.ts$/)
   })
@@ -119,6 +123,39 @@ describe('feature quality contract', () => {
     expect(rootContributing).toContain('bun run verify')
     expect(rootContributing).toContain('bun run quality:push')
     expect(rootContributing).toContain('不再自动运行本地质量门禁')
+  })
+
+  test('separates WSL module evidence from candidate-bound Actions gates without weakening verify', () => {
+    const agents = readFileSync('AGENTS.md', 'utf8')
+    const contributing = readFileSync('CONTRIBUTING.md', 'utf8')
+    for (const guidance of [agents, contributing]) {
+      expect(guidance).toContain('WSL 本地')
+      expect(guidance).toContain('全量留给 GitHub Actions')
+      expect(guidance).toContain('未提交工作区不能复用旧 CI 绿灯')
+      expect(guidance).toContain('nightly 全量不等于 release 验收')
+    }
+    const chinese = readFileSync('docs/internals/contributing.md', 'utf8')
+    const english = readFileSync('docs/en/internals/contributing.md', 'utf8')
+    expect(chinese).toContain('`bun run verify` 不是 WSL 默认动作')
+    expect(english).toContain('`bun run verify` is neither the WSL default')
+    expect(chinese).toContain('未提交工作区、后续修改或其他 SHA 不能复用旧 CI 绿灯')
+    expect(english).toContain('An uncommitted worktree, later edits, or another SHA cannot reuse an old green CI result')
+    for (const guidance of [chinese, english]) {
+      expect(guidance).toContain('checkout/merge SHA')
+      expect(guidance).toContain('PR head/base')
+      expect(guidance).toContain('`pr-quality-gate`')
+      expect(guidance).toContain('`not run` / pending')
+    }
+    const template = readFileSync('.github/pull_request_template.md', 'utf8')
+    expect(template).toContain('全量留给 GitHub Actions，不要求在 WSL 重复')
+    expect(template).toContain('候选 SHA 对应的 `pr-quality-gate` 结果')
+    expect(template).toContain('`not run` / pending')
+    expect(template).not.toContain('直接运行 `bun run verify`')
+    // A local convenience command must not silently become a smaller "full" gate.
+    const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'))
+    expect(scripts.verify).toBe('bun run quality:pr')
+    expect(scripts['quality:pr']).toBe('bun run quality:gate --mode pr')
+    expect(scripts['check:policy']).toContain('./scripts/pr/ci-preparation.test.ts')
   })
 
   test('keeps bilingual release guidance aligned with the actual publication gate', () => {
@@ -232,14 +269,14 @@ describe('feature quality contract', () => {
   test('keeps general AI coding tools pointed at the same quality bar', () => {
     const instructions = readFileSync('.github/copilot-instructions.md', 'utf8')
 
-    expect(instructions).toContain('遵循根 `AGENTS.md` 和最近的嵌套 `AGENTS.md`')
-    expect(instructions).toContain('生产改动须附同区域测试')
-    expect(instructions).toContain('保持或提高覆盖率基线')
-    expect(instructions).toContain('变更行覆盖率门槛')
-    expect(instructions).toContain('E2E 或桌面 UI 冒烟')
-    expect(instructions).toContain('临时浏览器自动化')
-    expect(instructions).toContain('Provider/auth/runtime-env/model-window/proxy 改动在 `check:impact` 选中时，须运行离线 `bun run check:provider-contract`')
-    expect(instructions).toContain('真实冒烟仅作为可信维护者证据，且需要明确授权')
-    expect(instructions).toContain('须列出变更文件、新增测试、实际运行的命令及可获得的通过/失败数量')
+    expect(instructions).toContain('[AGENTS.md](../AGENTS.md)')
+    expect(instructions).toContain('[DESIGN.md](../DESIGN.md)')
+    expect(instructions).toContain('不复制授权、实现或验证规则')
+    expect(Buffer.byteLength(instructions)).toBeLessThan(1024)
+    const agents = readFileSync('AGENTS.md', 'utf8')
+    expect(agents).toContain('需要同区域回归测试')
+    expect(agents).toContain('不削弱覆盖率、测试路由、CODEOWNERS 或分支保护')
+    expect(agents).toContain('补浏览器/桌面 smoke')
+    expect(agents).toContain('明确授权额度')
   })
 })
