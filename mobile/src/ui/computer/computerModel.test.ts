@@ -70,7 +70,7 @@ test('background activity never claims idle when some sessions were unreadable',
 
 test('desktop-only footnote keeps the shared list and points to the desktop', () => {
   expect(desktopOnlyText).toContain(desktopOnly)
-  expect(desktopOnlyText).toContain('在电脑上打开 cc-haha')
+  expect(desktopOnlyText).toContain('在电脑上打开 EchoFlow Code')
 })
 
 test('removing a computer quotes its name in the confirmation', () => {

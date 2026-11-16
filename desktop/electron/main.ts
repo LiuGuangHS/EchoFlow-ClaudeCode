@@ -40,6 +40,7 @@ import { DeepSeekHarnessRuntime } from './services/deepseekHarnessRuntime'
 import { discoverRuntimes, probeRuntimePath } from './services/runtimeDiscovery'
 import { DataMigration } from './services/dataMigration'
 import { configureEchoFlowUserData } from './services/echoFlowDataRoot'
+import { prepareProfileRecovery } from './services/profileConflictRecovery'
 import { areStorageWritesFrozen, setStorageWritesFrozen } from './services/storageMaintenance'
 import { resolveRelocatedAttachmentPath } from '../../src/utils/storageRelocations'
 import { appendHostDiagnostic, electronHostDiagnosticsFile, sanitizeHostDiagnostic } from './services/sidecarManager'
@@ -50,7 +51,7 @@ import {
   requestNotificationPermission,
   sendDesktopNotification,
 } from './services/notifications'
-import { installApplicationMenu, installRendererContextMenu } from './services/menu'
+import { createNativeMenuNavigation, installApplicationMenu, installRendererContextMenu } from './services/menu'
 import { saveWorkspaceBrowserPdf } from './services/workspaceBrowserPdf'
 import { workspaceBrowserMenuPosition } from './services/workspaceBrowserMenu'
 import type { WorkspaceBrowserMenuOptions } from '../src/lib/desktopHost/types'
@@ -148,12 +149,19 @@ import {
 } from './services/windows'
 
 // Resolve the profile before locks, migration journals, or any userData consumers.
+let startupProfileError: Error | null = null
+let cleanupProfileRecovery: (() => void) | undefined
 try {
   configureEchoFlowUserData(app)
 } catch (error) {
+  startupProfileError = error instanceof Error ? error : new Error(String(error))
   setStorageWritesFrozen(true)
-  dialog.showErrorBox('数据目录不可用 / Data directory unavailable', error instanceof Error ? error.message : String(error))
-  process.exit(1)
+  try {
+    cleanupProfileRecovery = prepareProfileRecovery(app)
+  } catch {
+    // Chromium must not reach ready using an unresolved user profile.
+    process.exit(1)
+  }
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -179,6 +187,19 @@ let isQuitting = false
 let quitCleanupStarted = false
 let quitCleanupFinished = false
 let trayController: TrayController | null = null
+let trayServiceStatus: 'ready' | 'unavailable' = 'unavailable'
+function updateTrayServiceStatus(serviceStatus: typeof trayServiceStatus) {
+  trayServiceStatus = serviceStatus
+  trayController?.update({ serviceStatus })
+}
+const nativeMenuNavigation = createNativeMenuNavigation(
+  () => showMainWindow(mainWindow, app),
+  () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(ELECTRON_EVENT_CHANNELS.nativeMenuNavigate)
+    }
+  },
+)
 const deepLinkHandler = new DeepLinkHandler(() => mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.deepLink))
 let idlePowerRendererGeneration = 0
 let idlePowerService: IdlePowerService | null = null
@@ -664,8 +685,12 @@ function getServerRuntime() {
   // the path in the explicit sidecar environment, not the host-wide one.
   serverSidecarEnv.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG ??= claudeCodeRuntimeConfigPath(app.getPath('userData'))
   serverRuntime ??= new ElectronServerRuntime({
-    onServerUnavailable: () => { void publicAccessManager?.serverUnavailable() },
+    onServerUnavailable: () => {
+      updateTrayServiceStatus('unavailable')
+      void publicAccessManager?.serverUnavailable()
+    },
     onServerReady: () => {
+      updateTrayServiceStatus('ready')
       void publicAccessManager?.serverChanged()
       void p2pTerminator?.refresh()
       echoFlowRestore = rehydrateEchoFlowSiteSession()
@@ -1027,6 +1052,7 @@ function emitNotificationAction(payload: unknown) {
 }
 
 function broadcastLocaleChanged(locale: Locale) {
+  trayController?.update({ locale })
   for (const window of BrowserWindow.getAllWindows()) {
     if (window.isDestroyed()) continue
     window.webContents.send(ELECTRON_EVENT_CHANNELS.appLocaleChanged, locale)
@@ -1060,6 +1086,11 @@ async function handleCommandInvoke(payload: unknown): Promise<unknown> {
 }
 
 function registerIpcHandlers() {
+  registerHandler(ELECTRON_IPC_CHANNELS.windowTakeNativeMenuNavigation, event => {
+    requireMainWindow(event)
+    if (event.senderFrame !== event.sender.mainFrame) throw new Error('Native navigation requires the main frame')
+    return nativeMenuNavigation.take()
+  })
   registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, async (_event, payload) => {
     const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
     return await getEchoFlowLoginSession().open(requested === 'dedicated' ? 'dedicated' : 'main')
@@ -1630,28 +1661,36 @@ async function createMainWindow() {
   writeWindowSmokeSnapshot(mainWindow, 'after-final-show')
 }
 
-if (!acquireSingleInstanceLock(app, () => mainWindow, url => deepLinkHandler.handle(url))) {
-  process.exit(0)
-}
-
-if (process.defaultApp) {
-  if (process.argv.length >= 2 && process.argv[1]) {
-    app.setAsDefaultProtocolClient('echoflowcode', process.execPath, [path.resolve(process.argv[1])])
+if (!startupProfileError) {
+  if (!acquireSingleInstanceLock(app, () => mainWindow, url => deepLinkHandler.handle(url))) {
+    process.exit(0)
   }
-} else {
-  app.setAsDefaultProtocolClient('echoflowcode')
-}
-app.on('open-url', (event, url) => {
-  event.preventDefault()
-  deepLinkHandler.handle(url)
-  showMainWindow(mainWindow, app)
-})
-const deepLinkUrl = extractDeepLinkFromArgs(process.argv)
-if (deepLinkUrl) deepLinkHandler.handle(deepLinkUrl)
 
-registerIpcHandlers()
+  if (process.defaultApp) {
+    if (process.argv.length >= 2 && process.argv[1]) {
+      app.setAsDefaultProtocolClient('echoflowcode', process.execPath, [path.resolve(process.argv[1])])
+    }
+  } else {
+    app.setAsDefaultProtocolClient('echoflowcode')
+  }
+  app.on('open-url', (event, url) => {
+    event.preventDefault()
+    deepLinkHandler.handle(url)
+    showMainWindow(mainWindow, app)
+  })
+  const deepLinkUrl = extractDeepLinkFromArgs(process.argv)
+  if (deepLinkUrl) deepLinkHandler.handle(deepLinkUrl)
+
+  registerIpcHandlers()
+}
 
 app.whenReady().then(async () => {
+  if (startupProfileError) {
+    dialog.showErrorBox('数据目录不可用 / Data directory unavailable', startupProfileError.message)
+    cleanupProfileRecovery?.()
+    app.exit(1)
+    return
+  }
   applyWindowsAppUserModelId(app)
   clearAppManagedPortableEnv()
   let validation = false
@@ -1718,11 +1757,14 @@ app.whenReady().then(async () => {
       }
     } else console.error('[desktop] failed to start Electron server sidecar', error)
   }
-  await installApplicationMenu(app, () => mainWindow)
+  await installApplicationMenu(app, () => mainWindow, process.platform, nativeMenuNavigation.navigate)
   if (shouldInstallTray(process.platform)) {
     trayController = await installTray({
-      app,
       desktopRoot: appRoot(),
+      locale: readLocalePreference(app) ?? resolveSupportedLocale(app.getPreferredSystemLanguages()),
+      serviceStatus: trayServiceStatus,
+      openSettings: () => nativeMenuNavigation.navigate('settings'),
+      openMobileConnection: () => nativeMenuNavigation.navigate('mobile-connection'),
       show: () => showMainWindow(mainWindow, app),
       quit: () => {
         isQuitting = true
@@ -1732,6 +1774,7 @@ app.whenReady().then(async () => {
       console.error('[desktop] failed to create Electron tray', error)
       return null
     })
+    trayController?.update({ serviceStatus: trayServiceStatus })
   }
   await createMainWindow()
   scheduleNotificationSmoke({

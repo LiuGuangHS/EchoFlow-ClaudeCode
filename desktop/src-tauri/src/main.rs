@@ -35,7 +35,7 @@ fn main() {
         std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &webview_data);
     }
 
-    claude_code_desktop_lib::run()
+    echoflow_code_lib::run()
 }
 
 /// Determine if we should start in portable mode.

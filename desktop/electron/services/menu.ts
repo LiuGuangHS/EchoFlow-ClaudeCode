@@ -1,9 +1,26 @@
 import type { App, BrowserWindow, MenuItemConstructorOptions } from 'electron'
 import type { Locale } from '../../src/i18n/locale'
+import { PRODUCT_NAME } from '../../src/lib/productIdentity.generated'
 import { ELECTRON_EVENT_CHANNELS } from '../ipc/channels'
 import { hideWindowSafely, toggleWindowFullScreen } from './windows'
 
-export type NativeMenuDestination = 'about' | 'settings'
+export type NativeMenuDestination = 'about' | 'settings' | 'mobile-connection'
+
+export function createNativeMenuNavigation(show: () => void, notify: () => void) {
+  let pending: NativeMenuDestination | null = null
+  return {
+    navigate(destination: NativeMenuDestination) {
+      pending = destination
+      show()
+      notify()
+    },
+    take() {
+      const destination = pending
+      pending = null
+      return destination
+    },
+  }
+}
 
 const COPY_IMAGE_LABEL: Record<Locale, string> = {
   en: 'Copy Image',
@@ -167,6 +184,7 @@ export async function installApplicationMenu(
   app: App,
   getMainWindow: () => BrowserWindow | null,
   platform: NodeJS.Platform = process.platform,
+  onNavigate: (destination: NativeMenuDestination) => void,
 ) {
   const { Menu } = await import('electron')
   if (platform === 'win32') {
@@ -174,9 +192,7 @@ export async function installApplicationMenu(
     return
   }
 
-  const template = buildApplicationMenuTemplate(app.name || 'EchoFlow Code', destination => {
-    getMainWindow()?.webContents.send(ELECTRON_EVENT_CHANNELS.nativeMenuNavigate, destination)
-  }, platform, {
+  const template = buildApplicationMenuTemplate(PRODUCT_NAME, onNavigate, platform, {
     hide: () => {
       const window = getMainWindow()
       if (!window) {

@@ -331,14 +331,15 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0 flex-1 text-sm text-[var(--color-text-secondary)]">{accountSummary}</div>
             <div className="flex shrink-0 items-center gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setShowCredentialEditor(true)}>
-                {t('echoflowApiOfficialLogin.updateToken')}
-              </Button>
-              {account.live === false ? (
+              {canSignIn && (
                 <Button variant="primary" size="sm" onClick={() => void signIn()} loading={isSigningIn}>
                   {t('echoflowApiOfficialLogin.signIn')}
                 </Button>
-              ) : (
+              )}
+              <Button variant="secondary" size="sm" onClick={() => setShowCredentialEditor(true)}>
+                {t('echoflowApiOfficialLogin.updateToken')}
+              </Button>
+              {account.live !== false && (
                 <Button variant="secondary" size="sm" icon={<RefreshCw className="h-4 w-4" />} onClick={() => void refreshAccount()} loading={isRefreshing}>
                   {t('echoflowApiOfficialLogin.refresh')}
                 </Button>

@@ -91,6 +91,32 @@ function openDirectoryTree(directory: string) {
   }
 }
 
+function describeCleanupError(error: unknown) {
+  if (!(error instanceof Error)) return String(error)
+  const systemError = error as NodeJS.ErrnoException
+  return JSON.stringify({ message: error.message, code: systemError.code, syscall: systemError.syscall, path: systemError.path })
+}
+
+function describeSandboxRemainder(directory: string) {
+  // Metadata only: bound the output and never traverse symlinks or read test data.
+  try {
+    const entries = readdirSync(directory).sort()
+    return JSON.stringify({
+      entries: entries.slice(0, 12).map(name => {
+        try {
+          const stat = lstatSync(join(directory, name))
+          return { name, type: stat.isSymbolicLink() ? 'symlink' : stat.isDirectory() ? 'directory' : 'file', mode: (stat.mode & 0o777).toString(8) }
+        } catch (error) {
+          return { name, error: describeCleanupError(error) }
+        }
+      }),
+      omitted: Math.max(0, entries.length - 12),
+    })
+  } catch (error) {
+    return describeCleanupError(error)
+  }
+}
+
 /**
  * Remove a lane's sandbox HOME without letting a test's leftovers turn a finished,
  * passing run red. A read-only directory left under the sandboxed TMPDIR blocks a
@@ -99,17 +125,21 @@ function openDirectoryTree(directory: string) {
  * warning. The sandbox lives under the OS temp dir, so nothing user-owned leaks.
  */
 export function removeTestSandbox(directory: string, label: string, warn: (message: string) => void = console.warn) {
+  let initialError: unknown
   try {
     rmSync(directory, { recursive: true, force: true })
     return
-  } catch {
-    // Retry below with the tree made writable.
+  } catch (error) {
+    initialError = error
   }
+  let stage = 'open-directory-tree'
   try {
     openDirectoryTree(directory)
+    stage = 'retry-rm'
     rmSync(directory, { recursive: true, force: true })
   } catch (error) {
     const prefix = process.env.GITHUB_ACTIONS === 'true' ? '::warning::' : ''
-    warn(`${prefix}${label}: could not remove test sandbox ${directory}: ${error instanceof Error ? error.message : String(error)}`)
+    warn(`${prefix}${label}: could not remove test sandbox ${directory}: ${describeCleanupError(error)}; stage=${stage}; initial=${describeCleanupError(initialError)}; platform=${process.platform}; bun=${process.versions.bun ?? 'none'}; remaining=${describeSandboxRemainder(directory)}`)
+    return { error }
   }
 }

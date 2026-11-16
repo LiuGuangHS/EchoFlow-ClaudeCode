@@ -4,6 +4,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { handleDesktopUiApi } from '../api/desktop-ui.js'
 import { DesktopUiPreferencesService } from '../services/desktopUiPreferencesService.js'
+import { PRODUCT_NAME, PRODUCT_REPO_URL } from '../../utils/productIdentity.generated.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -75,6 +76,8 @@ describe('DesktopUiPreferencesService', () => {
     const result = await service.readPreferences()
 
     expect(result.exists).toBe(false)
+    expect(result.preferences.profile.displayName).toBe(PRODUCT_NAME)
+    expect(result.preferences.profile.subtitle).toBe(PRODUCT_REPO_URL.replace(/^https?:\/\//, ''))
     expect(result.preferences).toEqual({
       schemaVersion: 7,
       profile: {
@@ -99,7 +102,8 @@ describe('DesktopUiPreferencesService', () => {
 
   test.each([
     { displayName: 'Local Operator', subtitle: 'operator.example' },
-    { displayName: 'cc-haha', subtitle: 'github.com/NanmiCoder/cc-haha' },
+    { displayName: 'cc-haha', subtitle: 'operator.example' },
+    { displayName: 'Local Operator', subtitle: 'github.com/NanmiCoder/cc-haha' },
   ])('preserves a saved schema-4 profile on read and unrelated writes: %j', async (identity) => {
     const profile = {
       ...identity,
@@ -117,6 +121,43 @@ describe('DesktopUiPreferencesService', () => {
     const after = await service.updateSidebarPreferences({ pinnedProjects: ['/workspace/alpha'] })
     expect(after.profile).toEqual(profile)
     expect(await readDesktopUiFile()).toMatchObject({ schemaVersion: 7, profile, futureField: { keep: true } })
+  })
+
+  test.each([4, 7])('normalizes old schema files with the known legacy default profile (schema %s)', async (schemaVersion) => {
+    const profile = {
+      displayName: 'cc-haha',
+      subtitle: 'github.com/NanmiCoder/cc-haha',
+      avatarFile: 'profile/avatar.png',
+      avatarUpdatedAt: '2025-01-01T00:00:00.000Z',
+      futureProfile: { keep: true },
+    }
+    const fixture = { schemaVersion, profile, futureField: { keep: true } }
+    const expectedProfile = {
+      ...profile,
+      displayName: PRODUCT_NAME,
+      subtitle: PRODUCT_REPO_URL.replace(/^https?:\/\//, ''),
+    }
+    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.writeFile(path.join(tmpDir, 'cc-haha', 'desktop-ui.json'), JSON.stringify(fixture))
+
+    const service = new DesktopUiPreferencesService()
+    expect((await service.readPreferences()).preferences.profile).toEqual(expectedProfile)
+    expect(await service.readProfileSummary()).toMatchObject({
+      displayName: expectedProfile.displayName,
+      subtitle: expectedProfile.subtitle,
+    })
+    expect(await readDesktopUiFile()).toEqual(fixture)
+    await service.updateSidebarPreferences({ pinnedProjects: ['/workspace/alpha'] })
+    expect(await readDesktopUiFile()).toMatchObject({ schemaVersion: 7, profile: expectedProfile, futureField: { keep: true } })
+    expect((await new DesktopUiPreferencesService().readPreferences()).preferences.profile).toEqual(expectedProfile)
+
+    // Later user edits survive both normalization and unrelated writes after restart.
+    await service.updateProfilePreferences({ displayName: 'Local Operator', subtitle: 'operator.example' })
+    const restarted = new DesktopUiPreferencesService()
+    await restarted.updatePetPreferences({ enabled: true })
+    expect((await restarted.readPreferences()).preferences.profile).toEqual({
+      ...expectedProfile, displayName: 'Local Operator', subtitle: 'operator.example',
+    })
   })
 
   test.each([

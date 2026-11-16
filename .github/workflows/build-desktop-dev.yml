@@ -165,6 +165,16 @@ jobs:
         working-directory: desktop
         run: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/windows-installer-smoke.ps1 -ArtifactsDir ./build-artifacts/electron -Arch x64
 
+      - name: Upload Windows installer diagnostics
+        if: always() && matrix.smoke_platform == 'windows' && matrix.arch == 'x64'
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-installer-diagnostics-${{ matrix.arch }}
+          path: desktop/build-artifacts/electron/windows-installer-smoke-x64/
+          retention-days: 14
+          # Earlier build failures may prevent the smoke from starting.
+          if-no-files-found: ignore
+
       - name: Verify packaged app structure
         run: bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron ${{ matrix.smoke_platform == 'linux' && '--max-linux-glibc 2.28' || '' }}
 
@@ -186,9 +196,9 @@ jobs:
           ls -lh "$STAGING/" 2>/dev/null || true
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: EchoFlow-Code-v${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}
           path: ${{ steps.collect.outputs.staging_dir }}
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: error

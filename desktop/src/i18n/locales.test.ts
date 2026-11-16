@@ -38,3 +38,21 @@ describe('EchoFlow SiHub copy', () => {
     }
   })
 })
+
+describe('trace product copy', () => {
+  it.each(Object.keys(LOCALES) as Locale[])('names EchoFlow Code while preserving technical compatibility keys in %s', (locale) => {
+    expect(translate(locale, 'settings.general.traceHintOn')).toContain('EchoFlow Code')
+    expect(translate(locale, 'settings.general.traceHintOn')).not.toContain('cc-haha')
+    expect(translate(locale, 'settings.diagnostics.doctorSafeKeys')).toContain('cc-haha-open-tabs')
+  })
+})
+
+
+describe('data directory descriptions', () => {
+  it.each(Object.keys(LOCALES) as Locale[])('avoids hardcoded legacy locations in %s', (locale) => {
+    for (const key of ['settings.providers.settingsJsonDesc', 'settings.pets.folderDescription'] as const) {
+      expect(translate(locale, key)).not.toMatch(/cc-haha|~\/\.claude|CLAUDE_CONFIG_DIR/)
+    }
+    expect(translate(locale, 'settings.diagnostics.doctorSafeKeys')).toContain('cc-haha-open-tabs')
+  })
+})

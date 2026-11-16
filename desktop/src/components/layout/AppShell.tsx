@@ -50,6 +50,7 @@ export function AppShell() {
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
   const sidebarOpen = useUIStore((s) => s.sidebarOpen)
   const [ready, setReady] = useState(false)
+  const [nativeNavigationReady, setNativeNavigationReady] = useState(false)
   useScheduledTasksSync(ready)
   const [startupError, setStartupError] = useState<string | null>(null)
   const [h5StartupError, setH5StartupError] = useState<H5ConnectionRequiredError | null>(null)
@@ -116,6 +117,7 @@ export function AppShell() {
     const bootstrap = async () => {
       if (!cancelled) {
         setReady(false)
+        setNativeNavigationReady(false)
         setStartupError(null)
         setH5StartupError(null)
         setDesktopUiPreferencesRequest(null)
@@ -152,7 +154,9 @@ export function AppShell() {
           if (activeId && activeTab?.type === 'session') {
             useChatStore.getState().connectToSession(activeId)
           }
-        })().catch(() => {})
+        })().catch(() => {}).finally(() => {
+          if (!cancelled) setNativeNavigationReady(true)
+        })
       } catch (error) {
         if (!cancelled) {
           if (!desktopRuntime && isH5ConnectionRequiredError(error)) {
@@ -174,22 +178,34 @@ export function AppShell() {
     }
   }, [bootstrapNonce, fetchSettings, desktopRuntime])
 
-  // Listen for macOS native menu navigation events (About / Settings)
+  // Wait for tab restoration before consuming queued native navigation.
   useEffect(() => {
     const host = getDesktopHost()
-    if (!host.isDesktop) return
+    if (!host.isDesktop || !ready || !nativeNavigationReady) return
+    let disposed = false
     let unlisten: (() => void) | undefined
     host.window.onNativeMenuNavigate((target) => {
-      const destination = target as SettingsTab | 'settings'
-      if (destination === 'about') {
-        useUIStore.getState().setPendingSettingsTab('about')
+      if (disposed) return
+      let destination: SettingsTab
+      switch (target) {
+        case 'about': destination = 'about'; break
+        case 'settings': destination = 'general'; break
+        case 'mobile-connection': destination = 'h5Access'; break
+        default: return
       }
-      useTabStore.getState().openTab(SETTINGS_TAB_ID, 'Settings', 'settings')
+      useUIStore.getState().setPendingSettingsTab(destination)
+      useTabStore.getState().openTab(SETTINGS_TAB_ID, t('settings.title'), 'settings')
     })
-      .then((fn) => { unlisten = fn })
+      .then((fn) => {
+        if (disposed) fn()
+        else unlisten = fn
+      })
       .catch(() => {})
-    return () => { unlisten?.() }
-  }, [])
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [ready, nativeNavigationReady, t])
 
   useEffect(() => {
     const host = getDesktopHost()

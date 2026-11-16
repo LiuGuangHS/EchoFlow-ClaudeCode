@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { resolveSpecifier } from './pr/module-graph'
+import { PRODUCT_IDENTITY } from '../src/utils/productIdentity.generated'
 
 export const EAS_CLI_VERSION = '25.3.0'
 export type Platform = 'ios' | 'android'
@@ -28,12 +29,15 @@ const digest = /^[a-f0-9]{64}$/
 
 export function parseDelivery(value: unknown): Delivery {
   const item = value as Delivery
+  const asset = item?.asset
   if (!item || item.schemaVersion !== 1) throw new Error('Unsupported mobile delivery manifest schema; refusing to overwrite it')
   if (!['ios', 'android'].includes(item.platform) || !/^v\d+\.\d+\.\d+$/.test(item.tag)
     || !sha.test(item.commit) || !digest.test(item.fingerprint) || !semver.test(item.version)
     || !/^[a-f0-9-]{36}$/.test(item.buildId) || !Number.isFinite(Date.parse(item.deliveredAt))
     || item.destination !== (item.platform === 'ios' ? 'app-store-connect' : 'github-release')
-    || (item.platform === 'android' && (!item.asset || !/^cc-haha-mobile-[\w.-]+\.apk$/.test(item.asset) || !digest.test(item.sha256 ?? '')))) {
+    || (item.platform === 'android' && (typeof asset !== 'string'
+      || ![PRODUCT_IDENTITY.mobileArtifactPrefix, PRODUCT_IDENTITY.legacyMobileArtifactPrefix].some(prefix => asset.startsWith(`${prefix}-`) && /^[\w.-]+\.apk$/.test(asset.slice(prefix.length + 1)))
+      || !digest.test(item.sha256 ?? '')))) {
     throw new Error('Invalid mobile delivery manifest')
   }
   return item
@@ -281,7 +285,7 @@ async function main() {
         if (!response.ok) throw new Error(`APK download failed: ${response.status}`)
         const bytes = new Uint8Array(await response.arrayBuffer())
         if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) throw new Error('EAS artifact is not an APK archive')
-        const asset = `cc-haha-mobile-${version}-${finished.id}.apk`
+        const asset = `${PRODUCT_IDENTITY.mobileArtifactPrefix}-${version}-${finished.id}.apk`
         const path = resolve(outputDir, asset)
         writeFileSync(path, bytes)
         const entries = (await command(['unzip', '-Z1', path], root)).split('\n')

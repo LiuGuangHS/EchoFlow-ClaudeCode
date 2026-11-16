@@ -478,7 +478,10 @@ private final class PermissionCardController: NSObject, NSWindowDelegate {
             ctx.duration = 0.2
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
             window.animator().alphaValue = 0
-        }, completionHandler: { [weak window] in window?.orderOut(nil) })
+        }, completionHandler: { [weak window] in
+            // AppKit runs animation completions on the main thread.
+            MainActor.assumeIsolated { window?.orderOut(nil) }
+        })
     }
 
     /// Bring the main card back (already refreshed to the new state by the caller)
@@ -1026,7 +1029,10 @@ private final class DragAccessoryWindow: NSObject {
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.16
             panel.animator().alphaValue = 0
-        }, completionHandler: { [weak panel] in panel?.orderOut(nil) })
+        }, completionHandler: { [weak panel] in
+            // AppKit runs animation completions on the main thread.
+            MainActor.assumeIsolated { panel?.orderOut(nil) }
+        })
     }
 
     /// Perpetual gentle bounce of the up-arrow toward the list above.

@@ -112,9 +112,10 @@ vi.mock('../../hooks/useKeyboardShortcuts', () => ({
   useKeyboardShortcuts: vi.fn(),
 }))
 
-vi.mock('../../i18n', () => ({
-  useTranslation: () => (key: string) => key,
-}))
+vi.mock('../../i18n', () => {
+  const translate = (key: string) => key === 'settings.title' ? 'Settings' : key
+  return { useTranslation: () => translate }
+})
 
 vi.mock('./Sidebar', () => ({
   Sidebar: ({
@@ -408,7 +409,11 @@ describe('AppShell boot flow', () => {
     expect(mocks.openTab).not.toHaveBeenCalled()
   })
 
-  it('routes native menu navigation through the desktop host', async () => {
+  it.each([
+    ['about', 'about'],
+    ['settings', 'general'],
+    ['mobile-connection', 'h5Access'],
+  ])('routes native %s navigation to the %s settings section', async (destination, section) => {
     let navigate: ((target: string) => void) | undefined
     const unlisten = vi.fn()
     const onNativeMenuNavigate = vi.fn((handler: (target: string) => void) => {
@@ -428,11 +433,27 @@ describe('AppShell boot flow', () => {
     await waitFor(() => expect(onNativeMenuNavigate).toHaveBeenCalledTimes(1))
 
     act(() => {
-      navigate?.('about')
+      navigate?.(destination)
     })
 
-    expect(useUIStore.getState().pendingSettingsTab).toBe('about')
+    expect(useUIStore.getState().pendingSettingsTab).toBe(section)
     expect(mocks.openTab).toHaveBeenCalledWith('__settings__', 'Settings', 'settings')
+    mocks.openTab.mockClear()
+    act(() => navigate?.('unknown-destination'))
+    expect(mocks.openTab).not.toHaveBeenCalled()
+    expect(useUIStore.getState().pendingSettingsTab).toBe(section)
+  })
+
+  it('waits for tab restoration before subscribing to queued native navigation', async () => {
+    let finishRestore!: () => void
+    mocks.restoreTabs.mockImplementationOnce(() => new Promise<void>(resolve => { finishRestore = resolve }))
+    const onNativeMenuNavigate = vi.fn().mockResolvedValue(vi.fn())
+    window.desktopHost = { isDesktop: true, window: { onNativeMenuNavigate } } as any
+    render(<AppShell />)
+    await waitFor(() => expect(mocks.restoreTabs).toHaveBeenCalled())
+    expect(onNativeMenuNavigate).not.toHaveBeenCalled()
+    await act(async () => finishRestore())
+    await waitFor(() => expect(onNativeMenuNavigate).toHaveBeenCalledTimes(1))
   })
 
   it('restores an enabled pet window and routes pet session navigation', async () => {

@@ -100,6 +100,51 @@ describe('release desktop workflow', () => {
     return findUpdateFile(files, 'zip', processArch, ['pkg', 'dmg'])
   }
 
+  test('delivery summary always reports publication, site sync and native pipeline outcomes without claiming delivery', () => {
+    const workflow = parse(readReleaseWorkflow())
+    const job = workflow.jobs['delivery-summary']
+    expect(job).toBeDefined()
+    expect(job.if).toBe('always()')
+    expect(job.needs).toEqual(['publish-release', 'site-release-sync', 'release-mobile'])
+    expect(job.permissions).toEqual({})
+    expect(job.steps).toHaveLength(1)
+    const step = job.steps[0]
+    expect(step.env).toMatchObject({
+      DESKTOP_RESULT: '${{ needs.publish-release.result }}',
+      SITE_RESULT: '${{ needs.site-release-sync.result }}',
+      MOBILE_RESULT: '${{ needs.release-mobile.result }}',
+      MOBILE_ENABLED: '${{ vars.MOBILE_RELEASE_ENABLED }}',
+      MOBILE_PLATFORM: "${{ vars.MOBILE_RELEASE_PLATFORM || 'all' }}",
+      OFFICIAL_RELEASE: '${{ inputs.official_release == true }}',
+    })
+    expect(step.run).not.toContain('${{')
+    const root = mkdtempSync(join(tmpdir(), 'delivery-summary-'))
+    try {
+      for (const [result, platform, official] of [['skipped', 'all', 'false'], ['failure', 'all', 'true'], ['success', 'android', 'true'], ['cancelled', 'ios', 'true']]) {
+        const summary = join(root, 'summary.md')
+        writeFileSync(summary, '')
+        const run = Bun.spawnSync(['bash', '-euo', 'pipefail', '-c', step.run], {
+          env: { PATH: process.env.PATH, HOME: root, XDG_CONFIG_HOME: root, CLAUDE_CONFIG_DIR: root,
+            GITHUB_STEP_SUMMARY: summary, DESKTOP_RESULT: result, SITE_RESULT: result,
+            MOBILE_RESULT: result, MOBILE_ENABLED: official, MOBILE_PLATFORM: platform, OFFICIAL_RELEASE: official },
+        })
+        expect(run.exitCode, run.stderr.toString()).toBe(0)
+        const text = readFileSync(summary, 'utf8')
+        expect(text).toContain(`| Desktop publication job | ${result}`)
+        expect(text).toContain(`| Site release sync | ${result} |`)
+        for (const native of ['android', 'ios']) {
+          expect(text).toContain(`| ${native} pipeline | ${platform === 'all' || platform === native ? result : 'skipped (not selected)'}`)
+        }
+        expect(text).toContain(`Mobile enabled: ${official}; requested platforms: ${platform}; official release: ${official}`)
+        expect(text).toContain('Aggregate mobile pipeline result is not proof of APK delivery or TestFlight availability')
+        expect(text).toContain('Per-platform results and delivery records must be checked in Release Mobile')
+        if (official === 'false') expect(text).toContain('Public desktop publication is not confirmed for a non-official run')
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   test('release packaging does not run the PR-quality gate', () => {
     const workflow = readReleaseWorkflow()
 
@@ -142,6 +187,22 @@ describe('release desktop workflow', () => {
       })
 
     expect(releasePublishers).toEqual(['release-desktop.yml'])
+  })
+
+  test('desktop builds retain installer diagnostics without accepting missing installers', () => {
+    for (const workflowPath of [
+      '.github/workflows/build-desktop-dev.yml',
+      '.github/workflows/release-desktop.yml',
+    ]) {
+      const workflow = readFileSync(workflowPath, 'utf8')
+      const step = extractStep(workflow, 'Upload Windows installer diagnostics')
+      expect(step).toContain("if: always() && matrix.smoke_platform == 'windows' && matrix.arch == 'x64'")
+      expect(step).toContain('actions/upload-artifact@v6')
+      expect(step).toContain('path: desktop/build-artifacts/electron/windows-installer-smoke-x64/')
+      expect(step).toContain('retention-days: 14')
+    }
+    const dev = readFileSync('.github/workflows/build-desktop-dev.yml', 'utf8')
+    expect(extractStep(dev, 'Upload artifacts')).toContain('if-no-files-found: error')
   })
 
   test('desktop build workflows keep Bun compile cache on the runner work drive', () => {
@@ -768,7 +829,7 @@ describe('release desktop workflow', () => {
     expect(buildJob).toContain('Upload release artifacts for final publish')
     // Blockmaps ship with installers so installed clients can use differential updates.
     expect(extractStep(buildJob ?? '', 'Upload release artifacts for final publish')).toContain('desktop/build-artifacts/electron/*.blockmap')
-    expect(buildJob).toContain('actions/upload-artifact@v5')
+    expect(buildJob).toContain('actions/upload-artifact@v6')
     expect(buildJob).toContain('name: desktop-release-artifacts-${{ matrix.label }}')
     expect(buildJob).not.toContain('softprops/action-gh-release@v2')
     expect(buildJob).not.toContain('Load release notes')
@@ -967,7 +1028,7 @@ fi
     expect(publishJob).toContain('needs:')
     expect(publishJob).toContain('- build')
     expect(publishJob).toContain('- release-verify-gate')
-    expect(publishJob).toContain('actions/download-artifact@v6')
+    expect(publishJob).toContain('actions/download-artifact@v7')
     expect(publishJob).toContain('pattern: desktop-release-artifacts-*')
     expect(publishJob).toContain('pattern: desktop-update-metadata-*')
     expect(publishJob).toContain('Validate complete release asset set')

@@ -59,8 +59,8 @@ describe('PR quality workflow', () => {
       const versions: Record<string, string> = {
         'actions/checkout': 'v5',
         'actions/setup-node': 'v5',
-        'actions/upload-artifact': 'v5',
-        'actions/download-artifact': 'v6',
+        'actions/upload-artifact': 'v6',
+        'actions/download-artifact': 'v7',
         'actions/cache': 'v5',
       }
       const jobs = workflowJobs(readFileSync(join('.github/workflows', file), 'utf8'))
@@ -414,7 +414,7 @@ describe('PR quality workflow', () => {
 
     expect(workflow).toContain('COVERAGE_BASE_REF: origin/${{ github.base_ref }}')
     expect(workflow).toContain('cat "$latest_report" >> "$GITHUB_STEP_SUMMARY"')
-    expect(workflow).toContain('uses: actions/upload-artifact@v5')
+    expect(workflow).toContain('uses: actions/upload-artifact@v6')
     expect(workflow).toContain('path: artifacts/coverage/')
     expect(workflow).toContain('retention-days: 14')
   })

@@ -71,6 +71,7 @@ export const ELECTRON_IPC_CHANNELS = {
   windowStartDragging: 'desktop:window:start-dragging',
   windowRequestAttention: 'desktop:window:request-attention',
   windowFocus: 'desktop:window:focus',
+  windowTakeNativeMenuNavigation: 'desktop:window:take-native-menu-navigation',
   windowIsMaximized: 'desktop:window:is-maximized',
   terminalSpawn: 'desktop:terminal:spawn',
   terminalWrite: 'desktop:terminal:write',

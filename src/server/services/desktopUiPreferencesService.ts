@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { randomBytes } from 'node:crypto'
+import { PRODUCT_NAME, PRODUCT_REPO_URL } from '../../utils/productIdentity.generated.js'
 import { ApiError } from '../middleware/errorHandler.js'
 import { readRecoverableJsonFile } from './recoverableJsonFile.js'
 import { ensurePersistentStorageUpgraded } from './persistentStorageMigrations.js'
@@ -22,7 +23,7 @@ const MIN_PET_SIZE = 96
 const MAX_PET_SIZE = 192
 const DEFAULT_PET_SIZE = 144
 const MAX_PET_SESSION_ID_LENGTH = 200
-const DEFAULT_PROFILE_SUBTITLE = 'github.com/LiuGuangHS/EchoFlow-ClaudeCode'
+const DEFAULT_PROFILE_SUBTITLE = PRODUCT_REPO_URL.replace(/^https?:\/\//, '')
 const DEFAULT_PET_ID = 'dada-code'
 
 const AVATAR_CONTENT_TYPES = {
@@ -92,7 +93,7 @@ const DEFAULT_SIDEBAR_PROJECT_PREFERENCES: SidebarProjectPreferences = {
 }
 
 const DEFAULT_PROFILE_PREFERENCES: DesktopProfilePreferences = {
-  displayName: 'EchoFlow Code',
+  displayName: PRODUCT_NAME,
   subtitle: DEFAULT_PROFILE_SUBTITLE,
   avatarFile: null,
   avatarUpdatedAt: null,
@@ -256,10 +257,14 @@ function normalizeProfilePreferences(value: unknown): DesktopProfilePreferences 
   }
 
   const record = value as Record<string, unknown>
+  // Old defaults were persisted by unrelated UI preference writes before the rebrand.
+  // Match the complete pair so either user-customized identity field is preserved.
+  const isLegacyDefault = record.displayName === 'cc-haha'
+    && record.subtitle === 'github.com/NanmiCoder/cc-haha'
   return {
     ...record,
-    displayName: normalizeProfileDisplayName(record.displayName),
-    subtitle: normalizeProfileSubtitle(record.subtitle),
+    displayName: isLegacyDefault ? PRODUCT_NAME : normalizeProfileDisplayName(record.displayName),
+    subtitle: isLegacyDefault ? DEFAULT_PROFILE_SUBTITLE : normalizeProfileSubtitle(record.subtitle),
     avatarFile: normalizeAvatarFile(record.avatarFile),
     avatarUpdatedAt: typeof record.avatarUpdatedAt === 'string' ? record.avatarUpdatedAt : null,
   }

@@ -1,6 +1,7 @@
 !include "LogicLib.nsh"
 !include "getProcessInfo.nsh"
 !include "${BUILD_RESOURCES_DIR}\check-install-processes.nsh"
+!include "${BUILD_RESOURCES_DIR}\product-identity.generated.nsh"
 !define /ifndef INSTALL_REGISTRY_KEY "Software\${APP_GUID}"
 !define /ifndef UNINSTALL_REGISTRY_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${UNINSTALL_APP_KEY}"
 Var pid
@@ -246,16 +247,33 @@ Function CcHahaCanSkipLegacyRecovery
   ${If} $R2 == ""
     Goto cc_haha_skip_recovery_done
   ${EndIf}
-  IfFileExists "$R2\EchoFlow Code\data-migration-v1.json" cc_haha_skip_recovery_done 0
-  IfFileExists "$R1\EchoFlow Code\data-migration-v1.json" cc_haha_skip_recovery_done 0
+  ; Package-name profiles must be empty before the branded-only no-CLR shortcut is safe.
+  Push "$R1\${ECHOFLOW_PRODUCT_SLUG}"
+  Call CcHahaIsAbsentOrEmptyDirectory
+  Pop $R3
+  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
+  Push "$R2\${ECHOFLOW_PRODUCT_SLUG}"
+  Call CcHahaIsAbsentOrEmptyDirectory
+  Pop $R3
+  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
+  Push "$R1\${ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME}"
+  Call CcHahaIsAbsentOrEmptyDirectory
+  Pop $R3
+  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
+  Push "$R2\${ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME}"
+  Call CcHahaIsAbsentOrEmptyDirectory
+  Pop $R3
+  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
+  IfFileExists "$R2\${ECHOFLOW_PRODUCT_NAME}\data-migration-v1.json" cc_haha_skip_recovery_done 0
+  IfFileExists "$R1\${ECHOFLOW_PRODUCT_NAME}\data-migration-v1.json" cc_haha_skip_recovery_done 0
   ; IfFileExists alone cannot distinguish absence from an access error.
-  System::Call 'kernel32::GetFileAttributesW(w "$R1\EchoFlow Code\data-migration-v1.json") i.R3 ?e'
+  System::Call 'kernel32::GetFileAttributesW(w "$R1\${ECHOFLOW_PRODUCT_NAME}\data-migration-v1.json") i.R3 ?e'
   Pop $R5
   StrCmp $R3 -1 0 cc_haha_skip_recovery_done
   StrCmp $R5 2 cc_haha_roaming_journal_absent
   StrCmp $R5 3 0 cc_haha_skip_recovery_done
   cc_haha_roaming_journal_absent:
-    System::Call 'kernel32::GetFileAttributesW(w "$R2\EchoFlow Code\data-migration-v1.json") i.R3 ?e'
+    System::Call 'kernel32::GetFileAttributesW(w "$R2\${ECHOFLOW_PRODUCT_NAME}\data-migration-v1.json") i.R3 ?e'
     Pop $R5
     StrCmp $R3 -1 0 cc_haha_skip_recovery_done
     StrCmp $R5 2 cc_haha_local_journal_absent
@@ -276,11 +294,11 @@ Function CcHahaCanSkipLegacyRecovery
   Pop $R3
   StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
 
-  Push "$R1\EchoFlow Code"
+  Push "$R1\${ECHOFLOW_PRODUCT_NAME}"
   Call CcHahaIsAbsentOrEmptyDirectory
   Pop $R3
   StrCmp $R3 "1" cc_haha_check_local_default
-  Push "$R2\EchoFlow Code"
+  Push "$R2\${ECHOFLOW_PRODUCT_NAME}"
   Call CcHahaIsAbsentOrEmptyDirectory
   Pop $R3
   StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
@@ -288,23 +306,23 @@ Function CcHahaCanSkipLegacyRecovery
   Goto cc_haha_check_profile_default
 
   cc_haha_check_local_default:
-    Push "$R2\EchoFlow Code"
+    Push "$R2\${ECHOFLOW_PRODUCT_NAME}"
     Call CcHahaIsAbsentOrEmptyDirectory
     Pop $R3
     StrCmp $R3 "1" cc_haha_no_profile_state
     StrCpy $R3 $R2
   cc_haha_check_profile_default:
-    System::Call 'kernel32::GetFileAttributesW(w "$R3\EchoFlow Code\app-mode.json") i.R5 ?e'
+    System::Call 'kernel32::GetFileAttributesW(w "$R3\${ECHOFLOW_PRODUCT_NAME}\app-mode.json") i.R5 ?e'
     Pop $R1
     StrCmp $R5 -1 cc_haha_profile_mode_missing
-    Push "$R3\EchoFlow Code\app-mode.json"
+    Push "$R3\${ECHOFLOW_PRODUCT_NAME}\app-mode.json"
     Call CcHahaIsStrictDefaultMode
     Pop $R0
     Goto cc_haha_skip_recovery_done
   cc_haha_profile_mode_missing:
     ; Ordinary populated profiles use implicit default mode only when absence is proven.
     StrCmp $R1 2 0 cc_haha_skip_recovery_done
-    System::Call 'kernel32::GetFileAttributesW(w "$R3\EchoFlow Code") i.R5'
+    System::Call 'kernel32::GetFileAttributesW(w "$R3\${ECHOFLOW_PRODUCT_NAME}") i.R5'
     IntOp $R5 $R5 & 0x410
     StrCmp $R5 16 0 cc_haha_skip_recovery_done
   cc_haha_no_profile_state:
@@ -387,8 +405,8 @@ Function CcHahaRecoverLegacy
     Return
   ${EndIf}
 
-  DetailPrint "Checking registered installations for legacy EchoFlow Code data..."
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\recover-legacy-install-data.ps1" -PerUserInstallDir "$4" -PerMachineInstallDir "$5" -CandidateInstallDir "$9" -UserDataDir "$2\EchoFlow Code" -LocalUserDataDir "$R2\EchoFlow Code" -RecoveryRoot "$3\EchoFlow Code Data\Recovered" -ProcessName "${PRODUCT_FILENAME}.exe" -ActiveConfigDir "$6" -ActiveConfigManaged "$7" -InstallerIdentitySafety "$8"'
+  DetailPrint "Checking registered installations for legacy ${ECHOFLOW_PRODUCT_NAME} data..."
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\recover-legacy-install-data.ps1" -PerUserInstallDir "$4" -PerMachineInstallDir "$5" -CandidateInstallDir "$9" -UserDataDir "$2\${ECHOFLOW_PRODUCT_NAME}" -LocalUserDataDir "$R2\${ECHOFLOW_PRODUCT_NAME}" -DesktopPackageName "${ECHOFLOW_PRODUCT_SLUG}" -LegacyDesktopPackageName "${ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME}" -RecoveryRoot "$3\${ECHOFLOW_PRODUCT_NAME} Data\Recovered" -ProcessName "${PRODUCT_FILENAME}.exe" -ActiveConfigDir "$6" -ActiveConfigManaged "$7" -InstallerIdentitySafety "$8"'
   Pop $0
   Pop $1
 FunctionEnd
@@ -442,12 +460,12 @@ FunctionEnd
             StrCpy $1 "Recovery helper failed without diagnostic output (exit code $0)"
           ${EndIf}
           StrCpy $R2 "$1" 360
-          MessageBox MB_ICONSTOP|MB_OK "EchoFlow Code stopped setup before removing the old version. Reason: $R2$\r$\n$\r$\nClose the app and retry. If the reason mentions an elevated installer, launch setup normally instead of using Run as administrator.$\r$\n$\r$\nEchoFlow Code 已在删除旧版本前停止安装。原因：$R2$\r$\n$\r$\n请关闭旧程序后重试；如果原因提到安装器权限过高，请直接双击运行，不要使用“以管理员身份运行”。旧版本和原数据尚未删除。" /SD IDOK
+          MessageBox MB_ICONSTOP|MB_OK "${ECHOFLOW_PRODUCT_NAME} stopped setup before removing the old version. Reason: $R2$\r$\n$\r$\nClose the app and retry. If the reason mentions an elevated installer, launch setup normally instead of using Run as administrator.$\r$\n$\r$\n${ECHOFLOW_PRODUCT_NAME} 已在删除旧版本前停止安装。原因：$R2$\r$\n$\r$\n请关闭旧程序后重试；如果原因提到安装器权限过高，请直接双击运行，不要使用“以管理员身份运行”。旧版本和原数据尚未删除。" /SD IDOK
           SetErrorLevel 20
           Quit
         ${EndIf}
         StrCpy $ccHahaRecoveryDone "1"
-        DetailPrint "Legacy EchoFlow Code data safety check completed"
+        DetailPrint "Legacy ${ECHOFLOW_PRODUCT_NAME} data safety check completed"
       ${EndIf}
     ${EndIf}
   ${EndIf}

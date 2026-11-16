@@ -372,7 +372,37 @@ describe('electron desktop host', () => {
     const stop = await host.window.onNativeMenuNavigate(handler)
     stop()
 
-    expect(subscribe).toHaveBeenCalledWith(ELECTRON_EVENT_CHANNELS.nativeMenuNavigate, handler)
+    expect(subscribe).toHaveBeenCalledWith(ELECTRON_EVENT_CHANNELS.nativeMenuNavigate, expect.any(Function))
+    expect(unlisten).toHaveBeenCalledTimes(1)
+  })
+
+  it('subscribes before draining pending native navigation and consumes later signals', async () => {
+    const handler = vi.fn()
+    let signal: (() => void) | undefined
+    const subscribe = vi.fn(async (_channel, listener) => {
+      signal = listener
+      return vi.fn()
+    })
+    const invoke = vi.fn().mockResolvedValueOnce('mobile-connection').mockResolvedValueOnce('settings')
+    const host = createElectronHost({ invoke, subscribe })
+    const stop = await host.window.onNativeMenuNavigate(handler)
+    expect(subscribe.mock.invocationCallOrder[0]).toBeLessThan(invoke.mock.invocationCallOrder[0]!)
+    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.windowTakeNativeMenuNavigation, undefined)
+    expect(handler).toHaveBeenCalledWith('mobile-connection')
+    signal?.()
+    await vi.waitFor(() => expect(handler).toHaveBeenLastCalledWith('settings'))
+    stop()
+    signal?.()
+    expect(invoke).toHaveBeenCalledTimes(2)
+  })
+
+  it('unsubscribes if the initial navigation drain fails', async () => {
+    const unlisten = vi.fn()
+    const host = createElectronHost({
+      invoke: vi.fn().mockRejectedValue(new Error('unavailable')),
+      subscribe: vi.fn().mockResolvedValue(unlisten),
+    })
+    await expect(host.window.onNativeMenuNavigate(vi.fn())).rejects.toThrow('unavailable')
     expect(unlisten).toHaveBeenCalledTimes(1)
   })
 

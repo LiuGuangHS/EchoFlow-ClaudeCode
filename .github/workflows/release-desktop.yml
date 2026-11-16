@@ -871,7 +871,7 @@ jobs:
       - name: Upload unsigned Windows application executables
         if: matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed == 'true'
         id: upload-unsigned-signpath-application
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: signpath-unsigned-application-${{ matrix.arch }}
           path: ${{ steps.stage-signpath-application.outputs.stage_dir }}
@@ -950,7 +950,7 @@ jobs:
       - name: Upload unsigned Windows installer
         if: matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed == 'true'
         id: upload-unsigned-signpath-installer
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: signpath-unsigned-installer-${{ matrix.arch }}
           path: ${{ steps.stage-signpath-installer.outputs.stage_dir }}
@@ -1000,6 +1000,16 @@ jobs:
         timeout-minutes: 10
         working-directory: desktop
         run: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/windows-installer-smoke.ps1 -ArtifactsDir ./build-artifacts/electron -Arch x64
+
+      - name: Upload Windows installer diagnostics
+        if: always() && matrix.smoke_platform == 'windows' && matrix.arch == 'x64'
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-installer-diagnostics-${{ matrix.arch }}
+          path: desktop/build-artifacts/electron/windows-installer-smoke-x64/
+          retention-days: 14
+          # Earlier build failures may prevent the smoke from starting.
+          if-no-files-found: ignore
 
       - name: Verify packaged app structure
         run: bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron ${{ matrix.smoke_platform == 'linux' && '--max-linux-glibc 2.28' || '' }}
@@ -1107,14 +1117,14 @@ jobs:
           done
 
       - name: Upload update metadata for merge
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: desktop-update-metadata-${{ matrix.label }}
           path: desktop/build-artifacts/electron/latest*.yml
           if-no-files-found: ignore
 
       - name: Upload release artifacts for final publish
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: desktop-release-artifacts-${{ matrix.label }}
           path: |
@@ -1224,7 +1234,7 @@ jobs:
         run: bun install
 
       - name: Download release artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           pattern: desktop-release-artifacts-*
           path: artifacts/release-assets
@@ -1266,7 +1276,7 @@ jobs:
           fi
 
       - name: Download update metadata artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           pattern: desktop-update-metadata-*
           path: artifacts/update-metadata
@@ -1430,3 +1440,41 @@ jobs:
       release_tag: ${{ needs.publish-release.outputs.release_tag }}
     secrets:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+  delivery-summary:
+    needs: [publish-release, site-release-sync, release-mobile]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Summarize delivery outcomes
+        env:
+          DESKTOP_RESULT: ${{ needs.publish-release.result }}
+          SITE_RESULT: ${{ needs.site-release-sync.result }}
+          MOBILE_RESULT: ${{ needs.release-mobile.result }}
+          MOBILE_ENABLED: ${{ vars.MOBILE_RELEASE_ENABLED }}
+          MOBILE_PLATFORM: ${{ vars.MOBILE_RELEASE_PLATFORM || 'all' }}
+          OFFICIAL_RELEASE: ${{ inputs.official_release == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf '## Delivery outcomes\n\n'
+            printf 'Mobile enabled: %s; requested platforms: %s; official release: %s\n\n' "${MOBILE_ENABLED:-unset}" "$MOBILE_PLATFORM" "$OFFICIAL_RELEASE"
+            printf '| Stage | Result |\n| --- | --- |\n'
+            printf '| Desktop publication job | %s |\n' "$DESKTOP_RESULT"
+            printf '| Site release sync | %s |\n' "$SITE_RESULT"
+            for platform in android ios; do
+              case "$MOBILE_PLATFORM" in
+                all|"$platform") result="$MOBILE_RESULT (aggregate reusable workflow result)" ;;
+                android|ios) result='skipped (not selected)' ;;
+                *) result='unknown (invalid platform selection)' ;;
+              esac
+              printf '| %s pipeline | %s |\n' "$platform" "$result"
+            done
+            printf '\nAggregate mobile pipeline result is not proof of APK delivery or TestFlight availability. Per-platform results and delivery records must be checked in Release Mobile.\n'
+            printf 'A skipped mobile run establishes no new delivery or availability; check mobile enablement, platform selection and upstream publication results.\n'
+            if [ "$OFFICIAL_RELEASE" != 'true' ]; then
+              printf '\nPublic desktop publication is not confirmed for a non-official run; inspect its draft/artifact outcome.\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

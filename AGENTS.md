@@ -8,7 +8,7 @@
 
 - 编辑前运行 `git status --short`，并保留已有用户改动。
 - 将请求的结果贯穿实现、相关验证以及修复由改动造成的失败。范围内允许本地编辑和使用一次性 fixture 的确定性检查；首次实现或每次测试后无需等待审批。
-- 工具访问是能力，不是授权。除非用户明确请求，不得创建 / 切换分支、提交、推送、打开或合并 PR、发布版本、修改仓库设置或消耗在线 provider 额度。对话中已有授权仍然有效。
+- 工具访问是能力，不是授权。除非用户明确请求，不得创建 / 切换分支、提交、推送、打开或合并 PR、发布版本、修改仓库设置或消耗在线 provider 额度。对话中已有授权仍然有效；同一范围不重复确认，只有新增高影响操作或明确的维护者例外需要单独确认。
 
 ## 仓库地图
 
@@ -43,8 +43,8 @@
 
 ## 验证
 
-- `bun run check:impact` 按路径和 import 选择必需检查。对最终 diff 运行选中的检查；命令和路由事实来源是 `package.json` 与 `scripts/pr/change-policy.ts`。
-- 请求完整验证，或准备声称代码已 PR-ready / push-ready 时，使用 `bun run verify`。它运行选中的 PR lane，无需先逐个运行全部 lane。未改动代码可复用通过结果；后续编辑、失败或未解决风险出现时应重跑或扩大检查。
+- 先运行受影响模块的定向回归，再按 `bun run check:impact` 选择必需检查；路由以 `package.json` 与 `scripts/pr/change-policy.ts` 为准。未变代码复用有效通过证据，后续改动只重跑受影响检查；失败或新风险才扩大范围。
+- 完整验证或声明 PR-ready / push-ready 时使用 `bun run verify`（按影响选择的 PR lane）。不得默认手动触发云端全量代替模块检查；完整检查按用户要求、既有 CI 或发布门禁执行，不重复启动同一候选的等价检查。
 - 必需 PR 检查必须确定性：不使用真实模型、公共网络、仓库 secrets、已保存 provider 或真实用户 home/config。使用假凭据、fixture、mock/loopback transport、临时目录和清理。启动 server 的质量 lane 使用 `scripts/quality-gate/sandbox.ts`，并必须在真实用户状态写入时失败。
 - 单元测试无法证明用户可见桌面或跨进程改动时，执行浏览器 / 桌面 smoke。临时浏览器操作使用 `ego-browser` skill；`agent-browser` 仅用于已提交的 smoke lane 和 `desktop/scripts/e2e-*-agent-browser.sh`。见[确定性的 Agent/UI lane](docs/internals/contributing.md#无模型的端到端-agent-门禁)。
 - Live model 检查是确定性检查通过后的独立维护者证据，且必须明确授权使用额度；在机器上找到凭据不等于获得授权。

@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import type { BrowserWindow } from 'electron'
+import { PRODUCT_APP_ID, PRODUCT_NAME } from '../../src/lib/productIdentity.generated'
 
 export type AppUserModelIdHost = {
   setAppUserModelId(id: string): void
@@ -9,7 +10,7 @@ export type AppUserModelIdHost = {
 // Must stay in sync with build.appId in desktop/package.json. Windows attributes
 // toast notifications (and taskbar pinning) to this AppUserModelID; without an
 // explicit call, notifications from a dev/unpackaged run can silently fail to show.
-export const WINDOWS_APP_USER_MODEL_ID = 'com.echoflow.code.desktop'
+export const WINDOWS_APP_USER_MODEL_ID = PRODUCT_APP_ID
 
 export function applyWindowsAppUserModelId(
   app: AppUserModelIdHost,
@@ -53,7 +54,7 @@ export function applyWindowsTaskbarIdentity(
     appIconPath: existsSync(externalIcon) ? externalIcon : paths.executablePath,
     appIconIndex: 0,
     relaunchCommand: `"${paths.executablePath}"`,
-    relaunchDisplayName: 'EchoFlow Code',
+    relaunchDisplayName: PRODUCT_NAME,
   })
   return true
 }

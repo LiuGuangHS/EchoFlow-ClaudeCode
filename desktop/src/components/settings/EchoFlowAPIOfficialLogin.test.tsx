@@ -132,6 +132,22 @@ describe('EchoFlowAPIOfficialLogin', () => {
     await waitFor(() => expect(hostMocks.openLogin).toHaveBeenLastCalledWith('dedicated'))
   })
 
+  it.each(['main', 'dedicated'] as const)('keeps web authorization available for a bound %s account without disconnecting it', async (endpoint) => {
+    mockAccounts({ ...mainAccount, live: true }, { ...dedicatedAccount, live: true })
+    hostMocks.openLogin.mockResolvedValue('cancelled')
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    await screen.findByText(userIdSummary('main-user'))
+
+    fireEvent.click(screen.getByRole('tab', { name: endpointTab(endpoint) }))
+    expect(hostMocks.openLogin).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
+    await waitFor(() => expect(hostMocks.openLogin).toHaveBeenCalledExactlyOnceWith(endpoint))
+    expect(echoflowApi.disconnectAccount).not.toHaveBeenCalled()
+    expect(hostMocks.signOut).not.toHaveBeenCalled()
+    expect(echoflowApi.refreshAccount).not.toHaveBeenCalled()
+    expect(screen.getByText(userIdSummary(endpoint === 'main' ? 'main-user' : 'dedicated-user'))).toBeInTheDocument()
+  })
+
   it('does not let a late initial account read undo a completed login', async () => {
     let resolveInitial: (value: Awaited<ReturnType<typeof echoflowApi.getAccounts>>) => void = () => {}
     vi.mocked(echoflowApi.getAccounts).mockReturnValueOnce(new Promise((resolve) => { resolveInitial = resolve }))

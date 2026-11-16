@@ -283,7 +283,7 @@ private final class NativeClipboardPasteObservation {
         var focusedValue: CFTypeRef?
         if AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focusedValue) == .success,
            let focusedValue, CFGetTypeID(focusedValue) == AXUIElementGetTypeID() {
-            let element = unsafeBitCast(focusedValue, to: AXUIElement.self)
+            let element = unsafeDowncast(focusedValue, to: AXUIElement.self)
             var elementPID: pid_t = 0
             focused = AXUIElementGetPid(element, &elementPID) == .success && elementPID == pid ? element : nil
         } else {

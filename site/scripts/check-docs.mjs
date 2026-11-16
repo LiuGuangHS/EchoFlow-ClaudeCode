@@ -252,7 +252,7 @@ async function checkLocaleRedirect() {
 
 /**
  * 首页文案里写死的文档路由和手机 App 下载地址。文档改名会让路由变成死链；
- * 已开放的下载渠道与桌面端保持一致；未开放的 TestFlight 只允许导航到本站已有文档。
+ * 已开放的下载渠道与桌面端保持一致；未开放的渠道只允许导航到本站已有文档。
  */
 async function checkLandingContent(routes) {
   const problems = []
@@ -260,6 +260,7 @@ async function checkLandingContent(routes) {
   const appLinksPath = 'desktop/src/pages/settings/mobileAppLinks.ts'
   const landing = await fs.readFile(path.join(paths.repoDir, landingPath), 'utf8')
   const appLinks = await fs.readFile(path.join(paths.repoDir, appLinksPath), 'utf8')
+  const { docsUrl } = JSON.parse(await fs.readFile(path.join(paths.repoDir, 'product.json'), 'utf8'))
 
   const landingRoutes = [...landing.matchAll(/\broute:\s*'([^']+)'/g)].map((match) => match[1])
   if (landingRoutes.length === 0) {
@@ -291,10 +292,9 @@ async function checkLandingContent(routes) {
     const pattern = new RegExp(`\\b${key}:\\s*'([^']+)'`)
     const site = landing.match(pattern)?.[1]
     const app = appLinks.match(pattern)?.[1]
-    if (key === 'testFlight' && /\btestFlight:\s*null\b/.test(appLinks)) {
-      const docsOrigin = 'https://code.echoflow.cn'
-      if (!site?.startsWith(`${docsOrigin}/`) || !routes.has(site.slice(docsOrigin.length))) {
-        problems.push(`${landingPath}: 未开放的 testFlight 渠道必须指向本站已有文档`)
+    if (new RegExp(`\\b${key}:\\s*null\\b`).test(appLinks)) {
+      if (!site?.startsWith(`${docsUrl}/`) || !routes.has(site.slice(docsUrl.length))) {
+        problems.push(`${landingPath}: 未开放的 ${key} 渠道必须指向本站已有文档`)
       }
       continue
     }
