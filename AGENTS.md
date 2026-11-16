@@ -70,7 +70,7 @@
 - `scripts/pr/change-policy.ts` 是路径到检查路由的唯一事实来源；路径前缀决定区域和阻塞规则，导入图只扩大检查范围，图失败则选择全部范围。工作流修改运行 policy，有 `actionlint` 时同时运行。
 - `pr-quality-gate` 保持稳定必需状态：选中 job 必须成功，未选中必须明确跳过；不得将失败改报成功。提示性的 `coverage-checks` 不加入 gate 的 `needs`；分片总和仍跑完整检查，不为提速缩减覆盖。
 - nightly 每日 19:00 UTC 及手动触发，运行全部确定性 lane 和模块图检查；不移入必需 PR 门禁，改频率须维护者决定。runtime job 先安装 ripgrep。
-- 必需 PR job 离线、无 provider 凭据或付费服务，使用匹配 Bun 与 frozen lockfile。`pull_request_target` 只能用可信 base 检查元数据，不执行 PR head、不安装 PR 控制的依赖、不向其暴露 secrets。
+- 必需 PR 检查必须确定性、离线、无 provider 凭据或付费服务，使用匹配 Bun 与 frozen lockfile，不依赖真实模型、公共网络、仓库 secrets 或已保存用户状态。`pull_request_target` 只能用可信 base 检查元数据，不执行 PR head、不安装 PR 控制的依赖、不向其暴露 secrets。
 - 不削弱覆盖率、测试路由、CODEOWNERS 或分支保护；override 须维护者明确留档。个人 CODEOWNER 的 PR 可免 `allow-cli-core-change`，身份与 CODEOWNERS 取可信 base，其他例外不变。
 - 失败重跑用于诊断；`check:server` 的 `FLAKY` 和 `FAILED` 均保持失败，不放宽断言或超时掩盖问题。仅最后手段才带原因和 owner 隔离。修改 workflow 不等于获准修改仓库设置、ruleset、secrets 或必需检查。
 
@@ -79,7 +79,7 @@
 - `src/`、`desktop/src/`、`adapters/` 的可执行生产改动需要同区域回归测试，维护者明确批准的例外除外。Bug 先复现或添加因目标缺陷失败的测试，无法复现如实说明；测试行为和受影响边界，不复制实现或改预期掩盖失败。
 - WSL 本地只做定向回归、`bun run check:impact` 和受影响模块验证；全量留给 GitHub Actions，不要求本地重复全量，也不将 `bun run verify` 作为默认动作。`verify` 保留显式运行的原有语义；相关代码与环境未变的本地证据可复用，不默认手动触发云端全量代替本地模块检查。
 - PR-ready/push-ready 须区分本地模块验证完成与候选 SHA 对应的 PR Actions 门禁通过；未提交工作区不能复用旧 CI 绿灯。full validation 须注明范围和对应 Actions 证据，nightly 全量不等于 release 验收；具体证据要求见贡献指南。
-- 必需 PR 检查必须确定性，不依赖真实模型、公共网络、仓库 secrets 或已保存用户状态。Live model 证据仅在确定性检查之后、明确授权额度时补充；在机器上找到凭据不等于获得授权。
+- Live model 证据仅在确定性检查之后、明确授权额度时补充；在机器上找到凭据不等于获得授权。
 - 单测不能证明用户可见布局或跨进程行为时补浏览器/桌面 smoke。临时浏览器操作用 `ego-browser` skill；`agent-browser` 仅用于既有已提交 smoke lane 和 `desktop/scripts/e2e-*-agent-browser.sh`。
 - 缺依赖先按授权完成准备并验证；需要新增权限或无法解决时明确阻塞。无关既有失败须调查并报告，不擅自扩展产品改动。命令细节、证据格式和发布门禁见[贡献指南](docs/internals/contributing.md)。
 

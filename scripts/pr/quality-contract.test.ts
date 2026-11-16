@@ -62,6 +62,7 @@ describe('feature quality contract', () => {
     const template = readFileSync('.github/pull_request_template.md', 'utf8')
 
     expect(template).toContain('## 功能质量契约')
+    expect(template).toContain('(https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/docs/internals/contributing.md#pr-提交流程)')
     expect(template).toContain('变更范围：')
     expect(template).toContain('新增或更新的测试：')
     expect(template).toContain('覆盖率证据：')
@@ -120,9 +121,9 @@ describe('feature quality contract', () => {
     expect(englishContributing).toContain('bun run quality:push')
     expect(englishContributing).toContain('push no longer runs a local quality gate')
     expect(englishContributing).toContain('AI Coding Agent Fix Loop')
-    expect(rootContributing).toContain('bun run verify')
-    expect(rootContributing).toContain('bun run quality:push')
-    expect(rootContributing).toContain('不再自动运行本地质量门禁')
+    expect(rootContributing).toContain('docs/internals/contributing.md#ai-coding-agent-修复循环')
+    expect(rootContributing).toContain('docs/en/internals/contributing.md#ai-coding-agent-fix-loop')
+    expect(rootContributing).toContain('本地通过不等于候选 Actions 门禁通过')
   })
 
   test('separates WSL module evidence from candidate-bound Actions gates without weakening verify', () => {
@@ -131,9 +132,10 @@ describe('feature quality contract', () => {
     for (const guidance of [agents, contributing]) {
       expect(guidance).toContain('WSL 本地')
       expect(guidance).toContain('全量留给 GitHub Actions')
-      expect(guidance).toContain('未提交工作区不能复用旧 CI 绿灯')
-      expect(guidance).toContain('nightly 全量不等于 release 验收')
+      expect(guidance).toContain('docs/internals/contributing.md')
     }
+    expect(agents).toContain('未提交工作区不能复用旧 CI 绿灯')
+    expect(agents).toContain('nightly 全量不等于 release 验收')
     const chinese = readFileSync('docs/internals/contributing.md', 'utf8')
     const english = readFileSync('docs/en/internals/contributing.md', 'utf8')
     expect(chinese).toContain('`bun run verify` 不是 WSL 默认动作')
@@ -176,10 +178,33 @@ describe('feature quality contract', () => {
       for (const field of ['candidate.before', 'candidate.after', 'candidate.failures', 'changedLines.scope', 'signalCode', '${logPath}.process.json']) {
         expect(guidance, path).toContain(`\`${field}\``)
       }
+      expect(guidance, path).toMatch(/新 PR 至少要让触达区域更好|new PRs must leave touched areas better than they found them/)
       expect(guidance, path).toMatch(/本地.*coverage.*阻塞|local.*coverage.*blocking/)
       expect(guidance, path).toMatch(/可信.*PR author.*base.*CODEOWNERS.*blocked|trusted.*PR author.*base.*CODEOWNERS.*blocked/)
       expect(guidance, path).toMatch(/发布后.*更新链路|post-publication.*update path/)
     }
+  })
+
+  test('keeps specialist runbooks scoped and linked to the shared policy', () => {
+    const baseline = readFileSync('docs/_internal/quality-baseline.md', 'utf8')
+    expect(baseline).toContain('bun run verify')
+    expect(baseline).toContain('不是普通 PR')
+    expect(baseline).toContain('../internals/contributing.md#')
+    expect(baseline).not.toContain('| Lane 全绿但总体失败 |')
+    for (const path of ['docs/_internal/release-windows.md', 'docs/en/_internal/release-windows.md']) {
+      const release = readFileSync(path, 'utf8')
+      expect(release, path).toContain('../internals/contributing.md#')
+      expect(release, path).toContain('`macos_signing`')
+      expect(release, path).toContain('`windows_signing`')
+      expect(release, path).not.toContain('skip_windows_signing')
+      expect(release, path).not.toContain('缺少 macOS 签名/公证配置时 preflight 直接失败')
+      expect(release, path).not.toContain('When macOS configuration is missing, the workflow marks artifacts unsigned')
+    }
+    const router = readFileSync('.agents/workflows/issue-router.md', 'utf8')
+    expect(router).not.toContain('声称 PR-ready 前运行 verify')
+    expect(router).not.toContain('必须列出 check:impact 选中检查和 verify 的实际结果')
+    expect(router).toContain('../../docs/internals/contributing.md#')
+    expect(router).toContain('所有 selected 包括 advisory 必须 completed/success')
   })
 
   test('keeps desktop native CI aligned with Electron packaging', () => {

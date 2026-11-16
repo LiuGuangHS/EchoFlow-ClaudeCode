@@ -1,16 +1,16 @@
 # 贡献指南
 
-## 按需入口
+## 从改动到交付
 
-- [根 AGENTS.md](AGENTS.md)：统一仓库规则、授权边界与验证要求；[DESIGN.md](DESIGN.md)：桌面设计。
-- [详细贡献指南](docs/internals/contributing.md) / [English](docs/en/internals/contributing.md)：安装、测试设计、质量报告、PR 与发布操作。
-- [执行、数据与信任边界](docs/internals/execution-boundaries.md)、[PR 模板](.github/pull_request_template.md)、[Issue 路由](.agents/workflows/issue-router.md)。
+1. 阅读[根 AGENTS.md](AGENTS.md)及领域链接，按根 `package.json#packageManager` 准备 Bun 和所需依赖。
+2. 补最小行为回归并完成改动；WSL 本地运行定向测试，再用 `bun run check:impact` 选择模块检查，全量留给 GitHub Actions。
+3. 按[详细贡献指南](docs/internals/contributing.md#ai-coding-agent-修复循环) / [English](docs/en/internals/contributing.md#ai-coding-agent-fix-loop)记录证据、缺口和风险，再用 [PR 模板](.github/pull_request_template.md)交付；本地通过不等于候选 Actions 门禁通过。
 
-## 本地验证
+安装、测试设计、显式本地 gate、报告诊断及发布步骤只在详细指南维护；[Issue 路由](.agents/workflows/issue-router.md)处理问题分流。
 
-WSL 本地先做定向回归，再用 `bun run check:impact` 选择模块检查；全量留给 GitHub Actions，不要求本地重复。PR-ready/push-ready 须区分本地模块验证完成与候选 SHA 对应的 PR Actions 门禁通过，未提交工作区不能复用旧 CI 绿灯；nightly 全量不等于 release 验收。证据要求见[详细贡献指南](docs/internals/contributing.md#ai-coding-agent-修复循环)。
+## 安全底线
 
-`git push` 不再自动运行本地质量门禁。`bun run verify` 保留显式本地 PR 验证入口及所选 coverage 的阻塞语义，不是 WSL 默认动作；`bun run quality:push` 是跳过 coverage 的可选快捷入口，不能代替完整验证。报告见 `artifacts/quality-runs/<timestamp>/`。
+保留已有用户改动；测试隔离真实用户配置、凭据和数据；分支/提交/推送/PR、发布、设置变更及在线额度须有覆盖该操作的明确授权。完整约束见[根规则](AGENTS.md)，运行时与持久化契约见[执行、数据与信任边界](docs/internals/execution-boundaries.md)。
 
 ## 贡献的许可边界
 
