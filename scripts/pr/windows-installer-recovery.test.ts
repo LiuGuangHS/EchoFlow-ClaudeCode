@@ -38,7 +38,22 @@ describe('Windows installer recovery prerequisites', () => {
     expect(helper).toContain('Both Windows data directories contain user state')
     expect(helper).toContain('Finish migration recovery in the application before upgrading')
     expect(helper).toContain('Local pointer recovery did not preserve its source')
-    expect(helper).toContain('dual profile roots did not fail closed')
+    expect(helper).toContain('populated standard profile was not fixed')
+  })
+
+  test('validates every retained profile before discovery and protects its portable source', () => {
+    const helper = readFileSync('desktop/build/recover-legacy-install-data.ps1', 'utf8')
+    const recovery = helper.slice(helper.indexOf('function Invoke-LegacyRecovery {'), helper.indexOf('function Assert-SelfTest {'))
+    expect(recovery).toContain('-PopulatedRoots ([ref]$profileRoots)')
+    expect(recovery).toMatch(/foreach \(\$profileRoot in \$profileRoots\)[\s\S]*Assert-MigrationJournalAllowsRecovery -UserDataDir \$profileRoot[\s\S]*Read-AppMode -ConfigDir \$profileRoot[\s\S]*Test-PathMayBeDeleted[\s\S]*\$source = Get-UnsafeLegacySource/)
+    for (const scenario of ['safe', 'external-portable', 'portable', 'relative-portable', 'empty-portable', 'invalid-mode', 'pending-journal', 'invalid-journal', 'terminal-journal', 'terminal-install-journal']) {
+      expect(helper).toContain(`'${scenario}'`)
+    }
+    expect(helper).toContain('multiple legacy profiles without standard state did not fail closed')
+    expect(helper).toContain('Unselected profile references data that may be removed')
+    expect(helper).toContain('Unselected profile has an unresolved portable data directory')
+    expect(recovery).toContain('-ProtectedInstallDirs $protectedRoots')
+    expect(helper).toContain('Unselected profile migration history references an application install directory')
   })
 
   test('keeps terminal, pending, invalid and read-only journal fixtures in Windows SelfTest', () => {
@@ -265,7 +280,7 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
     expect(resolver).toContain('$caches -cnotcontains $_.Name')
     expect(helper).toContain('unused-unc-roaming')
     expect(helper).toContain("@('logs', 'Cache', 'LOGS', 'cache')")
-    expect(helper).toContain('case-variant cache bypassed dual-root protection')
+    expect(helper).toContain('cache or unknown root selection changed data')
   })
 
   test('terminal acceptance still precedes shared-install and process safety checks', () => {

@@ -3,6 +3,7 @@ import path from 'node:path'
 import { existsSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import * as dataRoot from './echoFlowDataRoot'
+import { getDefaultEchoFlowConfigDir } from '../../../src/utils/echoFlowConfigRoot'
 import { PRODUCT_IDENTITY } from '../../src/lib/productIdentity.generated'
 import { createSandboxedTestEnvironment } from '../../../scripts/pr/test-environment'
 import { determineStartupPortableDir } from './appMode'
@@ -99,13 +100,26 @@ describe('Electron EchoFlow data root', () => {
     expect(fresh.app.getPath('userData')).toBe(fresh.local)
   })
 
-  it('refuses two populated roots without selecting or modifying either', () => {
+  it('fixes Windows to populated Local while preserving retained legacy state', () => {
     const f = fixture()
-    f.put(f.local, 'app-mode.json', '{"mode":"default","portable_dir":null}')
+    const pointer = '{"mode":"default","portable_dir":null}'
+    f.put(f.local, 'app-mode.json', pointer)
     f.put(f.roaming, 'data-migration-v1.json', '{"pending":true}')
+    dataRoot.configureEchoFlowUserData(f.app, f.env, 'win32', f.root)
+    expect(f.app.getPath('userData')).toBe(f.local)
+    expect(readFileSync(path.join(f.local, 'app-mode.json'), 'utf8')).toBe(pointer)
+    expect(readFileSync(path.join(f.roaming, 'data-migration-v1.json'), 'utf8')).toBe('{"pending":true}')
+  })
+
+  it('refuses multiple Windows legacy roots when standard has only caches', () => {
+    const f = fixture()
+    f.put(path.join(f.local, 'Cache'), 'cache')
+    f.put(f.roaming, 'unknown-state', 'keep roaming')
+    const legacy = path.join(f.env.LOCALAPPDATA!, 'claude-code-desktop')
+    f.put(legacy, 'Preferences', 'keep legacy')
     expect(() => dataRoot.configureEchoFlowUserData(f.app, f.env, 'win32', f.root)).toThrow('Both Windows data directories')
     expect(f.app.setPath).not.toHaveBeenCalled()
-    expect(readFileSync(path.join(f.roaming, 'data-migration-v1.json'), 'utf8')).toBe('{"pending":true}')
+    expect(readFileSync(path.join(legacy, 'Preferences'), 'utf8')).toBe('keep legacy')
   })
 
   it('makes an unfinished Local journal visible to migration recovery without rewriting it', async () => {
@@ -243,7 +257,7 @@ describe('Electron EchoFlow data root', () => {
       expect(readdirSync(legacy).sort()).toEqual(['app-mode.json', 'data-migration-v1.json'])
     })
 
-    it('blocks multiple aliases even when current already equals published', () => {
+    it('keeps Windows standard authoritative and blocks ambiguous non-Windows aliases', () => {
       const f = fixture()
       const published = defaultEchoFlowDataRoot(f.env, platform, f.root)
       const profileRoot = platform === 'win32' ? f.env.APPDATA!
@@ -255,8 +269,13 @@ describe('Electron EchoFlow data root', () => {
       f.app.setPath.mockClear()
       let conflict: unknown
       try { dataRoot.configureEchoFlowUserData(f.app, f.env, platform, f.root) } catch (error) { conflict = error }
-      expect(conflict).toBeInstanceOf(dataRoot.UserDataProfileConflictError)
-      expect(conflict).toMatchObject({ directories: [published, legacy], platform })
+      if (platform === 'win32') {
+        expect(conflict).toBeUndefined()
+        expect(f.app.getPath('userData')).toBe(published)
+      } else {
+        expect(conflict).toBeInstanceOf(dataRoot.UserDataProfileConflictError)
+        expect(conflict).toMatchObject({ directories: [published, legacy], platform })
+      }
       expect(f.app.setPath).not.toHaveBeenCalled()
       expect(readFileSync(path.join(legacy, 'Preferences'), 'utf8')).toBe('legacy bytes')
       expect(readFileSync(path.join(published, 'Preferences'), 'utf8')).toBe('new bytes')
@@ -328,14 +347,13 @@ describe('Electron EchoFlow data root', () => {
 
     const ready = source.slice(source.indexOf('app.whenReady().then'))
     const recovery = ready.slice(0, ready.indexOf('applyWindowsAppUserModelId(app)'))
-    expect(recovery).toMatch(/if \(startupProfileError\) \{\s*if \(startupProfileError instanceof UserDataProfileConflictError\)/)
-    expect(recovery).toContain('await recoverProfileConflict(app, dialog, startupProfileError, undefined, cleanupProfileRecovery)')
-    expect(recovery).toMatch(/else \{[\s\S]*dialog\.showErrorBox[\s\S]*cleanupProfileRecovery\?\.\(\)[\s\S]*app\.exit\(1\)\s*\}\s*return\s*\}/)
+    expect(recovery).toMatch(/if \(startupProfileError\) \{[\s\S]*dialog\.showErrorBox[\s\S]*cleanupProfileRecovery\?\.\(\)[\s\S]*app\.exit\(1\)[\s\S]*return/)
+    expect(recovery).not.toContain('recoverProfileConflict')
     expect(recovery).not.toContain('getDataMigration()')
     expect(recovery).not.toContain('createMainWindow()')
   })
 
-  it('keeps Electron userData separate without changing Claude config storage', () => {
+  it('reuses the shared default root without mutating environment overrides', () => {
     const homeDir = path.join('C:', 'Users', 'tester')
     const env: NodeJS.ProcessEnv = {
       LOCALAPPDATA: path.join(homeDir, 'AppData', 'Local'),
@@ -344,6 +362,9 @@ describe('Electron EchoFlow data root', () => {
     expect(defaultEchoFlowDataRoot(env, 'win32', homeDir)).toBe(
       path.join(env.LOCALAPPDATA!, 'EchoFlow Code'),
     )
+    for (const platform of ['win32', 'linux', 'darwin'] as const) {
+      expect(defaultEchoFlowDataRoot(env, platform, homeDir)).toBe(getDefaultEchoFlowConfigDir({ env, platform, homeDir }))
+    }
     expect(applyDefaultEchoFlowDataRoot(env)).toBe(defaultEchoFlowDataRoot(env))
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
     expect(env[ECHOFLOW_DEFAULT_CONFIG_ENV]).toBeUndefined()

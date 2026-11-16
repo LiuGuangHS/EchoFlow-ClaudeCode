@@ -153,7 +153,11 @@ describe('PetSettings', () => {
     expect(screen.getByText('补补 Bubu')).toBeInTheDocument()
     expect(screen.getByText('回回 Huihui')).toBeInTheDocument()
     expect(screen.getByText('Moon Cat')).toBeInTheDocument()
-    expect(screen.getByText((content) => content.includes('${CLAUDE_CONFIG_DIR:-~/.claude}/cc-haha/pets'))).toBeInTheDocument()
+    expect(screen.getByText('Custom pet packages are stored in the current data directory. Use “Open folder” to view their location.')).toBeInTheDocument()
+    const openFolder = screen.getByRole('button', { name: 'Open folder' })
+    expect(openFolder).toBeEnabled()
+    fireEvent.click(openFolder)
+    await waitFor(() => expect(openFolderMock).toHaveBeenCalledTimes(1))
     expect(screen.getByText('1 custom pet folders were skipped because they are invalid.')).toBeInTheDocument()
   })
 

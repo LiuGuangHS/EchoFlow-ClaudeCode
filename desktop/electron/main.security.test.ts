@@ -34,7 +34,7 @@ const workspaceBrowserServiceSource = mainSource.slice(
 )
 
 describe('Electron preview security boundary', () => {
-  it('blocks normal startup and defers profile recovery until Electron is ready', () => {
+  it('blocks unsafe startup without offering alternate profile selection', () => {
     const setup = mainSource.slice(mainSource.indexOf('// Resolve the profile'), mainSource.indexOf('let mainWindow:'))
     expect(setup).toContain('startupProfileError = error')
     expect(setup).toContain('setStorageWritesFrozen(true)')
@@ -47,8 +47,12 @@ describe('Electron preview security boundary', () => {
     expect(registrations).toContain("app.on('open-url'")
     const ready = mainSource.slice(mainSource.indexOf('app.whenReady().then(async () => {'))
     expect(ready).toMatch(/async \(\) => \{\s+if \(startupProfileError\)/)
-    expect(ready.indexOf('await recoverProfileConflict(app, dialog, startupProfileError, undefined, cleanupProfileRecovery)')).toBeGreaterThan(0)
-    expect(ready.indexOf('await recoverProfileConflict(app, dialog, startupProfileError, undefined, cleanupProfileRecovery)')).toBeLessThan(ready.indexOf('await getDataMigration().recover()'))
+    const failure = ready.slice(0, ready.indexOf('applyWindowsAppUserModelId(app)'))
+    expect(failure).toContain('dialog.showErrorBox(')
+    expect(failure).toContain('cleanupProfileRecovery?.()')
+    expect(failure).toContain('app.exit(1)')
+    expect(failure).not.toContain('showMessageBox')
+    expect(failure).not.toContain('relaunch')
     expect(ready).toMatch(/app\.exit\(1\)[\s\S]*?return\s+\}/)
   })
   it('wires native navigation through the main-frame-only queue and current tray state', () => {

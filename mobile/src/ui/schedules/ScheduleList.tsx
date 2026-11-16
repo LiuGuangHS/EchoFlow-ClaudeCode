@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from '../../config/productIdentity.generated'
 import { useCallback, useMemo, useState } from 'react'
 import { RefreshControl, ScrollView, View } from 'react-native'
 import { router } from 'expo-router'
@@ -96,7 +97,7 @@ export function ScheduleList({ hostId }: { hostId: string }) {
       >
         <LargeTitle
           title="定时任务"
-          subtitle={`${host?.name ?? '电脑'} 开着、cc-haha 在运行时，按计划指定的时区执行`}
+          subtitle={`${host?.name ?? '电脑'} 开着、${PRODUCT_NAME} 在运行时，按计划指定的时区执行`}
           style={{ paddingBottom: 16 }}
         />
         <InlineError text={connectionError || resource.error} style={{ marginBottom: 12 }} />

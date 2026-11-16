@@ -39,8 +39,8 @@ import {
 import { DeepSeekHarnessRuntime } from './services/deepseekHarnessRuntime'
 import { discoverRuntimes, probeRuntimePath } from './services/runtimeDiscovery'
 import { DataMigration } from './services/dataMigration'
-import { configureEchoFlowUserData, UserDataProfileConflictError } from './services/echoFlowDataRoot'
-import { prepareProfileRecovery, recoverProfileConflict } from './services/profileConflictRecovery'
+import { configureEchoFlowUserData } from './services/echoFlowDataRoot'
+import { prepareProfileRecovery } from './services/profileConflictRecovery'
 import { areStorageWritesFrozen, setStorageWritesFrozen } from './services/storageMaintenance'
 import { resolveRelocatedAttachmentPath } from '../../src/utils/storageRelocations'
 import { appendHostDiagnostic, electronHostDiagnosticsFile, sanitizeHostDiagnostic } from './services/sidecarManager'
@@ -1686,13 +1686,9 @@ if (!startupProfileError) {
 
 app.whenReady().then(async () => {
   if (startupProfileError) {
-    if (startupProfileError instanceof UserDataProfileConflictError) {
-      await recoverProfileConflict(app, dialog, startupProfileError, undefined, cleanupProfileRecovery)
-    } else {
-      dialog.showErrorBox('数据目录不可用 / Data directory unavailable', startupProfileError.message)
-      cleanupProfileRecovery?.()
-      app.exit(1)
-    }
+    dialog.showErrorBox('数据目录不可用 / Data directory unavailable', startupProfileError.message)
+    cleanupProfileRecovery?.()
+    app.exit(1)
     return
   }
   applyWindowsAppUserModelId(app)

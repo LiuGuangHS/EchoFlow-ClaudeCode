@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { createVoiceDictation, insertVoiceText, type VoiceDraft } from './voiceDictation'
+import { createVoiceDictation, insertVoiceText, voiceIssue, type VoiceDraft } from './voiceDictation'
 import type { VoiceCatalog } from './voiceApi'
 import type { VoiceRecording } from './voiceRecorderTypes'
 
@@ -250,4 +250,10 @@ describe('mobile dictation lifecycle', () => {
 test('voice text insertion replaces a selection and joins Latin words without adding CJK spaces', () => {
   expect(insertVoiceText('HelloWorld', { start: 5, end: 5 }, ' new\n words ')).toEqual({ text: 'Hello new words World', cursor: 16 })
   expect(insertVoiceText('替换这段文字', { start: 2, end: 4 }, '识别')).toEqual({ text: '替换识别文字', cursor: 4 })
+})
+
+test('microphone permission guidance names the installed product', () => {
+  expect(voiceIssue({ code: 'permission' })).toEqual({
+    code: 'permission', message: '请在系统设置中允许 EchoFlow Code 使用麦克风。',
+  })
 })

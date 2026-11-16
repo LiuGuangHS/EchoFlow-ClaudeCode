@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from '../../config/productIdentity.generated'
 import type { Host } from '../../core/types'
 import { desktopOnly } from '../settings/settingsModel'
 import { effortStopAt, effortStopX } from '../compose/runLogic'
@@ -89,7 +90,7 @@ export function activitySummary(input: { running: number; read: number; total: n
 
 /* ───────────── 只能在电脑上改 ───────────── */
 
-export const desktopOnlyText = `${desktopOnly}。在电脑上打开 cc-haha 的设置。`
+export const desktopOnlyText = `${desktopOnly}。在电脑上打开 ${PRODUCT_NAME} 的设置。`
 
 /* ───────────── 移除 ───────────── */
 

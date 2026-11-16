@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { ECHOFLOW_PRODUCT_NAME } from '../../src/constants/brand'
 import { PRODUCT_IDENTITY } from '../../src/lib/productIdentity.generated'
+import { getDefaultEchoFlowConfigDir } from '../../../src/utils/echoFlowConfigRoot'
 
 export const ECHOFLOW_APP_NAME = ECHOFLOW_PRODUCT_NAME
 export const ECHOFLOW_DEFAULT_CONFIG_ENV = 'ECHOFLOW_CODE_DEFAULT_CONFIG_DIR'
@@ -12,15 +13,7 @@ export function defaultEchoFlowDataRoot(
   platform: NodeJS.Platform = process.platform,
   homeDir: string = os.homedir(),
 ): string {
-  if (platform === 'win32') {
-    return path.join(env.LOCALAPPDATA || path.join(homeDir, 'AppData', 'Local'), ECHOFLOW_APP_NAME)
-  }
-
-  if (platform === 'darwin') {
-    return path.join(homeDir, 'Library', 'Application Support', ECHOFLOW_APP_NAME)
-  }
-
-  return path.join(env.XDG_DATA_HOME || path.join(homeDir, '.local', 'share'), PRODUCT_IDENTITY.configDir)
+  return getDefaultEchoFlowConfigDir({ env, platform, homeDir })
 }
 
 export function applyDefaultEchoFlowDataRoot(env: NodeJS.ProcessEnv = process.env): string {
@@ -85,11 +78,12 @@ export function configureEchoFlowUserData(
     if (stat.ino !== 0n) identities.add(identity)
     populated.push(candidate)
   }
-  if (populated.length > 1) {
+  const publishedHasState = platform === 'win32' && hasUserDataState(published)
+  if (!publishedHasState && populated.length > 1) {
     throw new UserDataProfileConflictError(populated, platform)
   }
   // Keep fresh non-Windows preview profiles, but resume any single existing profile in place.
-  const selected = populated[0] ?? (platform === 'win32' ? published : current)
+  const selected = publishedHasState ? published : populated[0] ?? (platform === 'win32' ? published : current)
   if (selected === current) return
   try {
     if (realpathSync.native(current) === realpathSync.native(selected)) return
