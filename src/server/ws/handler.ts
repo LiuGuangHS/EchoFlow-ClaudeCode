@@ -884,14 +884,7 @@ export const handleWebSocket = {
       // A missing or temporarily unreadable transcript must not reject the
       // WebSocket connection; the normal session-list refresh remains a fallback.
     })
-    const toolRequestIds = replayPendingPermissionRequests(ws, sessionId)
-    const computerUseRequestIds = replayPendingComputerUsePermissionRequests(ws, sessionId)
-    sendMessage(ws, {
-      type: 'permission_requests_snapshot',
-      toolRequestIds,
-      computerUseRequestIds,
-      turnActive: hasLiveUserTurnForClient(sessionId),
-    })
+    syncPermissionRequests(ws)
     replayAgentStopFailures(ws, sessionId)
     for (const task of activeNonAgentTasks.get(sessionId)?.values() ?? []) {
       if (task.localStopConfirmed) void emitAuthoritativeNonAgentStopped(sessionId, task)
@@ -928,7 +921,21 @@ export const handleWebSocket = {
 
       if (migrationMaintenance.isActive && message.type !== 'ping' && message.type !== 'sync_state') {
         if (message.type === 'user_message') releaseAcceptedPowerLease(ws, message.powerActivityLeaseId)
-        sendError(ws, 'Data migration is in progress', 'MIGRATION_IN_PROGRESS')
+        if (
+          (message.type === 'permission_response' || message.type === 'computer_use_permission_response') &&
+          typeof message.requestId === 'string' && message.requestId.length > 0
+        ) {
+          sendApprovalError(ws, {
+            type: 'error',
+            message: 'Data migration is in progress',
+            code: 'MIGRATION_IN_PROGRESS',
+            requestId: message.requestId,
+            permissionType: message.type === 'permission_response' ? 'tool' : 'computer_use',
+            approvalOutcome: 'rejected',
+          })
+        } else {
+          sendError(ws, 'Data migration is in progress', 'MIGRATION_IN_PROGRESS')
+        }
         return
       }
 
@@ -1004,6 +1011,7 @@ export const handleWebSocket = {
           break
 
         case 'sync_state':
+          syncPermissionRequests(ws)
           sendMessage(ws, {
             type: 'session_state',
             turnState: hasLiveUserTurnForClient(ws.data.sessionId)
@@ -1985,12 +1993,32 @@ async function handlePrewarmSession(ws: SessionConnection) {
 }
 
 const EXIT_PLAN_MODE_TOOL_NAME = 'ExitPlanMode'
+const planApprovalTransitions = new Map<string, Set<string>>()
+
+function syncPermissionRequests(ws: SessionConnection): void {
+  const { sessionId } = ws.data
+  sendMessage(ws, {
+    type: 'permission_requests_snapshot',
+    toolRequestIds: replayPendingPermissionRequests(ws, sessionId),
+    computerUseRequestIds: replayPendingComputerUsePermissionRequests(ws, sessionId),
+    turnActive: hasLiveUserTurnForClient(sessionId),
+  })
+}
+
+function sendApprovalError(ws: SessionConnection, message: Extract<ServerMessage, { type: 'error' }>): void {
+  sendMessage(ws, message)
+  if (!message.requestId) return
+  for (const client of activeSessions.get(ws.data.sessionId) ?? []) {
+    if (client !== ws) sendMessage(client, message)
+  }
+}
 
 function finalizePermissionResponse(
   ws: SessionConnection,
   message: Extract<ClientMessage, { type: 'permission_response' }>,
-): void {
+): boolean {
   const { sessionId } = ws.data
+  if (!conversationService.getPendingPermissionToolName(sessionId, message.requestId)) return false
   const resolved = conversationService.respondToPermission(
     sessionId,
     message.requestId,
@@ -2010,6 +2038,7 @@ function finalizePermissionResponse(
     })
   }
   console.log(`[WS] Permission response for ${message.requestId}: ${message.allowed}`)
+  return resolved
 }
 
 function handlePermissionResponse(
@@ -2017,26 +2046,45 @@ function handlePermissionResponse(
   message: Extract<ClientMessage, { type: 'permission_response' }>
 ) {
   const { sessionId } = ws.data
-  if (
-    message.allowed &&
-    message.runtimeOverride &&
-    conversationService.getPendingPermissionToolName(sessionId, message.requestId) ===
-      EXIT_PLAN_MODE_TOOL_NAME
-  ) {
-    void handlePlanApprovalWithRuntimeOverride(ws, message).catch((err) => {
-      // The approval was NOT sent: the CLI is still waiting on the permission
-      // and the user can retry. Note the desktop optimistically dismissed the
-      // approval bar on send — it reappears on the reconnect replay.
+  const toolName = conversationService.getPendingPermissionToolName(sessionId, message.requestId)
+  if (!toolName) return
+  const transitions = planApprovalTransitions.get(sessionId) ?? new Set<string>()
+  if (transitions.has(message.requestId)) return
+  if (message.allowed && message.runtimeOverride && toolName === EXIT_PLAN_MODE_TOOL_NAME) {
+    const submission = { started: false }
+    transitions.add(message.requestId)
+    planApprovalTransitions.set(sessionId, transitions)
+    void handlePlanApprovalWithRuntimeOverride(ws, message, submission).catch((err) => {
       console.error(`[WS] Plan approval with runtime override failed for ${sessionId}:`, err)
-      sendMessage(ws, {
+      const pending = !submission.started && conversationService.getPendingPermissionToolName(sessionId, message.requestId)
+      sendApprovalError(ws, {
         type: 'error',
-        message: 'Failed to apply the execution model. The plan is still waiting for approval.',
+        message: pending
+          ? 'Failed to apply the execution model. The plan is still waiting for approval.'
+          : 'Failed to complete the execution model transition. Synchronize the session before continuing.',
         code: 'RUNTIME_CONFIG_INVALID',
+        requestId: message.requestId,
+        permissionType: 'tool',
+        approvalOutcome: pending ? 'rejected' : 'uncertain',
       })
+    }).finally(() => {
+      if (!submission.started || !conversationService.getPendingPermissionToolName(sessionId, message.requestId)) {
+        transitions.delete(message.requestId)
+        if (transitions.size === 0) planApprovalTransitions.delete(sessionId)
+      }
     })
     return
   }
-  finalizePermissionResponse(ws, message)
+  try {
+    finalizePermissionResponse(ws, message)
+  } catch (err) {
+    console.error(`[WS] Permission response outcome uncertain for ${sessionId}:`, err)
+    sendApprovalError(ws, {
+      type: 'error', code: 'PERMISSION_RESPONSE_UNCERTAIN',
+      message: 'Permission response outcome is uncertain. Synchronize the session before continuing.',
+      requestId: message.requestId, permissionType: 'tool', approvalOutcome: 'uncertain',
+    })
+  }
 }
 
 /**
@@ -2082,16 +2130,18 @@ function waitForTurnResultOrTimeout(sessionId: string, timeoutMs: number): Promi
 function rejectStartedSideChatProviderChange(
   ws: SessionConnection,
   requestedProviderId: string | null,
+  requestId?: string,
 ): boolean {
   const { sessionId } = ws.data
   const side = getSideChat(sessionId)
   if (!side?.started) return false
   const providerId = runtimeOverrides.get(sessionId)?.providerId ?? side.launchInfo.runtimeProviderId ?? null
   if (providerId === requestedProviderId) return false
-  sendMessage(ws, {
+  sendApprovalError(ws, {
     type: 'error',
     code: 'SIDE_CHAT_RUNTIME_RESTART_UNAVAILABLE',
     message: 'Open a new side chat to change provider or reasoning effort.',
+    ...(requestId ? { requestId, permissionType: 'tool' as const, approvalOutcome: 'rejected' as const } : {}),
   })
   return true
 }
@@ -2099,18 +2149,22 @@ function rejectStartedSideChatProviderChange(
 async function handlePlanApprovalWithRuntimeOverride(
   ws: SessionConnection,
   message: Extract<ClientMessage, { type: 'permission_response' }>,
+  submission: { started: boolean },
 ): Promise<void> {
   const { sessionId } = ws.data
-  if (rejectStartedSideChatProviderChange(ws, message.runtimeOverride!.providerId)) return
+  if (rejectStartedSideChatProviderChange(ws, message.runtimeOverride!.providerId, message.requestId)) return
   const normalized = await normalizeRuntimeOverrideInput(message.runtimeOverride!)
   if (!normalized.ok) {
-    sendMessage(ws, {
+    sendApprovalError(ws, {
       type: 'error',
       message:
         normalized.reason === 'model'
           ? 'Runtime model selection is invalid.'
           : 'Runtime effort selection is invalid.',
       code: 'RUNTIME_CONFIG_INVALID',
+      requestId: message.requestId,
+      permissionType: 'tool',
+      approvalOutcome: 'rejected',
     })
     return
   }
@@ -2134,12 +2188,13 @@ async function handlePlanApprovalWithRuntimeOverride(
     (prevOverride?.openAIFastMode ?? launchInfo?.openAIFastMode ?? false) === (nextOverride.openAIFastMode ?? false)
   ) {
     rejectedRuntimeConfigs.delete(sessionId)
+    submission.started = true
     finalizePermissionResponse(ws, message)
     return
   }
 
   if (isSideChatId(sessionId) && (currentProviderId !== nextOverride.providerId || (nextOverride.effort !== undefined && nextOverride.effort !== currentEffort) || (prevOverride?.openAIFastMode ?? launchInfo?.openAIFastMode ?? false) !== (nextOverride.openAIFastMode ?? false))) {
-    sendMessage(ws, { type: 'error', code: 'SIDE_CHAT_RUNTIME_RESTART_UNAVAILABLE', message: 'Open a new side chat to change provider or reasoning effort.' })
+    sendApprovalError(ws, { type: 'error', code: 'SIDE_CHAT_RUNTIME_RESTART_UNAVAILABLE', message: 'Open a new side chat to change provider or reasoning effort.', requestId: message.requestId, permissionType: 'tool', approvalOutcome: 'rejected' })
     return
   }
 
@@ -2153,10 +2208,14 @@ async function handlePlanApprovalWithRuntimeOverride(
     // Same provider: the CLI is blocked on this very permission request, so a
     // set_model control request is acked before the allow response frees the
     // turn — the first execution request is guaranteed to read the new model.
-    // On failure the transition rejects, the catch in handlePermissionResponse
-    // reports it, and the permission stays pending (override untouched).
+    // A failed control acknowledgement does not prove the model change was rejected.
     await enqueueRuntimeTransition(sessionId, async () => {
-      await conversationService.setModel(sessionId, nextOverride.modelId)
+      if (!conversationService.getPendingPermissionToolName(sessionId, message.requestId)) return
+      submission.started = true
+      if (!await conversationService.setModel(sessionId, nextOverride.modelId)) {
+        throw new Error('Execution model owner is no longer available')
+      }
+      if (!conversationService.getPendingPermissionToolName(sessionId, message.requestId)) return
       const appliedOverride = nextOverride.effort === undefined && currentEffort
         ? { ...nextOverride, effort: currentEffort, requestedConfig: nextOverride.requestedConfig ?? message.runtimeOverride }
         : nextOverride
@@ -2169,6 +2228,7 @@ async function handlePlanApprovalWithRuntimeOverride(
       await persistSessionRuntimeConfig(sessionId, appliedOverride)
       broadcastAppliedRuntimeConfig(sessionId)
     })
+    submission.started = true
     finalizePermissionResponse(ws, message)
     return
   }
@@ -2178,6 +2238,8 @@ async function handlePlanApprovalWithRuntimeOverride(
   // flow. The interrupted turn may bill one partial request to the planning
   // model — same as the manual flow.
   await enqueueRuntimeTransition(sessionId, async () => {
+    if (!conversationService.getPendingPermissionToolName(sessionId, message.requestId)) return
+    submission.started = true
     rejectedRuntimeConfigs.delete(sessionId)
     runtimeOverrides.set(sessionId, nextOverride)
     runtimeOverrideVersions.set(
@@ -2191,7 +2253,8 @@ async function handlePlanApprovalWithRuntimeOverride(
     }
   })
 
-  finalizePermissionResponse(ws, message)
+  submission.started = true
+  if (!finalizePermissionResponse(ws, message)) return
   handleStopGeneration(ws)
   // Let the CLI write the interrupted result before the restart kills the
   // process. The timeout only bounds a wedged interrupt — the restart's own
@@ -3904,6 +3967,7 @@ function cleanupSessionRuntimeState(
   deferredRuntimeRestarts.delete(sessionId)
   deferredPermissionModes.delete(sessionId)
   runtimeTransitionPromises.delete(sessionId)
+  planApprovalTransitions.delete(sessionId)
   sessionStartupPromises.delete(sessionId)
   lastResolvedStartupWorkDirs.delete(sessionId)
   taskNotificationPersistence.delete(sessionId)
@@ -6126,6 +6190,7 @@ export function __resetWebSocketHandlerStateForTests(): void {
   legacyQueuedSessionChats.clear()
   interruptedSessionChats.clear()
   runtimeTransitionPromises.clear()
+  planApprovalTransitions.clear()
   sessionStartupPromises.clear()
   for (const [sessionId, callback] of sessionTurnObservers) {
     conversationService.removeOutputCallback(sessionId, callback)

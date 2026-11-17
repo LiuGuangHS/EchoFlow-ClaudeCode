@@ -1,3 +1,4 @@
+import type { ServerMessage as WireServerMessage } from '../../../src/server/ws/events'
 import type { ScheduledTaskTrigger } from './task'
 import type { PermissionMode } from './settings'
 import type { RuntimeSelection } from './runtime'
@@ -107,15 +108,7 @@ export type ServerMessage =
   | { type: 'content_delta'; text?: string; toolInput?: string }
   | { type: 'tool_use_complete'; toolName: string; toolUseId: string; originalToolUseId?: string; input: unknown; parentToolUseId?: string }
   | { type: 'tool_result'; toolUseId: string; originalToolUseId?: string; content: unknown; isError: boolean; parentToolUseId?: string }
-  | {
-      type: 'permission_request'
-      requestId: string
-      toolName: string
-      toolUseId?: string
-      input: unknown
-      description?: string
-      displayName?: string
-    }
+  | Extract<WireServerMessage, { type: 'permission_request' }>
   | {
       type: 'computer_use_permission_request'
       requestId: string
@@ -129,8 +122,9 @@ export type ServerMessage =
     }
   | {
       type: 'permission_requests_snapshot'
-      toolRequestIds: string[]
-      computerUseRequestIds: string[]
+      // Legacy servers can omit one category; absence is not an empty set.
+      toolRequestIds?: string[]
+      computerUseRequestIds?: string[]
       turnActive: boolean
     }
   | { type: 'user_message_replay'; content: string; scheduledTask?: ScheduledTaskTrigger; sessionReferences?: Array<{ sessionId: string }>; collaboration?: { sourceSessionId: string; messageId?: string } }
@@ -168,7 +162,7 @@ export type ServerMessage =
     }
   // 流式请求失败后的恢复状态：可能安全重试流，也可能降级为非流式请求。
   | { type: 'streaming_fallback'; cause: StreamingFallbackCause }
-  | { type: 'error'; message: string; code: string; retryable?: boolean; businessErrorCode?: string }
+  | Extract<WireServerMessage, { type: 'error' }>
   | { type: 'background_task_stop_failed'; taskId: string; message: string }
   | { type: 'system_notification'; subtype: string; message?: string; data?: unknown }
   | { type: 'pong' }

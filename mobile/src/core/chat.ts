@@ -128,8 +128,8 @@ export function parseServerEvent(raw: unknown): ServerEvent | null {
       break
     case 'permission_requests_snapshot':
       valid =
-        strings(v.toolRequestIds) &&
-        strings(v.computerUseRequestIds) &&
+        (v.toolRequestIds === undefined || strings(v.toolRequestIds)) &&
+        (v.computerUseRequestIds === undefined || strings(v.computerUseRequestIds)) &&
         typeof v.turnActive === 'boolean'
       break
     case 'user_message_replay':
@@ -163,7 +163,11 @@ export function parseServerEvent(raw: unknown): ServerEvent | null {
       valid = permissionModes.includes(String(v.mode))
       break
     case 'error':
-      valid = string(v.message) && string(v.code)
+      valid = string(v.message) && string(v.code) &&
+        (v.requestId === undefined || (string(v.requestId) && v.requestId.length > 0 &&
+          ['tool', 'computer_use'].includes(String(v.permissionType)))) &&
+        (v.approvalOutcome === undefined ||
+          (v.requestId !== undefined && ['rejected', 'uncertain'].includes(String(v.approvalOutcome))))
       break
     case 'system_notification':
       valid =
@@ -885,12 +889,12 @@ function reduceChat(state: ChatState, event: ServerEvent): ChatState {
       const next = {
         ...state,
         turnActive: event.turnActive,
-        permissions: state.permissions.filter((p) =>
-          event.toolRequestIds.includes(p.requestId)
-        ),
-        computerUsePermissions: state.computerUsePermissions.filter((p) =>
-          event.computerUseRequestIds.includes(p.requestId)
-        ),
+        permissions: event.toolRequestIds === undefined
+          ? state.permissions
+          : state.permissions.filter((p) => event.toolRequestIds!.includes(p.requestId)),
+        computerUsePermissions: event.computerUseRequestIds === undefined
+          ? state.computerUsePermissions
+          : state.computerUsePermissions.filter((p) => event.computerUseRequestIds!.includes(p.requestId)),
       }
       return { ...next, status: permissionStatus(next) }
     }
@@ -997,7 +1001,7 @@ function reduceChat(state: ChatState, event: ServerEvent): ChatState {
         'LEAN_CAPABILITY_UNAVAILABLE',
         'SIDE_CHAT_RUNTIME_RESTART_UNAVAILABLE',
       ].includes(event.code)
-      const next = configurationRejected
+      const next = configurationRejected || event.requestId !== undefined
         ? state
         : {
             ...clearActive(state),
@@ -1016,6 +1020,9 @@ function reduceChat(state: ChatState, event: ServerEvent): ChatState {
             message: event.message,
             code: event.code,
             retryable: event.retryable,
+            requestId: event.requestId,
+            permissionType: event.permissionType,
+            approvalOutcome: event.approvalOutcome,
           },
         },
         { type: 'error', text: event.message }

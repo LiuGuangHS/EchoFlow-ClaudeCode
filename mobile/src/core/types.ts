@@ -7,9 +7,16 @@ import type {
 export type {
   ClientMessage,
   PermissionMode,
-  ServerMessage as ServerEvent,
   TokenUsage,
 } from '../../../src/server/ws/events'
+
+// Legacy hosts may snapshot only one approval category.
+export type ServerEvent = Exclude<ServerMessage, { type: 'permission_requests_snapshot' }> | {
+  type: 'permission_requests_snapshot'
+  toolRequestIds?: string[]
+  computerUseRequestIds?: string[]
+  turnActive: boolean
+}
 
 /** Safe metadata only. Never put credentials or pairing secrets in this shape. */
 export type Host = Readonly<{
@@ -184,7 +191,7 @@ export type ChatState = {
   runtime?: RuntimeConfig
   permissionMode?: PermissionMode
   usage?: TokenUsage
-  error?: { message: string; code: string; retryable?: boolean }
+  error?: Omit<Extract<ServerMessage, { type: 'error' }>, 'type'>
   title?: string
   /** 电脑推来的团队方案变化（planId:revision:state）；变了就重新读取方案。 */
   teamPlanSignal?: string

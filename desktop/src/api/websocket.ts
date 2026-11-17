@@ -22,6 +22,31 @@ type Connection = {
   pendingMessages: ClientMessage[]
 }
 
+function isValidApprovalMessage(message: ServerMessage): boolean {
+  const ids = (value: unknown) => value === undefined || (Array.isArray(value) && value.every(id => typeof id === 'string' && id.length > 0))
+  switch (message.type) {
+    case 'permission_requests_snapshot':
+      return ids(message.toolRequestIds) && ids(message.computerUseRequestIds) && typeof message.turnActive === 'boolean'
+    case 'permission_request':
+      return typeof message.requestId === 'string' && message.requestId.length > 0 && typeof message.toolName === 'string' &&
+        (message.autoAnswerDeadline === undefined || message.autoAnswerDeadline === null || (typeof message.autoAnswerDeadline === 'number' && Number.isFinite(message.autoAnswerDeadline)))
+    case 'computer_use_permission_request':
+      return typeof message.requestId === 'string' && message.requestId.length > 0 && !!message.request && typeof message.request === 'object'
+    case 'permission_resolved':
+      return typeof message.requestId === 'string' && message.requestId.length > 0 &&
+        (message.permissionType === 'tool' || message.permissionType === 'computer_use') &&
+        (message.allowed === undefined || typeof message.allowed === 'boolean')
+    case 'error':
+      return typeof message.message === 'string' && typeof message.code === 'string' &&
+        (message.requestId === undefined || (typeof message.requestId === 'string' && message.requestId.length > 0 &&
+          (message.permissionType === 'tool' || message.permissionType === 'computer_use'))) &&
+        (message.approvalOutcome === undefined || (message.requestId !== undefined &&
+          (message.approvalOutcome === 'rejected' || message.approvalOutcome === 'uncertain')))
+    default:
+      return true
+  }
+}
+
 class WebSocketManager {
   private connections = new Map<string, Connection>()
 
@@ -85,6 +110,7 @@ class WebSocketManager {
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data as string) as ServerMessage
+        if (!msg || typeof msg !== 'object' || !isValidApprovalMessage(msg)) return
         if (msg.type === 'pong') {
           this.clearPongTimeout(conn)
         }
@@ -133,6 +159,10 @@ class WebSocketManager {
   }
 
   send(sessionId: string, message: ClientMessage) {
+    if ((message.type === 'permission_response' || message.type === 'computer_use_permission_response') && !this.isConnected(sessionId)) {
+      // Decisions are never replayed before the owner snapshot on a new connection.
+      throw new Error('Approval requires a connected session')
+    }
     let conn = this.connections.get(sessionId)
     if (!conn) {
       this.connect(sessionId)

@@ -1,3 +1,4 @@
+import '@testing-library/jest-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 
@@ -90,6 +91,33 @@ describe('AskUserQuestion', () => {
         },
       },
     })
+  })
+
+  it('keeps a submitted question pending and re-enables it after a correlated rejection', () => {
+    render(<AskUserQuestion toolUseId="tool-1" input={{ question: 'Ship it?', options: [{ label: 'Yes' }, { label: 'No' }] }} />)
+    fireEvent.click(screen.getByRole('button', { name: /^Yes$/ }))
+    fireEvent.click(screen.getByRole('button', { name: /submit/i }))
+    expect(screen.getByRole('button', { name: /submit/i })).toBeDisabled()
+    expect(screen.queryByText('Answered')).toBeNull()
+    act(() => useChatStore.getState().handleServerMessage(ACTIVE_TAB, {
+      type: 'error', code: 'APPROVAL_REJECTED', message: 'not submitted', requestId: 'perm-1', permissionType: 'tool', approvalOutcome: 'rejected',
+    }))
+    expect(screen.getByRole('button', { name: /submit/i })).not.toBeDisabled()
+  })
+
+  it('does not keep a rejected handoff as the outcome of a later accepted answer', () => {
+    render(<AskUserQuestion toolUseId="tool-1" input={{ question: 'Ship it?', options: [{ label: 'Yes' }] }} />)
+    fireEvent.click(screen.getByRole('button', { name: /chat about this/i }))
+    act(() => useChatStore.getState().handleServerMessage(ACTIVE_TAB, {
+      type: 'error', code: 'APPROVAL_REJECTED', message: 'not submitted', requestId: 'perm-1', permissionType: 'tool', approvalOutcome: 'rejected',
+    }))
+    fireEvent.click(screen.getByRole('button', { name: /^Yes$/ }))
+    fireEvent.click(screen.getByRole('button', { name: /submit/i }))
+    act(() => useChatStore.getState().handleServerMessage(ACTIVE_TAB, {
+      type: 'permission_resolved', requestId: 'perm-1', permissionType: 'tool', allowed: true,
+    }))
+    expect(screen.getByText('Answered')).toBeTruthy()
+    expect(screen.queryByText('Handed off')).toBeNull()
   })
 
   it('labels a completed timeout answer as automatic', () => {
@@ -474,6 +502,10 @@ describe('AskUserQuestion', () => {
           updatedInput: { ...QUESTION, answers: { 'Which greeting should go into hello.txt?': 'Hello' } },
         }],
       ])
+      expect(submit).toBeDisabled()
+      act(() => useChatStore.getState().handleServerMessage(LEAD, {
+        type: 'permission_resolved', requestId: 'member-request', permissionType: 'tool', allowed: true,
+      }))
       expect(screen.getByText(/Hello/, { selector: 'strong' })).toBeTruthy()
     })
 
@@ -820,6 +852,10 @@ describe('AskUserQuestion', () => {
       fireEvent.click(screen.getByRole('button', { name: /^Tabs$/ }))
       fireEvent.click(screen.getByRole('button', { name: /chat about this/i }))
 
+      expect(screen.getByRole('button', { name: /chat about this/i })).toBeDisabled()
+      act(() => useChatStore.getState().handleServerMessage(ACTIVE_TAB, {
+        type: 'permission_resolved', requestId: 'perm-1', permissionType: 'tool', allowed: false,
+      }))
       expect(screen.getByText(/Handed back to Claude/)).toBeTruthy()
       expect(screen.queryByText(/Answered:/)).toBeNull()
       expect(screen.queryByRole('button', { name: /chat about this/i })).toBeNull()
@@ -833,6 +869,10 @@ describe('AskUserQuestion', () => {
       fireEvent.click(screen.getByRole('button', { name: /^Tabs$/ }))
       fireEvent.click(screen.getByRole('button', { name: /chat about this/i }))
 
+      expect(screen.queryByText('Handed off')).toBeNull()
+      act(() => useChatStore.getState().handleServerMessage(ACTIVE_TAB, {
+        type: 'permission_resolved', requestId: 'perm-1', permissionType: 'tool', allowed: false,
+      }))
       expect(screen.getByText('Handed off')).toBeTruthy()
       expect(screen.queryByText('Answered')).toBeNull()
     })
@@ -1046,6 +1086,11 @@ describe('AskUserQuestion', () => {
       fireEvent.click(screen.getByRole('button', { name: /^A1$/ }))
       fireEvent.click(screen.getByRole('button', { name: /^A2$/ }))
       fireEvent.click(screen.getByRole('button', { name: /submit/i }))
+      expect(screen.getByRole('button', { name: /submit/i })).toBeDisabled()
+      expect(storedDraft()?.selections).toEqual({ 0: ['A1'], 1: ['A2'] })
+      act(() => useChatStore.getState().handleServerMessage(ACTIVE_TAB, {
+        type: 'permission_resolved', requestId: 'perm-1', permissionType: 'tool', allowed: true,
+      }))
       first.unmount()
 
       expect(storedDraft()).toBeUndefined()
