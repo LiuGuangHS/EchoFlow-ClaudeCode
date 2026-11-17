@@ -37,10 +37,10 @@ HTTPS_PROXY=http://127.0.0.1:7890 bun run prepare:cloudflared
 | --- | --- | --- | --- |
 | 本地迭代 | 手动 | 最窄的相关测试；`bun run check:impact` 选中的模块检查 | WSL 只做定向/模块验证，不重复云端全量 |
 | PR（必过） | `pull_request`，以及合入 `main` 后的 `push` | impact 选中的确定性 lane，含 `check:agent-flow`、`check:agent-e2e`；覆盖率只报告不阻塞 | 无模型、无 provider、无 secret、fork 可跑 |
-| 全量 | `nightly-quality.yml` 每天定时（北京时间 03:00）+ 维护者手动触发 | 无路径选择地运行 workflow 列出的确定性检查、独立 macOS Swift 检查和模块图健康度；含 `check:desktop-ui-smoke` | 无模型、无 secret；手动 `skip_coverage` 默认关闭，UI smoke 缺依赖会明确跳过 |
+| 全量 | `nightly-quality.yml` 每天定时（北京时间 03:00）+ 维护者手动触发 | 无路径选择地运行 workflow 列出的确定性检查、独立 macOS Swift 检查和模块图健康度；含 `check:release-surface`、`check:desktop-ui-smoke` | 无模型、无 secret；手动 `skip_coverage` 默认关闭，UI smoke 缺依赖会明确跳过 |
 | Release | 维护者手动 `bun run quality:release -- --allow-live --provider-model <selector>:main` | PR checks、baseline catalog/live、native 与当前平台打包 smoke；全量层另行执行，非自动包含其全部检查 | 真实模型需维护者显式授权；不是发布 workflow 本身 |
 
-PR 按影响面选择检查；无人触达的检查和整套组合问题交给每日全量层。频率由 `pr-quality-workflow.test.ts` 固定，改频率须维护者决定。真实模型只用于 Release 与明确授权额度的维护者手动 smoke；普通贡献者无需 provider 即可运行 PR 层。
+手动全量统一使用 `nightly-quality.yml`；原 `push-quality.yml` 入口退役，本地 `quality:push` 语义不变。PR 按影响面选择检查；无人触达的检查和整套组合问题交给每日全量层。频率由 `pr-quality-workflow.test.ts` 固定，改频率须维护者决定。真实模型只用于 Release 与明确授权额度的维护者手动 smoke；普通贡献者无需 provider 即可运行 PR 层。
 
 ## AI Coding Agent 修复循环
 

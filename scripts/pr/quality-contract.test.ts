@@ -224,6 +224,34 @@ describe('feature quality contract', () => {
     expect(buildSidecars).toContain("process.arch")
   })
 
+  test('uses one native packaging producer before all artifact and Electron host checks', () => {
+    const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'))
+    const { scripts: desktop } = JSON.parse(readFileSync('desktop/package.json', 'utf8'))
+    const electronChecks = desktop['check:electron'].split(' && ')
+
+    // Packaging already builds Electron; retain every other standalone host check.
+    expect(electronChecks.at(-1)).toBe('bun run build:electron')
+    expect(electronChecks.slice(0, -1)).toEqual([
+      'bun run test:package:dir',
+      'node ./node_modules/typescript/bin/tsc -p electron/tsconfig.json',
+      'bun test ./electron',
+    ])
+    expect(desktop['electron:build'].split(' && ')).toEqual([
+      'bun run build:sidecars', 'bun run build', 'bun run build:electron',
+    ])
+    expect(scripts['check:electron']).toBe('cd desktop && bun run check:electron')
+    expect(scripts['check:native'].split(' && ')).toEqual([
+      'bun run check:agent-desktop',
+      'bun run check:swift',
+      'cd desktop',
+      'CSC_IDENTITY_AUTO_DISCOVERY=false bun run electron:package:dir',
+      'bun run test:compiled-sidecar-smoke',
+      ...electronChecks.slice(0, -1),
+      'cd ..',
+      'bun run test:package-smoke:current',
+    ])
+  })
+
   test('keeps stateful server tests deterministic', () => {
     const serverRunner = readFileSync('scripts/pr/run-server-tests.ts', 'utf8')
     const providerRunner = readFileSync('scripts/pr/run-provider-contract-tests.ts', 'utf8')

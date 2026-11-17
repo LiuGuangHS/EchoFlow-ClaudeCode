@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { parse } from 'yaml'
 
 type Step = {
@@ -41,7 +41,7 @@ function requirePreparation(steps: Step[], command: string, workspaces: string[]
 }
 
 describe('quality CI dependency preparation', () => {
-  test.each(['pr-quality', 'nightly-quality', 'push-quality'])(
+  test.each(['pr-quality', 'nightly-quality'])(
     '%s caches Bun downloads with platform, actual version, lockfiles and dependency-set identity', name => {
       const jobs = workflow(name).jobs
       let cachedJobs = 0
@@ -78,7 +78,10 @@ describe('quality CI dependency preparation', () => {
           const expectedCondition = name === 'pr-quality' && jobId === 'policy-enforcement'
             ? "needs.scope-plan.outputs.policy_checks == 'true'"
             : undefined
-          expect(install.if).toBe(expectedCondition)
+          const installCondition = name === 'pr-quality' && jobId === 'desktop-checks' && install['working-directory'] === 'mobile'
+            ? 'matrix.shard == 2'
+            : expectedCondition
+          expect(install.if).toBe(installCondition)
           expect(cache.if).toBe(expectedCondition)
           expect(steps[version].if).toBe(expectedCondition)
           expect(install['continue-on-error']).toBeUndefined()
@@ -113,9 +116,9 @@ describe('quality CI dependency preparation', () => {
     }
   })
 
-  test('manual runtime checks prepare ripgrep and the real Host harness without dropping checks', () => {
-    const jobs = workflow('push-quality').jobs
-    const steps = jobs.server.steps
+  test('consolidates manual quality into the nightly full entrypoint without dropping release or runtime checks', () => {
+    expect(existsSync(new URL('../../.github/workflows/push-quality.yml', import.meta.url))).toBe(false)
+    const steps = workflow('nightly-quality').jobs['full-deterministic'].steps
     const check = requirePreparation(steps, 'bun run check:server', ['.', 'desktop', 'adapters'])
     const ripgrep = steps.findIndex(step => step.run?.includes('apt-get install') && /\bripgrep\b/.test(step.run))
     expect(ripgrep).toBeGreaterThanOrEqual(0)
@@ -126,27 +129,28 @@ describe('quality CI dependency preparation', () => {
     expect(node).toBeGreaterThanOrEqual(0)
     expect(harness).toBeGreaterThan(node)
     expect(harness).toBeLessThan(check)
-    expect(steps[harness].if).toBeUndefined()
-    expect(steps.filter(step => step.run?.startsWith('bun run check:')).map(step => step.run)).toEqual([
-      'bun run check:server',
-      'bun run check:provider-contract',
-      'bun run check:chat-contract',
-      'bun run check:agent-flow',
-      'bun run check:adapters',
-    ])
-    expect(jobs['push-quality-gate'].needs).toEqual(['contract', 'policy', 'server', 'desktop'])
-    expect(jobs['push-quality-gate'].if).toBe('always()')
+    const ready = steps.findIndex(step => step.id === 'dependencies')
+    for (const command of ['check:release-surface', 'check:policy', 'check:server', 'check:provider-contract', 'check:chat-contract', 'check:agent-flow', 'check:adapters']) {
+      const index = steps.findIndex(step => step.run === `bun run ${command}`)
+      expect(index, command).toBeGreaterThan(ready)
+      expect(steps[index].id, command).toBeTruthy()
+      expect(steps[index].if, command).toBe("${{ !cancelled() && steps.dependencies.outcome == 'success' }}")
+      expect(steps[index]['continue-on-error'], command).toBeUndefined()
+    }
+    const scripts = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).scripts
+    expect(scripts['quality:push']).toBe('bun run quality:gate --mode pr --skip coverage')
   })
 
-  test('manual desktop checks install sidecar adapters and phone H5 dependencies with Node 22', () => {
-    const steps = workflow('push-quality').jobs.desktop.steps
-    const check = requirePreparation(steps, 'bun run check:desktop', ['.', 'desktop', 'adapters', 'mobile'])
+  test('only the desktop build shard prepares phone H5 dependencies and Node 22', () => {
+    const steps = workflow('pr-quality').jobs['desktop-checks'].steps
+    const check = requirePreparation(steps, 'bun run check:desktop --shard=${{ matrix.shard }}/2', ['.', 'desktop', 'adapters'])
     const node = steps.findIndex(step => step.uses === 'actions/setup-node@v5' && String(step.with?.['node-version']) === '22')
     const mobile = steps.findIndex(step => frozenInstall(step) && step['working-directory'] === 'mobile')
     expect(node).toBeGreaterThanOrEqual(0)
     expect(node).toBeLessThan(mobile)
-    expect(node).toBeLessThan(check)
-    expect(steps[node].if).toBeUndefined()
+    expect(mobile).toBeLessThan(check)
+    expect(steps[node].if).toBe('matrix.shard == 2')
+    expect(steps[mobile].if).toBe('matrix.shard == 2')
   })
 
   test('nightly selection drift uses the complete-tree entrypoint without a path cap', () => {

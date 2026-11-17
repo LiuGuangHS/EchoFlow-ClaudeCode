@@ -34,7 +34,7 @@
     "check:mobile": "bun --no-env-file run scripts/pr/run-mobile-checks.ts",
     "check:electron": "cd desktop && bun run check:electron",
     "check:adapters": "cd adapters && bun test",
-    "check:native": "bun run check:agent-desktop && bun run check:swift && cd desktop && bun run build:sidecars && bun run test:compiled-sidecar-smoke && bun run check:electron && CSC_IDENTITY_AUTO_DISCOVERY=false bun run electron:package:dir && cd .. && bun run test:package-smoke:current",
+    "check:native": "bun run check:agent-desktop && bun run check:swift && cd desktop && CSC_IDENTITY_AUTO_DISCOVERY=false bun run electron:package:dir && bun run test:compiled-sidecar-smoke && bun run test:package:dir && node ./node_modules/typescript/bin/tsc -p electron/tsconfig.json && bun test ./electron && cd .. && bun run test:package-smoke:current",
     "check:docs": "npm --prefix site ci --loglevel=error && npm --prefix site run --loglevel=error build && npm --prefix site run --loglevel=error check",
     "check:persistence-upgrade": "bun run scripts/quality-gate/persistence-upgrade.ts",
     "check:quarantine": "bun run scripts/quality-gate/quarantine.ts --enforce-review-date",

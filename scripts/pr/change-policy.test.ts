@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { codeOwnerLogins, evaluateChangePolicy } from './change-policy'
 import { createSandboxedTestEnvironment } from './test-environment'
+import { WIDE_NET_FALLBACK_FILES } from './module-graph'
 
 describe('evaluateChangePolicy', () => {
   test('routes the product identity manifest to policy checks', () => {
@@ -424,6 +425,73 @@ describe('evaluateChangePolicy', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('agent guidance check selection', () => {
+  test.each([
+    'desktop/src/components/chat/ChatInput',
+    'desktop/electron/services',
+    'desktop/scripts',
+    'desktop/src-tauri/resources',
+    'native/agent-desktop/src',
+    'src/server/ws',
+    'src/server/config/provider',
+    'src/server/services/localIndex',
+    'adapters/common',
+    'harness/src',
+    'scripts/quality-gate/mock-llm',
+    'scripts/quality-gate/coverage',
+  ].flatMap(directory => ['AGENTS.md', 'AGENTS.override.md'].map(name => `${directory}/${name}`)))(
+    'keeps instruction-only changes on the policy lane: %s', file => {
+      const result = evaluateChangePolicy([file])
+      expect(Object.keys(result.checks).filter(check => result.checks[check as keyof typeof result.checks])).toEqual(['policy'])
+      expect(result.areas).toEqual([])
+      expect(result.blocked).toBe(false)
+      expect(result.missingTestSignals).toEqual([])
+    },
+  )
+
+  test.each([
+    ['desktop/src/pages/Settings.tsx', 'desktop/src/pages/Settings.test.tsx'],
+    ['desktop/electron/main.ts', 'desktop/electron/main.test.ts'],
+    ['native/cu-helper/Sources/cu-helper/VirtualCursor.swift'],
+  ])('preserves real source checks beside guidance: %j', (...sources) => {
+    for (const name of ['AGENTS.md', 'AGENTS.override.md']) {
+      const instructions = [
+        `desktop/src/components/chat/ChatInput/${name}`,
+        `desktop/electron/services/${name}`,
+        `native/agent-desktop/src/${name}`,
+      ]
+      const baseline = evaluateChangePolicy(sources)
+      const result = evaluateChangePolicy([...sources, ...instructions])
+      expect(result.checks).toEqual({ ...baseline.checks, policy: true })
+      expect(result.areas).toEqual(baseline.areas)
+      expect(result.missingTestSignals).toEqual(baseline.missingTestSignals)
+      expect(result.blocked).toBe(baseline.blocked)
+    }
+  })
+
+  test('preserves importer widening beside guidance', () => {
+    const result = evaluateChangePolicy(
+      ['src/shared/modelReasoning.ts', 'src/shared/modelReasoning.test.ts', 'desktop/electron/AGENTS.override.md'],
+      [],
+      ['desktop/src/lib/runtimeSelection.ts', 'desktop/electron/services/sidecarManager.ts'],
+    )
+    expect(result.checks).toMatchObject({ desktop: true, desktopNative: true, policy: true })
+    expect(result.areas).toEqual([])
+    expect(result.blocked).toBe(false)
+  })
+
+  test('preserves graph failure fallback for instruction-only changes', () => {
+    const result = evaluateChangePolicy(['desktop/src/AGENTS.md'], [], WIDE_NET_FALLBACK_FILES)
+    expect(result.checks).toMatchObject({
+      desktop: true, mobile: true, server: true, adapters: true, desktopNative: true,
+      providerContract: true, chatContract: true, agentFlow: true, agentE2e: true,
+      persistence: true, policy: true, docs: false, coverage: false,
+    })
+    expect(result.areas).toEqual([])
+    expect(result.blocked).toBe(false)
   })
 })
 

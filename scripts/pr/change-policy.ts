@@ -363,7 +363,8 @@ export function evaluateChangePolicy(
   const dependentFiles = [...new Set(
     inputDependentFiles.map(normalizePath).filter((file) => file && !changedSet.has(file)),
   )].sort()
-  const selectionFiles = [...files, ...dependentFiles]
+  // Guidance selects policy, not product checks, even under a product prefix.
+  const selectionFiles = [...files, ...dependentFiles].filter(file => !isAgentInstructionPath(file))
   const areas = new Set<ChangeArea>()
 
   for (const file of files) {
@@ -443,7 +444,7 @@ export function evaluateChangePolicy(
       file.startsWith('src/') ||
       file.startsWith('adapters/')
     )) ||
-    file.startsWith('scripts/quality-gate/coverage') ||
+    (file.startsWith('scripts/quality-gate/coverage') && !isAgentInstructionPath(file)) ||
     file === 'package.json' ||
     file === 'desktop/package.json' ||
     file === 'desktop/bun.lock'

@@ -88,6 +88,10 @@ jobs:
         id: policy
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:policy
+      - name: Release surface audit
+        id: release-surface
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: bun run check:release-surface
       - name: Product identity consistency
         id: product-identity
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}

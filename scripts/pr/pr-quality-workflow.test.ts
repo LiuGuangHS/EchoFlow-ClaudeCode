@@ -194,7 +194,7 @@ describe('PR quality workflow', () => {
   })
 
   test('prepares the installed Electron distribution before offline native packaging only', () => {
-    for (const file of ['pr-quality.yml', 'nightly-quality.yml', 'push-quality.yml']) {
+    for (const file of ['pr-quality.yml', 'nightly-quality.yml']) {
       const jobs = workflowJobs(readFileSync(`.github/workflows/${file}`, 'utf8'))
       for (const [name, job] of Object.entries(jobs)) {
         const steps = job.steps ?? []
@@ -341,7 +341,7 @@ describe('PR quality workflow', () => {
     expect(packageJson.scripts['check:swift']).toBe('bun run scripts/pr/run-swift-checks.ts')
     expect(packageJson.scripts['check:policy']).toContain('scripts/pr/run-swift-checks.test.ts')
     expect(packageJson.scripts['check:policy']).toContain('scripts/quality-gate/package-smoke/index.test.ts')
-    for (const command of ['check:swift', 'build:sidecars', 'test:compiled-sidecar-smoke', 'check:electron', 'electron:package:dir', 'test:package-smoke:current']) {
+    for (const command of ['check:swift', 'test:compiled-sidecar-smoke', 'test:package:dir', 'electron:package:dir', 'test:package-smoke:current']) {
       expect(packageJson.scripts['check:native']).toContain(`bun run ${command}`)
     }
   })
@@ -703,6 +703,7 @@ describe('full quality workflow', () => {
     expect(schedule).toEqual([{ cron: '0 19 * * *' }])
     for (const command of [
       'bun run check:policy',
+      'bun run check:release-surface',
       'bun run check:agent-flow',
       'bun run check:agent-e2e',
       'bun run check:server',
@@ -729,7 +730,7 @@ describe('full quality workflow', () => {
   test('installs the locked real Host harness and a supported Node before runtime and coverage suites', () => {
     const harness = JSON.parse(readFileSync('harness/package.json', 'utf8'))
     expect(harness.engines.node).toBe('>=24.9.0')
-    for (const file of ['pr-quality.yml', 'nightly-quality.yml', 'push-quality.yml', 'release-desktop.yml']) {
+    for (const file of ['pr-quality.yml', 'nightly-quality.yml', 'release-desktop.yml']) {
       const jobs = workflowJobs(readFileSync(`.github/workflows/${file}`, 'utf8'))
       for (const [name, job] of Object.entries(jobs)) {
         const steps = job.steps ?? []
@@ -749,7 +750,7 @@ describe('full quality workflow', () => {
     // Agent and skill discovery lists files through ripgrep. A job that runs the
     // runtime suites without it reports "create agent" as a 500, which kept the
     // full sweep red on every run while the PR gate, which installs it, stayed green.
-    for (const file of ['.github/workflows/pr-quality.yml', '.github/workflows/nightly-quality.yml', '.github/workflows/push-quality.yml']) {
+    for (const file of ['.github/workflows/pr-quality.yml', '.github/workflows/nightly-quality.yml']) {
       for (const [name, job] of Object.entries(workflowJobs(readFileSync(file, 'utf8')))) {
         const steps = job.steps ?? []
         const check = steps.findIndex(step => /\bcheck:(server|coverage|native)\b/.test(step.run ?? ''))
