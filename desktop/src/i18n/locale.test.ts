@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   getInitialLocale,
   initializeLocale,
+  migrateLegacyLocalePreference,
+  readStoredLocale,
   resolveSupportedLocale,
   subscribeLocaleChanges,
 } from './locale'
@@ -47,6 +49,42 @@ describe('locale detection', () => {
       onLocaleChanged: vi.fn().mockResolvedValue(() => {}),
     })).resolves.toBe('kr')
     expect(localStorage.getItem('echoflow-code-locale')).toBe('zh')
+  })
+
+  it('does not revive an eagerly imported locale when another migration keeps the global schema old', () => {
+    localStorage.setItem('cc-haha.persistence.schemaVersion', '8')
+    localStorage.setItem('echoflow-code-locale', 'zh')
+    expect(readStoredLocale()).toBe('zh')
+    localStorage.removeItem('cc-haha-locale')
+    expect(readStoredLocale()).toBeNull()
+    expect(localStorage.getItem('echoflow-code-locale')).toBe('zh')
+  })
+
+  it('retries an eager target failure without importing through an unreadable schema', () => {
+    localStorage.setItem('echoflow-code-locale', 'zh')
+    const setItem = localStorage.setItem.bind(localStorage)
+    expect(() => migrateLegacyLocalePreference({
+      getItem: localStorage.getItem.bind(localStorage),
+      setItem: (key, value) => {
+        if (key === 'cc-haha-locale') throw new Error('quota')
+        setItem(key, value)
+      },
+    })).toThrow()
+    expect(readStoredLocale()).toBe('zh')
+    const write = vi.fn()
+    expect(() => migrateLegacyLocalePreference({
+      getItem: () => { throw new Error('schema unavailable') },
+      setItem: write,
+    })).toThrow()
+    expect(write).not.toHaveBeenCalled()
+  })
+
+  it('leaves a future global schema and all locale bytes untouched during eager reads', () => {
+    localStorage.setItem('cc-haha.persistence.schemaVersion', ' 10\n')
+    localStorage.setItem('echoflow-code-locale', 'zh')
+    const before = { ...localStorage }
+    expect(readStoredLocale()).toBeNull()
+    expect({ ...localStorage }).toEqual(before)
   })
 
   it('normalizes BCP 47 tags and selects the first supported language', () => {

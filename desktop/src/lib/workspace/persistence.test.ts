@@ -97,6 +97,46 @@ describe('serialize', () => {
   })
 })
 
+describe('write boundary', () => {
+  it.each([
+    ' {"version":99,"newNavigation":[]}\n',
+    '{not json',
+    '{"version":2,"sessions":null}',
+  ])('does not replace unsupported or corrupt bytes (%s)', (raw) => {
+    const storage = memoryStorage()
+    storage.setItem(WORKSPACE_STORAGE_KEY, raw)
+    writeWorkspaceStorage(storage, serializeWorkspace({}, { sideWidth: 640, bottomHeight: 300 }))
+    expect(storage.getItem(WORKSPACE_STORAGE_KEY)).toBe(raw)
+  })
+
+  it('does not revive cleared optional fields or transfer extensions to a different tab kind', () => {
+    const storage = memoryStorage()
+    storage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify({
+      version: WORKSPACE_STORAGE_VERSION,
+      sessions: { s1: { tabs: [
+        { kind: 'file', id: 'f1', path: 'old.ts', line: 10, extension: { keep: true } },
+        { kind: 'review', id: 'r1', source: { kind: 'staged' }, viewedSnapshot: 'old', viewedPaths: ['a.ts'] },
+        { kind: 'browser', id: 'reused', storageId: 'old', extension: 'wrong-kind' },
+      ] } },
+    }))
+    writeWorkspaceStorage(storage, {
+      version: WORKSPACE_STORAGE_VERSION, sideWidth: 640, bottomHeight: 300,
+      sessions: { s1: {
+        layout: 'split', bottomOpen: false, activeSideTabId: 'f1', activeBottomTabId: null, nextTerminalOrdinal: 1,
+        tabs: [
+          { kind: 'file', id: 'f1', path: 'new.ts', preview: false },
+          { kind: 'review', id: 'r1', source: { kind: 'staged' }, selectedPath: null, viewedPaths: [] },
+          { kind: 'file', id: 'reused', path: 'replacement.ts', preview: false },
+        ],
+      } },
+    })
+    const written = JSON.parse(storage.getItem(WORKSPACE_STORAGE_KEY)!)
+    expect(written.sessions.s1.tabs[0]).toEqual({ kind: 'file', id: 'f1', path: 'new.ts', preview: false, extension: { keep: true } })
+    expect(written.sessions.s1.tabs[1]).not.toHaveProperty('viewedSnapshot')
+    expect(written.sessions.s1.tabs[2]).not.toHaveProperty('extension')
+  })
+})
+
 describe('hydrate', () => {
   it('repairs duplicate file identities and preview slots written by the old undo behavior', () => {
     const restored = hydrateWorkspace({

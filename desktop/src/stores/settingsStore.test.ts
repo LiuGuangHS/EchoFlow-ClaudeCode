@@ -1936,6 +1936,26 @@ describe('settingsStore theme persistence', () => {
   })
 })
 
+describe('settingsStore delegates versioned theme intent', () => {
+  beforeEach(() => { vi.resetModules(); window.localStorage.clear() })
+
+  it('keeps desktop picks following the OS and applies H5 manual intent as one operation', async () => {
+    const { useSettingsStore } = await import('./settingsStore')
+    const { useUIStore } = await import('./uiStore')
+    useUIStore.getState().setFollowSystemTheme(true)
+    await useSettingsStore.getState().setTheme('ink-blue')
+    expect(useUIStore.getState()).toMatchObject({ theme: 'white', followSystemTheme: true, darkTheme: 'ink-blue' })
+    const write = vi.spyOn(Storage.prototype, 'setItem')
+    await useSettingsStore.getState().setTheme('celadon', false)
+    const records = write.mock.calls.filter(([key]) => key === 'echoflow-code-theme-preferences').map(([, value]) => JSON.parse(value))
+    expect(records).toHaveLength(2)
+    expect(records[0]).toMatchObject({ theme: 'celadon', followSystem: false, mirrorSync: { pending: true } })
+    expect(records[1]).toMatchObject({ theme: 'celadon', followSystem: false, mirrorSync: { pending: false } })
+    expect(useUIStore.getState()).toMatchObject({ theme: 'celadon', followSystemTheme: false, themePersistence: { status: 'saved' } })
+    write.mockRestore()
+  })
+})
+
 describe('settingsStore H5 access behavior', () => {
   beforeEach(() => {
     vi.resetModules()

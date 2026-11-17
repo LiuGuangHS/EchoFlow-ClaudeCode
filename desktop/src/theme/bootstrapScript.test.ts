@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { beforeEach, afterEach, describe, expect, it } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   DARK_THEME_MODES,
@@ -216,6 +216,52 @@ describe('index.html pre-hydration theme script', () => {
     stubMatchMedia(true)
 
     expect(runBootstrapScript().theme).toBe('white')
+  })
+
+  it.each([
+    ['clean authority', false, ['paper', 'paper', 'dark', '0'], 'celadon'],
+    ['downgrade proposal', false, ['ink-blue', 'paper', 'ink-blue', '0'], 'ink-blue'],
+    ['pending partial mirrors', true, ['celadon', 'paper', 'dark', '0'], 'celadon'],
+    ['pending incompatible mirrors', true, ['ink-blue', 'paper', 'dark', '0'], 'celadon'],
+  ] as const)('uses explicit %s expectations before paint and hydration', (_name, pending, mirrors, expected) => {
+    seedStorage({ theme: mirrors[0], lightTheme: mirrors[1], darkTheme: mirrors[2], follow: mirrors[3] })
+    localStorage.setItem('echoflow-code-theme-preferences', JSON.stringify({ version: 1, theme: 'celadon', lightTheme: 'celadon', darkTheme: 'ink-blue', followSystem: false, mirrorSync: { baseline: ['paper', 'paper', 'dark', '0'], pending } }))
+    stubMatchMedia(true)
+    expect(runBootstrapScript().theme).toBe(expected)
+    expect(resolveViaAppBundle('dark')).toBe(expected)
+  })
+
+  it.each(THEME_MODES)('keeps versioned %s fixed on either OS ground and follows both selected grounds when enabled', (theme) => {
+    const baseline = ['paper', 'paper', 'dark', '0']
+    seedStorage({ theme: 'paper', lightTheme: 'paper', darkTheme: 'dark', follow: '0' })
+    for (const followSystem of [false, true]) {
+      localStorage.setItem('echoflow-code-theme-preferences', JSON.stringify({ version: 1, theme, lightTheme: 'celadon', darkTheme: 'ink-blue', followSystem, mirrorSync: { baseline, pending: false } }))
+      for (const darkOS of [false, true]) {
+        stubMatchMedia(darkOS)
+        const expected = followSystem ? darkOS ? 'ink-blue' : 'celadon' : theme
+        expect(runBootstrapScript()).toEqual({ theme: expected, colorScheme: isDarkTheme(expected) ? 'dark' : 'light', themeColor: THEME_BACKGROUNDS[expected] })
+        expect(resolveViaAppBundle(darkOS ? 'dark' : 'light')).toBe(expected)
+      }
+    }
+  })
+
+  it.each(['future', 'corrupt', 'record-read', 'mirror-read', 'invalid-sync'])('is display-only and preserves bytes for %s', (kind) => {
+    seedStorage({ theme: 'paper', lightTheme: 'paper', darkTheme: 'dark', follow: '0' })
+    const key = 'echoflow-code-theme-preferences'
+    const raw = kind === 'future' ? '{"version":7}' : kind === 'corrupt' ? '{broken' : JSON.stringify({ version: 1, theme: 'celadon', lightTheme: 'celadon', darkTheme: 'ink-blue', followSystem: false, mirrorSync: kind === 'invalid-sync' ? {} : { baseline: ['paper', 'paper', 'dark', '0'], pending: false } })
+    localStorage.setItem(key, raw)
+    const before = { ...localStorage }
+    const read = Storage.prototype.getItem
+    const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, name: string) {
+      if ((kind === 'record-read' && name === key) || (kind === 'mirror-read' && name === 'echoflow-code-dark-theme')) throw new Error('fixture read failure')
+      return read.call(this, name)
+    })
+    try {
+      const expected = ['mirror-read', 'invalid-sync'].includes(kind) ? 'celadon' : 'paper'
+      expect(runBootstrapScript().theme).toBe(expected)
+      expect(resolveViaAppBundle('light')).toBe(expected)
+      expect({ ...localStorage }).toEqual(before)
+    } finally { spy.mockRestore() }
   })
 
   it('starts a fresh install dark when the OS is dark', () => {

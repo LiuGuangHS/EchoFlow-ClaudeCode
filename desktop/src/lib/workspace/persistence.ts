@@ -374,17 +374,89 @@ export function hydrateWorkspace(
   }
 }
 
-export function readWorkspaceStorage(storage: StorageLike | null): unknown {
-  if (!storage) return null
+type WorkspaceStorageRead =
+  | { status: 'missing' | 'unavailable'; value: null }
+  | { status: 'corrupt'; value: unknown }
+  | { status: 'supported' | 'unsupported'; value: Record<string, unknown> }
+
+function readWorkspaceRecord(storage: StorageLike | null): WorkspaceStorageRead {
+  if (!storage) return { status: 'unavailable', value: null }
+  let raw: string | null
   try {
-    const raw = storage.getItem(WORKSPACE_STORAGE_KEY)
-    if (!raw) return null
-    return JSON.parse(raw)
+    raw = storage.getItem(WORKSPACE_STORAGE_KEY)
   } catch {
-    // A corrupt entry must not take the app down with it. The workspace simply
-    // starts empty, which is also what a fresh install looks like.
-    return null
+    return { status: 'unavailable', value: null }
   }
+  if (raw === null) return { status: 'missing', value: null }
+  try {
+    const value: unknown = JSON.parse(raw)
+    if (!isRecord(value)) return { status: 'corrupt', value }
+    // Version precedes current-schema validation: future records may have no sessions.
+    if (typeof value.version === 'number' && Number.isFinite(value.version) &&
+        value.version !== 1 && value.version !== WORKSPACE_STORAGE_VERSION) {
+      return { status: 'unsupported', value }
+    }
+    if ((value.version === 1 || value.version === WORKSPACE_STORAGE_VERSION) && isRecord(value.sessions)) {
+      return { status: 'supported', value }
+    }
+    return { status: 'corrupt', value }
+  } catch {
+    return { status: 'corrupt', value: null }
+  }
+}
+
+export function readWorkspaceStorage(storage: StorageLike | null): unknown {
+  // Keep the existing parsed-state API; only the writer needs the read outcome.
+  return readWorkspaceRecord(storage).value
+}
+
+const WORKSPACE_FIELDS = new Set(['version', 'sideWidth', 'bottomHeight', 'sessions'])
+const SESSION_FIELDS = new Set(['layout', 'bottomOpen', 'activeSideTabId', 'activeBottomTabId', 'nextTerminalOrdinal', 'tabs'])
+const TAB_FIELDS = new Set([
+  'kind', 'id', 'preview', 'path', 'line', 'storageId', 'restoreUrl', 'title',
+  'source', 'selectedPath', 'viewedPaths', 'viewedSnapshot', 'dock', 'cwd', 'ordinal',
+])
+// Extensions must not smuggle old host resources, payloads or transient state back to disk.
+const NON_PERSISTED_FIELDS = new Set([
+  'runtimeId', 'browserTabId', 'webContents', 'webContentsId', 'pty', 'ptyId', 'ptyHandle',
+  'handle', 'handles', 'hostHandle', 'hostResource', 'fileBytes', 'bytes', 'content', 'contents',
+  'cookie', 'cookies', 'cookieJar', 'commandHistory', 'output', 'scrollback',
+  'loadError', 'status', 'closed', 'focus', 'origin', 'createdAt', 'sideChatId',
+])
+
+function sanitizeExtension(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeExtension)
+  if (!isRecord(value)) return value
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !NON_PERSISTED_FIELDS.has(key))
+    .map(([key, entry]) => [key, sanitizeExtension(entry)]))
+}
+
+function extensionFields(value: unknown, known: Set<string>): Record<string, unknown> {
+  if (!isRecord(value)) return {}
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !known.has(key) && !NON_PERSISTED_FIELDS.has(key))
+    .map(([key, entry]) => [key, sanitizeExtension(entry)]))
+}
+
+function preserveWorkspaceExtensions(value: PersistedWorkspace, previous: Record<string, unknown>): PersistedWorkspace {
+  const previousSessions = isRecord(previous.sessions) ? previous.sessions : {}
+  const sessions = Object.fromEntries(Object.entries(value.sessions).map(([sessionId, session]) => {
+    const oldSession = previousSessions[sessionId]
+    const oldTabs = new Map<string, Record<string, unknown>>()
+    if (isRecord(oldSession) && Array.isArray(oldSession.tabs)) {
+      for (const tab of oldSession.tabs) {
+        if (isRecord(tab) && typeof tab.id === 'string' && !oldTabs.has(tab.id)) oldTabs.set(tab.id, tab)
+      }
+    }
+    const tabs = session.tabs.map(tab => {
+      const oldTab = oldTabs.get(tab.id)
+      return { ...extensionFields(oldTab?.kind === tab.kind ? oldTab : null, TAB_FIELDS), ...tab }
+    })
+    // Iterate the new identities only: closed tabs/sessions must stay deleted.
+    return [sessionId, { ...extensionFields(oldSession, SESSION_FIELDS), ...session, tabs }]
+  }))
+  return { ...extensionFields(previous, WORKSPACE_FIELDS), ...value, sessions }
 }
 
 export function writeWorkspaceStorage(storage: StorageLike | null, value: PersistedWorkspace): void {
@@ -393,7 +465,10 @@ export function writeWorkspaceStorage(storage: StorageLike | null, value: Persis
     // Written even with no sessions: `sideWidth`/`bottomHeight` live on the same
     // document, and dropping it because the last tab closed would silently
     // reset a panel the user had resized.
-    storage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(value))
+    const current = readWorkspaceRecord(storage)
+    if (current.status !== 'missing' && current.status !== 'supported') return
+    const next = current.status === 'supported' ? preserveWorkspaceExtensions(value, current.value) : value
+    storage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(next))
   } catch {
     // Private-mode storage and quota failures are not worth losing a keystroke
     // over; the workspace keeps working for this run.

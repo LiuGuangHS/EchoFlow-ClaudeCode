@@ -129,7 +129,7 @@ type SettingsStore = {
   setLocalRedaction: (settings: LocalRedactionSettings) => Promise<void>
   acceptAutoModeOptIn: () => Promise<void>
   setLocale: (locale: Locale) => void
-  setTheme: (theme: ThemeMode) => Promise<void>
+  setTheme: (theme: ThemeMode, followSystem?: boolean) => Promise<void>
   setChatSendBehavior: (behavior: ChatSendBehavior) => Promise<void>
   fetchOutputStyles: (workDir?: string | null) => Promise<void>
   setOutputStyle: (outputStyle: string, workDir?: string | null) => Promise<void>
@@ -521,8 +521,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   // Kept as the Settings page's entry point; uiStore owns the state.
-  setTheme: async (theme) => {
-    useUIStore.getState().setTheme(theme)
+  setTheme: async (theme, followSystem) => {
+    useUIStore.getState().setTheme(theme, followSystem)
   },
 
   setChatSendBehavior: async (behavior) => {

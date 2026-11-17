@@ -9,6 +9,7 @@ import {
   normalizeAppZoomLevel,
 } from './appZoom'
 import { browserHost } from './desktopHost/browserHost'
+import { runDesktopPersistenceMigrations } from './persistenceMigrations'
 
 describe('appZoom', () => {
   beforeEach(() => {
@@ -51,6 +52,26 @@ describe('appZoom', () => {
 
     expect(document.documentElement.getAttribute('data-app-zoom-percent')).toBe('125')
     expect(window.localStorage.getItem(APP_ZOOM_STORAGE_KEY)).toBeNull()
+  })
+
+  it('keeps fresh installs at default zoom without writing a preference', async () => {
+    runDesktopPersistenceMigrations()
+
+    await expect(initializeAppZoom()).resolves.toBe(1)
+    expect(document.documentElement.getAttribute('data-app-zoom-percent')).toBe('100')
+    expect(localStorage.getItem(APP_ZOOM_STORAGE_KEY)).toBeNull()
+  })
+
+  it('initializes zoom from the forward-migrated v0.7.4 value before the first frame', async () => {
+    localStorage.setItem('echoflow-code-app-zoom', '1.25')
+
+    runDesktopPersistenceMigrations()
+    await expect(initializeAppZoom()).resolves.toBe(1.25)
+
+    expect(document.documentElement.getAttribute('data-app-zoom-percent')).toBe('125')
+    expect(document.documentElement.style.getPropertyValue('--app-zoom')).toBe('1.25')
+    expect(localStorage.getItem(APP_ZOOM_STORAGE_KEY)).toBe('1.25')
+    expect(localStorage.getItem('echoflow-code-app-zoom')).toBe('1.25')
   })
 
   it('persists app zoom changes', async () => {

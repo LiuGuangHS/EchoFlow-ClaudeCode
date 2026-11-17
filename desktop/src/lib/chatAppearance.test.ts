@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { CHAT_APPEARANCE_STORAGE_KEY, DEFAULT_CHAT_APPEARANCE, getChatAppearanceStyle, migrateChatAppearance, normalizeChatAppearance, persistChatAppearance, readChatAppearance } from './chatAppearance'
+import { runDesktopPersistenceMigrations } from './persistenceMigrations'
 
 describe('chat appearance preferences', () => {
   beforeEach(() => localStorage.clear())
@@ -39,6 +40,20 @@ describe('chat appearance preferences', () => {
     persistChatAppearance({ font: 'serif', fontSize: 18, width: 'full' })
     expect(readChatAppearance()).toEqual({ font: 'serif', fontSize: 18, width: 'full' })
     expect(JSON.parse(localStorage.getItem(CHAT_APPEARANCE_STORAGE_KEY)!)).toHaveProperty('extra', 'keep')
+  })
+
+  it('reads the migrated v0.7.4 font, size and width and retains its unknown fields on edits', () => {
+    const legacy = JSON.stringify({ version: 1, font: 'serif', fontSize: 18, width: 'wide', extra: { keep: true } })
+    localStorage.setItem('echoflow-code-chat-appearance', legacy)
+
+    runDesktopPersistenceMigrations()
+
+    expect(readChatAppearance()).toEqual({ font: 'serif', fontSize: 18, width: 'wide' })
+    persistChatAppearance({ ...readChatAppearance(), fontSize: 20 })
+    expect(JSON.parse(localStorage.getItem(CHAT_APPEARANCE_STORAGE_KEY)!)).toEqual({
+      version: 1, font: 'serif', fontSize: 20, width: 'wide', extra: { keep: true },
+    })
+    expect(localStorage.getItem('echoflow-code-chat-appearance')).toBe(legacy)
   })
 
   it('preserves future schemas through reads, migrations and user changes', () => {
