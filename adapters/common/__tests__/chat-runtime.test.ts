@@ -33,6 +33,12 @@ class FakeBridge {
   sent: SentMessage[] = []
   sentLeaseIds: Array<string | undefined> = []
   permissionResponses: Array<{ requestId: string; allowed: boolean; rule?: string }> = []
+  syncRequests: string[] = []
+  requestSyncState(chatId: string): boolean {
+    this.syncRequests.push(chatId)
+    return true
+  }
+
   stopped: string[] = []
   resets: string[] = []
   sendResult = true
@@ -554,6 +560,65 @@ describe('ImChatRuntime server stream', () => {
     await inbound(runtime, '1')
 
     expect(bridge.permissionResponses).toEqual([{ requestId: 'req-1', allowed: true, rule: undefined }])
+  })
+
+  it('retains a sent decision until owner resolution and never reports it as approved', async () => {
+    const { runtime, bridge, notices } = createRuntime()
+    await inbound(runtime, 'run something')
+    await runtime.handleServerMessage(CHAT_ID, { type: 'permission_request', requestId: 'req-1', toolName: 'Bash', input: {} })
+    await inbound(runtime, '1')
+    expect(runtime.getRuntimeState(CHAT_ID).pendingPermissionCount).toBe(1)
+    expect(notices.at(-1)).toContain('等待')
+    await inbound(runtime, '1')
+    expect(bridge.permissionResponses).toHaveLength(1)
+    await runtime.handleServerMessage(CHAT_ID, { type: 'error', code: 'RUNTIME_CONFIG_INVALID', message: 'invalid', requestId: 'req-1', permissionType: 'tool', approvalOutcome: 'rejected' })
+    await inbound(runtime, '1')
+    expect(bridge.permissionResponses).toHaveLength(2)
+    await runtime.handleServerMessage(CHAT_ID, { type: 'permission_resolved', requestId: 'req-1', permissionType: 'tool' })
+    expect(runtime.getRuntimeState(CHAT_ID).pendingPermissionCount).toBe(0)
+  })
+
+  it('keeps an indeterminate send locked and synchronizes only its existing owner', async () => {
+    const { runtime, bridge, notices } = createRuntime()
+    await inbound(runtime, 'run something')
+    await runtime.handleServerMessage(CHAT_ID, { type: 'permission_request', requestId: 'req-1', toolName: 'Bash', input: {} })
+    const send = spyOn(bridge, 'sendPermissionResponse').mockImplementation(() => { throw new Error('transport may have accepted') })
+    try {
+      await inbound(runtime, '1')
+      expect(notices.at(-1)).toContain('等待')
+      expect(bridge.syncRequests).toEqual([CHAT_ID])
+      await inbound(runtime, '1')
+      expect(send).toHaveBeenCalledTimes(1)
+      await runtime.handleServerMessage(CHAT_ID, { type: 'error', code: 'APPROVAL_UNCERTAIN', message: 'uncertain', requestId: 'req-1', permissionType: 'tool', approvalOutcome: 'uncertain' })
+      expect(bridge.syncRequests).toEqual([CHAT_ID, CHAT_ID])
+      await runtime.handleServerMessage(CHAT_ID, { type: 'permission_resolved', requestId: 'req-1', permissionType: 'computer_use' })
+      await runtime.handleServerMessage(CHAT_ID, { type: 'permission_requests_snapshot', turnActive: false })
+      await runtime.handleServerMessage(CHAT_ID, { type: 'permission_requests_snapshot', toolRequestIds: [null], turnActive: false })
+      await inbound(runtime, '1')
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(runtime.getRuntimeState(CHAT_ID).pendingPermissionCount).toBe(1)
+      runtime.clearTransientChatState(CHAT_ID)
+      await runtime.handleServerMessage(CHAT_ID, { type: 'permission_request', requestId: 'req-1', toolName: 'Bash', input: {} })
+      await inbound(runtime, '1')
+      expect(send).toHaveBeenCalledTimes(2)
+    } finally { send.mockRestore() }
+  })
+
+  it.each(['permission_resolved', 'permission_requests_snapshot'])('ends the waiting notice once on authoritative %s, not on transport send', async (type) => {
+    const { runtime, notices } = createRuntime()
+    await runtime.handleServerMessage(CHAT_ID, { type: 'permission_request', requestId: 'settled', toolName: 'Bash', input: {} })
+    await inbound(runtime, '/deny settled')
+    expect(notices.at(-1)).toContain('等待')
+    const resolved = type === 'permission_resolved'
+      ? { type, requestId: 'settled', permissionType: 'tool', allowed: false }
+      : { type, toolRequestIds: [], turnActive: false }
+    await runtime.handleServerMessage(CHAT_ID, resolved)
+    expect(notices.at(-1)).toContain('不再等待')
+    expect(notices.at(-1)).toContain('settled')
+    const count = notices.length
+    await runtime.handleServerMessage(CHAT_ID, resolved)
+    expect(notices).toHaveLength(count)
+    expect(runtime.getRuntimeState(CHAT_ID).pendingPermissionCount).toBe(0)
   })
 
   it('records a permanent allow separately from a one-shot allow', async () => {

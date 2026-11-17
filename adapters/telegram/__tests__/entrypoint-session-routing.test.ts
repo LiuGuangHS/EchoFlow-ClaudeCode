@@ -25,6 +25,7 @@ describe('Telegram entrypoint session routing', () => {
   const messages: Array<{ sessionId: string; message: any }> = []
   const sockets = new Map<string, Set<ServerWebSocket<{ sessionId: string }>>>()
   const sessionPaths = new Map<string, string>()
+  const approvalSnapshots = new Map<string, string[]>()
   const activeLeases = new Set<string>()
   const acceptedLeases: string[] = []
   const protectedDownloads: boolean[] = []
@@ -122,7 +123,7 @@ describe('Telegram entrypoint session routing', () => {
           peers.add(socket)
           sockets.set(socket.data.sessionId, peers)
           socket.send(JSON.stringify({ type: 'connected' }))
-          socket.send(JSON.stringify({ type: 'permission_requests_snapshot', turnActive: socket.data.sessionId === 'running', toolRequestIds: [], computerUseRequestIds: [] }))
+          socket.send(JSON.stringify({ type: 'permission_requests_snapshot', turnActive: socket.data.sessionId === 'running', toolRequestIds: approvalSnapshots.get(socket.data.sessionId) ?? [], computerUseRequestIds: [] }))
         },
         message(socket, raw) {
           const message = JSON.parse(String(raw))
@@ -375,10 +376,134 @@ describe('Telegram entrypoint session routing', () => {
     await text(708, '/allow text-request')
     await eventually(() => expect(messages.some((item) => item.sessionId === 'stream' && item.message.type === 'permission_response' && item.message.requestId === 'text-request')).toBe(true))
     broadcast('stream', { type: 'message_complete' })
-    broadcast('stream', { type: 'error', message: 'Fixture turn failed' })
+    broadcast('stream', { type: 'error', code: 'FIXTURE_TURN_FAILED', message: 'Fixture turn failed' })
     await eventually(() => expect(texts(708).some((value) => value.includes('Fixture turn failed'))).toBe(true))
     expect(texts(708).some((value) => value.includes('Result from the restored session.'))).toBe(true)
     expect(texts(708).some((value) => value.includes('Checking the previous context'))).toBe(true)
+  })
+
+  it.each(['text', 'callback'] as const)('waits for owner convergence after %s submission and blocks mixed duplicate decisions', async (first) => {
+    const chatId = nextId++
+    const sessionId = `approval-${chatId}`
+    const requestId = `request-${chatId}`
+    sessionPaths.set(sessionId, project)
+    store.set(String(chatId), sessionId, project)
+    await text(chatId, 'Need confirmation')
+    await eventually(() => expect(messages.some(item => item.sessionId === sessionId)).toBe(true))
+    const request = { type: 'permission_request', requestId, toolName: 'Bash', input: {} }
+    broadcast(sessionId, request)
+    await eventually(() => expect(texts(chatId).some(value => value.includes(requestId))).toBe(true))
+    const submitText = () => text(chatId, `/allow ${requestId}`)
+    const submitCallback = () => callback(chatId, `permit:${requestId}:no`)
+    const responses = () => messages.filter(item => item.sessionId === sessionId && item.message.type === 'permission_response')
+    await (first === 'text' ? submitText() : submitCallback())
+    await eventually(() => expect(responses()).toHaveLength(1))
+    expect(texts(chatId).at(-1)).toContain('等待服务端确认')
+    expect(texts(chatId).at(-1)).not.toMatch(/已允许|已拒绝/)
+    await submitText()
+    await submitCallback()
+    await text(chatId, '/status')
+    await eventually(() => expect(texts(chatId).at(-1)).toContain('审批: 1 个待确认'))
+    expect(responses()).toHaveLength(1)
+
+    const sync = spyOn(WsBridge.prototype, 'requestSyncState')
+    try {
+      broadcast(sessionId, { type: 'error', code: 'APPROVAL_UNCERTAIN', message: 'Invalid signature thinking: owner uncertain', requestId, permissionType: 'tool', approvalOutcome: 'uncertain' })
+      await eventually(() => expect(sync).toHaveBeenCalledWith(String(chatId)))
+      expect(store.get(String(chatId))?.sessionId).toBe(sessionId)
+      broadcast(sessionId, { type: 'permission_resolved', requestId, permissionType: 'computer_use' })
+      broadcast(sessionId, { type: 'permission_requests_snapshot', turnActive: true })
+      broadcast(sessionId, { type: 'permission_requests_snapshot', toolRequestIds: [null], turnActive: false })
+      broadcast(sessionId, request)
+      await submitCallback()
+      expect(responses()).toHaveLength(1)
+      broadcast(sessionId, { type: 'error', code: 'REJECTED', message: 'other request', requestId: 'other', permissionType: 'tool', approvalOutcome: 'rejected' })
+      broadcast(sessionId, { type: 'error', code: 'REJECTED', message: 'other type', requestId, permissionType: 'computer_use', approvalOutcome: 'rejected' })
+      await submitText()
+      expect(responses()).toHaveLength(1)
+      broadcast(sessionId, { type: 'error', code: 'REJECTED', message: 'retry permitted', requestId, permissionType: 'tool', approvalOutcome: 'rejected' })
+      await eventually(() => expect(texts(chatId).at(-1)).toContain('retry permitted'))
+      await submitCallback()
+      await eventually(() => expect(responses()).toHaveLength(2))
+      const settled = first === 'text'
+        ? { type: 'permission_resolved', requestId, permissionType: 'tool', allowed: true }
+        : { type: 'permission_requests_snapshot', toolRequestIds: [], turnActive: false }
+      broadcast(sessionId, settled)
+      await eventually(() => expect(texts(chatId).at(-1)).toContain('不再等待'))
+      const count = texts(chatId).filter(value => value.includes('不再等待')).length
+      broadcast(sessionId, settled)
+      await callback(chatId, `permit:${requestId}:yes`)
+      expect(texts(chatId).filter(value => value.includes('不再等待'))).toHaveLength(count)
+      expect(responses()).toHaveLength(2)
+    } finally { sync.mockRestore() }
+  })
+
+  it.each(['text', 'callback'] as const)('retains the lock after a throwing %s transport, but retries a definite send false', async (source) => {
+    const chatId = nextId++
+    const sessionId = `throw-${chatId}`
+    const requestId = `throw-request-${chatId}`
+    sessionPaths.set(sessionId, project)
+    store.set(String(chatId), sessionId, project)
+    await text(chatId, 'Need confirmation')
+    await eventually(() => expect(messages.some(item => item.sessionId === sessionId)).toBe(true))
+    broadcast(sessionId, { type: 'permission_request', requestId, toolName: 'Bash', input: {} })
+    await eventually(() => expect(texts(chatId).some(value => value.includes(requestId))).toBe(true))
+    const submit = () => source === 'text' ? text(chatId, `/deny ${requestId}`) : callback(chatId, `permit:${requestId}:no`)
+    const originalSend = WsBridge.prototype.sendPermissionResponse
+    const send = spyOn(WsBridge.prototype, 'sendPermissionResponse').mockImplementationOnce(() => false)
+    try {
+      await submit()
+      expect(send).toHaveBeenCalledTimes(1)
+      send.mockImplementationOnce(function (this: WsBridge, ...args) {
+        originalSend.apply(this, args)
+        throw new Error('Fixture transport accepted before throwing')
+      })
+      await submit()
+      expect(texts(chatId).at(-1)).toContain('不确定')
+      await eventually(() => expect(messages.some(item => item.sessionId === sessionId && item.message.type === 'sync_state')).toBe(true))
+      await text(chatId, `/allow ${requestId}`)
+      await callback(chatId, `permit:${requestId}:always`)
+      expect(send).toHaveBeenCalledTimes(2)
+      expect(store.get(String(chatId))?.sessionId).toBe(sessionId)
+      await text(chatId, '/clear')
+      await eventually(() => expect(texts(chatId).at(-1)).toContain('已清空当前会话上下文'))
+      broadcast(sessionId, { type: 'permission_request', requestId, toolName: 'Bash', input: {} })
+      await eventually(() => expect(texts(chatId).at(-1)).toContain(requestId))
+      await submit()
+      expect(send).toHaveBeenCalledTimes(3)
+    } finally { send.mockRestore() }
+  })
+
+  it('keeps a submitted decision locked across reconnect to its original owner and replay', async () => {
+    const chatId = nextId++
+    const sessionId = `reconnect-${chatId}`
+    const requestId = `reconnect-request-${chatId}`
+    sessionPaths.set(sessionId, project)
+    store.set(String(chatId), sessionId, project)
+    await text(chatId, 'Need confirmation')
+    await eventually(() => expect(messages.some(item => item.sessionId === sessionId)).toBe(true))
+    const request = { type: 'permission_request', requestId, toolName: 'Bash', input: {} }
+    broadcast(sessionId, request)
+    await eventually(() => expect(texts(chatId).some(value => value.includes(requestId))).toBe(true))
+    const send = spyOn(WsBridge.prototype, 'sendPermissionResponse')
+    try {
+      await text(chatId, `/allow ${requestId}`)
+      expect(send).toHaveBeenCalledTimes(1)
+      approvalSnapshots.set(sessionId, [requestId])
+      for (const socket of sockets.get(sessionId) ?? []) socket.close(1000, 'fixture reconnect')
+      await eventually(() => expect(sockets.get(sessionId)?.size).toBe(0))
+      await text(chatId, '/status')
+      await eventually(() => expect(sockets.get(sessionId)?.size).toBe(1))
+      await eventually(() => expect(texts(chatId).at(-1)).toContain('审批: 1 个待确认'))
+      broadcast(sessionId, request)
+      await callback(chatId, `permit:${requestId}:no`)
+      await text(chatId, `/allow ${requestId}`)
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(store.get(String(chatId))?.sessionId).toBe(sessionId)
+      broadcast(sessionId, { type: 'permission_requests_snapshot', toolRequestIds: [], turnActive: false })
+      await eventually(() => expect(texts(chatId).at(-1)).toContain('不再等待'))
+      expect(texts(chatId).filter(value => value.includes('不再等待'))).toHaveLength(1)
+    } finally { send.mockRestore() }
   })
 
   it('starts the registered bot and publishes its menu without external access', async () => {

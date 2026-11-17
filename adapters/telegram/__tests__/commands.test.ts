@@ -286,6 +286,7 @@ describe('Telegram command controller helpers', () => {
       chatId: '42',
       decision: { requestId: 'req-1', allowed: true },
       pendingRequestIds,
+      submittingPermissions: new Map<string, Set<string>>(),
       sendPermissionResponse,
     }
 
@@ -321,7 +322,7 @@ describe('Telegram command controller helpers', () => {
       isAllowedUser: () => true,
     })).toBe('sent')
     expect(sendPermissionResponse).toHaveBeenCalledWith('42', 'req-1', true, undefined)
-    expect(pendingRequestIds.has('req-1')).toBe(false)
+    expect(pendingRequestIds.has('req-1')).toBe(true)
   })
 
   it('scopes duplicate message keys to the Telegram chat', () => {
@@ -891,16 +892,20 @@ describe('Telegram command controller helpers', () => {
       index: 0,
     })
     const permissionCtx = createCommandContext()
+    const pendingPermissions = new Map([['42', new Set(['req-1'])]])
+    const submittingPermissions = new Map<string, Set<string>>()
     await controller.handlePermissionCallback(permissionCtx.ctx, {
       requestId: 'req-1',
       allowed: true,
-    }, new Map([['42', new Set(['req-1'])]]), (chatId) => events.push(`decrement:${chatId}`))
+    }, pendingPermissions, submittingPermissions)
 
     expect(events).toContain('model:42:model-x')
     expect(events).toContain('message:42:connected')
     expect(events).toContain('permit:42:req-1:true:')
-    expect(events).toContain('decrement:42')
-    expect(permissionCtx.edits[0]).toContain('已允许')
+    expect(pendingPermissions.get('42')?.has('req-1')).toBe(true)
+    expect(submittingPermissions.get('42')?.has('req-1')).toBe(true)
+    expect(permissionCtx.edits[0]).toContain('等待服务端确认')
+    expect(permissionCtx.answers.at(-1)).toContain('等待服务端确认')
 
     await controller.handleSkillsCommand(createCommandContext().ctx)
     await controller.handleSelectionCallback(createCommandContext().ctx, {
@@ -914,14 +919,14 @@ describe('Telegram command controller helpers', () => {
     await expect(controller.handlePermissionCallback(missingIdentityCtx.ctx, {
       requestId: 'missing-user',
       allowed: true,
-    }, new Map(), () => {})).resolves.toBe('unauthorized')
+    }, new Map(), new Map())).resolves.toBe('unauthorized')
 
     allowPermissionUser = false
     const unauthorizedCtx = createCommandContext()
     await expect(controller.handlePermissionCallback(unauthorizedCtx.ctx, {
       requestId: 'unauthorized',
       allowed: true,
-    }, new Map([['42', new Set(['unauthorized'])]]), () => {})).resolves.toBe('unauthorized')
+    }, new Map([['42', new Set(['unauthorized'])]]), new Map())).resolves.toBe('unauthorized')
     expect(unauthorizedCtx.answers).toContain('未授权')
 
     allowPermissionUser = true
@@ -929,7 +934,7 @@ describe('Telegram command controller helpers', () => {
     await expect(controller.handlePermissionCallback(expiredCtx.ctx, {
       requestId: 'expired',
       allowed: true,
-    }, new Map(), () => {})).resolves.toBe('not_pending')
+    }, new Map(), new Map())).resolves.toBe('not_pending')
     expect(expiredCtx.answers).toContain('权限请求已失效')
 
     sendPermissionSucceeds = false
@@ -937,7 +942,7 @@ describe('Telegram command controller helpers', () => {
     await expect(controller.handlePermissionCallback(failedCtx.ctx, {
       requestId: 'send-failed',
       allowed: false,
-    }, new Map([['42', new Set(['send-failed'])]]), () => {})).resolves.toBe('send_failed')
+    }, new Map([['42', new Set(['send-failed'])]]), new Map())).resolves.toBe('send_failed')
     expect(failedCtx.answers).toContain('权限响应发送失败')
   })
 })

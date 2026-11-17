@@ -14,13 +14,12 @@ import { MessageBuffer } from '../common/message-buffer.js'
 import { loadConfig } from '../common/config.js'
 import { formatImHelp, formatImStatus, formatPermissionRequest, splitMessage } from '../common/format.js'
 import {
-  formatPermissionDecisionStatus,
   formatPermissionInstructions,
   parsePermissionCommand,
   type PermissionDecision,
 } from '../common/permission.js'
 import { SessionStore } from '../common/session-store.js'
-import { syncImPermissionState } from '../common/permission-sync.js'
+import { formatImPermissionSubmissionNotice, submitImPermissionDecision, syncImPermissionState } from '../common/permission-sync.js'
 import { SessionSelectionController } from '../common/session-selection.js'
 import { type RecentProject } from '../common/http-client.js'
 import { createAdapterClient } from '../common/adapter-client.js'
@@ -82,6 +81,7 @@ const aiCardTargets = new Map<string, DingTalkAiCardTarget>()
 const streamingCards = new Map<string, Promise<DingTalkAiCardInstance | null>>()
 const streamingCardText = new Map<string, string>()
 const pendingPermissions = new Map<string, Set<string>>()
+const submittingPermissions = new Map<string, Set<string>>()
 const pendingPermissionRecipients = new Map<string, { chatId: string; userId: string | null }>()
 
 let accessTokenCache: { token: string; expiresAt: number } | null = null
@@ -235,6 +235,7 @@ function clearPendingPermissions(chatId: string): void {
     for (const requestId of pending) pendingPermissionRecipients.delete(requestId)
   }
   pendingPermissions.delete(chatId)
+  submittingPermissions.delete(chatId)
 }
 
 async function ensureExistingSession(chatId: string): Promise<SessionRestoreResult> {
@@ -367,7 +368,19 @@ function prepareNewSession(chatId: string): void {
 
 async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<void> {
   const runtime = getRuntimeState(chatId)
-  if (syncImPermissionState(chatId, msg, runtime, pendingPermissions)) return
+  const settled: string[] = []
+  if (syncImPermissionState(chatId, msg, runtime, pendingPermissions, {
+    submittingPermissions,
+    requestSyncState: (id) => bridge.requestSyncState(id),
+    onSettled: (id) => {
+      pendingPermissionRecipients.delete(id)
+      settled.push(id)
+    },
+  })) {
+    if (msg.type === 'error') await sendText(chatId, msg.message)
+    for (const id of settled) await sendText(chatId, `权限请求 ${id} 已不再等待确认。`)
+    return
+  }
 
   switch (msg.type) {
     case 'connected':
@@ -417,15 +430,15 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
 
 async function sendPermissionRequest(chatId: string, msg: ServerMessage): Promise<void> {
   const runtime = getRuntimeState(chatId)
-  runtime.pendingPermissionCount += 1
-  runtime.state = 'permission_pending'
-  await finishAndResetDingTalkStreamingState({ aiCardBuffers, streamingCards, streamingCardText, finalize: () => flushToAiCard(chatId, '', true) }, chatId)
-
   const set = pendingPermissions.get(chatId) ?? new Set<string>()
+  if (set.has(msg.requestId) && pendingPermissionRecipients.has(msg.requestId)) return
   set.add(msg.requestId)
   pendingPermissions.set(chatId, set)
+  runtime.pendingPermissionCount = set.size
+  runtime.state = 'permission_pending'
   const target = aiCardTargets.get(chatId)
   pendingPermissionRecipients.set(msg.requestId, { chatId, userId: target?.type === 'user' ? target.userId : null })
+  await finishAndResetDingTalkStreamingState({ aiCardBuffers, streamingCards, streamingCardText, finalize: () => flushToAiCard(chatId, '', true) }, chatId)
 
   const requestText = formatPermissionRequest(msg.toolName, msg.input, msg.requestId)
   const instructions = formatPermissionInstructions(msg.requestId)
@@ -447,36 +460,19 @@ async function sendPermissionRequest(chatId: string, msg: ServerMessage): Promis
   await sendText(chatId, `${requestText}\n\n${instructions}`)
 }
 
-function handlePermissionCommand(chatId: string, text: string): boolean {
+async function handlePermissionCommand(chatId: string, text: string): Promise<boolean> {
   const decision = parsePermissionCommand(text, pendingPermissions.get(chatId))
   if (!decision) return false
 
-  const sent = applyPermissionDecision(chatId, decision)
-  if (!sent) return true
-
-  void sendText(chatId, formatPermissionDecisionStatus(decision))
+  await handlePermissionDecision(chatId, decision)
   return true
 }
 
-function applyPermissionDecision(chatId: string, decision: PermissionDecision): boolean {
-  const { requestId, allowed, rule } = decision
-  const pending = pendingPermissions.get(chatId)
-  if (!pending?.has(requestId)) {
-    void sendText(chatId, `未找到待确认的权限请求：${requestId}`)
-    return false
-  }
-
-  const sent = bridge.sendPermissionResponse(chatId, requestId, allowed, rule)
-  if (!sent) {
-    void sendText(chatId, '权限响应发送失败，请检查会话状态。')
-    return false
-  }
-
-  pending.delete(requestId)
-  pendingPermissionRecipients.delete(requestId)
-  const runtime = getRuntimeState(chatId)
-  runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
-  return sent
+async function handlePermissionDecision(chatId: string, decision: PermissionDecision): Promise<void> {
+  const result = submitImPermissionDecision(
+    chatId, decision, pendingPermissions.get(chatId), submittingPermissions, bridge,
+  )
+  await sendText(chatId, formatImPermissionSubmissionNotice(result, decision.requestId))
 }
 
 async function routeUserMessage(chatId: string, text: string, attachmentsOrLoader: AttachmentRef[] | (() => Promise<AttachmentRef[]>) = []): Promise<void> {
@@ -485,7 +481,7 @@ async function routeUserMessage(chatId: string, text: string, attachmentsOrLoade
     const trimmed = text.trim()
     const hasAttachments = attachments.length > 0
 
-    if (!hasAttachments && handlePermissionCommand(chatId, trimmed)) return
+    if (!hasAttachments && await handlePermissionCommand(chatId, trimmed)) return
 
     if (!hasAttachments && await sessionSelectionController.handleInput(chatId, trimmed)) return
 
@@ -586,9 +582,7 @@ async function handleCardCallback(raw: unknown): Promise<void> {
     return
   }
 
-  if (applyPermissionDecision(recipient.chatId, action)) {
-    await sendText(recipient.chatId, formatPermissionDecisionStatus(action))
-  }
+  await handlePermissionDecision(recipient.chatId, action)
 }
 
 async function collectAttachments(

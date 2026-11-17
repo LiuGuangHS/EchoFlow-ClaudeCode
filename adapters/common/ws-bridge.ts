@@ -27,6 +27,32 @@ export type ServerMessage = {
   [key: string]: any
 }
 
+function validApprovalMessage(message: ServerMessage): boolean {
+  const id = (value: unknown) => typeof value === 'string' && value.length > 0
+  switch (message.type) {
+    case 'permission_requests_snapshot':
+      return ['toolRequestIds', 'computerUseRequestIds'].every((key) =>
+        message[key] === undefined ||
+        (Array.isArray(message[key]) && message[key].every(id)),
+      ) && typeof message.turnActive === 'boolean'
+    case 'permission_request':
+      return id(message.requestId) && typeof message.toolName === 'string' &&
+        (message.autoAnswerDeadline === undefined || message.autoAnswerDeadline === null ||
+          (typeof message.autoAnswerDeadline === 'number' && Number.isFinite(message.autoAnswerDeadline)))
+    case 'computer_use_permission_request':
+      return id(message.requestId) && !!message.request && typeof message.request === 'object' && !Array.isArray(message.request)
+    case 'permission_resolved':
+      return id(message.requestId) && ['tool', 'computer_use'].includes(message.permissionType) &&
+        (message.allowed === undefined || typeof message.allowed === 'boolean')
+    case 'error':
+      return typeof message.message === 'string' && typeof message.code === 'string' &&
+        (message.requestId === undefined || (id(message.requestId) && ['tool', 'computer_use'].includes(message.permissionType))) &&
+        (message.approvalOutcome === undefined || (message.requestId !== undefined && ['rejected', 'uncertain'].includes(message.approvalOutcome)))
+    default:
+      return true
+  }
+}
+
 /** Callback for server messages */
 export type MessageHandler = (msg: ServerMessage) => void
 
@@ -46,6 +72,7 @@ type Session = {
   cliRunning: boolean
   /** Approval requests still waiting for the user. */
   pendingRequests: Set<string>
+  pendingComputerUseRequests: Set<string>
 }
 
 const HEARTBEAT_INTERVAL_MS = 30_000
@@ -147,6 +174,11 @@ export class WsBridge {
     return this.send(chatId, message)
   }
 
+  /** Ask the bound owner for authoritative state without replaying a decision. */
+  requestSyncState(chatId: string): boolean {
+    return this.send(chatId, { type: 'sync_state' })
+  }
+
   /** Stop the current generation. */
   sendStopGeneration(chatId: string): boolean {
     return this.send(chatId, { type: 'stop_generation' })
@@ -229,6 +261,7 @@ export class WsBridge {
       turnActive: carried?.turnActive ?? false,
       cliRunning: false,
       pendingRequests: carried?.pendingRequests ?? new Set(),
+      pendingComputerUseRequests: carried?.pendingComputerUseRequests ?? new Set(),
     }
     this.sessions.set(chatId, session)
 
@@ -245,6 +278,7 @@ export class WsBridge {
         console.error('[WsBridge] Parse error:', err)
         return
       }
+      if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.type !== 'string' || !validApprovalMessage(msg)) return
       if (msg.type === 'pong') return
       if (this.sessions.get(chatId) !== session) return
       this.trackInbound(session, msg)
@@ -341,9 +375,6 @@ export class WsBridge {
     session.ws.send(JSON.stringify(message))
     session.lastActivityAt = this.now()
     if (message.type === 'user_message') session.turnActive = true
-    if (message.type === 'permission_response' && typeof message.requestId === 'string') {
-      session.pendingRequests.delete(message.requestId)
-    }
     return true
   }
 
@@ -355,24 +386,24 @@ export class WsBridge {
         break
       case 'message_complete':
         session.turnActive = false
-        session.pendingRequests.clear()
         break
       case 'error':
-        session.turnActive = false
+        if (msg.requestId === undefined) session.turnActive = false
         break
       case 'permission_request':
+        session.pendingRequests.add(msg.requestId)
+        break
       case 'computer_use_permission_request':
-        if (typeof msg.requestId === 'string') session.pendingRequests.add(msg.requestId)
+        session.pendingComputerUseRequests.add(msg.requestId)
         break
       case 'permission_resolved':
-        if (typeof msg.requestId === 'string') session.pendingRequests.delete(msg.requestId)
+        if (msg.permissionType === 'tool') session.pendingRequests.delete(msg.requestId)
+        else session.pendingComputerUseRequests.delete(msg.requestId)
         break
       case 'permission_requests_snapshot':
-        session.turnActive = msg.turnActive === true
-        session.pendingRequests = new Set(
-          [...(msg.toolRequestIds ?? []), ...(msg.computerUseRequestIds ?? [])]
-            .filter((id): id is string => typeof id === 'string'),
-        )
+        session.turnActive = msg.turnActive
+        if (msg.toolRequestIds !== undefined) session.pendingRequests = new Set(msg.toolRequestIds)
+        if (msg.computerUseRequestIds !== undefined) session.pendingComputerUseRequests = new Set(msg.computerUseRequestIds)
         break
       case 'system_notification':
         if (msg.subtype === 'session_state_changed') {
@@ -406,6 +437,7 @@ export class WsBridge {
         session.turnActive ||
         session.cliRunning ||
         session.pendingRequests.size > 0 ||
+        session.pendingComputerUseRequests.size > 0 ||
         now - session.lastActivityAt < this.idleReleaseMs
       ) continue
       console.log(`[WsBridge] Releasing idle session ${session.sessionId} (chat ${chatId})`)
