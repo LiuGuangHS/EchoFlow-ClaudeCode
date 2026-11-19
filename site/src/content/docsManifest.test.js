@@ -85,7 +85,15 @@ test('internal docs never reach generated modules or static publication', async 
   await fs.writeFile(path.join(siteDir, 'index.html'), shell)
   await fs.writeFile(path.join(distDir, 'index.html'), shell)
   await fs.copyFile(new URL('../../../docs/public/CNAME', import.meta.url), path.join(distDir, 'CNAME'))
+  await fs.mkdir(path.join(root, 'desktop/public'), { recursive: true })
+  await fs.mkdir(path.join(distDir, 'images'), { recursive: true })
+  await fs.writeFile(path.join(root, 'desktop/public/app-icon.png'), 'canonical-icon-fixture')
+  await fs.writeFile(path.join(distDir, 'images/app-icon.png'), 'stale-icon-fixture')
   await run(process.execPath, [path.join(scriptsDir, 'prepare-static-output.mjs')], { cwd: root })
+
+  await t.test('publication replaces a stale icon with the canonical product asset', async () => {
+    assert.equal(await fs.readFile(path.join(distDir, 'images/app-icon.png'), 'utf8'), 'canonical-icon-fixture')
+  })
 
   await t.test('static routes and sitemap omit internal docs while retaining public routes', async () => {
     for (const [, route, title] of publicDocs) {
