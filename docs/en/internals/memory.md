@@ -88,7 +88,7 @@ Workflow:
 
 The terminal will display a notification:
 ```
-Memory updated in ~/.claude/projects/.../memory/feedback_testing.md · /memory to edit
+Memory updated in <data-root>/projects/.../memory/feedback_testing.md · /memory to edit
 ```
 
 ### Method 2: Explicit Request
@@ -120,10 +120,12 @@ Type `/remember` to trigger the memory review skill, which will:
 
 ## Where Are Memories Stored?
 
+`<data-root>` is EchoFlow's unified data root. See [Environment Variables](../cli/env.md#local-runtime-and-privacy) for platform defaults and the `CLAUDE_CONFIG_DIR` override. It is not a fixed `~/.claude` directory; project-level `.claude` paths are unchanged.
+
 ### Directory Structure
 
 ```
-~/.claude/
+<data-root>/
 └── projects/
     └── {project-path-hash}/
         └── memory/                    <- Auto-memory directory
@@ -186,7 +188,7 @@ Claude: [Does not use any memory content in this conversation]
 
 ### Manual Editing
 
-Directly edit files under `~/.claude/projects/{hash}/memory/`, or use the `/memory` command.
+Directly edit files under `<data-root>/projects/{hash}/memory/`, or use the `/memory` command.
 
 ### Disable Automatic Memory
 
@@ -198,15 +200,15 @@ Directly edit files under `~/.claude/projects/{hash}/memory/`, or use the `/memo
 
 ### Custom Memory Directory
 
-Set in `~/.claude/settings.json`:
+Custom memory belongs in the same data root. Set a root-contained directory in `<data-root>/settings.json`; replace `<data-root>` below with the actual absolute data root:
 
 ```json
 {
-  "autoMemoryDirectory": "~/my-claude-memories"
+  "autoMemoryDirectory": "<data-root>/memory/custom"
 }
 ```
 
-Supports `~/` expansion. For security reasons, the project-level `.claude/settings.json` is **not allowed** to set this option.
+`~/` expansion is supported, but it must not bypass the single data root. An old external memory directory is a migration source, not a separate ongoing write location. For security reasons, the project-level `.claude/settings.json` is **not allowed** to set this option.
 
 ## Memory Lifecycle
 
@@ -263,4 +265,4 @@ For a detailed technical analysis, see [AutoDream Memory Consolidation](./autodr
 | Disable auto-memory | `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
 | Disable AutoDream | Set `"autoDreamEnabled": false` in `settings.json` |
 | Manually consolidate memories | `/dream` command |
-| View memory directory | `~/.claude/projects/{hash}/memory/` |
+| View memory directory | `<data-root>/projects/{hash}/memory/` |

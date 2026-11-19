@@ -58,12 +58,22 @@ AZURE_OPENAI_CODEX_DEPLOYMENT=your_codex_deployment
 
 | Variable | Description |
 |----------|-------------|
-| `CLAUDE_CONFIG_DIR` | Use a specific configuration directory instead of `~/.claude`; useful for portable mode and isolated tests |
-| `CC_HAHA_TRACE_DIR` | Separate Agent Trace storage directory; must be an absolute path. When empty, defaults to `cc-haha/traces` under the configuration directory. See [Settings](../desktop/settings.md) |
+| `CLAUDE_CONFIG_DIR` | Select one absolute data root shared by Desktop, CLI, and IM, overriding the platform defaults below. An empty value uses the default; useful for portable mode and isolated tests |
+| `CC_HAHA_TRACE_DIR` | Compatibility input for an old separate Trace directory, not a second write location. Current traces live in `<data-root>/echoflow-code/traces`; an external value requires migration rather than silently switching to an empty directory. See [Settings](../desktop/settings.md) |
 | `CLAUDE_CODE_FORCE_RECOVERY_CLI` | Set to `1` to use the simplified Recovery CLI |
 | `CLAUDE_CODE_SHELL_PREFIX` | Prefix Bash tool commands, for example `wsl -e bash -lc` on Windows |
 | `DISABLE_TELEMETRY` | Set to `1` to disable telemetry |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | Set to `1` to disable non-essential network requests |
+
+In this guide, `<data-root>` means the single data root, with these platform defaults:
+
+| Platform | Default data root |
+|---|---|
+| Windows | `%LOCALAPPDATA%/EchoFlow Code` |
+| macOS | `~/Library/Application Support/EchoFlow Code` |
+| Linux | `${XDG_DATA_HOME:-~/.local/share}/echoflow-code` |
+
+`CLAUDE_CONFIG_DIR` selects the complete data root, not its `echoflow-code` subdirectory. Old `~/.claude` and `cc-haha` paths are migration inputs only. A project's `.claude` directory remains workspace configuration, not the user data root.
 
 See [Local Server](../internals/server.md) for `SERVER_HOST`, `SERVER_PORT`, `SERVER_AUTH_REQUIRED`, and related variables.
 
@@ -74,16 +84,16 @@ See [Local Server](../internals/server.md) for `SERVER_HOST`, `SERVER_PORT`, `SE
 Desktop stores the provider index at:
 
 ```text
-~/.claude/cc-haha/providers.json
+<data-root>/echoflow-code/providers.json
 ```
 
-Provider-managed environment data is written to an isolated Haha configuration. You do not need to copy it into `~/.claude/settings.json`. When the CLI finds an active provider, it reuses its credentials, models, and protocol settings. Providers using `openai_chat` or `openai_responses` automatically use a loopback proxy.
+Provider-managed environment data is written to the product configuration within the same data root. You do not need to copy it into the shared `~/.claude/settings.json`. When the CLI finds an active provider, it reuses its credentials, models, and protocol settings. Providers using `openai_chat` or `openai_responses` automatically use a loopback proxy.
 
 See [Third-Party Models](../start/models.md) for the setup flow.
 
 ### Repository `.env`
 
-The source `bin/claude-haha` launcher loads a `.env` file from the repository root when it exists:
+The source `bin/echoflow-code` launcher loads a `.env` file from the repository root when it exists:
 
 ```bash
 cp .env.example .env
@@ -104,7 +114,7 @@ The repository `.env` is only for source launches. CLI processes created by Desk
 
 ### `settings.json`
 
-User settings live at `~/.claude/settings.json`:
+EchoFlow user settings live at `<data-root>/settings.json`:
 
 ```json
 {
@@ -122,7 +132,7 @@ A project can also contain `.claude/settings.json` or `.claude/settings.local.js
 
 There is no reliable three-step rule such as “shell > `.env` > settings”:
 
-1. `bin/claude-haha` first lets Bun load the repository `.env`.
+1. `bin/echoflow-code` first lets Bun load the repository `.env`.
 2. CLI initialization merges enabled user, project, local, command-line, and managed setting sources.
 3. An active Haha provider overrides provider-routing values from ordinary Claude settings so the two clients do not contaminate each other.
 4. Runtime values injected by the Desktop host are protected from same-name fields in `settings.json`.
