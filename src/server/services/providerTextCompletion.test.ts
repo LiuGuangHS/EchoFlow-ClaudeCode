@@ -4,6 +4,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import type { SavedProvider } from '../types/provider.js'
 import { ProviderService } from './providerService.js'
+import { hahaOpenAIOAuthService } from './hahaOpenAIOAuthService.js'
 import {
   classifyProviderStatus,
   providerTextCompletion,
@@ -13,23 +14,29 @@ import { drainTraceCaptureForTests } from './traceCaptureService.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
+let originalHome: string | undefined
 let originalFetch: typeof globalThis.fetch
 const servers: Array<{ stop: (force?: boolean) => void }> = []
 
 beforeEach(async () => {
   originalConfigDir = process.env.CLAUDE_CONFIG_DIR
+  originalHome = process.env.HOME
   originalFetch = globalThis.fetch
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'provider-text-completion-'))
   process.env.CLAUDE_CONFIG_DIR = tmpDir
+  process.env.HOME = tmpDir
   await fs.mkdir(path.join(tmpDir, 'cc-haha', 'traces'), { recursive: true })
 })
 
 afterEach(async () => {
   globalThis.fetch = originalFetch
+  hahaOpenAIOAuthService.dispose()
   for (const server of servers.splice(0)) server.stop(true)
   await drainTraceCaptureForTests()
   if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
   else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
+  if (originalHome === undefined) delete process.env.HOME
+  else process.env.HOME = originalHome
   await fs.rm(tmpDir, { recursive: true, force: true })
 })
 
@@ -68,6 +75,86 @@ const request = (target: SavedProvider, extra: Partial<Parameters<typeof provide
   providerTextCompletion({ provider: target, modelId: 'fast-model[1m]', system: 'SYSTEM', user: 'USER', maxTokens: 64, ...extra })
 
 describe('providerTextCompletion', () => {
+  describe.each(['anthropic', 'openai-official'])('local redaction on the %s direct route', (route) => {
+    test.each([
+      ['enabled', '{"localRedaction":{"enabled":true}}'],
+      ['malformed JSON', '{ broken'],
+      ['invalid shape', '{"localRedaction":{"enabled":"yes"}}'],
+    ] as const)('blocks all outbound requests with %s settings', async (_label, settings) => {
+      const target = route === 'openai-official'
+        ? await new ProviderService().getProvider('openai-official')
+        : provider('https://anthropic.fixture.invalid')
+      if (route === 'openai-official') {
+        await hahaOpenAIOAuthService.saveTokens({
+          accessToken: 'fake-openai-token', refreshToken: null,
+          expiresAt: Date.now() + 60 * 60_000, accountId: 'acct-fixture', email: null,
+        })
+      }
+      await fs.writeFile(path.join(tmpDir, 'settings.json'), settings)
+      const calls: string[] = []
+      globalThis.fetch = (async (input) => {
+        calls.push(String(input))
+        return reply('must not be sent')
+      }) as typeof fetch
+
+      const result = await request(target, { user: 'fixture-private-context' })
+
+      expect(calls).toEqual([])
+      expect(result.ok).toBe(false)
+    })
+  })
+
+  test('keeps proxy redaction and response restoration available when redaction is enabled', async () => {
+    const target = await new ProviderService().addProvider({
+      presetId: 'custom', name: 'Redacted proxy', apiKey: 'fake-key',
+      baseUrl: 'https://chat.fixture.invalid/v1', apiFormat: 'openai_chat',
+      models: { main: 'fast-model', haiku: 'fast-model', sonnet: 'fast-model', opus: 'fast-model' },
+    })
+    const secret = 'fixture-private-word'
+    await fs.writeFile(path.join(tmpDir, 'settings.json'), JSON.stringify({
+      localRedaction: { enabled: true, personalInfo: false, customWords: [secret] },
+    }))
+    const sent: string[] = []
+    globalThis.fetch = (async (_input, init) => {
+      sent.push(String(init?.body))
+      const body = JSON.parse(String(init?.body)) as { messages: Array<{ role: string; content: string }> }
+      return Response.json({
+        id: 'chatcmpl-redacted', object: 'chat.completion', model: 'fast-model',
+        choices: [{ index: 0, message: {
+          role: 'assistant', content: body.messages.find(message => message.role === 'user')!.content,
+        }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      })
+    }) as typeof fetch
+
+    expect(await request(target, { system: `SYSTEM ${secret}`, user: `USER ${secret}` }))
+      .toEqual({ ok: true, text: `USER ${secret}` })
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).not.toContain(secret)
+  })
+
+  test.each([
+    ['malformed JSON', '{ broken'],
+    ['invalid shape', '{"localRedaction":{"enabled":"yes"}}'],
+  ] as const)('keeps the proxy fail-closed with %s settings', async (_label, settings) => {
+    const target = await new ProviderService().addProvider({
+      presetId: 'custom', name: 'Blocked proxy', apiKey: 'fake-key',
+      baseUrl: 'https://chat.fixture.invalid/v1', apiFormat: 'openai_chat',
+      models: { main: 'fast-model', haiku: 'fast-model', sonnet: 'fast-model', opus: 'fast-model' },
+    })
+    await fs.writeFile(path.join(tmpDir, 'settings.json'), settings)
+    const calls: string[] = []
+    globalThis.fetch = (async (input) => {
+      calls.push(String(input))
+      return Response.json({})
+    }) as typeof fetch
+
+    const result = await request(target, { user: 'fixture-private-context' })
+
+    expect(calls).toEqual([])
+    expect(result.ok).toBe(false)
+  })
+
   test('sends one system + user message with thinking disabled and returns the text without think blocks', async () => {
     const server = upstream(() => reply('<think>reasoning</think>Corrected text'))
 

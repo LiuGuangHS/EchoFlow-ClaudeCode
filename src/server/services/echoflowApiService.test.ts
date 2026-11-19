@@ -84,6 +84,289 @@ describe('EchoFlowApiService credentials', () => {
     expect(account?.userId).toBe('851842')
   })
 
+  test('does not restore a credential whose verification finishes after sign-out', async () => {
+    const verification = Promise.withResolvers<Response>()
+    const started = Promise.withResolvers<void>()
+    globalThis.fetch = mock(async () => {
+      started.resolve()
+      return verification.promise
+    }) as typeof fetch
+    const service = new EchoFlowApiService()
+    const restoring = service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' })
+    await started.promise
+    await service.disconnectAccount('main')
+    verification.resolve(Response.json({ success: true, data: { id: 851842, username: 'fixture' } }))
+
+    await expect(restoring).rejects.toMatchObject({ code: 'token_invalid' })
+    await expect(service.getAccount('main')).resolves.toBeNull()
+    await expect(new EchoFlowApiService().getAccount('main')).resolves.toBeNull()
+  })
+
+  test('does not restore account metadata from a refresh finishing after sign-out', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' })
+    const verification = Promise.withResolvers<Response>()
+    const started = Promise.withResolvers<void>()
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      if (String(input).endsWith('/api/user/self')) {
+        started.resolve()
+        return verification.promise
+      }
+      return Response.json({ success: true, data: { items: [] } })
+    }) as typeof fetch
+    const refreshing = service.refreshAccount('main')
+    await started.promise
+    await service.disconnectAccount('main')
+    verification.resolve(Response.json({ success: true, data: { id: 851842, username: 'fixture' } }))
+
+    await expect(refreshing).rejects.toMatchObject({ code: 'token_invalid' })
+    await expect(service.getAccount('main')).resolves.toBeNull()
+    await expect(new EchoFlowApiService().getAccount('main')).resolves.toBeNull()
+  })
+
+  test('does not replace a newer login with a late restored user', async () => {
+    const verification = Promise.withResolvers<Response>()
+    const started = Promise.withResolvers<void>()
+    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (new Headers(init?.headers).get('cookie') === 'session=old-fixture') {
+        started.resolve()
+        return verification.promise
+      }
+      return Response.json({ success: true, data: { id: 8, username: 'new-fixture' } })
+    }) as typeof fetch
+    const service = new EchoFlowApiService()
+    const restoring = service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=old-fixture' })
+    await started.promise
+    await service.setCredential('main', { kind: 'session', userId: '8', cookie: 'session=new-fixture' })
+    verification.resolve(Response.json({ success: true, data: { id: 851842, username: 'old-fixture' } }))
+
+    await expect(restoring).rejects.toMatchObject({ code: 'token_invalid' })
+    await expect(service.getAccount('main')).resolves.toMatchObject({ userId: '8', live: true })
+    expect(await readAccountFile()).not.toContain('old-fixture')
+  })
+
+  test.each(['refreshAccount', 'createAccountToken'] as const)('does not let %s reuse an old credential during a new login', async (operation) => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=old-fixture' })
+    const verification = Promise.withResolvers<Response>()
+    const started = Promise.withResolvers<void>()
+    const requests = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (new Headers(init?.headers).get('cookie') === 'session=new-fixture') {
+        started.resolve()
+        return verification.promise
+      }
+      return Response.json({ success: false, message: 'invalid session' }, { status: 401 })
+    })
+    globalThis.fetch = requests as typeof fetch
+    const signingIn = service.setCredential('main', { kind: 'session', userId: '8', cookie: 'session=new-fixture' })
+    try {
+      await started.promise
+      await expect(service[operation]('main')).rejects.toMatchObject({ code: 'token_invalid' })
+      expect(requests).toHaveBeenCalledTimes(1)
+    } finally {
+      verification.resolve(Response.json({ success: true, data: { id: 8 } }))
+      await signingIn.catch(() => {})
+    }
+    await expect(signingIn).resolves.toMatchObject({ userId: '8', live: true })
+    await expect(service.getAccount('main')).resolves.toMatchObject({ userId: '8', live: true })
+  })
+
+  test('keeps a newer login live when an old refresh is rejected', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=old-fixture' })
+    const verification = Promise.withResolvers<Response>()
+    const started = Promise.withResolvers<void>()
+    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (new Headers(init?.headers).get('cookie') === 'session=old-fixture') {
+        started.resolve()
+        return verification.promise
+      }
+      return Response.json({ success: true, data: { id: 8, username: 'new-fixture' } })
+    }) as typeof fetch
+    const refreshing = service.refreshAccount('main')
+    await started.promise
+    await service.setCredential('main', { kind: 'session', userId: '8', cookie: 'session=new-fixture' })
+    verification.resolve(Response.json({ success: false, message: 'invalid session' }, { status: 401 }))
+
+    await expect(refreshing).rejects.toMatchObject({ code: 'token_invalid' })
+    await expect(service.getAccount('main')).resolves.toMatchObject({ userId: '8', live: true })
+    await expect(new EchoFlowApiService().getAccount('main')).resolves.toMatchObject({ userId: '8', live: false })
+  })
+
+  test('does not commit an old refresh whose token list finishes after a newer login', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=old-fixture' })
+    const listing = Promise.withResolvers<Response>()
+    const started = Promise.withResolvers<void>()
+    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes('/api/token/')) {
+        expect(new Headers(init?.headers).get('cookie')).toBe('session=old-fixture')
+        started.resolve()
+        return listing.promise
+      }
+      const id = new Headers(init?.headers).get('cookie') === 'session=old-fixture' ? 851842 : 8
+      return Response.json({ success: true, data: { id } })
+    }) as typeof fetch
+    const refreshing = service.refreshAccount('main')
+    await started.promise
+    await service.setCredential('main', { kind: 'session', userId: '8', cookie: 'session=new-fixture' })
+    listing.resolve(Response.json({ success: true, data: { items: [{ id: 11, name: 'old-token', key: 'sk-old-fixture' }] } }))
+
+    await expect(refreshing).rejects.toMatchObject({ code: 'token_invalid' })
+    await expect(service.getAccount('main')).resolves.toMatchObject({ userId: '8', live: true })
+    expect(await readAccountFile()).not.toContain('sk-old-fixture')
+  })
+
+  test.each(['clear', 'disconnect'] as const)('invalidates a pending disk commit on %s before renaming it', async (action) => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    const started = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const accountPath = path.join(temporaryConfigDir, 'echoflow-code', 'echoflow-account.json')
+    const writeFile = fs.writeFile
+    let gated = false
+    const write = spyOn(fs, 'writeFile').mockImplementation(async (...args) => {
+      await writeFile(...args)
+      if (!gated && String(args[0]).startsWith(`${accountPath}.tmp.`)) {
+        gated = true
+        started.resolve()
+        await release.promise
+      }
+    })
+    const rename = spyOn(fs, 'rename')
+    const restoring = service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' })
+    let disconnecting: Promise<void> | undefined
+    try {
+      await started.promise
+      if (action === 'clear') service.clearCredential('main')
+      else disconnecting = service.disconnectAccount('main')
+      release.resolve()
+
+      await expect(restoring).rejects.toMatchObject({ code: 'token_invalid' })
+      await disconnecting
+      // A stale identity must never be renamed into the account file, even
+      // temporarily; disconnect may only commit its own null account.
+      expect(rename.mock.calls.filter(([, target]) => target === accountPath)).toHaveLength(action === 'clear' ? 0 : 1)
+      await expect(service.getAccount('main')).resolves.toBeNull()
+      expect((await fs.readdir(path.join(temporaryConfigDir, 'echoflow-code'))).some(name => name.includes('.tmp.'))).toBe(false)
+    } finally {
+      release.resolve()
+      await Promise.allSettled([restoring, disconnecting])
+      write.mockRestore()
+      rename.mockRestore()
+    }
+  })
+
+  test('does not publish a credential on disk failure and allows the next commit', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    const accountPath = path.join(temporaryConfigDir, 'echoflow-code', 'echoflow-account.json')
+    const renameFile = fs.rename
+    let failed = false
+    const rename = spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (!failed && to === accountPath) {
+        failed = true
+        throw new Error('fixture disk failure')
+      }
+      await renameFile(from, to)
+    })
+    try {
+      await expect(service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' }))
+        .rejects.toThrow('fixture disk failure')
+      await expect(service.listTokensWithCredential('main')).rejects.toMatchObject({ code: 'token_invalid' })
+      await expect(service.getAccount('main')).resolves.toBeNull()
+
+      await expect(service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=retry-fixture' }))
+        .resolves.toMatchObject({ userId: '851842', live: true })
+    } finally {
+      rename.mockRestore()
+    }
+  })
+
+  test('retains both endpoints when their account writes overlap', async () => {
+    const mainVerification = Promise.withResolvers<Response>()
+    const dedicatedVerification = Promise.withResolvers<Response>()
+    globalThis.fetch = mock(async (input: string | URL | Request) => String(input).includes('expapi.')
+      ? dedicatedVerification.promise
+      : mainVerification.promise) as typeof fetch
+    const service = new EchoFlowApiService()
+    const main = service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' })
+    const dedicated = service.setCredential('dedicated', { kind: 'bearer', userId: '7', accessToken: 'bearer-fixture' })
+    mainVerification.resolve(Response.json({ success: true, data: { id: 851842 } }))
+    dedicatedVerification.resolve(Response.json({ data: { id: 7 } }))
+    await Promise.all([main, dedicated])
+
+    await expect(service.getAccounts()).resolves.toMatchObject({
+      main: { userId: '851842', live: true },
+      dedicated: { userId: '7', live: true },
+    })
+    await expect(new EchoFlowApiService().getAccounts()).resolves.toMatchObject({
+      main: { userId: '851842', live: false },
+      dedicated: { userId: '7', live: false },
+    })
+    const raw = await readAccountFile()
+    expect(raw).not.toContain('session=fixture')
+    expect(raw).not.toContain('bearer-fixture')
+  })
+
+  test('does not bind a management-token account whose list finishes after sign-out', async () => {
+    const listing = Promise.withResolvers<Response>()
+    const started = Promise.withResolvers<void>()
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      if (String(input).endsWith('/api/user/self')) return Response.json({ success: true, data: { id: 7 } })
+      started.resolve()
+      return listing.promise
+    }) as typeof fetch
+    const service = new EchoFlowApiService()
+    const binding = service.bindAccount('7', 'management-fixture')
+    await started.promise
+    await service.disconnectAccount('main')
+    listing.resolve(Response.json({ success: true, data: { items: [] } }))
+
+    await expect(binding).rejects.toMatchObject({ code: 'token_invalid' })
+    await expect(new EchoFlowApiService().getAccount('main')).resolves.toBeNull()
+    expect(await readAccountFile()).not.toContain('management-fixture')
+  })
+
+  test('uses the bound management token instead of the previous live session', async () => {
+    const calls = stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' })
+    await service.bindAccount(' 8 ', ' management-fixture ')
+    await service.refreshAccount('main')
+
+    expect(calls.at(-1)?.headers.get('authorization')).toBe('management-fixture')
+    expect(calls.at(-1)?.headers.get('cookie')).toBeNull()
+    await expect(new EchoFlowApiService().getAccount('main')).resolves.toMatchObject({ userId: '8', live: true })
+  })
+
+  test('does not attach a late created key to a newer login', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=old-fixture' })
+    const creation = Promise.withResolvers<Response>()
+    const started = Promise.withResolvers<void>()
+    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        started.resolve()
+        return creation.promise
+      }
+      return Response.json({ success: true, data: { id: 8 } })
+    }) as typeof fetch
+    const creating = service.createAccountToken('main')
+    await started.promise
+    await service.setCredential('main', { kind: 'session', userId: '8', cookie: 'session=new-fixture' })
+    creation.resolve(Response.json({ success: true, data: 'sk-old-created-fixture' }))
+
+    await expect(creating).rejects.toMatchObject({ code: 'token_invalid' })
+    await expect(service.getAccount('main')).resolves.toMatchObject({ userId: '8', live: true })
+    expect(await readAccountFile()).not.toContain('sk-old-created-fixture')
+  })
+
   test('rejects a restored session whose cookie belongs to another user', async () => {
     stubSite()
     const service = new EchoFlowApiService()
