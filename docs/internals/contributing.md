@@ -19,6 +19,8 @@ order: 14
 
 根目录运行 `bun install`；涉及 `desktop/` 时在该目录安装依赖。涉及 `adapters/` 或运行 `check:adapters` / `check:native` 时，也在 `adapters/` 安装依赖。CI 的必需 PR job 使用匹配的 Bun 和 `bun install --frozen-lockfile`，不更新锁文件。
 
+选中 harness 检查时，还需 Node `>= 24.9.0`，并单独用 `npm --prefix harness ci` 按独立锁文件准备依赖（可能联网）。准备后运行 `npm --prefix harness test`（现有 Bun 调度不改变 Node 运行时）及独立的 `bun run audit:harness`；必需 audit 失败必须传播。`bun run check:harness` 包含安装与 suite，不含 audit。详见 [harness 工具链说明](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/harness/README.md#工具链)。
+
 首次运行桌面开发版或 `check:native` 前，在 `desktop/` 运行一次 `bun run prepare:cloudflared`。它下载固定版本的官方连接程序、校验 SHA-256，并放入被 Git 忽略的本机缓存；普通用户的安装包已包含该程序。原生检查只验证和使用已有缓存，不会下载；跨平台构建可传 `--target-triple` 选择目标平台。
 
 下载会显示进度，单次最多 10 分钟，连续 60 秒没有进展会中止，临时网络错误最多尝试 3 次。构建命令使用终端的 `HTTPS_PROXY` / `https_proxy`，不会读取桌面应用内的代理设置；需要代理时，在同一终端设置，例如：

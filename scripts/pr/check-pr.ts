@@ -2,6 +2,8 @@
 
 import { evaluateChangePolicy } from './change-policy'
 import { changedFilesForLocalPrCheck } from './changed-files'
+import { localCheckCommands } from './local-checks'
+import { dependentFilesForChangeSet } from './module-graph'
 
 async function run(cmd: string[], options: { optional?: boolean } = {}) {
   console.log(`\n$ ${cmd.join(' ')}`)
@@ -35,7 +37,11 @@ if (process.env.ALLOW_COVERAGE_BASELINE_CHANGE === '1' && !labels.includes('allo
   labels.push('allow-coverage-baseline-change')
 }
 
-const result = evaluateChangePolicy(files, labels)
+const dependency = dependentFilesForChangeSet(process.cwd(), files)
+if (dependency.degraded) {
+  console.warn(`[check:pr] dependency graph unavailable (${dependency.reason}); selecting every surface check.`)
+}
+const result = evaluateChangePolicy(files, labels, dependency.dependents)
 
 console.log('PR local check plan')
 console.log(`  Files: ${files.length}`)
@@ -50,44 +56,9 @@ if (result.blockingReason) {
   process.exit(1)
 }
 
-if (result.checks.policy) {
-  await run(['bun', 'run', 'check:policy'])
-}
-
-if (result.checks.desktop) {
-  await run(['bun', 'run', 'check:desktop'])
-}
-
-if (result.checks.mobile) {
-  await run(['bun', 'run', 'check:mobile'])
-}
-
-if (result.checks.server) {
-  await run(['bun', 'run', 'check:server'])
-}
-
-if (result.checks.providerContract) {
-  await run(['bun', 'run', 'check:provider-contract'])
-}
-
-if (result.checks.chatContract) {
-  await run(['bun', 'run', 'check:chat-contract'])
-}
-
-if (result.checks.adapters) {
-  await run(['bun', 'run', 'check:adapters'])
-}
-
-if (result.checks.desktopNative) {
-  await run(['bun', 'run', 'check:native'])
-}
-
-if (result.checks.persistence) {
-  await run(['bun', 'run', 'check:persistence-upgrade'])
-}
-
-if (result.checks.docs) {
-  await run(['bun', 'run', 'check:docs'])
+// Keep the legacy check:pr coverage exclusion; impact still reports that lane.
+for (const command of localCheckCommands({ ...result.checks, coverage: false })) {
+  await run(command)
 }
 
 console.log('\nPR local checks completed.')

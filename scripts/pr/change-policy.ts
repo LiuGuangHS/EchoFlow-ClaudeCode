@@ -35,6 +35,7 @@ export type ChangePolicyResult = {
     chatContract: boolean
     agentFlow: boolean
     agentE2e: boolean
+    harness: boolean
     persistence: boolean
     policy: boolean
     docs: boolean
@@ -143,6 +144,15 @@ const agentE2eHarnessPaths = [
   'package.json',
   'bun.lock',
 ]
+
+const harnessExactPaths = new Set([
+  'scripts/harness-audit.js',
+  'scripts/harness-audit.test.ts',
+  'package.json',
+  'bun.lock',
+  '.github/workflows/pr-quality.yml',
+  '.github/workflows/nightly-quality.yml',
+])
 
 const agentFlowPrefixes = [
   'src/server/api/sessions',
@@ -481,6 +491,7 @@ export function evaluateChangePolicy(
       chatContract: touchesChatContract,
       agentFlow: touchesAgentFlow,
       agentE2e: touchesAgentE2e,
+      harness: selectionFiles.some((file) => file.startsWith('harness/') || harnessExactPaths.has(file)),
       persistence: touchesPersistence,
       policy: touchesPolicy,
       docs: touchesDocs,
@@ -559,7 +570,7 @@ function formatSummary(result: ChangePolicyResult) {
     'PR change policy',
     `  Areas: ${result.areas.length ? result.areas.join(', ') : 'none'}`,
     `  Labels: ${result.labels.length ? result.labels.join(', ') : 'none'}`,
-    `  Checks: desktop=${result.checks.desktop}, mobile=${result.checks.mobile}, server=${result.checks.server}, adapters=${result.checks.adapters}, desktopNative=${result.checks.desktopNative}, providerContract=${result.checks.providerContract}, chatContract=${result.checks.chatContract}, agentFlow=${result.checks.agentFlow}, agentE2e=${result.checks.agentE2e}, persistence=${result.checks.persistence}, policy=${result.checks.policy}, docs=${result.checks.docs}, coverage=${result.checks.coverage}`,
+    `  Checks: desktop=${result.checks.desktop}, mobile=${result.checks.mobile}, server=${result.checks.server}, adapters=${result.checks.adapters}, desktopNative=${result.checks.desktopNative}, providerContract=${result.checks.providerContract}, chatContract=${result.checks.chatContract}, agentFlow=${result.checks.agentFlow}, agentE2e=${result.checks.agentE2e}, harness=${result.checks.harness}, persistence=${result.checks.persistence}, policy=${result.checks.policy}, docs=${result.checks.docs}, coverage=${result.checks.coverage}`,
   ]
 
   if (result.cliCoreOverride) {
@@ -618,6 +629,7 @@ function writeGithubOutputs(result: ChangePolicyResult) {
     chat_contract_checks: String(result.checks.chatContract),
     agent_flow_checks: String(result.checks.agentFlow),
     agent_e2e_checks: String(result.checks.agentE2e),
+    harness_checks: String(result.checks.harness),
     persistence_checks: String(result.checks.persistence),
     policy_checks: String(result.checks.policy),
     docs_checks: String(result.checks.docs),

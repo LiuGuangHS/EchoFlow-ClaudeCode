@@ -19,6 +19,8 @@ Dependency installation and tool/cache preparation require explicit setup within
 
 Run `bun install` at the root, and in `desktop/` when touching that area. Also install in `adapters/` when touching it or running `check:adapters` / `check:native`. Required PR jobs use the matching Bun and `bun install --frozen-lockfile` without updating lockfiles.
 
+Selected harness checks also require Node `>= 24.9.0` and separate dependency preparation with `npm --prefix harness ci` using its independent lockfile (network may be needed). After preparation, run `npm --prefix harness test` (existing Bun scheduling does not change the Node runtime) and the separate `bun run audit:harness`; required audit failures must propagate. `bun run check:harness` includes installation and the suite, not the audit. See the [harness toolchain guide](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/harness/README.md#工具链).
+
 Before your first desktop development run or `check:native`, run `bun run prepare:cloudflared` from `desktop/`. It downloads the pinned official connector, verifies SHA-256, and stages it in the Git-ignored local cache; distributed apps already include it. Native checks only validate and use that cache and do not download it. Cross-platform builds can select a target with `--target-triple`.
 
 Downloads show progress, allow up to 10 minutes per attempt, stop after 60 seconds without progress, and make at most 3 attempts for transient network failures. Build commands use the terminal's `HTTPS_PROXY` / `https_proxy`, not the desktop app's proxy settings. Set your HTTP proxy in the same terminal if needed, for example:

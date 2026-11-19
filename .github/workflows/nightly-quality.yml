@@ -108,6 +108,14 @@ jobs:
         id: agent-e2e
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: bun run check:agent-e2e
+      - name: Independent harness suite
+        id: harness
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: bun run --cwd harness test
+      - name: Required repository harness audit
+        id: harness-audit
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: bun run audit:harness
       - name: Root runtime tests
         id: server
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
@@ -215,16 +223,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
-      - name: Record Bun version
-        id: bun-cache-version
-        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
-      - name: Cache Bun downloads
-        uses: actions/cache@v5
-        with:
-          path: ~/.bun/install/cache
-          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
-      - name: Install root dependencies
-        run: bun install --frozen-lockfile
       - name: Run macOS Swift XCTest and helper probes
         id: swift
         run: bun run check:swift

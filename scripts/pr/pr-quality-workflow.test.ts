@@ -13,6 +13,7 @@ type WorkflowJob = {
   'runs-on'?: string
   'continue-on-error'?: boolean
   needs?: string | string[]
+  outputs?: Record<string, string>
   strategy?: { 'fail-fast'?: boolean; matrix?: { shard?: number[] } }
   steps?: Array<{
     name?: string
@@ -409,6 +410,68 @@ describe('PR quality workflow', () => {
     expect(result.exitCode, new TextDecoder().decode(result.stdout)).toBe(scenario.exit)
   })
 
+  test('runs the independent harness suite and required repository audit in a selected blocking job', () => {
+    const jobs = workflowJobs(readFileSync('.github/workflows/pr-quality.yml', 'utf8'))
+    const job = jobs['harness-checks']
+    expect(job).toBeDefined()
+    expect(job.needs).toBe('scope-plan')
+    expect(job.if).toBe("needs.scope-plan.outputs.harness_checks == 'true'")
+    expect(job['continue-on-error']).not.toBe(true)
+    expect(jobs['scope-plan'].outputs?.harness_checks).toBe('${{ steps.policy.outputs.harness_checks }}')
+    const steps = job.steps ?? []
+    const installs = steps.filter(step => step.run === 'npm --prefix harness ci')
+    expect(installs).toHaveLength(1)
+    const install = steps.indexOf(installs[0])
+    const node = steps.findIndex(step => step.uses?.startsWith('actions/setup-node@')
+      && String(step.with?.['node-version']) === '24')
+    expect(node).toBeGreaterThanOrEqual(0)
+    expect(install).toBeGreaterThan(node)
+    // Installation and audit unit tests do not execute either of these checks.
+    for (const command of ['bun run --cwd harness test', 'bun run audit:harness']) {
+      const check = steps.findIndex(step => step.run === command)
+      expect(check, command).toBeGreaterThan(install)
+      expect(steps[check].if, command).toBeUndefined()
+      expect(steps[check]['continue-on-error'], command).toBeUndefined()
+      expect(steps[check]['working-directory'], command).toBeUndefined()
+    }
+    const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'))
+    expect(scripts['audit:harness']).toBe('node scripts/harness-audit.js repo --format json --fail-on-required')
+    const gate = jobs['pr-quality-gate']
+    expect(gate.needs).toContain('harness-checks')
+    expect(gate.needs).not.toContain('coverage-checks')
+  })
+
+  test.each([
+    { selected: true, result: 'success', exit: 0 },
+    { selected: true, result: 'failure', exit: 1 },
+    { selected: true, result: 'cancelled', exit: 1 },
+    { selected: true, result: 'skipped', exit: 1 },
+    { selected: true, result: '', exit: 1 },
+    { selected: false, result: 'skipped', exit: 0 },
+    { selected: false, result: 'success', exit: 1 },
+    { selected: false, result: '', exit: 1 },
+  ])('propagates the independent harness job result through the stable gate: %j', scenario => {
+    const jobs = workflowJobs(readFileSync('.github/workflows/pr-quality.yml', 'utf8'))
+    const script = jobs['pr-quality-gate'].steps!.find(step => step.run?.includes('require_selected'))!.run!
+      .replace(/\$\{\{\s*([^}]+?)\s*\}\}/g, (_match, expression: string) => {
+        if (expression === 'needs.scope-plan.outputs.harness_checks') return String(scenario.selected)
+        if (expression.startsWith('needs.scope-plan.outputs.')) return 'false'
+        if (expression === 'needs.harness-checks.result') return scenario.result
+        if (expression === 'needs.scope-plan.result' || expression === 'needs.policy-enforcement.result') return 'success'
+        return 'skipped'
+      })
+    const root = mkdtempSync(join(tmpdir(), 'harness-gate-'))
+    try {
+      const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', script], {
+        cwd: root, env: createSandboxedTestEnvironment(join(root, 'home')), encoding: 'utf8',
+      })
+      expect(result.status, result.stdout + result.stderr).toBe(scenario.exit)
+      expect(result.stdout).toContain('harness-checks')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   test('keeps coverage artifacts observable in CI', () => {
     const workflow = readFileSync('.github/workflows/pr-quality.yml', 'utf8')
 
@@ -631,10 +694,14 @@ describe('full quality workflow', () => {
     expect(job.env).toBeUndefined()
     expect(job['continue-on-error']).toBeUndefined()
     const steps = job.steps ?? []
-    const install = steps.findIndex(step => step.run === 'bun install --frozen-lockfile' && !step['working-directory'])
+    const setup = steps.findIndex(step => step.uses === 'oven-sh/setup-bun@v2')
     const swift = steps.findIndex(step => step.run === 'bun run check:swift')
-    expect(install).toBeGreaterThanOrEqual(0)
-    expect(swift).toBeGreaterThan(install)
+    expect(setup).toBeGreaterThanOrEqual(0)
+    expect(steps[setup].with?.['bun-version-file']).toBe('package.json')
+    expect(swift).toBeGreaterThan(setup)
+    expect(steps.some(step => /\b(?:bun|npm) (?:install|ci)\b/.test(step.run ?? ''))).toBe(false)
+    expect(steps.some(step => step.uses?.startsWith('actions/cache@'))).toBe(false)
+    expect(steps.some(step => step.id === 'bun-cache-version')).toBe(false)
     expect(steps[swift].if).toBeUndefined()
     expect(steps[swift]['continue-on-error']).toBeUndefined()
     expect(steps.filter(step => step.run?.startsWith('bun run ')).map(step => step.run)).toEqual(['bun run check:swift'])
@@ -643,6 +710,31 @@ describe('full quality workflow', () => {
     expect(summary?.if).toBe('always()')
     expect(summary?.run).toContain('steps.swift.outcome')
     expect(summary?.run).toContain('GITHUB_STEP_SUMMARY')
+  })
+
+  test('runs the harness suite and audit body as independent nightly lanes after existing setup', () => {
+    const job = workflowJobs(readFileSync('.github/workflows/nightly-quality.yml', 'utf8'))['full-deterministic']
+    expect(job.if).toBeUndefined()
+    expect(job['continue-on-error']).toBeUndefined()
+    const steps = job.steps ?? []
+    const ready = steps.findIndex(step => step.id === 'dependencies')
+    const installs = steps.filter(step => step.run === 'npm --prefix harness ci')
+    expect(installs).toHaveLength(1)
+    expect(steps.indexOf(installs[0])).toBeLessThan(ready)
+    for (const command of ['bun run --cwd harness test', 'bun run audit:harness']) {
+      const checks = steps.filter(step => step.run === command)
+      expect(checks, command).toHaveLength(1)
+      const check = checks[0]
+      expect(steps.indexOf(check), command).toBeGreaterThan(ready)
+      expect(check.id, command).toBeTruthy()
+      expect(check.if, command).toBe("${{ !cancelled() && steps.dependencies.outcome == 'success' }}")
+      expect(check['continue-on-error'], command).toBeUndefined()
+      expect(check['working-directory'], command).toBeUndefined()
+    }
+    const summary = steps.find(step => step.name === 'Summarize every nightly lane')
+    expect(summary?.if).toBe('always()')
+    expect(summary?.env?.LANE_RESULTS).toBe('${{ toJSON(steps) }}')
+    expect(summary?.run).toContain('step.outcome')
   })
 
   test('runs the full public content audit in the nightly sweep', () => {

@@ -35,6 +35,7 @@ jobs:
       chat_contract_checks: ${{ steps.policy.outputs.chat_contract_checks }}
       agent_flow_checks: ${{ steps.policy.outputs.agent_flow_checks }}
       agent_e2e_checks: ${{ steps.policy.outputs.agent_e2e_checks }}
+      harness_checks: ${{ steps.policy.outputs.harness_checks }}
       persistence_checks: ${{ steps.policy.outputs.persistence_checks }}
       policy_checks: ${{ steps.policy.outputs.policy_checks }}
       docs_checks: ${{ steps.policy.outputs.docs_checks }}
@@ -274,6 +275,30 @@ jobs:
         run: npm --prefix harness ci
       - name: Run root runtime checks
         run: bun run check:server --shard=${{ matrix.shard }}/3
+
+  harness-checks:
+    name: harness-checks
+    needs: scope-plan
+    if: needs.scope-plan.outputs.harness_checks == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: harness/package-lock.json
+      - name: Install harness dependencies
+        run: npm --prefix harness ci
+      - name: Run independent harness suite
+        run: bun run --cwd harness test
+      - name: Run required repository harness audit
+        run: bun run audit:harness
 
   provider-contract-checks:
     name: provider-contract-checks
@@ -614,6 +639,7 @@ jobs:
       - chat-contract-checks
       - agent-flow-checks
       - agent-e2e-checks
+      - harness-checks
       - adapter-checks
       - desktop-native-checks
       - macos-swift-checks
@@ -660,6 +686,7 @@ jobs:
           require_selected "chat-contract-checks" "${{ needs.scope-plan.outputs.chat_contract_checks }}" "${{ needs.chat-contract-checks.result }}"
           require_selected "agent-flow-checks" "${{ needs.scope-plan.outputs.agent_flow_checks }}" "${{ needs.agent-flow-checks.result }}"
           require_selected "agent-e2e-checks" "${{ needs.scope-plan.outputs.agent_e2e_checks }}" "${{ needs.agent-e2e-checks.result }}"
+          require_selected "harness-checks" "${{ needs.scope-plan.outputs.harness_checks }}" "${{ needs.harness-checks.result }}"
           require_selected "adapter-checks" "${{ needs.scope-plan.outputs.adapter_checks }}" "${{ needs.adapter-checks.result }}"
           require_selected "desktop-native-checks" "${{ needs.scope-plan.outputs.desktop_native_checks }}" "${{ needs.desktop-native-checks.result }}"
           require_selected "macos-swift-checks" "${{ needs.scope-plan.outputs.desktop_native_checks }}" "${{ needs.macos-swift-checks.result }}"
