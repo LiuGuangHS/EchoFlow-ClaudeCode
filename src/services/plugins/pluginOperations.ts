@@ -219,17 +219,9 @@ function findPluginByIdentifier(
 ): LoadedPlugin | undefined {
   const { name, marketplace } = parsePluginIdentifier(plugin)
 
-  return plugins.find(p => {
-    // Check exact name match
-    if (p.name === plugin || p.name === name) return true
-
-    // If marketplace specified, check if it matches the source
-    if (marketplace && p.source) {
-      return p.name === name && p.source.includes(`@${marketplace}`)
-    }
-
-    return false
-  })
+  return plugins.find(p => marketplace
+    ? p.name === name && p.source === plugin
+    : p.name === plugin || p.name === name)
 }
 
 /**
@@ -240,13 +232,14 @@ function findPluginByIdentifier(
 function resolveDelistedPluginId(
   plugin: string,
 ): { pluginId: string; pluginName: string } | null {
-  const { name } = parsePluginIdentifier(plugin)
+  const { name, marketplace } = parsePluginIdentifier(plugin)
   const installedData = loadInstalledPluginsV2()
 
-  // Try exact match first, then search by name
+  // Qualified IDs must never fall back to another marketplace.
   if (installedData.plugins[plugin]?.length) {
     return { pluginId: plugin, pluginName: name }
   }
+  if (marketplace) return null
 
   const matchingKey = Object.keys(installedData.plugins).find(key => {
     const { name: keyName } = parsePluginIdentifier(key)
@@ -462,13 +455,13 @@ export async function uninstallPluginOp(
   if (foundPlugin) {
     // Find the matching settings key for this plugin (may differ from `plugin`
     // if user gave short name but settings has plugin@marketplace)
-    pluginId =
+    pluginId = plugin.includes('@') ? plugin :
       Object.keys(settings?.enabledPlugins ?? {}).find(
         k =>
           k === plugin ||
           k === foundPlugin.name ||
           k.startsWith(`${foundPlugin.name}@`),
-      ) ?? (plugin.includes('@') ? plugin : foundPlugin.name)
+      ) ?? foundPlugin.name
     pluginName = foundPlugin.name
   } else {
     // Plugin not found via marketplace lookup — it may have been delisted.

@@ -13,7 +13,7 @@
  * plugins active).
  */
 
-import { dirname, join, resolve, sep } from 'path'
+import { dirname, join, relative, resolve, sep } from 'path'
 import { logForDebugging } from '../debug.js'
 import { errorMessage, isENOENT, toError } from '../errors.js'
 import { getFsImplementation } from '../fsOperations.js'
@@ -106,8 +106,8 @@ export function clearInstalledPluginsCache(): void {
  * Migrate to single plugin file format.
  *
  * This consolidates the V1/V2 dual-file system into a single file:
- * 1. If installed_plugins_v2.json exists: copy to installed_plugins.json (version=2), delete V2 file
- * 2. If only installed_plugins.json exists with version=1: convert to version=2 in-place
+ * 1. Promote a valid legacy V2 file when the main file is missing or valid V1
+ * 2. If only a valid main V1 file exists, convert it to V2 in-place
  * 3. Clean up legacy non-versioned cache directories
  *
  * This migration runs once per session at startup.
@@ -122,38 +122,28 @@ export function migrateToSinglePluginFile(): void {
   const v2FilePath = getInstalledPluginsV2FilePath()
 
   try {
-    // Case 1: Try renaming v2→main directly; ENOENT = v2 doesn't exist
+    const main = readInstalledPluginsFileRaw()
+    if (main && main.version !== 1) {
+      migrationCompleted = true
+      return
+    }
+    const v1Data = main ? InstalledPluginsFileSchemaV1().parse(main.data) : null
+
+    let legacyContent: string | undefined
     try {
+      legacyContent = fs.readFileSync(v2FilePath, { encoding: 'utf-8' })
+    } catch (e) {
+      if (!isENOENT(e)) throw e
+    }
+
+    if (legacyContent !== undefined) {
+      const v2Data = InstalledPluginsFileSchemaV2().parse(jsonParse(legacyContent))
+      const normalized = normalizePortableInstallPaths(v2Data)
       fs.renameSync(v2FilePath, mainFilePath)
-      logForDebugging(
-        `Renamed installed_plugins_v2.json to installed_plugins.json`,
-      )
-      // Clean up legacy cache directories
-      const v2Data = loadInstalledPluginsV2()
-      cleanupLegacyCache(v2Data)
-      migrationCompleted = true
-      return
-    } catch (e) {
-      if (!isENOENT(e)) throw e
-    }
-
-    // Case 2: v2 absent — try reading main; ENOENT = neither exists (case 3)
-    let mainContent: string
-    try {
-      mainContent = fs.readFileSync(mainFilePath, { encoding: 'utf-8' })
-    } catch (e) {
-      if (!isENOENT(e)) throw e
-      // Case 3: No file exists - nothing to migrate
-      migrationCompleted = true
-      return
-    }
-
-    const mainData = jsonParse(mainContent)
-    const version = typeof mainData?.version === 'number' ? mainData.version : 1
-
-    if (version === 1) {
-      // Convert V1 to V2 format in-place
-      const v1Data = InstalledPluginsFileSchemaV1().parse(mainData)
+      clearInstalledPluginsCache()
+      logForDebugging('Renamed installed_plugins_v2.json to installed_plugins.json')
+      cleanupLegacyCache(normalized.data)
+    } else if (v1Data) {
       const v2Data = migrateV1ToV2(v1Data)
 
       writeFileSync_DEPRECATED(mainFilePath, jsonStringify(v2Data, null, 2), {
@@ -313,12 +303,19 @@ function normalizePortableInstallPaths(
 
   for (const [pluginId, entries] of Object.entries(data.plugins)) {
     plugins[pluginId] = entries.map(entry => {
+      if (entry.version === undefined) return entry
       const expectedPath = getVersionedCachePath(pluginId, entry.version)
       if (resolve(entry.installPath) === resolve(expectedPath)) {
         return entry
       }
 
-      if (!fs.existsSync(expectedPath)) {
+      // Only relocate missing versioned caches, never external or still-valid installations.
+      const cacheSuffix = `${sep}${relative(getPluginsDirectory(), expectedPath)}`
+      if (
+        !resolve(entry.installPath).endsWith(cacheSuffix) ||
+        fs.existsSync(entry.installPath) ||
+        !fs.existsSync(expectedPath)
+      ) {
         return entry
       }
 
@@ -467,7 +464,7 @@ export function addPluginInstallation(
   }
 
   if (existingIndex >= 0) {
-    installations[existingIndex] = newEntry
+    installations[existingIndex] = { ...installations[existingIndex], ...newEntry }
     logForDebugging(`Updated installation for ${pluginId} at scope ${scope}`)
   } else {
     installations.push(newEntry)
@@ -557,7 +554,7 @@ export function loadInstalledPluginsFromDisk(): InstalledPluginsFileV2 {
     logForDebugging(`Failed to load installed plugins from disk: ${errorMsg}`, {
       level: 'error',
     })
-    return { version: 2, plugins: {} }
+    throw error
   }
 }
 
@@ -936,7 +933,7 @@ export function addInstalledPlugin(
 
   const isUpdate = existingIndex >= 0
   if (isUpdate) {
-    installations[existingIndex] = v2Entry
+    installations[existingIndex] = { ...installations[existingIndex], ...v2Entry }
   } else {
     installations.push(v2Entry)
   }
@@ -1111,28 +1108,22 @@ export async function migrateFromEnabledPlugins(): Promise<void> {
   const rawFileData = readInstalledPluginsFileRaw()
   const fileExists = rawFileData !== null
   const isV2Format = fileExists && rawFileData?.version === 2
+  const existingData = loadInstalledPluginsFromDisk()
 
   // If file exists with V2 format, check if we can skip the expensive migration
-  if (isV2Format && rawFileData) {
+  if (isV2Format) {
     // Check if all plugins from settings already exist
     // (The expensive getPluginById/getGitCommitSha only runs for missing plugins)
-    const existingData = InstalledPluginsFileSchemaV2().safeParse(
-      rawFileData.data,
-    )
+    const allPluginsExist = Object.keys(enabledPlugins)
+      .filter(id => id.includes('@'))
+      .every(id => {
+        const installations = existingData.plugins[id]
+        return installations && installations.length > 0
+      })
 
-    if (existingData?.success) {
-      const plugins = existingData.data.plugins
-      const allPluginsExist = Object.keys(enabledPlugins)
-        .filter(id => id.includes('@'))
-        .every(id => {
-          const installations = plugins[id]
-          return installations && installations.length > 0
-        })
-
-      if (allPluginsExist) {
-        logForDebugging('All plugins already exist, skipping migration')
-        return
-      }
+    if (allPluginsExist) {
+      logForDebugging('All plugins already exist, skipping migration')
+      return
     }
   }
 
@@ -1180,14 +1171,8 @@ export async function migrateFromEnabledPlugins(): Promise<void> {
     }
   }
 
-  // Step 2: Start with existing data (or start empty if no file exists)
-  let v2Plugins: InstalledPluginsMapV2 = {}
-
-  if (fileExists) {
-    // File exists - load existing data
-    const existingData = loadInstalledPluginsV2()
-    v2Plugins = { ...existingData.plugins }
-  }
+  // Step 2: Start with the validated disk snapshot, not the session cache
+  const v2Plugins: InstalledPluginsMapV2 = { ...existingData.plugins }
 
   // Step 3: Update V2 scopes based on settings.json (settings is source of truth)
   let updatedCount = 0
@@ -1311,7 +1296,7 @@ export async function migrateFromEnabledPlugins(): Promise<void> {
 
   // Step 4: Save to single file (V2 format)
   if (!fileExists || updatedCount > 0 || addedCount > 0) {
-    const v2Data: InstalledPluginsFileV2 = { version: 2, plugins: v2Plugins }
+    const v2Data: InstalledPluginsFileV2 = { ...existingData, plugins: v2Plugins }
     saveInstalledPluginsV2(v2Data)
     logForDebugging(
       `Sync completed: ${addedCount} added, ${updatedCount} updated in installed_plugins.json`,

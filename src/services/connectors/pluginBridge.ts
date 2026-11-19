@@ -8,6 +8,8 @@ import { cacheAndRegisterPlugin } from '../../utils/plugins/pluginInstallationHe
 import { loadAllPluginsCacheOnly } from '../../utils/plugins/pluginLoader.js'
 import { addMarketplaceSource, clearMarketplacesCache, loadKnownMarketplacesConfig } from '../../utils/plugins/marketplaceManager.js'
 import { isPluginBlockedByPolicy } from '../../utils/plugins/pluginPolicy.js'
+import { loadInstalledPluginsFromDisk } from '../../utils/plugins/installedPluginsManager.js'
+import { CONNECTOR_MARKETPLACE, LEGACY_CONNECTOR_MARKETPLACE, connectorPluginName as pluginName } from './pluginIdentity.js'
 import { uninstallPluginOp } from '../plugins/pluginOperations.js'
 import { getRemoteRecipe } from './remoteCatalog.js'
 import { buildRemotePlugin } from './remoteConnector.js'
@@ -17,7 +19,7 @@ import type { ConnectorDefinition, ConnectorInstallation } from './types.js'
 
 import { nativeConnectorRecipes as recipes, renderNativeConnectorSkill } from './nativeConnectorSkill.js'
 
-const MARKETPLACE = 'haha-connectors'
+const MARKETPLACE = CONNECTOR_MARKETPLACE
 
 
 // All three connectors share one local marketplace and user settings entry.
@@ -32,15 +34,6 @@ function serialize<T>(work: () => Promise<T>): Promise<T> {
 function rootDirectory() {
   return join(getClaudeConfigHomeDir(), 'connectors', 'marketplace')
 }
-
-function pluginName(definition: ConnectorDefinition): string {
-  const expected = `office-${definition.id}`
-  if (definition.pluginId !== `${expected}@${MARKETPLACE}`) {
-    throw new Error('Invalid managed connector plugin identity')
-  }
-  return expected
-}
-
 
 export function renderConnectorSkill(definition: ConnectorDefinition, installation: ConnectorInstallation): string {
   const bundle = getSkillRecipe(definition.id, definition.version)
@@ -93,20 +86,61 @@ async function writeAtomic(file: string, content: string | Uint8Array) {
   }
 }
 
-async function assertMarketplaceOwnership(root: string) {
-  const existing = (await loadKnownMarketplacesConfig())[MARKETPLACE]
-  if (existing && (existing.source.source !== 'directory' || resolve(existing.source.path) !== resolve(root))) {
-    throw new Error('The haha-connectors marketplace name is already used by another source')
-  }
+type ManagedMarketplace = Record<string, unknown> & {
+  name: string
+  plugins: Array<Record<string, unknown> & { name: string, source: string, version?: string }>
 }
 
-function writeEnabled(definition: ConnectorDefinition, enabled: boolean) {
+async function connectorState(definition: ConnectorDefinition) {
+  const name = pluginName(definition)
+  const root = rootDirectory()
+  const known = await loadKnownMarketplacesConfig()
+  const owned = (marketplace: string) => {
+    const entry = known[marketplace]
+    return !!entry && entry.source.source === 'directory' && resolve(entry.source.path) === resolve(root) && resolve(entry.installLocation) === resolve(root)
+  }
+  const marketFile = join(root, '.claude-plugin', 'marketplace.json')
+  let market: ManagedMarketplace | undefined
+  try {
+    const value = JSON.parse(await readFile(marketFile, 'utf8'))
+    if (!value || ![MARKETPLACE, LEGACY_CONNECTOR_MARKETPLACE].includes(value.name) || !Array.isArray(value.plugins) || value.plugins.some((entry: ManagedMarketplace['plugins'][number]) => !entry || typeof entry.name !== 'string' || typeof entry.source !== 'string')) {
+      throw new Error('Invalid managed connector marketplace')
+    }
+    if (value.name === LEGACY_CONNECTOR_MARKETPLACE && !owned(value.name)) throw new Error('Unverified legacy connector marketplace')
+    if (known[value.name] && !owned(value.name)) throw new Error(`The ${value.name} marketplace name is already used by another source`)
+    if (value.plugins.some((entry: ManagedMarketplace['plugins'][number]) => entry.name === name && entry.source !== `./plugins/${name}`)) throw new Error('Invalid managed connector plugin source')
+    market = value
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  const marketplaces = [MARKETPLACE, LEGACY_CONNECTOR_MARKETPLACE].filter(item => owned(item) || (item === MARKETPLACE && !known[item]))
+  const managedIds = marketplaces.map(item => `${name}@${item}`)
+  if (definition.pluginId.endsWith(`@${LEGACY_CONNECTOR_MARKETPLACE}`) && !managedIds.includes(definition.pluginId)) throw new Error('Unverified legacy connector marketplace')
+  const installed = loadInstalledPluginsFromDisk().plugins
+  const userIds = managedIds.filter(id => installed[id]?.some(entry => entry.scope === 'user'))
+  const enabled = getSettingsForSource('userSettings')?.enabledPlugins ?? {}
+  const enabledIds = userIds.filter(id => enabled[id] === true)
+  // Keep the actual installed identity: options and secrets belong to that ID.
+  const pluginId = definition.pluginId.endsWith(`@${LEGACY_CONNECTOR_MARKETPLACE}`) ? definition.pluginId
+    : enabledIds.length === 1 ? enabledIds[0]!
+    : userIds.includes(definition.pluginId) ? definition.pluginId
+    : userIds[0] ?? (owned(LEGACY_CONNECTOR_MARKETPLACE) && !owned(MARKETPLACE) ? `${name}@${LEGACY_CONNECTOR_MARKETPLACE}` : definition.pluginId)
+  if (!managedIds.includes(pluginId)) throw new Error('The echoflow-connectors marketplace name is already used by another source')
+  const hasOtherAlias = managedIds.some(id => id !== pluginId && installed[id]?.length)
+  return { root, marketFile, market, known, userIds, hasOtherAlias, allManagedIds: managedIds, managedIds: managedIds.filter(id => id === pluginId || userIds.includes(id) || Object.hasOwn(enabled, id)), definition: { ...definition, pluginId } }
+}
+
+export async function resolveConnectorPluginDefinition(definition: ConnectorDefinition): Promise<ConnectorDefinition> {
+  return (await connectorState(definition)).definition
+}
+
+function writeEnabled(definition: ConnectorDefinition, enabled: boolean, managedIds: string[]) {
   if (enabled && isPluginBlockedByPolicy(definition.pluginId)) {
     throw new Error('This connector plugin is disabled by organization policy')
   }
   const settings = getSettingsForSource('userSettings')
   const { error } = updateSettingsForSource('userSettings', {
-    enabledPlugins: { ...settings?.enabledPlugins, [definition.pluginId]: enabled },
+    enabledPlugins: { ...settings?.enabledPlugins, ...Object.fromEntries(managedIds.map(id => [id, enabled && id === definition.pluginId])) },
   })
   if (error) throw error
   clearAllCaches()
@@ -114,12 +148,16 @@ function writeEnabled(definition: ConnectorDefinition, enabled: boolean) {
 
 export function installConnectorPlugin(definition: ConnectorDefinition, installation: ConnectorInstallation): Promise<void> {
   return serialize(async () => {
+    const state = await connectorState(definition)
+    definition = state.definition
+    const { root, marketFile, managedIds } = state
     const name = pluginName(definition)
     const bundle = getSkillRecipe(definition.id, definition.version)
     const bundleFiles = bundle ? await readSkillBundleFiles(bundle, installation.directory) : []
-    const root = rootDirectory()
-    await assertMarketplaceOwnership(root)
     if (isPluginBlockedByPolicy(definition.pluginId)) throw new Error('This connector plugin is disabled by organization policy')
+    const remoteRecipe = getRemoteRecipe(definition.id)
+    const remote = remoteRecipe ? buildRemotePlugin({ ...remoteRecipe, pluginId: definition.pluginId }) : undefined
+    const skill = renderConnectorSkill(definition, installation)
     const pluginRoot = join(root, 'plugins', name)
     await mkdir(join(root, '.claude-plugin'), { recursive: true })
     await mkdir(join(pluginRoot, '.claude-plugin'), { recursive: true })
@@ -131,33 +169,22 @@ export function installConnectorPlugin(definition: ConnectorDefinition, installa
       await writeAtomic(path, Buffer.from(file.bytes))
     }
     const version = `${definition.version}-connector.1`
-    const remoteRecipe = getRemoteRecipe(definition.id)
-    const remote = remoteRecipe ? buildRemotePlugin(remoteRecipe) : undefined
     const manifest = { ...remote?.manifest, name, version, description: `${definition.displayName ?? recipes[definition.id]?.name ?? name} desktop connector`, skills: './skills', ...(remote ? { mcpServers: './.mcp.json' } : {}) }
     if (remote) await writeAtomic(join(pluginRoot, '.mcp.json'), JSON.stringify(remote.mcpConfig, null, 2))
     await writeAtomic(join(pluginRoot, '.claude-plugin', 'plugin.json'), JSON.stringify(manifest, null, 2))
-    await writeAtomic(join(pluginRoot, 'skills', name, 'SKILL.md'), renderConnectorSkill(definition, installation))
+    await writeAtomic(join(pluginRoot, 'skills', name, 'SKILL.md'), skill)
 
-    const marketFile = join(root, '.claude-plugin', 'marketplace.json')
-    let entries: Array<{ name: string; source: string; version: string }> = []
-    try {
-      const previous = JSON.parse(await readFile(marketFile, 'utf8'))
-      if (previous.name !== MARKETPLACE || !Array.isArray(previous.plugins)) throw new Error('Invalid managed connector marketplace')
-      entries = previous.plugins
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    }
-    const entry = { name, source: `./plugins/${name}`, version, strict: true }
+    const market = state.market ?? { name: definition.pluginId.split('@')[1]!, owner: { name: 'EchoFlow Code' }, plugins: [] }
+    const entry = { ...market.plugins.find(item => item.name === name), name, source: `./plugins/${name}`, version, strict: true }
     await writeAtomic(marketFile, JSON.stringify({
-      name: MARKETPLACE,
-      owner: { name: 'Claude Code Haha' },
-      plugins: [...entries.filter(item => item.name !== name), entry],
+      ...market,
+      plugins: [...market.plugins.filter(item => item.name !== name), entry],
     }, null, 2))
     clearMarketplacesCache()
-    await addMarketplaceSource({ source: 'directory', path: root })
+    if (!state.known[market.name]) await addMarketplaceSource({ source: 'directory', path: root })
     // Do not briefly expose an unauthenticated skill via installPluginOp's
     // default auto-enable. Reuse its cache/registration core, initially off.
-    writeEnabled(definition, false)
+    writeEnabled(definition, false, managedIds)
     await cacheAndRegisterPlugin(definition.pluginId, entry, 'user', undefined, pluginRoot)
     clearAllCaches()
   })
@@ -165,17 +192,18 @@ export function installConnectorPlugin(definition: ConnectorDefinition, installa
 
 export function setConnectorPluginEnabled(definition: ConnectorDefinition, enabled: boolean): Promise<void> {
   return serialize(async () => {
-    pluginName(definition)
-    await assertMarketplaceOwnership(rootDirectory())
-    writeEnabled(definition, enabled)
+    const state = await connectorState(definition)
+    writeEnabled(state.definition, enabled, state.managedIds)
   })
 }
 
 export async function isConnectorPluginReady(definition: ConnectorDefinition): Promise<boolean> {
-  pluginName(definition)
+  const state = await connectorState(definition)
+  definition = state.definition
   const { enabled, errors } = await loadAllPluginsCacheOnly()
-  const plugin = enabled.find(item => item.source === definition.pluginId)
-  if (!plugin || errors.some(error => error.source === definition.pluginId)) return false
+  const active = enabled.filter(item => state.allManagedIds.includes(item.source))
+  const plugin = active.find(item => item.source === definition.pluginId)
+  if (!plugin || active.length !== 1 || errors.some(error => error.source === definition.pluginId)) return false
   const skill = join(plugin.path, 'skills', pluginName(definition), 'SKILL.md')
   try {
     const bundle = getSkillRecipe(definition.id, definition.version)
@@ -188,20 +216,20 @@ export async function isConnectorPluginReady(definition: ConnectorDefinition): P
 
 export function removeConnectorPlugin(definition: ConnectorDefinition): Promise<void> {
   return serialize(async () => {
+    const state = await connectorState(definition)
+    definition = state.definition
     const name = pluginName(definition)
-    await assertMarketplaceOwnership(rootDirectory())
-    writeEnabled(definition, false)
-    const result = await uninstallPluginOp(definition.pluginId, 'user', false)
-    if (!result.success && !result.message.includes('not installed')) throw new Error(result.message)
-    const marketFile = join(rootDirectory(), '.claude-plugin', 'marketplace.json')
-    try {
-      const market = JSON.parse(await readFile(marketFile, 'utf8'))
-      if (market.name !== MARKETPLACE || !Array.isArray(market.plugins)) throw new Error('Invalid managed connector marketplace')
-      await writeAtomic(marketFile, JSON.stringify({ ...market, plugins: market.plugins.filter((entry: { name: string }) => entry.name !== name) }, null, 2))
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    writeEnabled(definition, false, state.managedIds)
+    if (state.userIds.includes(definition.pluginId)) {
+      const result = await uninstallPluginOp(definition.pluginId, 'user', false)
+      if (!result.success) throw new Error(result.message)
+      if (result.pluginId !== definition.pluginId) throw new Error('Connector uninstall resolved a different plugin identity')
     }
-    await rm(join(rootDirectory(), 'plugins', name), { recursive: true, force: true })
+    // A coexisting managed alias still owns the same source files.
+    if (!state.hasOtherAlias) {
+      if (state.market) await writeAtomic(state.marketFile, JSON.stringify({ ...state.market, plugins: state.market.plugins.filter(entry => entry.name !== name) }, null, 2))
+      await rm(join(state.root, 'plugins', name), { recursive: true, force: true })
+    }
     clearMarketplacesCache()
     clearAllCaches()
   })

@@ -9,7 +9,7 @@ import * as sessionReload from '../../server/services/sessionComponentReloadServ
 
 afterEach(() => { mock.restore() })
 
-test.each(ALL_CONNECTORS)('$id requires its own plugin and skill; only MCP requires remote tools', async definition => {
+test.each([...ALL_CONNECTORS, { ...remote, pluginId: 'office-supabase@haha-connectors' }])('$id requires its own plugin and skill; only MCP requires remote tools', async definition => {
   spyOn(conversationService, 'getActiveSessions').mockReturnValue(['catalog-chat'])
   const reload = spyOn(sessionReload, 'reloadSessionComponents').mockResolvedValue({
     applied: true, commands: 1, agents: 0, plugins: 1, mcpServers: 0, errors: 0,
