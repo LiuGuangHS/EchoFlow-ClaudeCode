@@ -47,6 +47,15 @@ describe('stream protocol pieces', () => {
     expect(readStreamFrame('not json')).toBeNull()
   })
 
+  test('accepts legacy and v1 controls but rejects explicitly future control versions', () => {
+    for (const type of ['command_ack', 'stream_attached']) {
+      const frame = { type, cseq: 1, epoch: 'e', resumed: true, cack: 0, next: 1, last: 0 }
+      expect(readStreamFrame(frame)).not.toBeNull()
+      expect(readStreamFrame({ ...frame, v: 1 })).not.toBeNull()
+      for (const v of [2, null, '1']) expect(readStreamFrame({ ...frame, v })).toBeNull()
+    }
+  })
+
   test('the outbox numbers commands first, forgets acknowledged ones and keeps their numbers for a resend', () => {
     const outbox = new CommandOutbox()
     const first = outbox.encode({ type: 'sync_state' })

@@ -20,7 +20,6 @@ import {
 } from './format.js'
 import { TelegramStreamDelivery } from './stream-delivery.js'
 import {
-  formatPermissionDecisionStatus,
   formatPermissionInstructions,
   parsePermissionCommand,
   parsePermitCallbackData,
@@ -30,7 +29,7 @@ import { SessionStore } from '../common/session-store.js'
 import { createAdapterClient } from '../common/adapter-client.js'
 import { restoreStoredSessionBinding, SESSION_RECONNECT_NOTICE, type SessionRestoreResult } from '../common/session-recovery.js'
 import { SessionSelectionController } from '../common/session-selection.js'
-import { syncImPermissionState } from '../common/permission-sync.js'
+import { formatImPermissionSubmissionNotice, submitImPermissionDecision, syncImPermissionState } from '../common/permission-sync.js'
 import { isAllowedUser, tryPair } from '../common/pairing.js'
 import { TelegramMediaService } from './media.js'
 import { AttachmentStore } from '../common/attachment/attachment-store.js'
@@ -71,6 +70,7 @@ const accumulatedThinkingText = new Map<string, string>()
 const pendingProjectSelection = new Map<string, boolean>()
 const runtimeStates = new Map<string, ChatRuntimeState>()
 const pendingPermissions = new Map<string, Set<string>>()
+const submittingPermissions = new Map<string, Set<string>>()
 /** Per-chat outbound image watcher for Agent-produced markdown images. */
 const tgImageWatchers = new Map<string, ImageBlockWatcher>()
 
@@ -135,26 +135,15 @@ function clearTransientChatState(chatId: string): void {
   runtime.verb = undefined
   runtime.pendingPermissionCount = 0
   pendingPermissions.delete(chatId)
+  submittingPermissions.delete(chatId)
   tgImageWatchers.delete(chatId)
 }
 
 async function handlePermissionDecision(chatId: string, decision: PermissionDecision): Promise<void> {
-  const pending = pendingPermissions.get(chatId)
-  if (!pending?.has(decision.requestId)) {
-    await bot.api.sendMessage(Number(chatId), `未找到待确认的权限请求：${decision.requestId}`)
-    return
-  }
-
-  const sent = bridge.sendPermissionResponse(chatId, decision.requestId, decision.allowed, decision.rule)
-  if (sent) {
-    pending.delete(decision.requestId)
-    const runtime = getRuntimeState(chatId)
-    runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
-  }
-  await bot.api.sendMessage(
-    Number(chatId),
-    sent ? `${formatPermissionDecisionStatus(decision)}。` : '权限响应发送失败，请检查会话状态。',
+  const result = submitImPermissionDecision(
+    chatId, decision, pendingPermissions.get(chatId), submittingPermissions, bridge,
   )
+  await bot.api.sendMessage(Number(chatId), formatImPermissionSubmissionNotice(result, decision.requestId))
 }
 
 async function ensureExistingSession(chatId: string): Promise<SessionRestoreResult> {
@@ -315,7 +304,16 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
   const numericChatId = Number(chatId)
   const runtime = getRuntimeState(chatId)
 
-  if (syncImPermissionState(chatId, msg, runtime, pendingPermissions)) return
+  const settled: string[] = []
+  if (syncImPermissionState(chatId, msg, runtime, pendingPermissions, {
+    submittingPermissions,
+    requestSyncState: (id) => bridge.requestSyncState(id),
+    onSettled: (id) => { settled.push(id) },
+  })) {
+    if (msg.type === 'error') await bot.api.sendMessage(numericChatId, msg.message)
+    for (const id of settled) await bot.api.sendMessage(numericChatId, `权限请求 ${id} 已不再等待确认。`)
+    return
+  }
   switch (msg.type) {
     case 'connected':
       break
@@ -378,11 +376,12 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
       break
 
     case 'permission_request': {
-      runtime.pendingPermissionCount += 1
-      runtime.state = 'permission_pending'
       const pending = pendingPermissions.get(chatId) ?? new Set<string>()
+      if (pending.has(msg.requestId)) break
       pending.add(msg.requestId)
       pendingPermissions.set(chatId, pending)
+      runtime.pendingPermissionCount = pending.size
+      runtime.state = 'permission_pending'
       const text = `${formatPermissionRequest(msg.toolName, msg.input, msg.requestId)}\n\n${formatPermissionInstructions(msg.requestId)}`
       const keyboard = new InlineKeyboard()
         .text('✅ 允许', `permit:${msg.requestId}:yes`)
@@ -457,6 +456,7 @@ async function startNewSession(chatId: string, query?: string): Promise<void> {
   sessionSelection.clear(chatId)
   commandController.clearPendingSelections(chatId)
   pendingPermissions.delete(chatId)
+  submittingPermissions.delete(chatId)
   runtimeStates.delete(chatId)
   tgImageWatchers.delete(chatId)
 
@@ -705,7 +705,7 @@ bot.on('callback_query:data', async (ctx) => {
 
     const decision = parsePermitCallbackData(data)
     if (!decision) return
-    await commandController.handlePermissionCallback(ctx, decision, pendingPermissions, (chatId) => getRuntimeState(chatId).pendingPermissionCount = Math.max(0, getRuntimeState(chatId).pendingPermissionCount - 1))
+    await commandController.handlePermissionCallback(ctx, decision, pendingPermissions, submittingPermissions)
   })
 })
 

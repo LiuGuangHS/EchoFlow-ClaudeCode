@@ -1,4 +1,5 @@
 import { normalizeAnthropicBaseUrl } from '../../services/api/anthropicBaseUrl.js'
+import { readLocalRedactionState } from '../../services/localRedactionGuard.js'
 import { normalizeModelStringForAPI } from '../../utils/model/model.js'
 import { OPENAI_CODEX_API_ENDPOINT } from '../../services/openaiAuth/client.js'
 import { resolveOpenAICodexModel } from '../../services/openaiAuth/models.js'
@@ -175,8 +176,14 @@ async function askSmallModel({
     // question simply stays with the user.
     return null
   }
+  // Check before the settings loader can quarantine malformed JSON and fall back to defaults.
+  const redactionState = readLocalRedactionState()
   const provider = await new ProviderService().getProvider(providerId)
   if (signal.aborted) return null
+  const usesLocalProxy = !isOpenAIOfficialProviderId(provider.id)
+    && !isGrokOfficialProviderId(provider.id)
+    && providerNeedsProxy(resolveProviderApiFormat(provider), provider.supportsNestedToolResultMedia)
+  if (redactionState.enabled && !usesLocalProxy) return null
   const networkSettings = await loadNetworkSettings()
   if (signal.aborted) return null
   const model = normalizeModelStringForAPI(provider.models.haiku || provider.models.main)
@@ -198,7 +205,7 @@ async function askSmallModel({
   }
   if (!provider.baseUrl) return null
 
-  if (providerNeedsProxy(resolveProviderApiFormat(provider), provider.supportsNestedToolResultMedia)) {
+  if (usesLocalProxy) {
     return askThroughProxy(provider.id, sessionId, body, requestSignal)
   }
 

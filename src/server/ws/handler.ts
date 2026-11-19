@@ -31,7 +31,8 @@ import type {
   TokenUsage,
   TurnTiming,
 } from './events.js'
-import { RUNTIME_CONFIG_APPLIED_EVENT } from './events.js'
+import { CLI_RUNTIME_APPLIED_EVENT, RUNTIME_CONFIG_APPLIED_EVENT } from './events.js'
+import { resolveClaudeCodeRuntimeId, resolveClaudeCodeRuntimePath, type ClaudeCodeRuntimeId } from '../services/claudeCodeRuntimeService.js'
 import { PLAN_EXECUTION_CONTINUE_MESSAGE } from '../../constants/messages.js'
 import * as os from 'node:os'
 import {
@@ -281,6 +282,9 @@ const interruptedTurnResultMessages = new WeakMap<object, string>()
 const scheduledTurnResults = new WeakMap<object, { sessionId: string; metadata: ScheduledTaskMetadata }>()
 const sessionClearInProgress = new Set<string>()
 const deferredRuntimeRestarts = new Map<string, RuntimeOverride>()
+const cliRuntimeOverrides = new Map<string, ClaudeCodeRuntimeId>()
+const deferredCliRuntimeRestarts = new Map<string, ClaudeCodeRuntimeId>()
+const rejectedCliRuntimeConfigs = new Map<string, string>()
 const deferredPermissionModes = new Map<string, PermissionMode>()
 
 export type SessionChatActivityState =
@@ -884,14 +888,7 @@ export const handleWebSocket = {
       // A missing or temporarily unreadable transcript must not reject the
       // WebSocket connection; the normal session-list refresh remains a fallback.
     })
-    const toolRequestIds = replayPendingPermissionRequests(ws, sessionId)
-    const computerUseRequestIds = replayPendingComputerUsePermissionRequests(ws, sessionId)
-    sendMessage(ws, {
-      type: 'permission_requests_snapshot',
-      toolRequestIds,
-      computerUseRequestIds,
-      turnActive: hasLiveUserTurnForClient(sessionId),
-    })
+    syncPermissionRequests(ws)
     replayAgentStopFailures(ws, sessionId)
     for (const task of activeNonAgentTasks.get(sessionId)?.values() ?? []) {
       if (task.localStopConfirmed) void emitAuthoritativeNonAgentStopped(sessionId, task)
@@ -928,7 +925,21 @@ export const handleWebSocket = {
 
       if (migrationMaintenance.isActive && message.type !== 'ping' && message.type !== 'sync_state') {
         if (message.type === 'user_message') releaseAcceptedPowerLease(ws, message.powerActivityLeaseId)
-        sendError(ws, 'Data migration is in progress', 'MIGRATION_IN_PROGRESS')
+        if (
+          (message.type === 'permission_response' || message.type === 'computer_use_permission_response') &&
+          typeof message.requestId === 'string' && message.requestId.length > 0
+        ) {
+          sendApprovalError(ws, {
+            type: 'error',
+            message: 'Data migration is in progress',
+            code: 'MIGRATION_IN_PROGRESS',
+            requestId: message.requestId,
+            permissionType: message.type === 'permission_response' ? 'tool' : 'computer_use',
+            approvalOutcome: 'rejected',
+          })
+        } else {
+          sendError(ws, 'Data migration is in progress', 'MIGRATION_IN_PROGRESS')
+        }
         return
       }
 
@@ -999,11 +1010,16 @@ export const handleWebSocket = {
           void migrationMaintenance.track(handleSetRuntimeConfig(ws, message))
           break
 
+        case 'set_cli_runtime':
+          void migrationMaintenance.track(handleSetCliRuntime(ws, message))
+          break
+
         case 'prewarm_session':
           void migrationMaintenance.track(handlePrewarmSession(ws))
           break
 
         case 'sync_state':
+          syncPermissionRequests(ws)
           sendMessage(ws, {
             type: 'session_state',
             turnState: hasLiveUserTurnForClient(ws.data.sessionId)
@@ -1767,6 +1783,8 @@ function bindActiveUserTurnCompletion(
         if (stillOwnsTurn) {
           settleSessionChatActivity(sessionId, cliMsg)
           clearActiveUserTurn(sessionId, activeTurn)
+          applyDeferredPermissionModeAfterActiveTurn(ws, sessionId)
+          applyDeferredRuntimeRestartAfterActiveTurn(ws, sessionId)
         }
       }
       return
@@ -1797,7 +1815,9 @@ function bindActiveUserTurnCompletion(
 }
 
 function shouldDeferRuntimeRestartForActiveTurn(sessionId: string): boolean {
-  return activeUserTurns.get(sessionId)?.messageSent === true
+  const activeTurn = activeUserTurns.get(sessionId)
+  // sendMessage can await input preparation before committing to its runtime owner.
+  return activeTurn?.sendStarted === true || activeTurn?.messageSent === true
 }
 
 function applyDeferredPermissionModeAfterActiveTurn(
@@ -1819,21 +1839,35 @@ function applyDeferredRuntimeRestartAfterActiveTurn(
   sessionId: string,
 ): void {
   const deferred = deferredRuntimeRestarts.get(sessionId)
-  if (!deferred) return
+  const deferredCliRuntime = deferredCliRuntimeRestarts.get(sessionId)
+  if (!deferred && !deferredCliRuntime) return
+  if (shouldDeferRuntimeRestartForActiveTurn(sessionId)) return
 
   deferredRuntimeRestarts.delete(sessionId)
+  deferredCliRuntimeRestarts.delete(sessionId)
   void enqueueRuntimeTransition(sessionId, async () => {
     const currentOverride = runtimeOverrides.get(sessionId)
-    if (
-      !currentOverride ||
-      currentOverride.providerId !== deferred.providerId ||
-      currentOverride.modelId !== deferred.modelId ||
-      currentOverride.effort !== deferred.effort ||
-      !conversationService.hasSession(sessionId)
-    ) {
+    const modelSelectionCurrent = deferred && currentOverride &&
+      currentOverride.providerId === deferred.providerId &&
+      currentOverride.modelId === deferred.modelId &&
+      currentOverride.effort === deferred.effort &&
+      (currentOverride.openAIFastMode ?? false) === (deferred.openAIFastMode ?? false)
+    const cliSelectionCurrent = deferredCliRuntime &&
+      cliRuntimeOverrides.get(sessionId) === deferredCliRuntime
+    if (!modelSelectionCurrent && !cliSelectionCurrent) return
+    if (!conversationService.hasSession(sessionId)) {
+      if (deferredCliRuntime && cliSelectionCurrent) {
+        await commitCliRuntime(sessionId, deferredCliRuntime)
+        rejectedCliRuntimeConfigs.delete(sessionId)
+        sendToSession(sessionId, { type: CLI_RUNTIME_APPLIED_EVENT, cliRuntimeId: deferredCliRuntime })
+      }
       return
     }
     await restartSessionWithRuntimeConfig(ws, sessionId)
+  }).catch((error) => {
+    if (deferredCliRuntime) rejectedCliRuntimeConfigs.set(sessionId, 'The CLI runtime selection could not be applied.')
+    console.error(`[WS] Failed to apply deferred runtime for ${sessionId}:`, error)
+    sendMessage(ws, { type: 'error', message: 'Unable to apply the deferred runtime selection.', code: 'CLI_RESTART_FAILED' })
   })
 }
 
@@ -1985,12 +2019,32 @@ async function handlePrewarmSession(ws: SessionConnection) {
 }
 
 const EXIT_PLAN_MODE_TOOL_NAME = 'ExitPlanMode'
+const planApprovalTransitions = new Map<string, Set<string>>()
+
+function syncPermissionRequests(ws: SessionConnection): void {
+  const { sessionId } = ws.data
+  sendMessage(ws, {
+    type: 'permission_requests_snapshot',
+    toolRequestIds: replayPendingPermissionRequests(ws, sessionId),
+    computerUseRequestIds: replayPendingComputerUsePermissionRequests(ws, sessionId),
+    turnActive: hasLiveUserTurnForClient(sessionId),
+  })
+}
+
+function sendApprovalError(ws: SessionConnection, message: Extract<ServerMessage, { type: 'error' }>): void {
+  sendMessage(ws, message)
+  if (!message.requestId) return
+  for (const client of activeSessions.get(ws.data.sessionId) ?? []) {
+    if (client !== ws) sendMessage(client, message)
+  }
+}
 
 function finalizePermissionResponse(
   ws: SessionConnection,
   message: Extract<ClientMessage, { type: 'permission_response' }>,
-): void {
+): boolean {
   const { sessionId } = ws.data
+  if (!conversationService.getPendingPermissionToolName(sessionId, message.requestId)) return false
   const resolved = conversationService.respondToPermission(
     sessionId,
     message.requestId,
@@ -2010,6 +2064,7 @@ function finalizePermissionResponse(
     })
   }
   console.log(`[WS] Permission response for ${message.requestId}: ${message.allowed}`)
+  return resolved
 }
 
 function handlePermissionResponse(
@@ -2017,26 +2072,45 @@ function handlePermissionResponse(
   message: Extract<ClientMessage, { type: 'permission_response' }>
 ) {
   const { sessionId } = ws.data
-  if (
-    message.allowed &&
-    message.runtimeOverride &&
-    conversationService.getPendingPermissionToolName(sessionId, message.requestId) ===
-      EXIT_PLAN_MODE_TOOL_NAME
-  ) {
-    void handlePlanApprovalWithRuntimeOverride(ws, message).catch((err) => {
-      // The approval was NOT sent: the CLI is still waiting on the permission
-      // and the user can retry. Note the desktop optimistically dismissed the
-      // approval bar on send — it reappears on the reconnect replay.
+  const toolName = conversationService.getPendingPermissionToolName(sessionId, message.requestId)
+  if (!toolName) return
+  const transitions = planApprovalTransitions.get(sessionId) ?? new Set<string>()
+  if (transitions.has(message.requestId)) return
+  if (message.allowed && message.runtimeOverride && toolName === EXIT_PLAN_MODE_TOOL_NAME) {
+    const submission = { started: false }
+    transitions.add(message.requestId)
+    planApprovalTransitions.set(sessionId, transitions)
+    void handlePlanApprovalWithRuntimeOverride(ws, message, submission).catch((err) => {
       console.error(`[WS] Plan approval with runtime override failed for ${sessionId}:`, err)
-      sendMessage(ws, {
+      const pending = !submission.started && conversationService.getPendingPermissionToolName(sessionId, message.requestId)
+      sendApprovalError(ws, {
         type: 'error',
-        message: 'Failed to apply the execution model. The plan is still waiting for approval.',
+        message: pending
+          ? 'Failed to apply the execution model. The plan is still waiting for approval.'
+          : 'Failed to complete the execution model transition. Synchronize the session before continuing.',
         code: 'RUNTIME_CONFIG_INVALID',
+        requestId: message.requestId,
+        permissionType: 'tool',
+        approvalOutcome: pending ? 'rejected' : 'uncertain',
       })
+    }).finally(() => {
+      if (!submission.started || !conversationService.getPendingPermissionToolName(sessionId, message.requestId)) {
+        transitions.delete(message.requestId)
+        if (transitions.size === 0) planApprovalTransitions.delete(sessionId)
+      }
     })
     return
   }
-  finalizePermissionResponse(ws, message)
+  try {
+    finalizePermissionResponse(ws, message)
+  } catch (err) {
+    console.error(`[WS] Permission response outcome uncertain for ${sessionId}:`, err)
+    sendApprovalError(ws, {
+      type: 'error', code: 'PERMISSION_RESPONSE_UNCERTAIN',
+      message: 'Permission response outcome is uncertain. Synchronize the session before continuing.',
+      requestId: message.requestId, permissionType: 'tool', approvalOutcome: 'uncertain',
+    })
+  }
 }
 
 /**
@@ -2082,16 +2156,18 @@ function waitForTurnResultOrTimeout(sessionId: string, timeoutMs: number): Promi
 function rejectStartedSideChatProviderChange(
   ws: SessionConnection,
   requestedProviderId: string | null,
+  requestId?: string,
 ): boolean {
   const { sessionId } = ws.data
   const side = getSideChat(sessionId)
   if (!side?.started) return false
   const providerId = runtimeOverrides.get(sessionId)?.providerId ?? side.launchInfo.runtimeProviderId ?? null
   if (providerId === requestedProviderId) return false
-  sendMessage(ws, {
+  sendApprovalError(ws, {
     type: 'error',
     code: 'SIDE_CHAT_RUNTIME_RESTART_UNAVAILABLE',
     message: 'Open a new side chat to change provider or reasoning effort.',
+    ...(requestId ? { requestId, permissionType: 'tool' as const, approvalOutcome: 'rejected' as const } : {}),
   })
   return true
 }
@@ -2099,18 +2175,22 @@ function rejectStartedSideChatProviderChange(
 async function handlePlanApprovalWithRuntimeOverride(
   ws: SessionConnection,
   message: Extract<ClientMessage, { type: 'permission_response' }>,
+  submission: { started: boolean },
 ): Promise<void> {
   const { sessionId } = ws.data
-  if (rejectStartedSideChatProviderChange(ws, message.runtimeOverride!.providerId)) return
+  if (rejectStartedSideChatProviderChange(ws, message.runtimeOverride!.providerId, message.requestId)) return
   const normalized = await normalizeRuntimeOverrideInput(message.runtimeOverride!)
   if (!normalized.ok) {
-    sendMessage(ws, {
+    sendApprovalError(ws, {
       type: 'error',
       message:
         normalized.reason === 'model'
           ? 'Runtime model selection is invalid.'
           : 'Runtime effort selection is invalid.',
       code: 'RUNTIME_CONFIG_INVALID',
+      requestId: message.requestId,
+      permissionType: 'tool',
+      approvalOutcome: 'rejected',
     })
     return
   }
@@ -2134,12 +2214,13 @@ async function handlePlanApprovalWithRuntimeOverride(
     (prevOverride?.openAIFastMode ?? launchInfo?.openAIFastMode ?? false) === (nextOverride.openAIFastMode ?? false)
   ) {
     rejectedRuntimeConfigs.delete(sessionId)
+    submission.started = true
     finalizePermissionResponse(ws, message)
     return
   }
 
   if (isSideChatId(sessionId) && (currentProviderId !== nextOverride.providerId || (nextOverride.effort !== undefined && nextOverride.effort !== currentEffort) || (prevOverride?.openAIFastMode ?? launchInfo?.openAIFastMode ?? false) !== (nextOverride.openAIFastMode ?? false))) {
-    sendMessage(ws, { type: 'error', code: 'SIDE_CHAT_RUNTIME_RESTART_UNAVAILABLE', message: 'Open a new side chat to change provider or reasoning effort.' })
+    sendApprovalError(ws, { type: 'error', code: 'SIDE_CHAT_RUNTIME_RESTART_UNAVAILABLE', message: 'Open a new side chat to change provider or reasoning effort.', requestId: message.requestId, permissionType: 'tool', approvalOutcome: 'rejected' })
     return
   }
 
@@ -2153,10 +2234,14 @@ async function handlePlanApprovalWithRuntimeOverride(
     // Same provider: the CLI is blocked on this very permission request, so a
     // set_model control request is acked before the allow response frees the
     // turn — the first execution request is guaranteed to read the new model.
-    // On failure the transition rejects, the catch in handlePermissionResponse
-    // reports it, and the permission stays pending (override untouched).
+    // A failed control acknowledgement does not prove the model change was rejected.
     await enqueueRuntimeTransition(sessionId, async () => {
-      await conversationService.setModel(sessionId, nextOverride.modelId)
+      if (!conversationService.getPendingPermissionToolName(sessionId, message.requestId)) return
+      submission.started = true
+      if (!await conversationService.setModel(sessionId, nextOverride.modelId)) {
+        throw new Error('Execution model owner is no longer available')
+      }
+      if (!conversationService.getPendingPermissionToolName(sessionId, message.requestId)) return
       const appliedOverride = nextOverride.effort === undefined && currentEffort
         ? { ...nextOverride, effort: currentEffort, requestedConfig: nextOverride.requestedConfig ?? message.runtimeOverride }
         : nextOverride
@@ -2169,6 +2254,7 @@ async function handlePlanApprovalWithRuntimeOverride(
       await persistSessionRuntimeConfig(sessionId, appliedOverride)
       broadcastAppliedRuntimeConfig(sessionId)
     })
+    submission.started = true
     finalizePermissionResponse(ws, message)
     return
   }
@@ -2178,6 +2264,8 @@ async function handlePlanApprovalWithRuntimeOverride(
   // flow. The interrupted turn may bill one partial request to the planning
   // model — same as the manual flow.
   await enqueueRuntimeTransition(sessionId, async () => {
+    if (!conversationService.getPendingPermissionToolName(sessionId, message.requestId)) return
+    submission.started = true
     rejectedRuntimeConfigs.delete(sessionId)
     runtimeOverrides.set(sessionId, nextOverride)
     runtimeOverrideVersions.set(
@@ -2191,7 +2279,8 @@ async function handlePlanApprovalWithRuntimeOverride(
     }
   })
 
-  finalizePermissionResponse(ws, message)
+  submission.started = true
+  if (!finalizePermissionResponse(ws, message)) return
   handleStopGeneration(ws)
   // Let the CLI write the interrupted result before the restart kills the
   // process. The timeout only bounds a wedged interrupt — the restart's own
@@ -2397,6 +2486,69 @@ async function normalizeRuntimeOverrideInput(
         ? { openAIFastMode: input.openAIFastMode } : {}),
     },
   }
+}
+
+async function handleSetCliRuntime(
+  ws: SessionConnection,
+  message: Extract<ClientMessage, { type: 'set_cli_runtime' }>,
+): Promise<void> {
+  const { sessionId } = ws.data
+  // Register before validation so a following input cannot use the old process.
+  await enqueueRuntimeTransition(sessionId, async () => {
+    const cliRuntimeId = message.cliRuntimeId
+    try {
+      if (cliRuntimeId !== 'bundled' && cliRuntimeId !== 'installed') {
+        throw new Error('CLI runtime selection is invalid')
+      }
+      resolveClaudeCodeRuntimePath(cliRuntimeId)
+    } catch {
+      rejectedCliRuntimeConfigs.set(sessionId, 'The selected CLI runtime is unavailable.')
+      sendMessage(ws, { type: 'error', message: 'Unable to select the requested CLI runtime.', code: 'CLI_RUNTIME_INVALID' })
+      return
+    }
+    if (getSideChat(sessionId)?.started) {
+      sendMessage(ws, { type: 'error', message: 'Open a new side chat to change CLI runtime.', code: 'SIDE_CHAT_RUNTIME_RESTART_UNAVAILABLE' })
+      return
+    }
+
+    const launchInfo = await sessionService.getSessionLaunchInfo(sessionId)
+    const currentRuntimeId = cliRuntimeOverrides.get(sessionId) ??
+      conversationService.getSessionCliRuntimeId(sessionId) ?? launchInfo?.cliRuntimeId
+    if (currentRuntimeId === cliRuntimeId && !rejectedCliRuntimeConfigs.has(sessionId)) {
+      if (!deferredCliRuntimeRestarts.has(sessionId)) {
+        await commitCliRuntime(sessionId, cliRuntimeId)
+        cliRuntimeOverrides.set(sessionId, cliRuntimeId)
+        sendToSession(sessionId, { type: CLI_RUNTIME_APPLIED_EVENT, cliRuntimeId })
+      }
+      return
+    }
+
+    rejectedCliRuntimeConfigs.delete(sessionId)
+    cliRuntimeOverrides.set(sessionId, cliRuntimeId)
+    runtimeOverrideVersions.set(sessionId, (runtimeOverrideVersions.get(sessionId) ?? 0) + 1)
+    if (shouldDeferRuntimeRestartForActiveTurn(sessionId)) {
+      deferredCliRuntimeRestarts.set(sessionId, cliRuntimeId)
+      return
+    }
+
+    const pendingStartup = sessionStartupPromises.get(sessionId)
+    const startupIncludesSelection = (sessionStartupRuntimeVersions.get(sessionId) ?? 0) >=
+      (runtimeOverrideVersions.get(sessionId) ?? 0)
+    if (pendingStartup) await pendingStartup.catch(() => undefined)
+    if (conversationService.hasSession(sessionId) && !startupIncludesSelection) {
+      await restartSessionWithRuntimeConfig(ws, sessionId)
+      return
+    }
+
+    await commitCliRuntime(sessionId, cliRuntimeId)
+    sendToSession(sessionId, { type: CLI_RUNTIME_APPLIED_EVENT, cliRuntimeId })
+  }).catch((error) => {
+    if (cliRuntimeOverrides.has(sessionId)) {
+      rejectedCliRuntimeConfigs.set(sessionId, 'The CLI runtime selection could not be applied.')
+    }
+    console.error(`[WS] Failed to select CLI runtime for ${sessionId}:`, error)
+    sendMessage(ws, { type: 'error', message: 'Unable to apply the CLI runtime selection.', code: 'CLI_RUNTIME_CHANGE_FAILED' })
+  })
 }
 
 async function handleSetRuntimeConfig(
@@ -2648,12 +2800,38 @@ async function resolveRuntimeRestartWorkDir(sessionId: string): Promise<string> 
   throw new Error(`Unable to resolve working directory for session: ${sessionId}`)
 }
 
+async function commitCliRuntime(
+  sessionId: string,
+  cliRuntimeId: ClaudeCodeRuntimeId,
+  knownWorkDir?: string,
+): Promise<void> {
+  const workDir = knownWorkDir ?? await resolveRuntimeRestartWorkDir(sessionId)
+  resolveClaudeCodeRuntimePath(cliRuntimeId)
+  await sessionService.appendSessionMetadata(sessionId, { workDir, cliRuntimeId })
+}
+
 async function restartSessionWithRuntimeConfig(
   ws: SessionConnection,
   sessionId: string,
 ): Promise<boolean> {
+  const cliRuntimeId = cliRuntimeOverrides.get(sessionId)
   try {
     const workDir = await resolveRuntimeRestartWorkDir(sessionId)
+    const runtimeSettings = await getRuntimeSettings(sessionId)
+    // Revalidate deferred selections before stopping or writing anything.
+    try {
+      resolveClaudeCodeRuntimePath(runtimeSettings.cliRuntimeId)
+    } catch {
+      rejectedCliRuntimeConfigs.set(sessionId, 'The selected CLI runtime is unavailable.')
+      sendMessage(ws, { type: 'error', message: 'Unable to select the requested CLI runtime.', code: 'CLI_RUNTIME_INVALID' })
+      return false
+    }
+    const startupSettings = {
+      ...runtimeSettings,
+      ...(cliRuntimeId ? { persistCliRuntimeId: false } : {}),
+      ...(hasStoppedTurnBoundary(sessionId) || interruptedSessionChats.has(sessionId)
+        ? { resumeInterruptedTurn: false } : {}),
+    }
     markActiveAgentsStopping(sessionId)
     runtimeExitStoppedSessions.add(sessionId)
     // Approved team members are independent processes; replacing the lead's
@@ -2663,12 +2841,16 @@ async function restartSessionWithRuntimeConfig(
     await emitAuthoritativeStoppedForActiveAgents(sessionId)
     await emitStoppedForNonAgentTasksAfterRuntimeExit(sessionId)
 
-    const runtimeSettings = await getRuntimeSettings(sessionId)
     const sdkUrl = buildSdkWebSocketUrl(ws, sessionId)
-    await conversationService.startSession(sessionId, workDir, sdkUrl, runtimeSettings)
+    await conversationService.startSession(sessionId, workDir, sdkUrl, startupSettings)
+    if (cliRuntimeId) await commitCliRuntime(sessionId, cliRuntimeId, workDir)
+    rejectedCliRuntimeConfigs.delete(sessionId)
+    bindSessionTurnObserver(sessionId)
+    bindAllClientSessionOutputs(sessionId)
     runtimeExitStoppedSessions.delete(sessionId)
     runtimeExitFailedSessions.delete(sessionId)
 
+    if (cliRuntimeId) sendToSession(sessionId, { type: CLI_RUNTIME_APPLIED_EVENT, cliRuntimeId })
     broadcastAppliedRuntimeConfig(sessionId)
     sendMessage(ws, { type: 'status', state: 'idle' })
     console.log(`[WS] Restarted CLI for ${sessionId} with runtime override`)
@@ -2683,6 +2865,7 @@ async function restartSessionWithRuntimeConfig(
       details: { runtimeOverride: runtimeOverrides.get(sessionId), error: err },
     })
     console.error(`[WS] Failed to restart CLI for ${sessionId} after runtime override: ${errMsg}`)
+    if (cliRuntimeId) rejectedCliRuntimeConfigs.set(sessionId, 'The CLI runtime selection could not be applied.')
     sendMessage(ws, {
       type: 'error',
       message: await buildSessionStartupDiagnosticMessage(
@@ -3891,6 +4074,9 @@ function cleanupSessionRuntimeState(
   sessionSlashCommands.delete(sessionId)
   sessionTitleState.delete(sessionId)
   runtimeOverrides.delete(sessionId)
+  cliRuntimeOverrides.delete(sessionId)
+  deferredCliRuntimeRestarts.delete(sessionId)
+  rejectedCliRuntimeConfigs.delete(sessionId)
   strictCollaborationRuntimeSessions.delete(sessionId)
   rejectedRuntimeConfigs.delete(sessionId)
   activeUserTurns.delete(sessionId)
@@ -3904,6 +4090,7 @@ function cleanupSessionRuntimeState(
   deferredRuntimeRestarts.delete(sessionId)
   deferredPermissionModes.delete(sessionId)
   runtimeTransitionPromises.delete(sessionId)
+  planApprovalTransitions.delete(sessionId)
   sessionStartupPromises.delete(sessionId)
   lastResolvedStartupWorkDirs.delete(sessionId)
   taskNotificationPersistence.delete(sessionId)
@@ -4049,7 +4236,7 @@ async function ensureCliSessionStarted(
     const workDir = await resolveSessionWorkDir(sessionId)
     lastResolvedStartupWorkDirs.set(sessionId, workDir)
     const runtimeSettings = await getRuntimeSettings(sessionId)
-    const startupSettings = reason === 'prewarm_session'
+    const startupSettings = reason === 'prewarm_session' || hasStoppedTurnBoundary(sessionId) || interruptedSessionChats.has(sessionId)
       ? { ...runtimeSettings, resumeInterruptedTurn: false }
       : runtimeSettings
     const sdkUrl = buildSdkWebSocketUrl(ws, sessionId)
@@ -5554,6 +5741,7 @@ function handleCliPermissionModeBroadcast(sessionId: string, cliMsg: any): void 
 }
 
 type RuntimeSettings = {
+  cliRuntimeId?: ClaudeCodeRuntimeId
   permissionMode?: string
   model?: string
   effort?: string
@@ -5688,6 +5876,9 @@ export async function getRuntimeSettings(sessionId?: string): Promise<RuntimeSet
   const launchInfo = sessionId
     ? await sessionService.getSessionLaunchInfo(sessionId).catch(() => null)
     : null
+  const cliRuntimeId = resolveClaudeCodeRuntimeId(
+    (sessionId ? cliRuntimeOverrides.get(sessionId) : undefined) ?? launchInfo?.cliRuntimeId,
+  )
   const sessionPermissionMode = sessionId
     ? launchInfo?.permissionMode ?? await getSessionPermissionMode(sessionId)
     : undefined
@@ -5722,6 +5913,7 @@ export async function getRuntimeSettings(sessionId?: string): Promise<RuntimeSet
         const defaults = await getDefaultRuntimeSettings()
         return {
           ...defaults,
+          cliRuntimeId,
           model: await resolveDefaultRuntimeModel(defaults),
           permissionMode: sessionPermissionMode ?? defaults.permissionMode,
         }
@@ -5763,6 +5955,7 @@ export async function getRuntimeSettings(sessionId?: string): Promise<RuntimeSet
     }
 
     return {
+      cliRuntimeId,
       permissionMode: sessionPermissionMode ?? await settingsService.getPermissionMode().catch(() => undefined),
       model: runtimeOverride.modelId,
       effort,
@@ -5779,6 +5972,7 @@ export async function getRuntimeSettings(sessionId?: string): Promise<RuntimeSet
   const defaults = await getDefaultRuntimeSettings()
   return {
     ...defaults,
+    cliRuntimeId,
     permissionMode: sessionPermissionMode ?? defaults.permissionMode,
     effort: launchInfo?.effortLevel ?? defaults.effort,
   }
@@ -5952,6 +6146,9 @@ async function waitForRuntimeTransitionBeforeUserTurn(
   ws: SessionConnection,
   sessionId: string,
 ): Promise<{ ok: boolean; waited: boolean }> {
+  // Stop may replace the admission token before the old result callback runs,
+  // or force-kill the CLI without a result. Settle its selections before input.
+  applyDeferredRuntimeRestartAfterActiveTurn(ws, sessionId)
   let waited = false
   let pendingRuntimeTransition = runtimeTransitionPromises.get(sessionId)
   while (pendingRuntimeTransition) {
@@ -5985,9 +6182,12 @@ async function waitForRuntimeTransitionBeforeUserTurn(
         : undefined
   }
 
+  const rejectedCliRuntime = rejectedCliRuntimeConfigs.get(sessionId)
   const rejectedConfig = rejectedRuntimeConfigs.get(sessionId)
-  if (rejectedConfig) {
-    const message = `The message was not sent. ${rejectedConfig} Select a valid model and reasoning effort, then retry.`
+  if (rejectedCliRuntime || rejectedConfig) {
+    const message = rejectedCliRuntime
+      ? `The message was not sent. ${rejectedCliRuntime} Select a valid CLI runtime, then retry.`
+      : `The message was not sent. ${rejectedConfig} Select a valid model and reasoning effort, then retry.`
     sendMessage(ws, { type: 'error', message, code: 'USER_TURN_FAILED', retryable: true })
     sendMessage(ws, { type: 'status', state: 'idle' })
     failSessionChatActivity(sessionId)
@@ -6126,12 +6326,16 @@ export function __resetWebSocketHandlerStateForTests(): void {
   legacyQueuedSessionChats.clear()
   interruptedSessionChats.clear()
   runtimeTransitionPromises.clear()
+  planApprovalTransitions.clear()
   sessionStartupPromises.clear()
   for (const [sessionId, callback] of sessionTurnObservers) {
     conversationService.removeOutputCallback(sessionId, callback)
   }
   sessionTurnObservers.clear()
   runtimeOverrides.clear()
+  cliRuntimeOverrides.clear()
+  deferredCliRuntimeRestarts.clear()
+  rejectedCliRuntimeConfigs.clear()
   rejectedRuntimeConfigs.clear()
   runtimeOverrideVersions.clear()
   deferredRuntimeRestarts.clear()

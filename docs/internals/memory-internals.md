@@ -48,19 +48,7 @@ order: 10
 3. {memoryBase}/projects/{sanitized-git-root}/memory/  ← 默认计算路径
 ```
 
-**关键源码** `src/memdir/paths.ts:223`：
-
-```typescript
-export const getAutoMemPath = memoize(
-  (): string => {
-    const override = getAutoMemPathOverride() ?? getAutoMemPathSetting()
-    if (override) return override
-    const projectsDir = join(getMemoryBaseDir(), 'projects')
-    return join(projectsDir, sanitizePath(getAutoMemBase()), AUTO_MEM_DIRNAME) + sep
-  },
-  () => getProjectRoot(),  // 缓存 key = 项目根目录
-)
-```
+实现入口为 `src/memdir/paths.ts`。上述优先级只在同一个已绑定数据根内选择目录，不授权根外写入。环境变量和用户设置中的路径也须通过根内边界检查；旧版根外目录应先迁移，不能直接返回为活动目录。默认 `memoryBase` 为 `<data-root>`，项目级 `.claude` 不受用户数据迁移接管。
 
 ### 路径安全校验
 
@@ -325,11 +313,11 @@ async function scanMemoryFiles(memoryDir, signal): Promise<MemoryHeader[]> {
 
 ![Agent 记忆三级作用域](./images/10-agent-memory.png)
 
-子 Agent（通过 Agent 工具启动的）有独立的三级记忆系统：
+子 Agent（通过 Agent 工具启动的）有独立的三级记忆系统。`<data-root>` 是统一数据根，位置见[环境变量](../cli/env.md#本地运行与隐私)；项目级 `.claude` 路径不变：
 
 | 作用域 | 路径 | 说明 |
 |--------|------|------|
-| **user** | `~/.claude/agent-memory/{agentType}/` | 全局用户级 |
+| **user** | `<data-root>/agent-memory/{agentType}/` | 全局用户级 |
 | **project** | `.claude/agent-memory/{agentType}/` | 项目级（提交到 VCS） |
 | **local** | `.claude/agent-memory-local/{agentType}/` | 本地级（不提交） |
 
@@ -345,7 +333,7 @@ Agent 记忆与主记忆的差异：
 ### 目录结构
 
 ```
-~/.claude/projects/{hash}/memory/
+<data-root>/projects/{hash}/memory/
 ├── MEMORY.md           ← 个人记忆索引
 ├── user_*.md           ← 个人记忆
 └── team/               ← 团队共享目录

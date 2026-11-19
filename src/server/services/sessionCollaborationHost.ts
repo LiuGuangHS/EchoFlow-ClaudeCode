@@ -52,7 +52,7 @@ export function configureSessionCollaborationHost(serverHost: string, serverPort
     return (await getSessionCollaborationService()).admitUserTurn(sessionId, canAdmit)
   })
   let disposed = false
-  unsubscribe = observeSessionTurns(event => {
+  const removeObserver = observeSessionTurns(event => {
     pendingTurnEvents += 1
     eventTail = eventTail.then(async () => {
       if (disposed) return
@@ -62,7 +62,13 @@ export function configureSessionCollaborationHost(serverHost: string, serverPort
       if (pendingTurnEvents === 0) powerActivityClock.changed()
     })
   })
-  return () => { disposed = true; removeGuard(); unsubscribe?.(); unsubscribe = undefined; current = undefined }
+  unsubscribe = removeObserver
+  return () => {
+    disposed = true
+    removeGuard()
+    removeObserver()
+    if (unsubscribe === removeObserver) { unsubscribe = undefined; current = undefined }
+  }
 }
 
 /**

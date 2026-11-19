@@ -2,6 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   DARK_SCHEME_QUERY,
+  readThemeSnapshot,
+  updateThemePreferences,
+  THEME_PREFERENCES_STORAGE_KEY,
+  THEME_MIRROR_KEYS,
+  type ThemePreferences,
   getSystemAppearance,
   readStoredDarkTheme,
   readStoredFollowSystemTheme,
@@ -154,6 +159,159 @@ describe('subscribeSystemAppearance', () => {
   it('returns a usable unsubscribe where matchMedia is unavailable', () => {
     clearMatchMedia()
     expect(() => subscribeSystemAppearance(vi.fn())()).not.toThrow()
+  })
+})
+
+describe('versioned theme authority and bounded mirror recovery', () => {
+  const target: ThemePreferences = { theme: 'celadon', lightTheme: 'celadon', darkTheme: 'ink-blue', followSystem: false }
+  const targetTuple = ['celadon', 'celadon', 'ink-blue', '0']
+  const baseline = ['paper', 'paper', 'dark', '1']
+
+  function fixture() {
+    const data = new Map<string, string>(THEME_MIRROR_KEYS.map((key, i) => [key, baseline[i]!]))
+    let failKey: string | null = null
+    let recordWrites = 0
+    let failCompletion = false
+    const writes: string[] = []
+    const storage = {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        writes.push(key)
+        if (key === THEME_PREFERENCES_STORAGE_KEY) recordWrites++
+        if (key === failKey || (failCompletion && recordWrites === 2)) throw new Error('fixture write failure')
+        data.set(key, value)
+      },
+    }
+    return { data, storage, writes, fail: (key: string | null) => { failKey = key }, completionFailure: () => { failCompletion = true } }
+  }
+
+  it('does not touch any mirror if the initial authority write fails', () => {
+    const f = fixture()
+    f.fail(THEME_PREFERENCES_STORAGE_KEY)
+    expect(updateThemePreferences(() => target, f.storage)).toEqual({ status: 'failed', stage: 'record', key: THEME_PREFERENCES_STORAGE_KEY })
+    expect(f.writes).toEqual([THEME_PREFERENCES_STORAGE_KEY])
+    expect(THEME_MIRROR_KEYS.map(key => f.storage.getItem(key))).toEqual(baseline)
+  })
+
+  it.each([0, 1, 2, 3])('recovers mirror failure %s after recreation, preserving the committed target and extensions', (index) => {
+    const f = fixture()
+    f.data.set(THEME_PREFERENCES_STORAGE_KEY, JSON.stringify({ version: 1, ...target, theme: 'paper', lightTheme: 'paper', darkTheme: 'dark', followSystem: true, extra: { keep: true }, mirrorSync: { baseline, pending: false, note: 'retain' } }))
+    f.fail(THEME_MIRROR_KEYS[index]!)
+    expect(updateThemePreferences(() => target, f.storage)).toEqual({ status: 'pending', stage: 'mirror', key: THEME_MIRROR_KEYS[index] })
+    expect(f.writes).toEqual([THEME_PREFERENCES_STORAGE_KEY, ...THEME_MIRROR_KEYS.slice(0, index + 1)])
+    expect(readThemeSnapshot(f.storage).preferences).toEqual(target)
+    f.fail(null)
+    // A new reader/writer instance has only the persisted bytes as evidence.
+    expect(updateThemePreferences(p => p, { ...f.storage })).toEqual({ status: 'saved' })
+    expect(THEME_MIRROR_KEYS.map(key => f.storage.getItem(key))).toEqual(targetTuple)
+    expect(JSON.parse(f.storage.getItem(THEME_PREFERENCES_STORAGE_KEY)!)).toEqual({ version: 1, ...target, extra: { keep: true }, mirrorSync: { baseline: targetTuple, pending: false, note: 'retain' } })
+  })
+
+  it('keeps completion failure pending and retries only the completion record', () => {
+    const f = fixture()
+    f.completionFailure()
+    expect(updateThemePreferences(() => target, f.storage)).toEqual({ status: 'pending', stage: 'completion', key: THEME_PREFERENCES_STORAGE_KEY })
+    expect(JSON.parse(f.storage.getItem(THEME_PREFERENCES_STORAGE_KEY)!).mirrorSync.pending).toBe(true)
+    f.writes.length = 0
+    expect(updateThemePreferences(p => p, f.storage)).toEqual({ status: 'saved' })
+    expect(f.writes).toEqual([THEME_PREFERENCES_STORAGE_KEY])
+  })
+
+  it('imports sequential scalar-only downgrade edits and retains unknown fields', () => {
+    const f = fixture()
+    expect(updateThemePreferences(() => target, f.storage).status).toBe('saved')
+    const record = JSON.parse(f.storage.getItem(THEME_PREFERENCES_STORAGE_KEY)!)
+    f.data.set(THEME_PREFERENCES_STORAGE_KEY, JSON.stringify({ ...record, extra: 'keep', mirrorSync: { ...record.mirrorSync, note: 7 } }))
+    f.data.set(THEME_MIRROR_KEYS[0]!, 'paper')
+    f.data.set(THEME_MIRROR_KEYS[1]!, 'paper')
+    expect(readThemeSnapshot(f.storage).preferences).toEqual({ ...target, theme: 'paper', lightTheme: 'paper' })
+    expect(updateThemePreferences(p => p, f.storage).status).toBe('saved')
+    expect(JSON.parse(f.storage.getItem(THEME_PREFERENCES_STORAGE_KEY)!)).toMatchObject({ extra: 'keep', theme: 'paper', mirrorSync: { pending: false, note: 7 } })
+  })
+
+  it.each([
+    ['celadon', 'paper', 'ink-blue', '1'], // Per-field baseline/target is not necessarily a prefix.
+    ['ink-blue', 'paper', 'dark', '1'],
+  ])('preserves all bytes for an out-of-prefix external edit %j', (...tuple) => {
+    const f = fixture()
+    f.fail(THEME_MIRROR_KEYS[1]!)
+    updateThemePreferences(() => target, f.storage)
+    tuple.forEach((value, i) => f.data.set(THEME_MIRROR_KEYS[i]!, value))
+    const before = [...f.data]
+    f.writes.length = 0
+    f.fail(null)
+    expect(updateThemePreferences(p => p, f.storage)).toEqual({ status: 'blocked', reason: 'conflicting-mirrors' })
+    expect([...f.data]).toEqual(before)
+    expect(f.writes).toEqual([])
+    expect(readThemeSnapshot(f.storage).preferences).toEqual(target)
+  })
+
+  it.each(['future', 'corrupt', 'invalid-sync', 'pending-invalid-preferences', 'record-read', 'mirror-read'])('blocks all writes for %s without treating a failed read as absence', (kind) => {
+    const f = fixture()
+    const record = { version: 1, ...target, mirrorSync: { baseline, pending: false } }
+    f.data.set(THEME_PREFERENCES_STORAGE_KEY, kind === 'future' ? '{"version":2,"opaque":true}' : kind === 'corrupt' ? '{bad' : JSON.stringify(kind === 'invalid-sync' ? { ...record, mirrorSync: {} } : kind === 'pending-invalid-preferences' ? { ...record, theme: 'neon', mirrorSync: { baseline, pending: true } } : record))
+    const storage = { ...f.storage, getItem: (key: string) => {
+      if ((kind === 'record-read' && key === THEME_PREFERENCES_STORAGE_KEY) || (kind === 'mirror-read' && key === THEME_MIRROR_KEYS[2])) throw new Error('fixture read failure')
+      return f.storage.getItem(key)
+    } }
+    const before = [...f.data]
+    expect(updateThemePreferences(() => target, storage).status).toBe('blocked')
+    expect(f.writes).toEqual([])
+    expect([...f.data]).toEqual(before)
+    if (kind === 'mirror-read') expect(readThemeSnapshot(storage).preferences).toEqual(target)
+  })
+
+  it.each(THEME_MIRROR_KEYS)('blocks the whole domain for an incomplete read of %s, with and without an authority record', (failedKey) => {
+    for (const present of [false, true]) {
+      const f = fixture()
+      if (present) f.data.set(THEME_PREFERENCES_STORAGE_KEY, JSON.stringify({ version: 1, ...target, mirrorSync: { baseline, pending: false } }))
+      const storage = { ...f.storage, getItem: (key: string) => {
+        if (key === failedKey) throw new Error('fixture partial read')
+        return f.storage.getItem(key)
+      } }
+      const before = [...f.data]
+      expect(readThemeSnapshot(storage).persistence).toEqual({ status: 'blocked', reason: 'incomplete-mirrors' })
+      expect(updateThemePreferences(() => target, storage)).toEqual({ status: 'blocked', reason: 'incomplete-mirrors' })
+      expect(f.writes).toEqual([])
+      expect([...f.data]).toEqual(before)
+      if (present) expect(readThemeSnapshot(storage).preferences).toEqual(target)
+    }
+  })
+
+  it('updates sync evidence when a clean downgrade edit already matches the record preferences', () => {
+    const f = fixture()
+    f.data.set(THEME_PREFERENCES_STORAGE_KEY, JSON.stringify({ version: 1, ...target, mirrorSync: { baseline, pending: false } }))
+    targetTuple.forEach((value, i) => f.data.set(THEME_MIRROR_KEYS[i]!, value))
+    expect(updateThemePreferences(p => p, f.storage)).toEqual({ status: 'saved' })
+    expect(JSON.parse(f.storage.getItem(THEME_PREFERENCES_STORAGE_KEY)!).mirrorSync).toEqual({ baseline: targetTuple, pending: false })
+    expect(f.writes).toEqual([THEME_PREFERENCES_STORAGE_KEY, THEME_PREFERENCES_STORAGE_KEY])
+  })
+
+  it('finishes the previous immutable target before accepting a subsequent update', () => {
+    const f = fixture()
+    f.fail(THEME_MIRROR_KEYS[2]!)
+    updateThemePreferences(() => target, f.storage)
+    f.fail(null)
+    const records: Array<Record<string, unknown>> = []
+    expect(updateThemePreferences(current => {
+      expect(current).toEqual(target)
+      return { ...current, theme: 'paper', lightTheme: 'paper' }
+    }, { ...f.storage, setItem: (key, value) => {
+      if (key === THEME_PREFERENCES_STORAGE_KEY) records.push(JSON.parse(value))
+      f.storage.setItem(key, value)
+    } })).toEqual({ status: 'saved' })
+    expect(records).toMatchObject([
+      { ...target, mirrorSync: { pending: false, baseline: targetTuple } },
+      { theme: 'paper', lightTheme: 'paper', mirrorSync: { pending: true, baseline: targetTuple } },
+      { theme: 'paper', lightTheme: 'paper', mirrorSync: { pending: false, baseline: ['paper', 'paper', 'ink-blue', '0'] } },
+    ])
+  })
+
+  it('normalizes supported clean preference fields without inventing sync evidence', () => {
+    const f = fixture()
+    f.data.set(THEME_PREFERENCES_STORAGE_KEY, JSON.stringify({ version: 1, theme: 'neon', lightTheme: 'ink-blue', darkTheme: 'celadon', followSystem: 'yes', mirrorSync: { baseline, pending: false } }))
+    expect(readThemeSnapshot(f.storage).preferences).toEqual({ theme: 'white', lightTheme: 'white', darkTheme: 'dark', followSystem: false })
+    expect(updateThemePreferences(p => p, f.storage).status).toBe('saved')
   })
 })
 

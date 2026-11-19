@@ -88,7 +88,7 @@ Claude 保存：grafana.internal/d/api-latency 是 oncall 延迟仪表板 — �
 
 终端会显示通知：
 ```
-Memory updated in ~/.claude/projects/.../memory/feedback_testing.md · /memory to edit
+Memory updated in <data-root>/projects/.../memory/feedback_testing.md · /memory to edit
 ```
 
 ### 方式二：显式要求
@@ -120,10 +120,12 @@ Claude：[立即保存为 feedback 类型记忆]
 
 ## 记忆存储在哪里？
 
+`<data-root>` 表示 EchoFlow 的统一数据根，平台默认位置和 `CLAUDE_CONFIG_DIR` 覆盖规则见[环境变量](../cli/env.md#本地运行与隐私)。它不是固定的 `~/.claude`；项目级 `.claude` 路径不变。
+
 ### 目录结构
 
 ```
-~/.claude/
+<data-root>/
 └── projects/
     └── {项目路径哈希}/
         └── memory/                    ← 自动记忆目录
@@ -186,7 +188,7 @@ Claude：[本次对话中不使用任何记忆内容]
 
 ### 手动编辑
 
-直接编辑 `~/.claude/projects/{hash}/memory/` 下的文件，或使用 `/memory` 命令。
+直接编辑 `<data-root>/projects/{hash}/memory/` 下的文件，或使用 `/memory` 命令。
 
 ### 禁用自动记忆
 
@@ -198,15 +200,15 @@ Claude：[本次对话中不使用任何记忆内容]
 
 ### 自定义记忆目录
 
-在 `~/.claude/settings.json` 中设置：
+自定义记忆也属于同一数据根。可在 `<data-root>/settings.json` 中设置根内目录；下面的 `<data-root>` 须替换为实际绝对数据根：
 
 ```json
 {
-  "autoMemoryDirectory": "~/my-claude-memories"
+  "autoMemoryDirectory": "<data-root>/memory/custom"
 }
 ```
 
-支持 `~/` 展开。出于安全考虑，项目级 `.claude/settings.json` **不允许**设置此项。
+支持 `~/` 展开，但不能用它绕过唯一数据根。旧版根外记忆目录应作为迁移来源处理，而不是继续独立写入。出于安全考虑，项目级 `.claude/settings.json` **不允许**设置此项。
 
 ## 记忆的生命周期
 
@@ -263,4 +265,4 @@ Claude Code 有一个隐藏的 **AutoDream** 功能，类比人类睡眠时大�
 | 禁用自动记忆 | `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
 | 禁用 AutoDream | `settings.json` 中 `"autoDreamEnabled": false` |
 | 手动整合记忆 | `/dream` 命令 |
-| 查看记忆目录 | `~/.claude/projects/{hash}/memory/` |
+| 查看记忆目录 | `<data-root>/projects/{hash}/memory/` |

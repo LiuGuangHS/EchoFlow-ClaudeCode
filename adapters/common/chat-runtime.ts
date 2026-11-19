@@ -30,14 +30,13 @@ import { MessageBuffer } from './message-buffer.js'
 import type { MessageDedup } from './message-dedup.js'
 import { isAllowedUser, tryPair, type ImPlatform } from './pairing.js'
 import {
-  formatPermissionDecisionStatus,
   formatPermissionInstructions,
   parsePermissionCommand,
   type PermissionDecision,
 } from './permission.js'
 import { restoreStoredSessionBinding, SESSION_RECONNECT_NOTICE, type SessionRestoreResult } from './session-recovery.js'
 import { SessionSelectionController } from './session-selection.js'
-import { syncImPermissionState } from './permission-sync.js'
+import { formatImPermissionSubmissionNotice, submitImPermissionDecision, syncImPermissionState } from './permission-sync.js'
 import type { SessionStore } from './session-store.js'
 import type { AttachmentRef, ServerMessage, WsBridge } from './ws-bridge.js'
 import { ImageBlockWatcher } from './attachment/image-block-watcher.js'
@@ -149,6 +148,7 @@ export class ImChatRuntime {
   private readonly buffers = new Map<string, MessageBuffer>()
   private readonly responses = new Map<string, ResponseStream>()
   private readonly pendingPermissions = new Map<string, Set<string>>()
+  private readonly submittingPermissions = new Map<string, Set<string>>()
   private readonly pendingProjectSelection = new Set<string>()
   private readonly imageWatchers = new Map<string, ImageBlockWatcher>()
   private readonly sessionSelection: SessionSelectionController
@@ -346,33 +346,26 @@ export class ImChatRuntime {
     chatId: string,
     decision: PermissionDecision,
   ): Promise<void> {
-    const pending = this.pendingPermissions.get(chatId)
-    if (!pending?.has(decision.requestId)) {
-      await this.port.sendNotice(chatId, `未找到待确认的权限请求：${decision.requestId}`)
-      return
-    }
-    const sent = this.bridge.sendPermissionResponse(
-      chatId,
-      decision.requestId,
-      decision.allowed,
-      decision.rule,
+    const result = submitImPermissionDecision(
+      chatId, decision, this.pendingPermissions.get(chatId), this.submittingPermissions, this.bridge,
     )
-    if (sent) {
-      pending.delete(decision.requestId)
-      const runtime = this.getRuntimeState(chatId)
-      runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
-    }
-    await this.port.sendNotice(
-      chatId,
-      sent ? `${formatPermissionDecisionStatus(decision)}。` : '权限响应发送失败，请检查会话状态。',
-    )
+    await this.port.sendNotice(chatId, formatImPermissionSubmissionNotice(result, decision.requestId))
   }
 
   // ---------- server stream ----------
 
   async handleServerMessage(chatId: string, msg: ServerMessage): Promise<void> {
     const runtime = this.getRuntimeState(chatId)
-    if (syncImPermissionState(chatId, msg, runtime, this.pendingPermissions)) return
+    const settled: string[] = []
+    if (syncImPermissionState(chatId, msg, runtime, this.pendingPermissions, {
+      submittingPermissions: this.submittingPermissions,
+      requestSyncState: (id) => this.bridge.requestSyncState(id),
+      onSettled: (id) => { settled.push(id) },
+    })) {
+      if (msg.type === 'error') await this.port.sendNotice(chatId, msg.message)
+      for (const id of settled) await this.port.sendNotice(chatId, `权限请求 ${id} 已不再等待确认。`)
+      return
+    }
 
     switch (msg.type) {
       case 'connected':
@@ -710,6 +703,7 @@ export class ImChatRuntime {
     // not a completion — so `finish()` only seals what the user already saw.
     this.closeResponse(chatId)
     this.pendingPermissions.delete(chatId)
+    this.submittingPermissions.delete(chatId)
     this.imageWatchers.delete(chatId)
     this.port.setBusy?.(chatId, false)
     this.port.clearChat?.(chatId)

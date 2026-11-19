@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile, lstat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { downloadVerified, verifyIntegrity } from './managedRuntime.js'
+import { connectorPluginName } from './pluginIdentity.js'
 import type { ConnectorAdapter, ConnectorDefinition, ConnectorInstallation, SkillBundleRecipe } from './types.js'
 
 function validateRecipe(recipe: SkillBundleRecipe) {
@@ -42,7 +43,8 @@ export async function readSkillBundleFiles(recipe: SkillBundleRecipe, directory:
 
 export function createSkillBundleAdapter(definition: ConnectorDefinition, root: string, recipe: SkillBundleRecipe, download = downloadVerified): ConnectorAdapter {
   validateRecipe(recipe)
-  if (definition.id !== recipe.id || definition.version !== recipe.version || definition.pluginId !== `office-${recipe.id}@haha-connectors`) throw new Error('Invalid managed skill identity')
+  connectorPluginName(definition)
+  if (definition.id !== recipe.id || definition.version !== recipe.version) throw new Error('Invalid managed skill identity')
   const directory = join(resolve(root), 'bundles', recipe.id, recipe.version)
   const installation: ConnectorInstallation = { directory, command: '', args: [], env: {} }
   const validate = (value: ConnectorInstallation) => {

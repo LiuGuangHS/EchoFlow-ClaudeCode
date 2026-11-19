@@ -42,6 +42,57 @@ describe('desktop persistence migrations', () => {
     expect(localStorage.getItem('echoflow-code-theme')).toBeNull()
   })
 
+  test.each(['supported', 'future', 'corrupt', 'unreadable'])('reserves the theme domain before any legacy copy or scalar normalization for %s records', (kind) => {
+    const key = 'echoflow-code-theme-preferences'
+    const mirrors = ['echoflow-code-theme', 'echoflow-code-light-theme', 'echoflow-code-dark-theme', 'echoflow-code-follow-system-theme']
+    const raw = kind === 'future' ? '{"version":2,"opaque":true}' : kind === 'corrupt' ? '{broken' : JSON.stringify({ version: 1, theme: 'paper', lightTheme: 'paper', darkTheme: 'dark', followSystem: false, mirrorSync: { baseline: ['light', null, 'bad', 'true'], pending: false } })
+    localStorage.setItem(key, raw)
+    localStorage.setItem('cc-haha-light-theme', 'celadon')
+    localStorage.setItem(mirrors[0]!, 'light')
+    localStorage.setItem(mirrors[2]!, 'bad')
+    localStorage.setItem(mirrors[3]!, 'true')
+    const before = [key, ...mirrors].map(name => localStorage.getItem(name))
+    const storage = {
+      getItem: (name: string) => { if (kind === 'unreadable' && name === key) throw new Error('fixture read failure'); return localStorage.getItem(name) },
+      setItem: (name: string, value: string) => localStorage.setItem(name, value),
+      removeItem: (name: string) => localStorage.removeItem(name),
+    }
+    const report = runDesktopPersistenceMigrations(storage)
+    expect([key, ...mirrors].map(name => localStorage.getItem(name))).toEqual(before)
+    if (kind === 'future') expect(report.unsupportedKeys).toContain(key)
+    if (kind === 'corrupt') expect(report.blockedKeys).toContain(key)
+    if (kind === 'unreadable') expect(report.failedKeys).toContain(key)
+    if (kind !== 'supported') expect(report.status).not.toBe('completed')
+    expect(report.migratedKeys).not.toContain(key)
+    expect(report.unchangedKeys.includes(key)).toBe(kind === 'supported')
+  })
+
+  test.each(['echoflow-code-theme', 'echoflow-code-light-theme', 'echoflow-code-dark-theme', 'echoflow-code-follow-system-theme'])('blocks the missing-authority theme domain when %s cannot be read', (failedKey) => {
+    const key = 'echoflow-code-theme-preferences'
+    const mirrors = ['echoflow-code-theme', 'echoflow-code-light-theme', 'echoflow-code-dark-theme', 'echoflow-code-follow-system-theme']
+    const domain = [key, ...mirrors]
+    localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, '6')
+    ;['light', 'light', 'invalid', 'true'].forEach((value, i) => localStorage.setItem(mirrors[i]!, value))
+    const before = domain.map(name => localStorage.getItem(name))
+    const mutations: string[] = []
+    const storage = {
+      getItem: (name: string) => { if (name === failedKey) throw new Error('fixture incomplete theme snapshot'); return localStorage.getItem(name) },
+      setItem: (name: string, value: string) => { mutations.push(name); localStorage.setItem(name, value) },
+      removeItem: (name: string) => { mutations.push(name); localStorage.removeItem(name) },
+    }
+    const report = runDesktopPersistenceMigrations(storage)
+    expect(domain.map(name => localStorage.getItem(name))).toEqual(before)
+    expect(mutations.filter(name => domain.includes(name))).toEqual([])
+    expect(report.status).toBe('blocked')
+    expect(report.blockedKeys).toEqual([key])
+    expect(report.migratedKeys.filter(name => domain.includes(name))).toEqual([])
+    expect(report.unchangedKeys.filter(name => domain.includes(name))).toEqual([])
+    expect(report.failedKeys.filter(name => domain.includes(name))).toEqual([])
+    expect(localStorage.getItem(DESKTOP_PERSISTENCE_VERSION_KEY)).toBe('6')
+    expect(localStorage.getItem(PREVENT_SLEEP_STORAGE_KEY)).toBe('0')
+    expect(report.migratedKeys).toContain(PREVENT_SLEEP_STORAGE_KEY)
+  })
+
   test('upgrades a frozen schema-6 install with prevent sleep off and preserves existing preferences', () => {
     localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, '6')
     localStorage.setItem('cc-haha-theme', 'ink-blue')
@@ -78,7 +129,9 @@ describe('desktop persistence migrations', () => {
     expect(JSON.parse(localStorage.getItem(CHAT_APPEARANCE_STORAGE_KEY)!)).toEqual({ version: 1, font: 'serif', fontSize: 24, width: 'standard', extra: true })
     const future = '{"version":2,"font":"future","extra":true}'
     localStorage.setItem(CHAT_APPEARANCE_STORAGE_KEY, future)
-    runDesktopPersistenceMigrations()
+    const report = runDesktopPersistenceMigrations()
+    expect(report.unsupportedKeys).toContain(CHAT_APPEARANCE_STORAGE_KEY)
+    expect(report.unchangedKeys).not.toContain(CHAT_APPEARANCE_STORAGE_KEY)
     expect(localStorage.getItem(CHAT_APPEARANCE_STORAGE_KEY)).toBe(future)
   })
 
@@ -130,7 +183,8 @@ describe('desktop persistence migrations', () => {
 
     const report = runDesktopPersistenceMigrations()
 
-    expect(report.migratedKeys).toContain('cc-haha-open-tabs')
+    expect(report.migratedKeys).not.toContain('cc-haha-open-tabs')
+    expect(report.unchangedKeys).toContain('cc-haha-open-tabs')
     expect(JSON.parse(window.localStorage.getItem('cc-haha-open-tabs') || '{}')).toEqual({
       openTabs: [
         { sessionId: '__market__', title: 'Market', type: 'market' },
@@ -457,7 +511,10 @@ describe('desktop persistence migrations', () => {
     }
 
     expect(() => runDesktopPersistenceMigrations(storage)).not.toThrow()
-    expect(runDesktopPersistenceMigrations(storage).migratedKeys).toContain(DESKTOP_PERSISTENCE_VERSION_KEY)
+    const report = runDesktopPersistenceMigrations(storage)
+    expect(report.migratedKeys).not.toContain(DESKTOP_PERSISTENCE_VERSION_KEY)
+    expect(report.blockedKeys).toContain(DESKTOP_PERSISTENCE_VERSION_KEY)
+    expect(report.status).toBe('blocked')
   })
 
   test('does not throw if storage reads and writes are blocked', () => {
@@ -475,14 +532,10 @@ describe('desktop persistence migrations', () => {
 
     const report = runDesktopPersistenceMigrations(storage)
 
-    expect(report.migratedKeys).toEqual(expect.arrayContaining([
-      'cc-haha-open-tabs',
-      'cc-haha-session-runtime',
-      'echoflow-code-theme',
-      'cc-haha-locale',
-      'cc-haha-app-zoom',
-      DESKTOP_PERSISTENCE_VERSION_KEY,
-    ]))
+    expect(report.migratedKeys).toEqual([])
+    expect(report.failedKeys).toEqual([DESKTOP_PERSISTENCE_VERSION_KEY])
+    expect(report.blockedKeys).toEqual([DESKTOP_PERSISTENCE_VERSION_KEY])
+    expect(report.status).toBe('blocked')
   })
   test('keeps a schema-1 install usable: no workspace key means nothing to migrate', () => {
     window.localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
@@ -515,6 +568,16 @@ describe('desktop persistence migrations', () => {
     // newer build is still using.
     expect(report.migratedKeys).not.toContain('echoflow-code.workspace')
     expect(window.localStorage.getItem('echoflow-code.workspace')).toBe(future)
+  })
+
+  test.each([undefined, null, [], 'new-shape'])('protects a future workspace before validating old sessions (%s)', (sessions) => {
+    const future = ` ${JSON.stringify({ version: WORKSPACE_STORAGE_VERSION + 1, navigation: { keep: true }, sessions })}\n`
+    localStorage.setItem('echoflow-code.workspace', future)
+
+    for (let launch = 0; launch < 2; launch++) {
+      expect(runDesktopPersistenceMigrations().migratedKeys).not.toContain('echoflow-code.workspace')
+      expect(localStorage.getItem('echoflow-code.workspace')).toBe(future)
+    }
   })
 
   test('upgrades workspace v1 without losing the Files launcher, turns, or unknown metadata', () => {
@@ -615,6 +678,185 @@ test('merges legacy connector and skill market tabs while preserving the active 
   expect(JSON.parse(localStorage.getItem('custom-user-state')!)).toEqual({ selectedSkill: 'my-skill' })
 })
 
+describe('v0.7.4 reading, zoom and editor preference forward copy', () => {
+  const preferences = [
+    {
+      legacyKey: 'echoflow-code-chat-appearance',
+      currentKey: CHAT_APPEARANCE_STORAGE_KEY,
+      legacyValue: JSON.stringify({ version: 1, font: 'serif', fontSize: 18, width: 'wide', extra: { keep: true } }),
+      currentValue: JSON.stringify({ version: 1, font: 'mono', fontSize: 16, width: 'full', extra: { current: true } }),
+    },
+    {
+      legacyKey: 'echoflow-code-app-zoom',
+      currentKey: 'cc-haha-app-zoom',
+      legacyValue: '1.25',
+      currentValue: '1.1',
+    },
+    {
+      legacyKey: 'echoflow-code-open-target-preferences',
+      currentKey: 'cc-haha-open-target-preferences',
+      legacyValue: JSON.stringify({ version: 1, editorTargetId: 'sublime', extra: { keep: true } }),
+      currentValue: JSON.stringify({ version: 1, editorTargetId: null, extra: { current: true } }),
+    },
+  ] as const
+
+  beforeEach(() => localStorage.clear())
+
+  test.each([null, '9'])('copies all three released preferences from schema %s, retaining unknown fields and legacy bytes', (version) => {
+    if (version !== null) localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, version)
+    for (const preference of preferences) localStorage.setItem(preference.legacyKey, preference.legacyValue)
+    localStorage.setItem('unrelated-user-key', 'keep')
+
+    const report = runDesktopPersistenceMigrations()
+
+    for (const preference of preferences) {
+      expect(localStorage.getItem(preference.currentKey)).toBe(preference.legacyValue)
+      expect(localStorage.getItem(preference.legacyKey)).toBe(preference.legacyValue)
+      expect(report.migratedKeys).toContain(preference.currentKey)
+    }
+    expect(localStorage.getItem('unrelated-user-key')).toBe('keep')
+    const second = runDesktopPersistenceMigrations()
+    for (const preference of preferences) {
+      expect(localStorage.getItem(preference.currentKey)).toBe(preference.legacyValue)
+      expect(second.migratedKeys).not.toContain(preference.currentKey)
+    }
+  })
+
+  test.each(preferences)('keeps the current $currentKey ahead of a stale legacy choice', (preference) => {
+    localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, '9')
+    localStorage.setItem(preference.legacyKey, preference.legacyValue)
+    localStorage.setItem(preference.currentKey, preference.currentValue)
+
+    for (let launch = 0; launch < 2; launch++) {
+      runDesktopPersistenceMigrations()
+      expect(localStorage.getItem(preference.currentKey)).toBe(preference.currentValue)
+      expect(localStorage.getItem(preference.legacyKey)).toBe(preference.legacyValue)
+    }
+  })
+
+  test.each([preferences[0], preferences[2]])('preserves a future payload copied to $currentKey and a newer current payload', (preference) => {
+    const future = '{"version":99,"custom":{"keep":[1,2]}}'
+    localStorage.setItem(preference.legacyKey, future)
+
+    runDesktopPersistenceMigrations()
+    expect(localStorage.getItem(preference.currentKey)).toBe(future)
+    expect(localStorage.getItem(preference.legacyKey)).toBe(future)
+
+    localStorage.setItem(preference.legacyKey, preference.legacyValue)
+    runDesktopPersistenceMigrations()
+    expect(localStorage.getItem(preference.currentKey)).toBe(future)
+    expect(localStorage.getItem(preference.legacyKey)).toBe(preference.legacyValue)
+  })
+
+  test('does not downgrade a future desktop schema or backfill its missing preference keys', () => {
+    const futureVersion = String(CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION + 1)
+    localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, futureVersion)
+    for (const preference of preferences) localStorage.setItem(preference.legacyKey, preference.legacyValue)
+
+    runDesktopPersistenceMigrations()
+
+    expect(localStorage.getItem(DESKTOP_PERSISTENCE_VERSION_KEY)).toBe(futureVersion)
+    for (const preference of preferences) {
+      expect(localStorage.getItem(preference.currentKey)).toBeNull()
+      expect(localStorage.getItem(preference.legacyKey)).toBe(preference.legacyValue)
+    }
+  })
+
+  test.each(['transient', 'persistent'] as const)('blocks all mutations after a %s schema-only read failure', (failure) => {
+    localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, String(CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION + 1))
+    for (const preference of preferences) localStorage.setItem(preference.legacyKey, preference.legacyValue)
+    localStorage.setItem('cc-haha-open-tabs', '{"futureTabs":[1,2]}')
+    localStorage.setItem('echoflow-code-theme', 'future-theme')
+    localStorage.setItem(CHAT_APPEARANCE_STORAGE_KEY, '{"font":"future-font","extra":true}')
+    const before = { ...localStorage }
+    const mutations: string[] = []
+    const reads: string[] = []
+    let blocked = true
+    const storage = {
+      getItem: (key: string) => {
+        reads.push(key)
+        if (key === DESKTOP_PERSISTENCE_VERSION_KEY && blocked) {
+          if (failure === 'transient') blocked = false
+          throw new Error('schema read unavailable')
+        }
+        return localStorage.getItem(key)
+      },
+      setItem: (key: string, value: string) => {
+        mutations.push(key)
+        localStorage.setItem(key, value)
+      },
+      removeItem: (key: string) => {
+        mutations.push(key)
+        localStorage.removeItem(key)
+      },
+    }
+
+    const report = runDesktopPersistenceMigrations(storage)
+
+    expect(report.migratedKeys).toEqual([])
+    expect(report.failedKeys).toEqual([DESKTOP_PERSISTENCE_VERSION_KEY])
+    expect(report.blockedKeys).toEqual([DESKTOP_PERSISTENCE_VERSION_KEY])
+    expect(reads).toEqual([DESKTOP_PERSISTENCE_VERSION_KEY])
+    expect(mutations).toEqual([])
+    expect({ ...localStorage }).toEqual(before)
+    const second = runDesktopPersistenceMigrations(storage)
+    if (failure === 'transient') expect(second.migratedKeys).toEqual([])
+    expect(mutations).toEqual([])
+    expect({ ...localStorage }).toEqual(before)
+  })
+
+  test.each(preferences)('retries a failed $currentKey copy without blocking the other preferences', (failedPreference) => {
+    localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, '9')
+    for (const preference of preferences) localStorage.setItem(preference.legacyKey, preference.legacyValue)
+    let blocked = true
+    const storage = {
+      getItem: localStorage.getItem.bind(localStorage),
+      removeItem: localStorage.removeItem.bind(localStorage),
+      setItem: (key: string, value: string) => {
+        if (blocked && key === failedPreference.currentKey) throw new Error('quota exceeded')
+        localStorage.setItem(key, value)
+      },
+    }
+
+    expect(() => runDesktopPersistenceMigrations(storage)).not.toThrow()
+    expect(localStorage.getItem(failedPreference.currentKey)).toBeNull()
+    for (const preference of preferences) {
+      expect(localStorage.getItem(preference.legacyKey)).toBe(preference.legacyValue)
+      if (preference.currentKey !== failedPreference.currentKey) {
+        expect(localStorage.getItem(preference.currentKey)).toBe(preference.legacyValue)
+        localStorage.removeItem(preference.currentKey)
+      }
+    }
+
+    blocked = false
+    runDesktopPersistenceMigrations(storage)
+    expect(localStorage.getItem(failedPreference.currentKey)).toBe(failedPreference.legacyValue)
+    for (const preference of preferences) {
+      if (preference.currentKey !== failedPreference.currentKey) {
+        expect(localStorage.getItem(preference.currentKey)).not.toBe(preference.legacyValue)
+      }
+      expect(localStorage.getItem(preference.legacyKey)).toBe(preference.legacyValue)
+    }
+  })
+
+  test('does not resurrect any legacy choice after a completed migration clears the current preferences', () => {
+    for (const preference of preferences) localStorage.setItem(preference.legacyKey, preference.legacyValue)
+    runDesktopPersistenceMigrations()
+    for (const preference of preferences) {
+      expect(localStorage.getItem(preference.currentKey)).toBe(preference.legacyValue)
+      localStorage.removeItem(preference.currentKey)
+    }
+
+    for (let launch = 0; launch < 2; launch++) {
+      runDesktopPersistenceMigrations()
+      expect(JSON.parse(localStorage.getItem(CHAT_APPEARANCE_STORAGE_KEY)!)).toEqual({ version: 1, ...DEFAULT_CHAT_APPEARANCE })
+      expect(localStorage.getItem('cc-haha-app-zoom')).toBeNull()
+      expect(localStorage.getItem('cc-haha-open-target-preferences')).toBeNull()
+      for (const preference of preferences) expect(localStorage.getItem(preference.legacyKey)).toBe(preference.legacyValue)
+    }
+  })
+})
+
 describe('v0.7.4 legacy key forward copy', () => {
   // Frozen v0.7.4 fixture keys, before the product prefix rename.
   const LEGACY_TAB_KEY = 'echoflow-code-open-tabs'
@@ -695,5 +937,151 @@ describe('v0.7.4 legacy key forward copy', () => {
     expect(window.localStorage.getItem(DESKTOP_PERSISTENCE_VERSION_KEY)).toBe(
       String(CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION),
     )
+  })
+})
+
+
+describe('B2 truthful outcomes and bounded legacy retries', () => {
+  beforeEach(() => localStorage.clear())
+
+  const imports = [
+    ['cc-haha-theme', 'echoflow-code-theme', 'dark'],
+    ['cc-haha-follow-system-theme', 'echoflow-code-follow-system-theme', '0'],
+    ['cc-haha-light-theme', 'echoflow-code-light-theme', 'paper'],
+    ['cc-haha-dark-theme', 'echoflow-code-dark-theme', 'ink-blue'],
+    ['echoflow-code-locale', 'cc-haha-locale', 'zh'],
+    ['echoflow-code-sidebar-width', 'cc-haha-sidebar-width', '368'],
+    ['echoflow-code-open-tabs', 'cc-haha-open-tabs', JSON.stringify([{ sessionId: 's', title: 'Keep' }])],
+    ['echoflow-code-session-runtime', 'cc-haha-session-runtime', JSON.stringify({ s: { providerId: null, modelId: 'model' } })],
+  ] as const
+
+  test.each(imports)('retries only the failed import %s and never revives cleared successful imports', (_source, failedKey) => {
+    localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, '7')
+    for (const [source, , value] of imports) localStorage.setItem(source, value)
+    let blocked = true
+    const storage = {
+      getItem: localStorage.getItem.bind(localStorage),
+      removeItem: localStorage.removeItem.bind(localStorage),
+      setItem: (key: string, value: string) => {
+        if (blocked && key === failedKey) throw new Error('selective target failure')
+        localStorage.setItem(key, value)
+      },
+    }
+    const first = runDesktopPersistenceMigrations(storage)
+    expect(first.migratedKeys).not.toContain(failedKey)
+    expect(first.failedKeys).toContain(failedKey)
+    expect(first.status).toBe('blocked')
+    expect(localStorage.getItem(DESKTOP_PERSISTENCE_VERSION_KEY)).toBe('7')
+    for (const [, key] of imports) if (key !== failedKey) localStorage.removeItem(key)
+    blocked = false
+    const second = runDesktopPersistenceMigrations(storage)
+    expect(second.failedKeys).toEqual([])
+    expect(second.status).toBe('completed')
+    expect(localStorage.getItem(failedKey)).not.toBeNull()
+    for (const [source, key, value] of imports) {
+      if (key !== failedKey) expect(localStorage.getItem(key)).toBeNull()
+      expect(localStorage.getItem(source)).toBe(value)
+    }
+    expect(localStorage.getItem(DESKTOP_PERSISTENCE_VERSION_KEY)).toBe('9')
+  })
+
+  test('retains explicit retry eligibility even if another startup has already written schema 9', () => {
+    localStorage.setItem('cc-haha-theme', 'dark')
+    localStorage.setItem('echoflow-code-locale', 'zh')
+    localStorage.setItem('echoflow-code-sidebar-width', '368')
+    const targets = ['echoflow-code-theme', 'cc-haha-locale', 'cc-haha-sidebar-width']
+    runDesktopPersistenceMigrations({
+      getItem: localStorage.getItem.bind(localStorage),
+      removeItem: localStorage.removeItem.bind(localStorage),
+      setItem: (key, value) => {
+        if (targets.includes(key)) throw new Error('quota')
+        localStorage.setItem(key, value)
+      },
+    })
+    localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, '9')
+    const retry = runDesktopPersistenceMigrations()
+    expect(retry.status).toBe('completed')
+    expect(localStorage.getItem('echoflow-code-theme')).toBe('dark')
+    expect(localStorage.getItem('cc-haha-locale')).toBe('zh')
+    expect(localStorage.getItem('cc-haha-sidebar-width')).toBe('368')
+  })
+
+  test.each([
+    ['cc-haha-open-tabs', '[{"sessionId":"s","title":"Keep"}]'],
+    ['cc-haha-session-runtime', '{"s":{"providerId":null,"modelId":"m"},"bad":{}}'],
+    ['echoflow-code.workspace', '{"version":1,"sessions":{"s":{"tabs":[{"id":"f","kind":"file","path":""}]}}}'],
+  ])('does not treat a failed normalization write as malformed JSON for %s', (key, raw) => {
+    localStorage.setItem(key, raw)
+    const report = runDesktopPersistenceMigrations({
+      getItem: localStorage.getItem.bind(localStorage),
+      removeItem: localStorage.removeItem.bind(localStorage),
+      setItem: (target, value) => {
+        if (target === key) throw new Error('quota')
+        localStorage.setItem(target, value)
+      },
+    })
+    expect(localStorage.getItem(key)).toBe(raw)
+    expect(report.migratedKeys).not.toContain(key)
+    expect(report.failedKeys).toContain(key)
+    expect(localStorage.getItem(DESKTOP_PERSISTENCE_VERSION_KEY)).toBeNull()
+  })
+
+  test.each(['intent', 'completion'])('blocks an uncertain %s marker write without reporting the import as successful', (phase) => {
+    const target = 'cc-haha-locale'
+    const marker = `cc-haha.persistence.legacyCopied.${target}`
+    localStorage.setItem('echoflow-code-locale', 'zh')
+    let blocked = true
+    const storage = {
+      getItem: localStorage.getItem.bind(localStorage),
+      removeItem: localStorage.removeItem.bind(localStorage),
+      setItem: (key: string, value: string) => {
+        if (blocked && key === marker && (phase === 'intent' || value === '1')) throw new Error('marker unavailable')
+        localStorage.setItem(key, value)
+      },
+    }
+    const report = runDesktopPersistenceMigrations(storage)
+    expect(report.status).toBe('blocked')
+    expect(report.blockedKeys).toContain(target)
+    expect(report.migratedKeys).not.toContain(target)
+    expect(localStorage.getItem(DESKTOP_PERSISTENCE_VERSION_KEY)).toBeNull()
+    if (phase === 'intent') expect(localStorage.getItem(target)).toBeNull()
+    else {
+      expect(localStorage.getItem(target)).toBe('zh')
+      // A clear after the copy cannot safely be distinguished from an interrupted copy.
+      localStorage.removeItem(target)
+    }
+    blocked = false
+    const retry = runDesktopPersistenceMigrations(storage)
+    if (phase === 'intent') expect(retry.status).toBe('completed')
+    else {
+      expect(retry.status).toBe('blocked')
+      expect(localStorage.getItem(target)).toBeNull()
+    }
+  })
+
+  test('reports unsupported workspace before old-shape validation and leaves the schema promise incomplete', () => {
+    const raw = ' {"version":99,"navigation":{"keep":true}}\n'
+    localStorage.setItem('echoflow-code.workspace', raw)
+    const report = runDesktopPersistenceMigrations()
+    expect(report.unsupportedKeys).toContain('echoflow-code.workspace')
+    expect(report.migratedKeys).not.toContain('echoflow-code.workspace')
+    expect(localStorage.getItem('echoflow-code.workspace')).toBe(raw)
+    expect(localStorage.getItem(DESKTOP_PERSISTENCE_VERSION_KEY)).toBeNull()
+  })
+
+  test('reports unchanged keys and preserves a future global marker byte-for-byte', () => {
+    const first = runDesktopPersistenceMigrations()
+    expect(first.status).toBe('completed')
+    const second = runDesktopPersistenceMigrations()
+    expect(second.migratedKeys).toEqual([])
+    expect(second.unchangedKeys).toContain('cc-haha-locale')
+    const future = ' 10\n'
+    localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, future)
+    const before = { ...localStorage }
+    const report = runDesktopPersistenceMigrations()
+    expect(report.status).toBe('unsupported')
+    expect(report.unsupportedKeys).toContain(DESKTOP_PERSISTENCE_VERSION_KEY)
+    expect(report.migratedKeys).toEqual([])
+    expect({ ...localStorage }).toEqual(before)
   })
 })

@@ -6,8 +6,10 @@
 
 | 文档 | 用途 |
 | --- | --- |
+| [文档与站点维护规范](site-maintenance.md) | 内容格式、公开路由、站点视觉与验证契约；修改 docs/site 前按需读取 |
 | `decoupling-plan.md` | 脱钩与重写的现行重构计划（原根目录 `DECOUPLING_PLAN.md`） |
 | [工作区集成账本](workspace-integration.md) | 原根目录账本；保留阶段状态和未关闭项，历史验证不代表当前候选通过 |
+| [产品数据单根归并](storage-convergence.md) | 历史目录分布、完整归并的完成条件和验证边界；当前实施状态不作为迁移完成证明 |
 | `release-windows.md` | 桌面端发布与自动更新 runbook |
 | `quality-baseline.md` | 真实 provider、模型 baseline 与 release quality gate |
 | `computer-use-native-manual-qa.md` | macOS/Windows Computer Use 真机验收步骤 |
@@ -27,4 +29,4 @@
 | `archive/computer-use-*.md` | 已完成的 Computer Use 重设计、评审、CEF 分析、Swift 方案和交接材料 |
 | [历史设计与计划](archive/planning/README.md) | 原 Superpowers 的 49 份设计、计划与任务记录合并为 6 个主题；保留历史状态，不再作为插件执行入口 |
 
-分类与归档规则见 [文档放置](../AGENTS.md#文档放置)。
+分类与归档规则见[文档放置与路由](site-maintenance.md#文档放置与路由)。

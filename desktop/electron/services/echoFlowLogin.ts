@@ -246,8 +246,8 @@ export class EchoFlowLoginSession {
   private activeProfile: EchoFlowLoginProfile | null = null
   private pending: Promise<EchoFlowLoginResult> | null = null
   private opening: Promise<void> | null = null
-  private restoring: Promise<boolean> | null = null
-  private restoringEndpoint: EchoFlowLoginEndpoint | null = null
+  private readonly restoring = new Map<EchoFlowLoginEndpoint, Promise<boolean>>()
+  private readonly generations = new Map<EchoFlowLoginEndpoint, number>()
   private settled: ((result: EchoFlowLoginResult) => void) | null = null
   private readonly verified = new Set<EchoFlowLoginEndpoint>()
   private loadRetriesUsed = 0
@@ -258,7 +258,7 @@ export class EchoFlowLoginSession {
   private loadTimer: ReturnType<typeof setTimeout> | null = null
   private loginTimer: ReturnType<typeof setTimeout> | null = null
   private pollTimer: ReturnType<typeof setInterval> | null = null
-  private identityInFlight = false
+  private identityInFlight: EchoFlowLoginWindow | null = null
   private identityRejections = 0
   private lastCredentialKey = ''
   private pageLoaded = false
@@ -292,7 +292,10 @@ export class EchoFlowLoginSession {
     // An existing credential is the common "already signed in" case. Reusing
     // it avoids opening a window that the site would immediately redirect
     // away from the login page.
-    if (await this.restoreSession(endpoint)) return 'authenticated'
+    const generation = this.generations.get(endpoint)
+    const restored = await this.restoreSession(endpoint)
+    if (this.generations.get(endpoint) !== generation) return 'cancelled'
+    if (restored) return 'authenticated'
     if (this.pending) {
       this.focusWindow()
       return this.pending
@@ -310,6 +313,8 @@ export class EchoFlowLoginSession {
   }
 
   async clear(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
+    this.generations.set(endpoint, (this.generations.get(endpoint) ?? 0) + 1)
+    this.restoring.delete(endpoint)
     this.verified.delete(endpoint)
     if (this.activeProfile?.endpoint === endpoint) this.cancelLogin()
     // Both must run even when one of them fails: the gateway token lives in
@@ -326,21 +331,24 @@ export class EchoFlowLoginSession {
   }
 
   private restoreSession(endpoint: EchoFlowLoginEndpoint): Promise<boolean> {
-    if (this.restoringEndpoint !== endpoint) {
-      this.restoring = null
-      this.restoringEndpoint = endpoint
-    }
-    this.restoring ??= this.tryRestoreSession(endpoint)
+    const existing = this.restoring.get(endpoint)
+    if (existing) return existing
+    const generation = this.generations.get(endpoint)
+    const restoring = this.tryRestoreSession(endpoint, generation)
       .catch(() => false)
-      .finally(() => { this.restoring = null })
-    return this.restoring
+      .finally(() => {
+        if (this.restoring.get(endpoint) === restoring) this.restoring.delete(endpoint)
+      })
+    this.restoring.set(endpoint, restoring)
+    return restoring
   }
 
-  private async tryRestoreSession(endpoint: EchoFlowLoginEndpoint): Promise<boolean> {
+  private async tryRestoreSession(endpoint: EchoFlowLoginEndpoint, generation: number | undefined): Promise<boolean> {
     this.verified.delete(endpoint)
     const credential = await this.deps.readCredential(endpoint, null)
-    if (!credential) return false
+    if (!credential || this.generations.get(endpoint) !== generation) return false
     const verdict = await this.deps.verifySession(endpoint, credential)
+    if (this.generations.get(endpoint) !== generation) return false
     if (verdict !== 'ok') {
       if (verdict === 'rejected') await this.clearEndpointState(endpoint)
       return false
@@ -525,7 +533,7 @@ export class EchoFlowLoginSession {
   }
 
   private async pollSession(window: EchoFlowLoginWindow, endpoint: EchoFlowLoginEndpoint): Promise<void> {
-    if (this.window !== window || this.identityInFlight || this.verified.has(endpoint)) return
+    if (this.window !== window || this.identityInFlight === window || this.verified.has(endpoint)) return
 
     let credential: EchoFlowLoginCredential | null
     try {
@@ -546,9 +554,10 @@ export class EchoFlowLoginSession {
     this.lastCredentialKey = fingerprint
     this.lastIdentityAttemptAt = now
 
-    this.identityInFlight = true
+    this.identityInFlight = window
     try {
       const verdict = await this.deps.verifySession(endpoint, credential)
+      if (this.window !== window) return
       if (verdict === 'rejected') {
         this.identityRejections += 1
         if (this.identityRejections >= MAX_IDENTITY_REJECTIONS) {
@@ -574,7 +583,7 @@ export class EchoFlowLoginSession {
     } catch {
       // Transient read or bridge failures are retried on the next poll.
     } finally {
-      this.identityInFlight = false
+      if (this.identityInFlight === window) this.identityInFlight = null
     }
   }
 

@@ -101,6 +101,15 @@ export class EchoFlowApiService {
   constructor(private defaultBaseUrl = ECHOFLOW_BASE_URLS.main) {}
 
   private readonly credentials = new Map<EchoFlowEndpoint, EchoFlowCredential>()
+  private readonly credentialVersions: Record<EchoFlowEndpoint, number> = { main: 0, dedicated: 0 }
+  // Do not reuse an old credential under a login's new version while it is being verified.
+  private readonly pendingCredentials = new Map<EchoFlowEndpoint, number>()
+  // shortcut: in-process writers only, add a file lock before introducing another writer process.
+  private static readonly accountFileLocks = new Map<string, Promise<void>>()
+
+  private assertCredentialVersion(endpoint: EchoFlowEndpoint, version: number): void {
+    if (this.credentialVersions[endpoint] !== version) throw new EchoFlowApiError('token_invalid')
+  }
 
   private getBaseUrl(endpoint?: EchoFlowEndpoint): string {
     if (!endpoint) return this.defaultBaseUrl
@@ -119,7 +128,8 @@ export class EchoFlowApiService {
     // Token accounts keep their credential on disk; session and bearer
     // credentials live in memory only, so they are usable only in this process.
     if (account.credential === 'session' || account.credential === 'bearer') {
-      return this.credentials.has(endpoint)
+      const credential = this.credentials.get(endpoint)
+      return credential?.kind === account.credential && credential.userId === account.userId
     }
     return true
   }
@@ -130,6 +140,8 @@ export class EchoFlowApiService {
   }
 
   clearCredential(endpoint: EchoFlowEndpoint): void {
+    this.credentialVersions[endpoint] += 1
+    this.pendingCredentials.delete(endpoint)
     this.credentials.delete(endpoint)
   }
 
@@ -145,67 +157,52 @@ export class EchoFlowApiService {
     const trimmed: EchoFlowCredential = { ...credential, userId: credential.userId.trim() }
     if (!trimmed.userId) throw new EchoFlowApiError('token_invalid')
 
-    const user = await this.validateCredential(trimmed, endpoint)
-    this.credentials.set(endpoint, trimmed)
+    const version = ++this.credentialVersions[endpoint]
+    this.pendingCredentials.set(endpoint, version)
+    try {
+      const user = await this.validateCredential(trimmed, endpoint)
+      this.assertCredentialVersion(endpoint, version)
+      const tokens = trimmed.kind === 'token' ? await this.listTokensForCredential(trimmed, endpoint) : undefined
 
-    const accounts = await this.readAccounts()
-    const previous = accounts.accounts[endpoint]
-    const stored: StoredEchoFlowAccount = trimmed.kind === 'token'
-      ? {
-          userId: trimmed.userId,
-          credential: 'token',
-          managementToken: trimmed.managementToken,
-          ...user,
-          tokens: reattachStoredTokenKeys(
-            await this.listTokensWithCredential(endpoint),
-            previous?.tokens,
-            previous?.userId === trimmed.userId,
-          ),
-          refreshedAt: Date.now(),
-          endpoint,
-        }
-      : {
-          // The cookie or bearer token stays in memory; only identity is stored.
-          userId: trimmed.userId,
-          credential: trimmed.kind,
-          username: user.username || previous?.username,
-          // The saved keys are the only copies the gateway will ever hand out.
-          // The restore at startup re-runs this for the same user, so dropping
-          // them here would make every earlier token unusable on restart. The
-          // balance is the last known one for the same reason: the next
-          // refresh reconciles both against the gateway.
-          ...(previous && previous.userId === trimmed.userId
-            ? {
-                balance: previous.balance,
-                userGroup: previous.userGroup,
-                tokens: previous.tokens,
-                refreshedAt: previous.refreshedAt,
-              }
-            : {}),
-          endpoint,
-        }
-    accounts.accounts[endpoint] = stored
-    await this.writeAccounts(accounts)
-    return toPublicAccount(stored, true)
+      return await this.commitAccount(endpoint, version, trimmed, (previous) => trimmed.kind === 'token'
+        ? {
+            userId: trimmed.userId,
+            credential: 'token',
+            managementToken: trimmed.managementToken,
+            ...user,
+            tokens: reattachStoredTokenKeys(tokens ?? [], previous?.tokens, previous?.userId === trimmed.userId),
+            refreshedAt: Date.now(),
+            endpoint,
+          }
+        : {
+            // The cookie or bearer token stays in memory; only identity is stored.
+            userId: trimmed.userId,
+            credential: trimmed.kind,
+            username: user.username || previous?.username,
+            // The saved keys are the only copies the gateway will ever hand out.
+            // The restore at startup re-runs this for the same user, so dropping
+            // them here would make every earlier token unusable on restart. The
+            // balance is the last known one for the same reason: the next
+            // refresh reconciles both against the gateway.
+            ...(previous && previous.userId === trimmed.userId
+              ? {
+                  balance: previous.balance,
+                  userGroup: previous.userGroup,
+                  tokens: previous.tokens,
+                  refreshedAt: previous.refreshedAt,
+                }
+              : {}),
+            endpoint,
+          })
+    } finally {
+      if (this.pendingCredentials.get(endpoint) === version) this.pendingCredentials.delete(endpoint)
+    }
   }
 
   async bindAccount(userId: string, managementToken: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowAccount> {
-    const account = await this.refreshWithCredentials(userId, managementToken, endpoint)
-    const accounts = await this.readAccounts()
-    const stored: StoredEchoFlowAccount = {
-      ...account,
-      credential: 'token' as const,
-      managementToken,
-      endpoint,
-      tokens: reattachStoredTokenKeys(
-        account.tokens ?? [],
-        accounts.accounts[endpoint]?.tokens,
-        accounts.accounts[endpoint]?.userId === account.userId,
-      ),
-    }
-    accounts.accounts[endpoint] = stored
-    await this.writeAccounts(accounts)
-    return toPublicAccount(stored)
+    const trimmedToken = managementToken.trim()
+    if (!trimmedToken) throw new EchoFlowApiError('token_invalid')
+    return this.setCredential(endpoint, { kind: 'token', userId, managementToken: trimmedToken })
   }
 
   // Kept as a compatibility boundary for older clients. It only reads the
@@ -217,12 +214,14 @@ export class EchoFlowApiService {
   }
 
   async refreshAccount(endpoint: EchoFlowEndpoint = 'main', created?: { id?: string; name: string; key: string }): Promise<EchoFlowAccount> {
+    const version = this.credentialVersions[endpoint]
+    if (this.pendingCredentials.has(endpoint)) throw new EchoFlowApiError('token_invalid')
     const accounts = await this.readAccounts()
+    this.assertCredentialVersion(endpoint, version)
     const account = accounts.accounts[endpoint]
     if (!account) throw new EchoFlowApiError('token_invalid')
     const credential = this.credentials.get(endpoint) ?? storedCredential(account)
     if (!credential) throw new EchoFlowApiError('token_invalid')
-    this.credentials.set(endpoint, credential)
 
     let user: EchoFlowUserInfo
     try {
@@ -237,44 +236,40 @@ export class EchoFlowApiService {
       }))
       // A rejected credential must not keep the account looking live: the UI
       // offers sign-in again only when the account is not live.
-      if (error instanceof EchoFlowApiError && error.code === 'token_invalid') {
-        this.credentials.delete(endpoint)
+      if (error instanceof EchoFlowApiError && error.code === 'token_invalid' && this.credentialVersions[endpoint] === version) {
+        this.clearCredential(endpoint)
       }
       throw error
     }
-    const stored: StoredEchoFlowAccount = {
-      ...account,
-      userId: credential.userId,
-      credential: credential.kind,
-      ...(credential.kind === 'token' ? { managementToken: credential.managementToken } : {}),
-      ...user,
-      // Both gateways expose a call-token list; the dedicated one is just a
-      // different path (`/api/v1/keys`) and is selected by gateway, not by
-      // credential kind.
-      tokens: rememberCreatedToken(
-        reattachStoredTokenKeys(
-          await this.listTokensWithCredential(endpoint).catch((error) => {
-            // The create response is the only copy of that key; a list that
-            // fails right after must not take it down with it.
-            if (!created) throw error
-            console.warn('[echoflow-api] token-list-after-create-failed:', JSON.stringify({
-              endpoint,
-              code: error instanceof EchoFlowApiError ? error.code : 'unexpected',
-              status: error instanceof EchoFlowApiError ? error.status : undefined,
-            }))
-            return account.tokens ?? []
-          }),
-          account.tokens,
-          account.userId === credential.userId,
+    this.assertCredentialVersion(endpoint, version)
+    // Use this operation's credential, not a newer login's live credential.
+    const tokens = await this.listTokensForCredential(credential, endpoint).catch((error) => {
+      // The create response is the only copy of that key; a list that
+      // fails right after must not take it down with it.
+      if (!created) throw error
+      console.warn('[echoflow-api] token-list-after-create-failed:', JSON.stringify({
+        endpoint,
+        code: error instanceof EchoFlowApiError ? error.code : 'unexpected',
+        status: error instanceof EchoFlowApiError ? error.status : undefined,
+      }))
+      return null
+    })
+    return this.commitAccount(endpoint, version, credential, (previous) => {
+      if (!previous) throw new EchoFlowApiError('token_invalid')
+      return {
+        ...previous,
+        userId: credential.userId,
+        credential: credential.kind,
+        ...(credential.kind === 'token' ? { managementToken: credential.managementToken } : {}),
+        ...user,
+        tokens: rememberCreatedToken(
+          reattachStoredTokenKeys(tokens ?? previous.tokens ?? [], previous.tokens, previous.userId === credential.userId),
+          created,
         ),
-        created,
-      ),
-      refreshedAt: Date.now(),
-      endpoint,
-    }
-    accounts.accounts[endpoint] = stored
-    await this.writeAccounts(accounts)
-    return toPublicAccount(stored, true)
+        refreshedAt: Date.now(),
+        endpoint,
+      }
+    })
   }
 
   /**
@@ -287,14 +282,17 @@ export class EchoFlowApiService {
   async createAccountToken(endpoint: EchoFlowEndpoint = 'main', name = 'echoflow-code'): Promise<EchoFlowAccount> {
     // A management-token account keeps its credential on disk, so creating a
     // token must work right after a restart, before any refresh loads it.
+    const version = this.credentialVersions[endpoint]
+    if (this.pendingCredentials.has(endpoint)) throw new EchoFlowApiError('token_invalid')
     let credential = this.credentials.get(endpoint)
     if (!credential) {
       const stored = (await this.readAccounts()).accounts[endpoint]
       credential = stored ? storedCredential(stored) ?? undefined : undefined
     }
     if (!credential) throw new EchoFlowApiError('token_invalid')
+    this.assertCredentialVersion(endpoint, version)
     const created = endpoint === 'dedicated'
-      ? await this.createDedicatedKey(credential, endpoint, name)
+      ? await this.createDedicatedKey(credential, endpoint, name, version)
       : await this.fetchManagementApi<{ success?: boolean; message?: unknown; data?: unknown }>('/api/token/', credential, endpoint, {
         method: 'POST',
         body: JSON.stringify({
@@ -307,6 +305,7 @@ export class EchoFlowApiService {
           routing_priority: 'auto',
         }),
       })
+    this.assertCredentialVersion(endpoint, version)
     const refusal = gatewayRefusal(created)
     if (refusal) throw new EchoFlowApiError('invalid_response', undefined, refusal)
     console.info('[echoflow-api] token-created:', JSON.stringify({
@@ -337,10 +336,11 @@ export class EchoFlowApiService {
   }
 
   /** The dedicated gateway's call-token resource is `/api/v1/keys`, and every key needs a group. */
-  private async createDedicatedKey(credential: EchoFlowCredential, endpoint: EchoFlowEndpoint, name: string) {
+  private async createDedicatedKey(credential: EchoFlowCredential, endpoint: EchoFlowEndpoint, name: string, version: number) {
     const groups = await this.fetchManagementApi<{ success?: boolean; code?: unknown; message?: unknown; data?: unknown }>(
       '/api/v1/groups/available', credential, endpoint,
     )
+    this.assertCredentialVersion(endpoint, version)
     const refusal = gatewayRefusal(groups)
     if (refusal) throw new EchoFlowApiError('invalid_response', undefined, refusal)
     const groupId = firstGroupId(groups.data ?? groups)
@@ -373,10 +373,12 @@ export class EchoFlowApiService {
   }
 
   async disconnectAccount(endpoint: EchoFlowEndpoint = 'main'): Promise<void> {
-    this.credentials.delete(endpoint)
-    const accounts = await this.readAccounts()
-    accounts.accounts[endpoint] = null
-    await this.writeAccounts(accounts)
+    this.clearCredential(endpoint)
+    await this.withAccountFile(async (accountPath) => {
+      const accounts = await this.readAccountsFile(accountPath)
+      accounts.accounts[endpoint] = null
+      await this.writeAccounts(accounts, accountPath)
+    })
   }
 
   async validateManagementToken(userId: string, token: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowUserInfo> {
@@ -505,19 +507,37 @@ export class EchoFlowApiService {
     return tokens
   }
 
-  private async refreshWithCredentials(userId: string, managementToken: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowAccount> {
-    const trimmedUserId = userId.trim()
-    const trimmedToken = managementToken.trim()
-    if (!trimmedUserId || !trimmedToken) throw new EchoFlowApiError('token_invalid')
+  private async commitAccount(
+    endpoint: EchoFlowEndpoint,
+    version: number,
+    credential: EchoFlowCredential,
+    update: (previous: StoredEchoFlowAccount | null) => StoredEchoFlowAccount,
+  ): Promise<EchoFlowAccount> {
+    return this.withAccountFile(async (accountPath) => {
+      this.assertCredentialVersion(endpoint, version)
+      const accounts = await this.readAccountsFile(accountPath)
+      this.assertCredentialVersion(endpoint, version)
+      const stored = update(accounts.accounts[endpoint])
+      accounts.accounts[endpoint] = stored
+      await this.writeAccounts(accounts, accountPath, () => this.assertCredentialVersion(endpoint, version))
+      this.assertCredentialVersion(endpoint, version)
+      this.credentials.set(endpoint, credential)
+      return toPublicAccount(stored, true)
+    })
+  }
 
-    const user = await this.validateManagementToken(trimmedUserId, trimmedToken, endpoint)
-    const tokens = await this.listTokens(trimmedUserId, trimmedToken, endpoint)
-    return {
-      ...user,
-      userId: trimmedUserId,
-      tokens,
-      refreshedAt: Date.now(),
-      endpoint,
+  private async withAccountFile<T>(task: (accountPath: string) => Promise<T>): Promise<T> {
+    const accountPath = this.getAccountPath()
+    const previous = EchoFlowApiService.accountFileLocks.get(accountPath) ?? Promise.resolve()
+    const next = previous.then(() => task(accountPath))
+    const tracked = next.then(() => {}, () => {})
+    EchoFlowApiService.accountFileLocks.set(accountPath, tracked)
+    try {
+      return await next
+    } finally {
+      if (EchoFlowApiService.accountFileLocks.get(accountPath) === tracked) {
+        EchoFlowApiService.accountFileLocks.delete(accountPath)
+      }
     }
   }
 
@@ -525,19 +545,23 @@ export class EchoFlowApiService {
     return path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'echoflow-account.json')
   }
 
-  private async readAccounts(): Promise<StoredEchoFlowAccounts> {
+  private readAccounts(): Promise<StoredEchoFlowAccounts> {
+    return this.withAccountFile((accountPath) => this.readAccountsFile(accountPath))
+  }
+
+  private async readAccountsFile(accountPath: string): Promise<StoredEchoFlowAccounts> {
     try {
-      const parsed = JSON.parse(await fs.readFile(this.getAccountPath(), 'utf-8')) as unknown
+      const parsed = JSON.parse(await fs.readFile(accountPath, 'utf-8')) as unknown
       const normalized = normalizeStoredAccounts(parsed)
       if (normalized) {
         if ((parsed as { schemaVersion?: unknown }).schemaVersion !== 3) {
-          await this.backupAccountsFile()
-          await this.writeAccounts(normalized)
+          await this.backupAccountsFile(accountPath)
+          await this.writeAccounts(normalized, accountPath)
         }
         return normalized
       }
       if (isStoredAccount(parsed)) {
-        await this.backupAccountsFile()
+        await this.backupAccountsFile(accountPath)
         const endpoint: EchoFlowEndpoint = parsed.endpoint === 'dedicated' ? 'dedicated' : 'main'
         const account = { ...parsed, credential: parsed.credential ?? 'token', endpoint }
         const migrated: StoredEchoFlowAccounts = {
@@ -547,7 +571,7 @@ export class EchoFlowApiService {
             dedicated: endpoint === 'dedicated' ? account : null,
           },
         }
-        await this.writeAccounts(migrated)
+        await this.writeAccounts(migrated, accountPath)
         return migrated
       }
       return { ...EMPTY_ACCOUNTS, accounts: { ...EMPTY_ACCOUNTS.accounts } }
@@ -558,19 +582,19 @@ export class EchoFlowApiService {
     return { ...EMPTY_ACCOUNTS, accounts: { ...EMPTY_ACCOUNTS.accounts } }
   }
 
-  private async backupAccountsFile(): Promise<void> {
-    const accountPath = this.getAccountPath()
+  private async backupAccountsFile(accountPath: string): Promise<void> {
     const backupPath = `${accountPath}.bak-before-migration-${Date.now()}`
     await fs.copyFile(accountPath, backupPath)
     await fs.chmod(backupPath, 0o600)
   }
 
-  private async writeAccounts(accounts: StoredEchoFlowAccounts): Promise<void> {
-    const accountPath = this.getAccountPath()
+  private async writeAccounts(accounts: StoredEchoFlowAccounts, accountPath: string, beforeCommit?: () => void): Promise<void> {
     await fs.mkdir(path.dirname(accountPath), { recursive: true })
     const temporaryPath = `${accountPath}.tmp.${randomBytes(3).toString('hex')}`
     try {
       await fs.writeFile(temporaryPath, `${JSON.stringify(accounts, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 })
+      // Sign-out or a newer login can invalidate this operation during disk I/O.
+      beforeCommit?.()
       await fs.rename(temporaryPath, accountPath)
     } catch (error) {
       await fs.unlink(temporaryPath).catch(() => {})

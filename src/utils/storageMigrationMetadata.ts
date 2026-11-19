@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { CONNECTORS } from '../services/connectors/catalog.js'
 import type { ConnectorInstallation } from '../services/connectors/types.js'
 import { renderNativeConnectorSkill } from '../services/connectors/nativeConnectorSkill.js'
+import { LEGACY_CONNECTOR_MARKETPLACE, connectorPluginName } from '../services/connectors/pluginIdentity.js'
 
 type JsonObject = Record<string, unknown>
 
@@ -130,8 +131,9 @@ export async function relocateManagedData(sourceDir: string, targetDir: string, 
   for (const folder of ['plugins', 'cowork_plugins']) {
     const marketplacesPath = join(stage, folder, 'known_marketplaces.json')
     const marketplaces = await optionalJson(stage, marketplacesPath)
+    let legacyMarketplaceOwned = false
     if (marketplaces) {
-      for (const value of Object.values(marketplaces)) {
+      for (const [name, value] of Object.entries(marketplaces)) {
         const entry = object(value, 'marketplace')
         if (typeof entry.installLocation !== 'string') throw new Error('Invalid marketplace install location')
         entry.installLocation = rebase(entry.installLocation)
@@ -139,6 +141,10 @@ export async function relocateManagedData(sourceDir: string, targetDir: string, 
         if (location.source === 'file' || location.source === 'directory') {
           if (typeof location.path !== 'string') throw new Error('Invalid local marketplace source')
           location.path = rebase(location.path)
+        }
+        if (name === LEGACY_CONNECTOR_MARKETPLACE && location.source === 'directory') {
+          const managedMarketplace = join(target, 'connectors', 'marketplace')
+          legacyMarketplaceOwned = resolve(entry.installLocation as string) === managedMarketplace && resolve(location.path as string) === managedMarketplace
         }
       }
       await saveFile(stage, marketplacesPath, JSON.stringify(marketplaces, null, 2) + '\n')
@@ -153,7 +159,10 @@ export async function relocateManagedData(sourceDir: string, targetDir: string, 
           const entry = object(item, 'installed plugin')
           if (typeof entry.installPath !== 'string') throw new Error('Invalid installed plugin path')
           entry.installPath = rebase(entry.installPath)
-          const definition = CONNECTORS.find(def => def.pluginId === id)
+          const definition = CONNECTORS.find(def => def.pluginId === id || (
+            legacyMarketplaceOwned && id === `${connectorPluginName(def)}@${LEGACY_CONNECTOR_MARKETPLACE}` &&
+            inside(join(target, folder, 'cache', LEGACY_CONNECTOR_MARKETPLACE, connectorPluginName(def)), resolve(entry.installPath as string))
+          ))
           if (definition && inside(target, resolve(entry.installPath as string))) {
             ownedSkills.set(join(entry.installPath as string, 'skills', `office-${definition.id}`, 'SKILL.md'), definition.id)
           }

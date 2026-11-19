@@ -20,13 +20,12 @@ import {
   formatPermissionRequest,
 } from '../common/format.js'
 import {
-  formatPermissionDecisionStatus,
   formatPermissionInstructions,
   parsePermissionCommand,
   type PermissionDecision,
 } from '../common/permission.js'
 import { SessionStore } from '../common/session-store.js'
-import { syncImPermissionState } from '../common/permission-sync.js'
+import { formatImPermissionSubmissionNotice, submitImPermissionDecision, syncImPermissionState, type ImPermissionSubmissionResult } from '../common/permission-sync.js'
 import { SessionSelectionController } from '../common/session-selection.js'
 import { type RecentProject } from '../common/http-client.js'
 import { createAdapterClient } from '../common/adapter-client.js'
@@ -94,6 +93,7 @@ const projectSelectionController = new ProjectSelectionController({
 })
 const runtimeStates = new Map<string, ChatRuntimeState>()
 const pendingPermissions = new Map<string, Set<string>>()
+const submittingPermissions = new Map<string, Set<string>>()
 
 // Per-chat outbound watchers for Agent-produced markdown image references.
 // `imageWatchers` extracts `![alt](src)` from streaming text;
@@ -225,6 +225,7 @@ function clearTransientChatState(chatId: string): void {
   runtime.verb = undefined
   runtime.pendingPermissionCount = 0
   pendingPermissions.delete(chatId)
+  submittingPermissions.delete(chatId)
 }
 
 async function ensureExistingSession(chatId: string): Promise<SessionRestoreResult> {
@@ -738,6 +739,7 @@ function prepareNewSession(chatId: string): void {
   imageWatchers.delete(chatId)
   uploadedImageKeys.delete(chatId)
   pendingPermissions.delete(chatId)
+  submittingPermissions.delete(chatId)
   runtimeStates.delete(chatId)
 }
 
@@ -745,7 +747,16 @@ function prepareNewSession(chatId: string): void {
 
 async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<void> {
   const runtime = getRuntimeState(chatId)
-  if (syncImPermissionState(chatId, msg, runtime, pendingPermissions)) return
+  const settled: string[] = []
+  if (syncImPermissionState(chatId, msg, runtime, pendingPermissions, {
+    submittingPermissions,
+    requestSyncState: (id) => bridge.requestSyncState(id),
+    onSettled: (id) => { settled.push(id) },
+  })) {
+    if (msg.type === 'error') await sendText(chatId, msg.message)
+    for (const id of settled) await sendText(chatId, `权限请求 ${id} 已不再等待确认。`)
+    return
+  }
 
   switch (msg.type) {
     case 'connected':
@@ -833,11 +844,12 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
       break
 
     case 'permission_request': {
-      runtime.pendingPermissionCount += 1
-      runtime.state = 'permission_pending'
       const pending = pendingPermissions.get(chatId) ?? new Set<string>()
+      if (pending.has(msg.requestId)) break
       pending.add(msg.requestId)
       pendingPermissions.set(chatId, pending)
+      runtime.pendingPermissionCount = pending.size
+      runtime.state = 'permission_pending'
       const stored = sessionStore.get(chatId)
       const card = buildPermissionCard(
         msg.toolName,
@@ -1138,29 +1150,12 @@ async function handleMessage(data: any): Promise<void> {
   })
 }
 
-function applyPermissionDecision(chatId: string, decision: PermissionDecision): boolean {
-  const { requestId, allowed, rule } = decision
-  const pending = pendingPermissions.get(chatId)
-  if (!pending?.has(requestId)) {
-    void sendText(chatId, `未找到待确认的权限请求：${requestId}`)
-    return false
-  }
-
-  const sent = bridge.sendPermissionResponse(chatId, requestId, allowed, rule)
-  if (!sent) {
-    void sendText(chatId, '权限响应发送失败，请检查会话状态。')
-    return false
-  }
-
-  pending.delete(requestId)
-  const runtime = getRuntimeState(chatId)
-  runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
-  return true
-}
-
-async function handlePermissionDecision(chatId: string, decision: PermissionDecision): Promise<void> {
-  const sent = applyPermissionDecision(chatId, decision)
-  if (sent) await sendText(chatId, `${formatPermissionDecisionStatus(decision)}。`)
+async function handlePermissionDecision(chatId: string, decision: PermissionDecision): Promise<ImPermissionSubmissionResult> {
+  const result = submitImPermissionDecision(
+    chatId, decision, pendingPermissions.get(chatId), submittingPermissions, bridge,
+  )
+  await sendText(chatId, formatImPermissionSubmissionNotice(result, decision.requestId))
+  return result
 }
 
 async function handleCardAction(data: any): Promise<any> {
@@ -1192,20 +1187,15 @@ async function handleCardAction(data: any): Promise<any> {
     const rule = event.action?.value?.rule
     if (!requestId) return
 
-    const sent = applyPermissionDecision(chatId, {
+    const result = await handlePermissionDecision(chatId, {
       requestId,
       allowed,
       rule: rule === 'always' ? 'always' : undefined,
     })
-    if (!sent) return { toast: { type: 'warning', content: '权限响应发送失败' } }
-
-    const statusText = allowed
-      ? rule === 'always'
-        ? '♾️ 已永久允许（本次会话内不再询问相同操作）'
-        : '✅ 已允许'
-      : '❌ 已拒绝'
-    await sendText(chatId, statusText)
-    return { toast: { type: 'info', content: allowed ? (rule === 'always' ? '♾️ 永久允许' : '✅ 已允许') : '❌ 已拒绝' } }
+    return { toast: {
+      type: result === 'not_pending' || result === 'send_failed' ? 'warning' : 'info',
+      content: formatImPermissionSubmissionNotice(result, requestId),
+    } }
   }
 
   if (action === 'pick_project') {

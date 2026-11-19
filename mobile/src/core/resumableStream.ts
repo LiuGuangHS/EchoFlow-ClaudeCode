@@ -78,6 +78,10 @@ export function readStreamFrame(data: unknown): StreamFrame | null {
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const frame = value as Record<string, unknown>
+  if (
+    (frame.type === 'stream_attached' || frame.type === 'command_ack') &&
+    frame.v !== undefined && frame.v !== 1
+  ) return null
   if (frame.type === 'stream_attached') {
     if (
       typeof frame.epoch !== 'string' ||

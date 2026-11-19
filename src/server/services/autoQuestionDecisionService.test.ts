@@ -31,23 +31,127 @@ const undecided: AutoQuestion = {
 describe('autoQuestionDecisionService', () => {
   let configDir: string
   let originalConfigDir: string | undefined
+  let originalHome: string | undefined
   let originalFetch: typeof globalThis.fetch
 
   beforeEach(async () => {
     originalConfigDir = process.env.CLAUDE_CONFIG_DIR
+    originalHome = process.env.HOME
     originalFetch = globalThis.fetch
     configDir = await fs.mkdtemp(path.join(os.tmpdir(), 'auto-question-test-'))
     process.env.CLAUDE_CONFIG_DIR = configDir
+    process.env.HOME = configDir
     await fs.mkdir(path.join(configDir, 'cc-haha', 'traces'), { recursive: true })
   })
 
   afterEach(async () => {
     globalThis.fetch = originalFetch
     hahaOpenAIOAuthService.dispose()
+    hahaGrokOAuthService.dispose()
     await drainTraceCaptureForTests()
     if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
     else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
+    if (originalHome === undefined) delete process.env.HOME
+    else process.env.HOME = originalHome
     await fs.rm(configDir, { recursive: true, force: true })
+  })
+
+  describe.each(['anthropic', 'openai-official', 'grok-official'])('local redaction on the %s direct route', (route) => {
+    test.each([
+      ['enabled', '{"localRedaction":{"enabled":true}}'],
+      ['malformed JSON', '{ broken'],
+      ['invalid shape', '{"localRedaction":{"enabled":"yes"}}'],
+    ] as const)('leaves the question with the user without any outbound request with %s settings', async (_label, settings) => {
+      const providerId = route === 'anthropic'
+        ? (await new ProviderService().addProvider({
+          presetId: 'custom', name: 'Direct fixture', apiKey: 'fake-key', authStrategy: 'api_key',
+          baseUrl: 'https://anthropic.fixture.invalid', apiFormat: 'anthropic', supportsNestedToolResultMedia: true,
+          models: { main: 'large-test', haiku: 'small-test', sonnet: 'large-test', opus: 'large-test' },
+        })).id
+        : route
+      await new ProviderService().getProvider(providerId)
+      if (route === 'openai-official') {
+        await hahaOpenAIOAuthService.saveTokens({
+          accessToken: 'fake-openai-token', refreshToken: null,
+          expiresAt: Date.now() + 60 * 60_000, accountId: 'acct-fixture', email: null,
+        })
+      } else if (route === 'grok-official') {
+        await hahaGrokOAuthService.saveTokens({
+          accessToken: 'fake-grok-token', refreshToken: null,
+          expiresAt: Date.now() + 60 * 60_000, email: null,
+        })
+      }
+      await fs.writeFile(path.join(configDir, 'settings.json'), settings)
+      const calls: string[] = []
+      globalThis.fetch = (async (input) => {
+        calls.push(String(input))
+        return Response.json({ content: [{ type: 'text', text:
+          '{"answers":[{"questionIndex":0,"optionLabels":["JSON"]}]}' }] })
+      }) as typeof fetch
+
+      const result = await decideAutoQuestionAnswers({
+        questions: [undecided], conversationText: 'fixture-private-context', providerId,
+        signal: new AbortController().signal,
+      })
+
+      expect(calls).toEqual([])
+      expect(result).toBeNull()
+    })
+  })
+
+  test('keeps the protected proxy available when local redaction is enabled', async () => {
+    const provider = await new ProviderService().addProvider({
+      presetId: 'custom', name: 'Redacted proxy', apiKey: 'fake-key',
+      baseUrl: 'https://chat.fixture.invalid/v1', apiFormat: 'openai_chat',
+      models: { main: 'large-test', haiku: 'small-test', sonnet: 'large-test', opus: 'large-test' },
+    })
+    const secret = 'fixture-private-context'
+    await fs.writeFile(path.join(configDir, 'settings.json'), JSON.stringify({
+      localRedaction: { enabled: true, personalInfo: false, customWords: [secret] },
+    }))
+    const sent: string[] = []
+    globalThis.fetch = (async (_input, init) => {
+      sent.push(String(init?.body))
+      return Response.json({
+        id: 'chatcmpl-redacted', object: 'chat.completion', model: 'small-test',
+        choices: [{ index: 0, message: {
+          role: 'assistant', content: '{"answers":[{"questionIndex":0,"optionLabels":["JSON"]}]}',
+        }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      })
+    }) as typeof fetch
+
+    expect(await decideAutoQuestionAnswers({
+      questions: [undecided], conversationText: secret, providerId: provider.id,
+      signal: new AbortController().signal,
+    })).toEqual({ 'Which format?': 'JSON' })
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).not.toContain(secret)
+  })
+
+  test.each([
+    ['malformed JSON', '{ broken'],
+    ['invalid shape', '{"localRedaction":{"enabled":"yes"}}'],
+  ] as const)('keeps the proxy fail-closed with %s settings', async (_label, settings) => {
+    const provider = await new ProviderService().addProvider({
+      presetId: 'custom', name: 'Blocked proxy', apiKey: 'fake-key',
+      baseUrl: 'https://chat.fixture.invalid/v1', apiFormat: 'openai_chat',
+      models: { main: 'large-test', haiku: 'small-test', sonnet: 'large-test', opus: 'large-test' },
+    })
+    await fs.writeFile(path.join(configDir, 'settings.json'), settings)
+    const calls: string[] = []
+    globalThis.fetch = (async (input) => {
+      calls.push(String(input))
+      return Response.json({})
+    }) as typeof fetch
+
+    const result = await decideAutoQuestionAnswers({
+      questions: [undecided], conversationText: 'fixture-private-context', providerId: provider.id,
+      signal: new AbortController().signal,
+    })
+
+    expect(calls).toEqual([])
+    expect(result).toBeNull()
   })
 
   test('asks the session Haiku model for every question including explicit recommendations', async () => {

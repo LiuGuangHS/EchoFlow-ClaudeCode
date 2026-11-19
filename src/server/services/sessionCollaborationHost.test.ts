@@ -397,6 +397,111 @@ test('host rejects unavailable source workspace explicitly instead of silently c
   }
 })
 
+test('stale and duplicate host disposal preserves the replacement observer and admission ordering', async () => {
+  const previous = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = directory
+  let disposeA = () => {}
+  let disposeB = () => {}
+  let unblock!: () => void
+  let entered!: () => void
+  const gate = new Promise<void>(resolve => { unblock = resolve })
+  const started = new Promise<void>(resolve => { entered = resolve })
+  let pending: ReturnType<typeof admitSessionUserTurn> | undefined
+  try {
+    disposeA = configureSessionCollaborationHost('127.0.0.1', 1234)
+    const serviceA = await getSessionCollaborationService()
+    disposeB = configureSessionCollaborationHost('127.0.0.1', 1234)
+    const serviceB = await getSessionCollaborationService()
+    expect(serviceB).toBe(serviceA)
+    disposeA()
+    disposeA()
+    expect(await getSessionCollaborationService()).toBe(serviceB)
+
+    const originalStopped = serviceB.onStopped.bind(serviceB)
+    const stopped = spyOn(serviceB, 'onStopped').mockImplementation(async id => {
+      entered()
+      await gate
+      await originalStopped(id)
+    })
+    const admission = spyOn(serviceB, 'admitUserTurn')
+    emitSessionTurnEvent({ type: 'stopped', sessionId: 'worker' })
+    pending = admitSessionUserTurn('worker', () => true)
+    await started
+    expect(admission).not.toHaveBeenCalled()
+    unblock()
+    const lease = await pending
+    expect(stopped).toHaveBeenCalledTimes(1)
+    expect(admission).toHaveBeenCalledTimes(1)
+    expect((await serviceB.status()).members.find(member => member.sessionId === 'worker')).toMatchObject({ state: 'running', stopped: false })
+    await lease.release()
+    pending = undefined
+    expect((await serviceB.status()).members.find(member => member.sessionId === 'worker')).toMatchObject({ state: 'stopped', stopped: true })
+
+    disposeB()
+    emitSessionTurnEvent({ type: 'stopped', sessionId: 'after-disposal' })
+    expect(hasSessionCollaborationPowerActivity()).toBe(false)
+    await (await admitSessionUserTurn('after-disposal', () => true)).release()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(stopped).toHaveBeenCalledTimes(1)
+    expect(admission).toHaveBeenCalledTimes(1)
+  } finally {
+    unblock()
+    await pending?.then(lease => lease.release())
+    disposeB()
+    disposeA()
+    mock.restore()
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previous
+  }
+})
+
+test('disposed queued host events cannot reach a replacement and stale cleanup cannot clear it', async () => {
+  const previous = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = directory
+  let disposeA = () => {}
+  let disposeB = () => {}
+  let disposeC = () => {}
+  let pending: ReturnType<typeof admitSessionUserTurn> | undefined
+  try {
+    disposeA = configureSessionCollaborationHost('127.0.0.1', 1234)
+    const serviceA = await getSessionCollaborationService()
+    disposeB = configureSessionCollaborationHost('127.0.0.1', 1234)
+    expect(await getSessionCollaborationService()).toBe(serviceA)
+    const stopped = spyOn(SessionCollaborationService.prototype, 'onStopped')
+    emitSessionTurnEvent({ type: 'stopped', sessionId: 'obsolete-queued-event' })
+    disposeB()
+    disposeC = configureSessionCollaborationHost('127.0.0.1', 1234)
+    const serviceC = await getSessionCollaborationService()
+    expect(serviceC).not.toBe(serviceA)
+    disposeA()
+    disposeB()
+    expect(await getSessionCollaborationService()).toBe(serviceC)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(stopped).not.toHaveBeenCalled()
+    expect(hasSessionCollaborationPowerActivity()).toBe(false)
+
+    const admission = spyOn(serviceC, 'admitUserTurn')
+    emitSessionTurnEvent({ type: 'stopped', sessionId: 'current-worker' })
+    pending = admitSessionUserTurn('current-worker', () => true)
+    const lease = await pending
+    expect(stopped).toHaveBeenCalledTimes(1)
+    expect(stopped).toHaveBeenCalledWith('current-worker')
+    expect(admission).toHaveBeenCalledTimes(1)
+    expect((await serviceC.status()).members.map(member => member.sessionId)).toEqual(['current-worker'])
+    await lease.release()
+    pending = undefined
+    expect((await serviceC.status()).members[0]).toMatchObject({ state: 'stopped', stopped: true })
+  } finally {
+    await pending?.then(lease => lease.release())
+    disposeC()
+    disposeB()
+    disposeA()
+    mock.restore()
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previous
+  }
+})
+
 test('manual admission waits for already emitted Stop events before reserving its slot', async () => {
   const previous = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = directory

@@ -12,19 +12,26 @@
 | `bundles/` | dsh 未自带、由 EchoFlow 维护的插件（目前为 `egress-guard`） |
 | `src/` | 启动顺序（`boot.js`）和驱动 dsh 的 ACP 接缝客户端 |
 | `egress-blocklist.json` | 此配置绝不能使用的插件和主机 |
-| `test/` | `check:harness` 检查通道 |
+| `test/` | 独立 harness 测试套件 |
 
 ## 工具链
 
-本目录使用 npm 和 Node，不使用 Bun。仓库根目录使用 Bun；两棵目录树不共享依赖安装，根目录 `bun install` 不会进入 `harness/`。
+本目录使用独立的 npm `package-lock.json` 和 Node 运行时。仓库根目录使用 Bun；两棵目录树不共享依赖安装，根目录 `bun install` 不会进入 `harness/`。
 
-dsh 要求 Node `>= 24.9.0`，其包也假定现代 Node 环境。根仓库自身的 Node 最低要求较低，两者有意不同。
+dsh 要求 Node `>= 24.9.0`，其包也假定现代 Node 环境。根仓库自身的 Node 最低要求较低，两者有意不同。CI 和 quality runner 使用 `bun run --cwd harness test` 调度已安装的 Vitest；这不将测试或真实子进程切换为 Bun 运行时，也不降低 Node 要求。
+
+以下命令从仓库根目录运行，准备与检查分开：
 
 ```bash
-npm --prefix harness ci      # 严格安装锁定依赖树
-npm --prefix harness test    # check:harness 检查通道
+npm --prefix harness ci      # 依赖准备：严格按独立锁文件安装，可能访问网络
+npm --prefix harness test    # 已准备依赖后的独立 suite，不重新安装
+bun run audit:harness        # 独立的仓库必需契约审计，不安装依赖
 npm --prefix harness run preview
 ```
+
+已有 CI/quality 调度的 `bun run --cwd harness test` 与上述 suite 使用同一个 `test` 脚本；缺少依赖时应失败，不能在检查阶段隐式安装。`audit:harness` 调用 `node scripts/harness-audit.js repo --format json --fail-on-required`，必需契约失败时非零退出；调用方必须传播该失败，不能用 suite 成功或已生成 JSON 报告掩盖。
+
+根目录 `bun run check:harness` 保留“`npm --prefix harness ci` + suite”的便捷入口语义，包含可能联网的安装，但**不包含**必需 audit，不能替代 suite 与 audit 两项检查。依赖已准备的 CI/quality lane 分别执行 suite 和 audit，不重复调用此安装入口。
 
 `preview` 使用临时 `HOME`/`DSH_HOME` 启动真实启动器，并将模型服务指向 `127.0.0.1` 回环网关。不需要凭据或网络，可快速观察一个完整回合：握手、`session/new`、一次流式提示及有界退出。
 

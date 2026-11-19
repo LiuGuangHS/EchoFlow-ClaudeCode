@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { codeOwnerLogins, evaluateChangePolicy } from './change-policy'
+import { dependentFilesForChangeSet, WIDE_NET_FALLBACK_FILES } from './module-graph'
 import { createSandboxedTestEnvironment } from './test-environment'
 
 describe('evaluateChangePolicy', () => {
@@ -423,6 +424,148 @@ describe('evaluateChangePolicy', () => {
       expect(outputs).toContain('desktop_native_checks=false')
     } finally {
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('agent guidance check selection', () => {
+  test.each([
+    'desktop/src/components/chat/ChatInput',
+    'desktop/electron/services',
+    'desktop/scripts',
+    'desktop/src-tauri/resources',
+    'native/agent-desktop/src',
+    'src/server/ws',
+    'src/server/config/provider',
+    'src/server/services/localIndex',
+    'adapters/common',
+    'harness/src',
+    'scripts/quality-gate/mock-llm',
+    'scripts/quality-gate/coverage',
+  ].flatMap(directory => ['AGENTS.md', 'AGENTS.override.md'].map(name => `${directory}/${name}`)))(
+    'keeps instruction-only changes on the policy lane: %s', file => {
+      const result = evaluateChangePolicy([file])
+      expect(Object.keys(result.checks).filter(check => result.checks[check as keyof typeof result.checks])).toEqual(['policy'])
+      expect(result.areas).toEqual([])
+      expect(result.blocked).toBe(false)
+      expect(result.missingTestSignals).toEqual([])
+    },
+  )
+
+  test.each([
+    ['desktop/src/pages/Settings.tsx', 'desktop/src/pages/Settings.test.tsx'],
+    ['desktop/electron/main.ts', 'desktop/electron/main.test.ts'],
+    ['native/cu-helper/Sources/cu-helper/VirtualCursor.swift'],
+  ])('preserves real source checks beside guidance: %j', (...sources) => {
+    for (const name of ['AGENTS.md', 'AGENTS.override.md']) {
+      const instructions = [
+        `desktop/src/components/chat/ChatInput/${name}`,
+        `desktop/electron/services/${name}`,
+        `native/agent-desktop/src/${name}`,
+      ]
+      const baseline = evaluateChangePolicy(sources)
+      const result = evaluateChangePolicy([...sources, ...instructions])
+      expect(result.checks).toEqual({ ...baseline.checks, policy: true })
+      expect(result.areas).toEqual(baseline.areas)
+      expect(result.missingTestSignals).toEqual(baseline.missingTestSignals)
+      expect(result.blocked).toBe(baseline.blocked)
+    }
+  })
+
+  test('preserves importer widening beside guidance', () => {
+    const result = evaluateChangePolicy(
+      ['src/shared/modelReasoning.ts', 'src/shared/modelReasoning.test.ts', 'desktop/electron/AGENTS.override.md'],
+      [],
+      ['desktop/src/lib/runtimeSelection.ts', 'desktop/electron/services/sidecarManager.ts'],
+    )
+    expect(result.checks).toMatchObject({ desktop: true, desktopNative: true, policy: true })
+    expect(result.areas).toEqual([])
+    expect(result.blocked).toBe(false)
+  })
+
+  test('preserves graph failure fallback for instruction-only changes', () => {
+    const result = evaluateChangePolicy(['desktop/src/AGENTS.md'], [], WIDE_NET_FALLBACK_FILES)
+    expect(result.checks).toMatchObject({
+      desktop: true, mobile: true, server: true, adapters: true, desktopNative: true,
+      providerContract: true, chatContract: true, agentFlow: true, agentE2e: true,
+      persistence: true, policy: true, docs: false, coverage: false,
+    })
+    expect(result.areas).toEqual([])
+    expect(result.blocked).toBe(false)
+  })
+})
+
+describe('independent harness check selection', () => {
+  test.each([
+    'harness/src/boot.js',
+    'harness/test/boot.test.ts',
+    'harness/profile/package.json',
+    'harness/bundles/egress-guard/src/index.js',
+    'harness/package.json',
+    'harness/package-lock.json',
+    'scripts/harness-audit.js',
+    'scripts/harness-audit.test.ts',
+    'package.json',
+    'bun.lock',
+    '.github/workflows/pr-quality.yml',
+    '.github/workflows/nightly-quality.yml',
+  ])('selects the harness suite and required audit for %s', file => {
+    expect(evaluateChangePolicy([file]).checks).toMatchObject({ harness: true })
+  })
+
+  test.each([
+    { files: [] },
+    { files: ['docs/guide/install.md'] },
+    { files: ['desktop/src/pages/Settings.test.tsx'] },
+  ])('does not select the harness for unrelated changes %j', ({ files }) => {
+    expect(evaluateChangePolicy(files).checks).toMatchObject({ harness: false })
+  })
+
+  test('selects harness importers of shared code without widening areas or blocking rules', () => {
+    const root = mkdtempSync(join(tmpdir(), 'harness-impact-'))
+    try {
+      mkdirSync(join(root, 'src'))
+      mkdirSync(join(root, 'harness/src'), { recursive: true })
+      writeFileSync(join(root, 'src/shared.ts'), 'export const value = 1\n')
+      writeFileSync(join(root, 'harness/src/host.js'), "import { value } from '../../src/shared.js'\n")
+      const files = ['src/shared.ts', 'src/shared.test.ts']
+      const resolution = dependentFilesForChangeSet(root, files)
+      expect(resolution.degraded).toBe(false)
+      expect(resolution.dependents).toContain('harness/src/host.js')
+      const result = evaluateChangePolicy(files, [], resolution.dependents)
+      expect(result.checks).toMatchObject({ harness: true })
+      expect(result.areas).toEqual([])
+      expect(result.blocked).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('includes the harness in the module graph failure wide net', () => {
+    expect(evaluateChangePolicy(['docs/guide/install.md'], [], WIDE_NET_FALLBACK_FILES).checks)
+      .toMatchObject({ harness: true })
+  })
+
+  test.each([
+    { file: 'harness/package-lock.json', selected: 'true' },
+    { file: 'docs/guide/install.md', selected: 'false' },
+  ])('publishes the explicit harness selection to workflow outputs: %j', scenario => {
+    const root = mkdtempSync(join(tmpdir(), 'harness-policy-output-'))
+    try {
+      const output = join(root, 'outputs.txt')
+      const files = join(root, 'files.nul')
+      writeFileSync(files, `${scenario.file}\0`)
+      const proc = Bun.spawnSync([
+        process.execPath, '--no-env-file', 'run', 'scripts/pr/change-policy.ts',
+        '--files0', files, '--no-dependency-graph', '--plan-only',
+      ], {
+        cwd: process.cwd(), env: createSandboxedTestEnvironment(join(root, 'home'), { GITHUB_OUTPUT: output }),
+        stdout: 'pipe', stderr: 'pipe',
+      })
+      expect(proc.exitCode, new TextDecoder().decode(proc.stderr)).toBe(0)
+      expect(readFileSync(output, 'utf8').split('\n')).toContain(`harness_checks=${scenario.selected}`)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
 })

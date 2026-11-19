@@ -4,7 +4,7 @@ import '@testing-library/jest-dom'
 
 import { DesktopSettings as Settings } from '../pages/Settings'
 import { useSettingsStore } from '../stores/settingsStore'
-import { useUIStore } from '../stores/uiStore'
+import { initializeTheme, teardownTheme, useUIStore } from '../stores/uiStore'
 import { useUpdateStore } from '../stores/updateStore'
 import type { ProviderModelsResult, SavedProvider } from '../types/provider'
 import type { ProviderPreset } from '../types/providerPreset'
@@ -586,25 +586,35 @@ describe('Settings > General tab', () => {
     // Going through the real transition, not a hand-set state: the OS turned
     // dark during the session, then the user releases the switch to freeze it.
     // The picker must point at the palette that is actually rendered.
-    useUIStore.setState({
-      followSystemTheme: true,
-      lightTheme: 'white',
-      darkTheme: 'ink-blue',
-      theme: 'white',
-    })
-    render(<Settings />)
-    fireEvent.click(screen.getByText('General'))
+    let prefersDark = false
+    let onChange: ((event: { matches: boolean }) => void) | undefined
+    vi.stubGlobal('matchMedia', () => ({
+      matches: prefersDark,
+      addEventListener: (_type: string, listener: typeof onChange) => { onChange = listener },
+      removeEventListener: () => { onChange = undefined },
+    }))
+    try {
+      useUIStore.getState().setTheme('white', false)
+      useUIStore.getState().setFollowSystemTheme(true)
+      useUIStore.getState().setTheme('ink-blue')
+      initializeTheme()
+      render(<Settings />)
+      fireEvent.click(screen.getByText('General'))
 
-    act(() => {
-      // Stand in for the OS flip the media-query listener would deliver.
-      useUIStore.setState({ theme: 'ink-blue' })
-    })
-    act(() => {
-      useUIStore.getState().setFollowSystemTheme(false)
-    })
+      act(() => {
+        prefersDark = true
+        onChange?.({ matches: true })
+      })
+      act(() => {
+        useUIStore.getState().setFollowSystemTheme(false)
+      })
 
-    expect(screen.getByRole('button', { name: 'Ink Blue' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: 'Pure White' })).toHaveAttribute('aria-pressed', 'false')
+      expect(screen.getByRole('button', { name: 'Ink Blue' })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByRole('button', { name: 'Pure White' })).toHaveAttribute('aria-pressed', 'false')
+    } finally {
+      teardownTheme()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('groups General settings into topic sections in a stable order', () => {

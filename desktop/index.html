@@ -141,8 +141,9 @@
       */
       (function () {
         try {
+          var mirrorsReadable = true
           var read = function (key) {
-            try { return window.localStorage.getItem(key) } catch (_) { return null }
+            try { return window.localStorage.getItem(key) } catch (_) { mirrorsReadable = false; return null }
           }
           // The six palettes, split by ground. Keep in step with
           // LIGHT_THEME_MODES / DARK_THEME_MODES in src/types/settings.ts.
@@ -166,21 +167,31 @@
             if (meta && BACKGROUND[value]) meta.setAttribute('content', BACKGROUND[value])
           }
 
-          var stored = read('echoflow-code-theme')
-          var theme = (has(LIGHT, stored) || isDark(stored)) ? stored : 'white'
-
-          var followRaw = read('echoflow-code-follow-system-theme')
-          // Unset means: new install follows the system, existing install
-          // (recognised by having a stored theme) keeps its fixed pick.
-          var follow = followRaw === '1' || (followRaw !== '0' && stored === null)
-
-          if (follow) {
-            var storedLight = read('echoflow-code-light-theme')
-            var lightTheme = has(LIGHT, storedLight)
-              ? storedLight
-              : (has(LIGHT, theme) ? theme : 'white')
-            var storedDark = read('echoflow-code-dark-theme')
-            var darkTheme = isDark(storedDark) ? storedDark : (isDark(theme) ? theme : 'dark')
+          var mirrors = [read('echoflow-code-theme'), read('echoflow-code-light-theme'), read('echoflow-code-dark-theme'), read('echoflow-code-follow-system-theme')]
+          var normalize = function (value) {
+            var theme = (has(LIGHT, value.theme) || isDark(value.theme)) ? value.theme : 'white'
+            return {
+              theme: theme,
+              lightTheme: has(LIGHT, value.lightTheme) ? value.lightTheme : (has(LIGHT, theme) ? theme : 'white'),
+              darkTheme: isDark(value.darkTheme) ? value.darkTheme : (isDark(theme) ? theme : 'dark'),
+              followSystem: value.followSystem === true
+            }
+          }
+          // Legacy dirty-value behavior also interprets sequential downgrade edits.
+          var preferences = normalize({ theme: mirrors[0], lightTheme: mirrors[1], darkTheme: mirrors[2], followSystem: mirrors[3] === '1' || (mirrors[3] !== '0' && mirrors[0] === null) })
+          var record
+          try { record = JSON.parse(window.localStorage.getItem('echoflow-code-theme-preferences')) } catch (_) { /* display-only scalar fallback */ }
+          if (record && typeof record === 'object' && !Array.isArray(record) && record.version === 1) {
+            var sync = record.mirrorSync
+            var validSync = sync && typeof sync === 'object' && !Array.isArray(sync) && typeof sync.pending === 'boolean' && Array.isArray(sync.baseline) && sync.baseline.length === 4 && sync.baseline.every(function (value) { return value === null || typeof value === 'string' })
+            // Pending/invalid evidence and incomplete reads never import partial mirrors.
+            var downgrade = validSync && !sync.pending && mirrorsReadable && mirrors.some(function (value, i) { return value !== sync.baseline[i] })
+            if (!downgrade) preferences = normalize(record)
+          }
+          var theme = preferences.theme
+          if (preferences.followSystem) {
+            var lightTheme = preferences.lightTheme
+            var darkTheme = preferences.darkTheme
             var prefersDark = false
             try {
               // Some WebViews reject the query outright. Treating that as

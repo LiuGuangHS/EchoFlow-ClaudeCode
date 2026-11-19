@@ -108,6 +108,29 @@ describe('wsManager reconnect buffering', () => {
     expect(states).toEqual(['connecting', 'connected', 'reconnecting', 'reconnecting', 'connected'])
   })
 
+  it('never queues offline approvals ahead of owner reconciliation', async () => {
+    wsManager.connect('offline-approval')
+    const first = FakeWebSocket.instances[0]!
+    first.open()
+    first.fail()
+    expect(() => wsManager.send('offline-approval', { type: 'permission_response', requestId: 'stale', allowed: true })).toThrow()
+    await vi.advanceTimersByTimeAsync(1000)
+    const replacement = FakeWebSocket.instances[1]!
+    replacement.open()
+    expect(replacement.sent.map(payload => JSON.parse(payload))).toEqual([{ type: 'sync_state' }])
+  })
+
+  it('rejects malformed approval snapshots without turning invalid arrays into authoritative empty sets', () => {
+    wsManager.connect('invalid-approval')
+    const handler = vi.fn()
+    wsManager.onMessage('invalid-approval', handler)
+    const socket = FakeWebSocket.instances[0]!
+    for (const message of [null, { type: 'permission_requests_snapshot', toolRequestIds: [1], turnActive: false }, { type: 'permission_resolved', requestId: 'r', permissionType: 'future' }]) socket.receive(message)
+    expect(handler).not.toHaveBeenCalled()
+    socket.receive({ type: 'permission_requests_snapshot', toolRequestIds: [], turnActive: true })
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+
   it('closes and reconnects a half-open socket when a pong never arrives', async () => {
     wsManager.connect('session-half-open')
     const firstSocket = FakeWebSocket.instances[0]!

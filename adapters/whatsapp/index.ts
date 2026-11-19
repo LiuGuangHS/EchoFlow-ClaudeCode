@@ -21,13 +21,12 @@ import {
   formatPermissionRequest,
 } from '../common/format.js'
 import {
-  formatPermissionDecisionStatus,
   formatPermissionInstructions,
   parsePermissionCommand,
   type PermissionDecision,
 } from '../common/permission.js'
 import { SessionStore } from '../common/session-store.js'
-import { syncImPermissionState } from '../common/permission-sync.js'
+import { formatImPermissionSubmissionNotice, submitImPermissionDecision, syncImPermissionState } from '../common/permission-sync.js'
 import { SessionSelectionController } from '../common/session-selection.js'
 import { createAdapterClient } from '../common/adapter-client.js'
 import { restoreStoredSessionBinding, SESSION_RECONNECT_NOTICE, type SessionRestoreResult } from '../common/session-recovery.js'
@@ -83,6 +82,7 @@ const thinkingNotices = new Set<string>()
 const pendingProjectSelection = new Map<string, boolean>()
 const runtimeStates = new Map<string, ChatRuntimeState>()
 const pendingPermissions = new Map<string, Set<string>>()
+const submittingPermissions = new Map<string, Set<string>>()
 const imageWatchers = new Map<string, ImageBlockWatcher>()
 
 const sessionSelectionController = new SessionSelectionController({
@@ -134,6 +134,7 @@ function clearTransientChatState(chatId: string): void {
   runtime.verb = undefined
   runtime.pendingPermissionCount = 0
   pendingPermissions.delete(chatId)
+  submittingPermissions.delete(chatId)
   imageWatchers.delete(chatId)
 }
 
@@ -149,22 +150,10 @@ async function sendHelp(jid: string): Promise<void> {
 }
 
 async function handlePermissionDecision(chatId: string, decision: PermissionDecision): Promise<void> {
-  const pending = pendingPermissions.get(chatId)
-  if (!pending?.has(decision.requestId)) {
-    await sendWhatsAppText(chatId, `未找到待确认的权限请求：${decision.requestId}`)
-    return
-  }
-
-  const sent = bridge.sendPermissionResponse(chatId, decision.requestId, decision.allowed, decision.rule)
-  if (sent) {
-    pending.delete(decision.requestId)
-    const runtime = getRuntimeState(chatId)
-    runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
-  }
-  await sendWhatsAppText(
-    chatId,
-    sent ? `${formatPermissionDecisionStatus(decision)}。` : '权限响应发送失败，请检查会话状态。',
+  const result = submitImPermissionDecision(
+    chatId, decision, pendingPermissions.get(chatId), submittingPermissions, bridge,
   )
+  await sendWhatsAppText(chatId, formatImPermissionSubmissionNotice(result, decision.requestId))
 }
 
 async function ensureExistingSession(chatId: string): Promise<SessionRestoreResult> {
@@ -296,7 +285,16 @@ async function flushAccumulatedText(chatId: string): Promise<void> {
 
 async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<void> {
   const runtime = getRuntimeState(chatId)
-  if (syncImPermissionState(chatId, msg, runtime, pendingPermissions)) return
+  const settled: string[] = []
+  if (syncImPermissionState(chatId, msg, runtime, pendingPermissions, {
+    submittingPermissions,
+    requestSyncState: (id) => bridge.requestSyncState(id),
+    onSettled: (id) => { settled.push(id) },
+  })) {
+    if (msg.type === 'error') await sendWhatsAppText(chatId, msg.message)
+    for (const id of settled) await sendWhatsAppText(chatId, `权限请求 ${id} 已不再等待确认。`)
+    return
+  }
 
   switch (msg.type) {
     case 'connected':
@@ -339,11 +337,12 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
     }
 
     case 'permission_request': {
-      runtime.pendingPermissionCount += 1
-      runtime.state = 'permission_pending'
       const pending = pendingPermissions.get(chatId) ?? new Set<string>()
+      if (pending.has(msg.requestId)) break
       pending.add(msg.requestId)
       pendingPermissions.set(chatId, pending)
+      runtime.pendingPermissionCount = pending.size
+      runtime.state = 'permission_pending'
       const text = `${formatPermissionRequest(msg.toolName, msg.input, msg.requestId)}\n\n${formatPermissionInstructions(msg.requestId)}`
       await sendWhatsAppText(chatId, text)
       break
@@ -400,6 +399,7 @@ async function startNewSession(chatId: string, query?: string): Promise<void> {
   thinkingNotices.delete(chatId)
   pendingProjectSelection.delete(chatId)
   pendingPermissions.delete(chatId)
+  submittingPermissions.delete(chatId)
   runtimeStates.delete(chatId)
   imageWatchers.delete(chatId)
 

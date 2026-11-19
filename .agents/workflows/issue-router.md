@@ -98,7 +98,7 @@ PR、验证、审查和 CI 都由适配器查询后规范化记录，CLI 不联�
 | observe-main | sha/previous/descendant_verified=true + source/reference/observed_at | previous 与本库已知 main CAS；适配器查询真实 main ref，并用 Git/GitHub compare 验证新 tip 是旧 tip 的后代；首次 previous=null |
 | record-pr | number/url/branch/state/head/base + source/reference/observed_at | state 为 open/closed/merged；base 是刚查询并确认已集成的真实 main；PR 分支/编号固定，head/base 变化清空旧证据、取消未发送 merge、释放旧 merge 名额 |
 | observe-external-merge | number/url/branch/state=merged/head/base/merge_sha/merged_at/merged_by/main_sha/ancestry_verified=true/ancestry_reference + provenance | 仅记录已发生的外部合并事实；匹配原 PR 与当前 token，不能替代既有未对账 merge 动作，不创建发送动作或合并授权 |
-| validation | head/base + provenance + checks:[{name,result}] | result 为 passed/failed/not_run/skipped，merge 要求每项 passed；必须列出 check:impact 选中检查和 verify 的实际结果 |
+| validation | head/base + provenance + checks:[{name,result}] | result 为 passed/failed/not_run/skipped，merge 要求每项 passed；列出 check:impact 规划、本地定向回归和受影响模块检查的实际结果 |
 | review | head/base + provenance + reviewer/independent=true/verdict | 独立上下文只读审查该版本，verdict 为 approved/changes_requested |
 | ci | head/base + provenance + complete=true/tested_sha/association/association_reference/checks | 见下面 CI 规范，需真正查询全部本轮状态，不能只报一个 success |
 | merge-acquire | head/base + branch_protection:{strict:true,required_checks,source,reference,observed_at} | 检查最新证据、已知 main、所有选中 CI，再抢唯一 main-merge 名额，返回 merge action |
@@ -169,7 +169,7 @@ backup 使用 SQLite VACUUM INTO 生成一致快照，返回主目录 .issue-rou
 1. 确认目标仓库、专属 worktree、当前版本、git status、真实入口、环境与有效配置，读取适用的 AGENTS.md。保护已有修改，不操作其他会话的工作区。
 2. Bug：区分现象、预期与根因猜测，从原用户入口复现，优先建立修前失败的同区域回归；比较竞争假设，只修证据支持的原因，再以原条件复测。无法复现时继续缩小差异，明确代码路径、局部测试与原环境证据的区别。
 3. 功能：明确谁在什么条件下做什么动作、应看到什么结果；沿现有链路完成输入到输出，验证失败和关键边界。缺产品决策时只派“仅分析”任务，交付范围、方案和待决定事项，不能使用实施模板直接改代码。
-4. 在最终差异上运行 check:impact，并执行选中检查；声称 PR-ready 前运行 verify。持久化形状变化补前向迁移、旧 fixture 和 check:persistence-upgrade。用户可见桌面或跨进程变化补实际入口冒烟，交互浏览器使用 ego-browser。
+4. 在最终差异上按[PR 提交流程](../../docs/internals/contributing.md#pr-提交流程)完成 check:impact、本地定向回归和受影响模块验证；PR-ready 另需候选 SHA 对应的 Actions 证据，不默认在 WSL 跑 verify。持久化、桌面与跨进程变更仍遵守根规范的专项验证要求。路由器另要求所有 selected（包括 advisory）成功，见上文 CI 适配契约。
 5. 测试隔离真实 HOME、用户配置和 provider，使用确定性 fixture/mock。记录实际执行的平台、命令、产物和 passed/failed/skipped/blocked/not run；未运行不计通过。
 6. 给独立审查者原始需求、验收、适用规则、准确版本、完整 diff（含新文件）和原始材料，不附作者预设的根因或正确性结论。审查期间冻结版本；执行者逐条核实发现、修复，再跑受影响检查。后续代码变化使旧证据失效时补审与复测。
 

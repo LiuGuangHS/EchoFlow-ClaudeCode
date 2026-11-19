@@ -12,6 +12,7 @@ vi.mock('../api/openTargets', () => ({
 
 describe('openTargetStore', () => {
   beforeEach(async () => {
+    localStorage.clear()
     vi.resetModules()
     apiMocks.list.mockReset()
     apiMocks.listForPath.mockReset()
@@ -88,6 +89,37 @@ describe('openTargetStore', () => {
       getItem.mockRestore()
       setItem.mockRestore()
     }
+  })
+
+  it('keeps unknown migrated editor preference fields when changing or clearing the editor', async () => {
+    const legacy = JSON.stringify({ version: 1, editorTargetId: 'sublime', extra: { keep: true } })
+    localStorage.setItem('echoflow-code-open-target-preferences', legacy)
+    const { runDesktopPersistenceMigrations } = await import('../lib/persistenceMigrations')
+    runDesktopPersistenceMigrations()
+    const { useOpenTargetStore } = await import('./openTargetStore')
+
+    expect(useOpenTargetStore.getState().editorTargetId).toBe('sublime')
+    for (const editorTargetId of ['vscode', null]) {
+      useOpenTargetStore.getState().setEditorTargetId(editorTargetId)
+      expect(JSON.parse(localStorage.getItem('cc-haha-open-target-preferences')!)).toEqual({
+        version: 1, editorTargetId, extra: { keep: true },
+      })
+    }
+    runDesktopPersistenceMigrations()
+    expect(useOpenTargetStore.getState().editorTargetId).toBeNull()
+    expect(localStorage.getItem('echoflow-code-open-target-preferences')).toBe(legacy)
+  })
+
+  it('does not interpret or overwrite a future editor preference schema', async () => {
+    const future = JSON.stringify({ version: 99, editorTargetId: 'future-editor', extra: { keep: true } })
+    localStorage.setItem('cc-haha-open-target-preferences', future)
+    const { useOpenTargetStore, readOpenTargetPreferences } = await import('./openTargetStore')
+
+    expect(readOpenTargetPreferences()).toEqual({ version: 1, editorTargetId: null })
+    expect(useOpenTargetStore.getState().editorTargetId).toBeNull()
+    useOpenTargetStore.getState().setEditorTargetId('vscode')
+    useOpenTargetStore.getState().setEditorTargetId(null)
+    expect(localStorage.getItem('cc-haha-open-target-preferences')).toBe(future)
   })
 
   it('queries targets for the concrete path without replacing project targets', async () => {

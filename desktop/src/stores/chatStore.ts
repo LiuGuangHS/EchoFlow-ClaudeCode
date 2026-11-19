@@ -146,6 +146,9 @@ export type PendingPermission = {
   input: unknown
   description?: string
   displayName?: string
+  autoAnswerDeadline?: number | null
+  /** Local send state, never proof of owner acceptance. */
+  submitting?: boolean
 }
 
 type PendingPermissions = Record<string, PendingPermission>
@@ -153,6 +156,7 @@ type PendingPermissions = Record<string, PendingPermission>
 type PendingComputerUsePermission = {
   requestId: string
   request: ComputerUsePermissionRequest
+  submitting?: boolean
 }
 
 type PendingComputerUsePermissions = Record<string, PendingComputerUsePermission>
@@ -464,6 +468,7 @@ type ChatStore = {
     attachments?: AttachmentRef[],
     options?: { sessionReferences?: Array<{ sessionId: string }>; displayContent?: string; displayAttachments?: AttachmentRef[]; hideDisplayContent?: boolean },
   ) => void
+  /** True only when this call sent a response; server acceptance is still pending. */
   respondToPermission: (
     sessionId: string,
     requestId: string,
@@ -476,7 +481,7 @@ type ChatStore = {
       /** Execution-model switch applied together with an ExitPlanMode approval. */
       runtimeOverride?: RuntimeSelection
     },
-  ) => void
+  ) => boolean
   recordAskUserQuestionActivity: (sessionId: string, requestId: string) => void
   respondToComputerUsePermission: (
     sessionId: string,
@@ -3712,6 +3717,8 @@ export const useChatStore = create<ChatStore>((setState, get) => {
   },
 
   respondToPermission: (sessionId, requestId, allowed, options) => {
+    const pending = getPendingPermission(get().sessions[sessionId], requestId)
+    if (!pending || pending.submitting) return false
     wsManager.send(sessionId, {
       type: 'permission_response',
       requestId,
@@ -3725,19 +3732,15 @@ export const useChatStore = create<ChatStore>((setState, get) => {
     set((s) => ({
       sessions: updateSessionIn(s.sessions, sessionId, (session) => {
         const pendingPermissions = getPendingPermissionRecord(session)
-        delete pendingPermissions[requestId]
-        const remainingPermissions = Object.values(pendingPermissions)
-
+        pendingPermissions[requestId] = { ...pending, submitting: true }
         return {
           pendingPermissions,
-          pendingPermission: remainingPermissions[remainingPermissions.length - 1] ?? null,
-          chatState: remainingPermissions.length > 0 ||
-            Object.keys(getPendingComputerUsePermissionRecord(session)).length > 0
-            ? 'permission_pending'
-            : allowed ? 'tool_executing' : 'idle',
+          pendingPermission: session.pendingPermission?.requestId === requestId
+            ? pendingPermissions[requestId] : session.pendingPermission,
         }
       }),
     }))
+    return true
   },
 
   recordAskUserQuestionActivity: (sessionId, requestId) => {
@@ -3745,6 +3748,10 @@ export const useChatStore = create<ChatStore>((setState, get) => {
   },
 
   respondToComputerUsePermission: (sessionId, requestId, response) => {
+    const session = get().sessions[sessionId]
+    if (!session) return
+    const pending = getPendingComputerUsePermissionRecord(session)[requestId]
+    if (!pending || pending.submitting) return
     wsManager.send(sessionId, {
       type: 'computer_use_permission_response',
       requestId,
@@ -3753,19 +3760,13 @@ export const useChatStore = create<ChatStore>((setState, get) => {
     set((s) => ({
       sessions: updateSessionIn(s.sessions, sessionId, (session) => {
         const pendingComputerUsePermissions = getPendingComputerUsePermissionRecord(session)
-        delete pendingComputerUsePermissions[requestId]
-        const remainingPermissions = Object.values(pendingComputerUsePermissions)
-
+        pendingComputerUsePermissions[requestId] = { ...pending, submitting: true }
         return {
           pendingComputerUsePermissions,
           pendingComputerUsePermission: getCurrentComputerUsePermission(
             pendingComputerUsePermissions,
             session.pendingComputerUsePermission,
           ),
-          chatState: Object.keys(getPendingPermissionRecord(session)).length > 0 ||
-            remainingPermissions.length > 0
-            ? 'permission_pending'
-            : response.userConsented === false ? 'idle' : 'tool_executing',
         }
       }),
     }))
@@ -5632,11 +5633,13 @@ export const useChatStore = create<ChatStore>((setState, get) => {
         })
         update((s) => {
           const pendingPermission: PendingPermission = {
+            ...getPendingPermissionRecord(s)[msg.requestId],
             requestId: msg.requestId,
             toolName: msg.toolName,
             toolUseId: msg.toolUseId,
             input: msg.input,
             description: msg.description,
+            ...(msg.autoAnswerDeadline !== undefined ? { autoAnswerDeadline: msg.autoAnswerDeadline } : {}),
             ...(msg.displayName ? { displayName: msg.displayName } : {}),
           }
           const pendingPermissions = {
@@ -5696,6 +5699,7 @@ export const useChatStore = create<ChatStore>((setState, get) => {
         })
         update((session) => {
           const pendingComputerUsePermission = {
+            ...getPendingComputerUsePermissionRecord(session)[msg.requestId],
             requestId: msg.requestId,
             request: msg.request,
           }
@@ -5758,16 +5762,19 @@ export const useChatStore = create<ChatStore>((setState, get) => {
         break
 
       case 'permission_requests_snapshot':
+        if (typeof msg.turnActive !== 'boolean' ||
+          [msg.toolRequestIds, msg.computerUseRequestIds].some(ids => ids !== undefined &&
+            (!Array.isArray(ids) || ids.some(id => typeof id !== 'string' || !id)))) break
         update((session) => {
-          const toolRequestIds = new Set(msg.toolRequestIds)
+          const toolRequestIds = msg.toolRequestIds === undefined ? undefined : new Set(msg.toolRequestIds)
           const pendingPermissions = Object.fromEntries(
             Object.entries(getPendingPermissionRecord(session))
-              .filter(([requestId]) => toolRequestIds.has(requestId)),
+              .filter(([requestId]) => toolRequestIds === undefined || toolRequestIds.has(requestId)),
           )
-          const computerUseRequestIds = new Set(msg.computerUseRequestIds)
+          const computerUseRequestIds = msg.computerUseRequestIds === undefined ? undefined : new Set(msg.computerUseRequestIds)
           const pendingComputerUsePermissions = Object.fromEntries(
             Object.entries(getPendingComputerUsePermissionRecord(session))
-              .filter(([requestId]) => computerUseRequestIds.has(requestId)),
+              .filter(([requestId]) => computerUseRequestIds === undefined || computerUseRequestIds.has(requestId)),
           )
           const remainingPermissions = Object.values(pendingPermissions)
           const remainingComputerUsePermissions = Object.values(pendingComputerUsePermissions)
@@ -5907,6 +5914,25 @@ export const useChatStore = create<ChatStore>((setState, get) => {
           code: msg.code,
           ...(msg.businessErrorCode ? { businessErrorCode: msg.businessErrorCode } : {}),
           timestamp: Date.now(),
+        }
+        if (msg.requestId && (msg.permissionType === 'tool' || msg.permissionType === 'computer_use')) {
+          update((session) => {
+            const pendingPermissions = getPendingPermissionRecord(session)
+            const pendingComputerUsePermissions = getPendingComputerUsePermissionRecord(session)
+            const requests = msg.permissionType === 'tool' ? pendingPermissions : pendingComputerUsePermissions
+            const pending = requests[msg.requestId!]
+            if (pending && msg.approvalOutcome === 'rejected') requests[msg.requestId!] = { ...pending, submitting: false }
+            const remaining = Object.values(pendingPermissions)
+            return {
+              pendingPermissions,
+              pendingPermission: remaining[remaining.length - 1] ?? null,
+              pendingComputerUsePermissions,
+              pendingComputerUsePermission: getCurrentComputerUsePermission(pendingComputerUsePermissions, session.pendingComputerUsePermission),
+              messages: [...session.messages, errorMessage],
+            }
+          })
+          wsManager.send(sessionId, { type: 'sync_state' })
+          break
         }
         if (msg.code === 'RUNTIME_CONFIG_INVALID') {
           // Validation rejects the selection before changing the runtime. It

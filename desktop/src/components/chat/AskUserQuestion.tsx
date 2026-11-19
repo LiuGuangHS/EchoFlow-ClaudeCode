@@ -157,6 +157,13 @@ export function AskUserQuestion({
   const composingRef = useRef(false)
   const activitySentForRequest = useRef<string | null>(null)
 
+  useEffect(() => {
+    if (pendingRequest && !pendingRequest.submitting) {
+      setHasSubmitted(false)
+      setHasRequestedChat(false)
+    }
+  }, [pendingRequest])
+
   // A choice can be made before the SDK permission request reaches the UI.
   // Protect that draft as soon as the matching request arrives.
   useEffect(() => {
@@ -208,11 +215,11 @@ export function AskUserQuestion({
       store.setAskUserQuestionDraft(targetSessionId, toolUseId, { ...draft, sentAsMessage: true })
       return
     }
-    if (hasRequestedChat) {
+    if (hasRequestedChat && !pendingRequest) {
       store.setAskUserQuestionDraft(targetSessionId, toolUseId, { ...draft, handedOff: true })
       return
     }
-    if (hasSubmitted || hasTerminalResult) {
+    if ((hasSubmitted && !pendingRequest) || hasTerminalResult) {
       store.clearAskUserQuestionDraft(targetSessionId, toolUseId)
       return
     }
@@ -224,6 +231,7 @@ export function AskUserQuestion({
     hasSentAsMessage,
     hasSubmitted,
     hasTerminalResult,
+    pendingRequest,
     selections,
     targetSessionId,
     toolUseId,
@@ -242,7 +250,8 @@ export function AskUserQuestion({
   const safeActiveTab = Math.min(activeTab, questions.length - 1)
   const activeQuestion = questions[safeActiveTab]
 
-  const submitted = hasTerminalResult || hasSubmitted || hasRequestedChat || hasSentAsMessage
+  const submitting = pendingRequest?.submitting === true
+  const submitted = hasTerminalResult || (!pendingRequest && (hasSubmitted || hasRequestedChat)) || hasSentAsMessage
   const terminalWithoutAnswers = submitted && !hasStructuredAnswers && resultText.length > 0
 
   // Mid-turn states. Here "no request yet" means "not yet", not "never": the card
@@ -308,7 +317,7 @@ export function AskUserQuestion({
   }
 
   const handleSelect = (qIndex: number, label: string) => {
-    if (submitted) return
+    if (submitted || submitting) return
     markUserActivity()
     // Computed from the render snapshot rather than inside the updater: React
     // may run a state updater twice, and advancing the tab is a side effect.
@@ -351,7 +360,7 @@ export function AskUserQuestion({
   }
 
   const handleFreeTextChange = (qIndex: number, value: string) => {
-    if (submitted) return
+    if (submitted || submitting) return
     markUserActivity()
     setFreeTexts((prev) => {
       const next = { ...prev }
@@ -373,7 +382,7 @@ export function AskUserQuestion({
   }
 
   const handleSubmit = () => {
-    if (submitted) return
+    if (submitted || submitting) return
 
     const parts: string[] = []
     for (let i = 0; i < questions.length; i++) {
@@ -405,7 +414,6 @@ export function AskUserQuestion({
       return acc
     }, {})
 
-    setHasSubmitted(true)
     const metadata = inputObject.metadata
     respondToPermission(requestSessionId, pendingRequest.requestId, true, {
       updatedInput: {
@@ -416,6 +424,8 @@ export function AskUserQuestion({
           : {}),
       },
     })
+    setHasRequestedChat(false)
+    setHasSubmitted(true)
   }
 
   /**
@@ -432,7 +442,7 @@ export function AskUserQuestion({
    * an ordinary message instead — the model still gets asked to follow up.
    */
   const handleChatAboutThis = () => {
-    if (submitted) return
+    if (submitted || submitting) return
 
     if (expired) {
       const questionsWithAnswers = describeAnswers()
@@ -448,12 +458,13 @@ export function AskUserQuestion({
 
     if (!requestSessionId || !pendingRequest) return
 
-    setHasRequestedChat(true)
     respondToPermission(requestSessionId, pendingRequest.requestId, false, {
       // Carry whatever was already picked, so switching to a conversation isn't
       // punished by losing the partial answers.
       denyMessage: describeAnswers(),
     })
+    setHasSubmitted(false)
+    setHasRequestedChat(true)
   }
 
   // All questions must be answered (via selection or free text) to enable submit
@@ -665,7 +676,7 @@ export function AskUserQuestion({
             size="base"
             // `expired` is the one state where a button may work without a live
             // request: it sends the answers as a message instead of answering.
-            disabled={!allAnswered || (!expired && !pendingRequest)}
+            disabled={submitting || !allAnswered || (!expired && !pendingRequest)}
             onClick={handleSubmit}
           >
             {t(expired ? 'question.sendAsMessage' : 'question.submit')}
@@ -673,7 +684,7 @@ export function AskUserQuestion({
           <Button
             variant="ghost"
             size="base"
-            disabled={!expired && !pendingRequest}
+            disabled={submitting || (!expired && !pendingRequest)}
             onClick={handleChatAboutThis}
             title={t('question.chatAboutThisHint')}
             icon={<MessagesSquare aria-hidden="true" size={14} strokeWidth={1.75} />}

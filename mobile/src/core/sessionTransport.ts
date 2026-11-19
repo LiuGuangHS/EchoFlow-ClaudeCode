@@ -140,7 +140,8 @@ export class SessionTransport {
   #historyReady = false
   #connectedSeen = false
   #sessionSnapshotSeen = false
-  #permissionSnapshotSeen = false
+  #toolPermissionSnapshotSeen = false
+  #computerUsePermissionSnapshotSeen = false
   #buffer: ServerEvent[] = []
   #pendingConfig?: Extract<
     ClientMessage,
@@ -528,7 +529,8 @@ export class SessionTransport {
     this.#historyReady = false
     this.#connectedSeen = false
     this.#sessionSnapshotSeen = false
-    this.#permissionSnapshotSeen = false
+    this.#toolPermissionSnapshotSeen = false
+    this.#computerUsePermissionSnapshotSeen = false
     this.#buffer = []
     this.#publish({ ...this.state, connected: false })
     this.#setConnection(reconnecting ? 'reconnecting' : 'connecting')
@@ -690,8 +692,10 @@ export class SessionTransport {
     if (event && (event.type !== 'connected' || event.sessionId === this.#options.sessionId)) {
       if (event.type === 'connected') this.#connectedSeen = true
       if (event.type === 'session_state') this.#sessionSnapshotSeen = true
-      if (event.type === 'permission_requests_snapshot')
-        this.#permissionSnapshotSeen = true
+      if (event.type === 'permission_requests_snapshot') {
+        if (event.toolRequestIds !== undefined) this.#toolPermissionSnapshotSeen = true
+        if (event.computerUseRequestIds !== undefined) this.#computerUsePermissionSnapshotSeen = true
+      }
       if (!this.#historyReady) this.#buffer.push(event)
       else this.#applyEvent(event)
       this.#maybeReady()
@@ -797,6 +801,10 @@ export class SessionTransport {
       this.#clearConfigPending()
     this.#publish(chatReducer(this.state, event))
     this.#collapseInitialOverlap()
+    if (event.type === 'error' && event.requestId && event.permissionType && this.#socket?.readyState === 1) {
+      try { this.#socket.send(JSON.stringify({ type: 'sync_state' })) }
+      catch (error) { this.#report(error) }
+    }
     if (event.type === 'message_complete') this.#scheduleReconcile()
   }
 
@@ -805,7 +813,8 @@ export class SessionTransport {
       !this.#historyReady ||
       !this.#connectedSeen ||
       !this.#sessionSnapshotSeen ||
-      !this.#permissionSnapshotSeen ||
+      !this.#toolPermissionSnapshotSeen ||
+      !this.#computerUsePermissionSnapshotSeen ||
       this.#socket?.readyState !== 1
     )
       return

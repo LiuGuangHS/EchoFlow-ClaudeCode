@@ -228,6 +228,11 @@ async function main() {
   await copyDirectory(path.join(paths.docsDir, 'public'), distDir)
   await copyReferencedDocImages(records)
   await copySiteReferencedImages()
+  // The docs copy preserves Markdown links; published branding follows the product asset.
+  await fs.copyFile(
+    path.join(paths.repoDir, 'desktop/public/app-icon.png'),
+    path.join(distDir, 'images/app-icon.png')
+  )
 
   const customDomain = (await fs.readFile(path.join(distDir, 'CNAME'), 'utf8')).trim()
   if (customDomain !== expectedCustomDomain) {

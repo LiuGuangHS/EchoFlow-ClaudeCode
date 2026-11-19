@@ -15,6 +15,7 @@
 
 import type { SavedProvider, ProviderAuthStrategy } from '../types/provider.js'
 import { normalizeAnthropicBaseUrl } from '../../services/api/anthropicBaseUrl.js'
+import { readLocalRedactionState } from '../../services/localRedactionGuard.js'
 import { normalizeModelStringForAPI } from '../../utils/model/model.js'
 import { findModelMaxOutputTokens } from '../../utils/model/modelContextWindows.js'
 import {
@@ -263,8 +264,17 @@ export async function providerTextCompletion(
 
   try {
     if (overall?.aborted) throw new CompletionAbort()
-    const networkSettings = request.networkSettings ?? await loadNetworkSettings()
+    // Check before the settings loader can quarantine malformed JSON and fall back to defaults.
+    const redactionState = readLocalRedactionState()
     const { provider } = request
+    const usesLocalProxy = !isOpenAIOfficialProviderId(provider.id) && providerNeedsProxy(
+      resolveProviderApiFormat(provider),
+      provider.supportsNestedToolResultMedia,
+    )
+    if (redactionState.enabled && !usesLocalProxy) {
+      return failure('upstream', 'Local redaction is enabled; direct provider transport is unavailable')
+    }
+    const networkSettings = request.networkSettings ?? await loadNetworkSettings()
 
     if (isOpenAIOfficialProviderId(provider.id)) {
       return await completeWithOpenAIOfficial(request, networkSettings, overall, attemptTimeoutMs)
@@ -287,10 +297,6 @@ export async function providerTextCompletion(
     // Talking to them in Anthropic Messages would ignore the preset's per-model
     // rules and the client headers some gateways require, so these go through the
     // same proxy the CLI uses instead of a second, parallel code path.
-    const usesLocalProxy = providerNeedsProxy(
-      resolveProviderApiFormat(provider),
-      provider.supportsNestedToolResultMedia,
-    )
     const firstAttempt = {
       thinking: { type: 'disabled' },
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),

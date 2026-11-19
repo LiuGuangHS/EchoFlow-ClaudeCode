@@ -9,6 +9,7 @@ import { initWorkspacePersistence } from './lib/workspace/persistenceBridge'
 import { getDesktopHost } from './lib/desktopHost'
 import { initializeLocale } from './i18n/locale'
 import { initializeChatAppearance } from './stores/chatAppearanceStore'
+import { initializeOpenTargetPreferences } from './stores/openTargetStore'
 
 declare global {
   interface Window {
@@ -93,6 +94,7 @@ export async function bootstrapDesktopApp(
 
 runDesktopPersistenceMigrations()
 initializeChatAppearance()
+initializeOpenTargetPreferences()
 // Strictly after the migrations: the hydrator trusts the shape the migration
 // step just normalized rather than re-validating a possibly future schema.
 if (isPrimaryWorkspaceWindow()) initWorkspacePersistence()

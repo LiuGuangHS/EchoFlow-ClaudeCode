@@ -2,6 +2,7 @@
 
 import { evaluateChangePolicy } from './change-policy'
 import { changedFilesForLocalPrCheck } from './changed-files'
+import { localCheckCommands } from './local-checks'
 import { dependentFilesForChangeSet } from './module-graph'
 
 function parseListArg(name: string) {
@@ -21,53 +22,6 @@ function parseListArg(name: string) {
 async function changedFiles() {
   const files = parseListArg('--files')
   return changedFilesForLocalPrCheck(files)
-}
-
-function commandList(result: ReturnType<typeof evaluateChangePolicy>) {
-  const commands: string[] = []
-
-  if (result.checks.policy) {
-    commands.push('bun run check:policy')
-  }
-
-  if (result.checks.desktop) {
-    commands.push('bun run check:desktop')
-  }
-  if (result.checks.mobile) {
-    commands.push('bun run check:mobile')
-  }
-  if (result.checks.server) {
-    commands.push('bun run check:server')
-  }
-  if (result.checks.providerContract) {
-    commands.push('bun run check:provider-contract')
-  }
-  if (result.checks.chatContract) {
-    commands.push('bun run check:chat-contract')
-  }
-  if (result.checks.agentFlow) {
-    commands.push('bun run check:agent-flow')
-  }
-  if (result.checks.agentE2e) {
-    commands.push('bun run check:agent-e2e')
-  }
-  if (result.checks.adapters) {
-    commands.push('bun run check:adapters')
-  }
-  if (result.checks.desktopNative) {
-    commands.push('bun run check:native')
-  }
-  if (result.checks.persistence) {
-    commands.push('bun run check:persistence-upgrade')
-  }
-  if (result.checks.docs) {
-    commands.push('bun run check:docs')
-  }
-  if (result.checks.coverage) {
-    commands.push('bun run check:coverage')
-  }
-
-  return commands
 }
 
 function hasMatchingTest(files: string[], predicate: (file: string) => boolean) {
@@ -160,7 +114,7 @@ const dependency = dependentFilesForChangeSet(process.cwd(), files, {
   enabled: !process.argv.includes('--no-dependency-graph'),
 })
 const result = evaluateChangePolicy(files, labels, dependency.dependents)
-const commands = commandList(result)
+const commands = localCheckCommands(result.checks).map(command => command.join(' '))
 const warnings = [...coverageWarnings(result.files)]
 const blockingTestSignals = result.missingTestSignals
 const notes = riskNotes(result.files)
@@ -206,7 +160,8 @@ if (dependency.degraded) {
             : check === 'mobile' ? file.startsWith('mobile/')
               : check === 'adapters' ? file.startsWith('adapters/')
                 : check === 'server' ? file.startsWith('src/')
-                  : true
+                  : check === 'harness' ? file.startsWith('harness/')
+                    : true
       ))
       console.log(`- Selected \`${check}\` because a changed file is imported by \`${example ?? dependency.dependents[0]}\`.`)
     }

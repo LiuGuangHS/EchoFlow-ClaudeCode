@@ -10,16 +10,15 @@ import {
   type ThemeMode,
 } from '../types/settings'
 import {
-  DARK_THEME_STORAGE_KEY,
-  FOLLOW_SYSTEM_THEME_STORAGE_KEY,
-  LIGHT_THEME_STORAGE_KEY,
   THEME_BACKGROUNDS,
-  THEME_STORAGE_KEY,
   getSystemAppearance,
-  readStoredDarkTheme,
   readStoredFollowSystemTheme,
   readStoredLightTheme,
-  readStoredTheme,
+  readThemeSnapshot,
+  updateThemePreferences,
+  type ThemePreferences,
+  type ThemePersistenceResult,
+  type SystemAppearance,
   resolveAppliedTheme,
   subscribeSystemAppearance,
   subscribeThemeStorageChanges,
@@ -74,37 +73,30 @@ function persist(key: string, value: string): void {
   } catch { /* localStorage unavailable */ }
 }
 
-type ThemePreferences = {
-  theme: ThemeMode
-  lightTheme: LightThemeMode
-  darkTheme: DarkThemeMode
-  followSystem: boolean
+function themeState(snapshot = readThemeSnapshot(), appearance = getSystemAppearance()) {
+  const { preferences, persistence } = snapshot
+  return {
+    theme: resolveAppliedTheme({ ...preferences, systemAppearance: appearance }),
+    lightTheme: preferences.lightTheme,
+    darkTheme: preferences.darkTheme,
+    followSystemTheme: preferences.followSystem,
+    themePersistence: persistence,
+  }
 }
 
-/**
- * Write every theme value together.
- *
- * The follow-the-system default is inferred from *not* having a stored theme,
- * so any write that stores a theme has to store the flag alongside it —
- * otherwise a fresh install silently drops back to a fixed theme the first
- * time the theme is persisted for any reason.
- */
-function persistThemeState({ theme, lightTheme, darkTheme, followSystem }: ThemePreferences): void {
-  persist(THEME_STORAGE_KEY, theme)
-  persist(LIGHT_THEME_STORAGE_KEY, lightTheme)
-  persist(DARK_THEME_STORAGE_KEY, darkTheme)
-  persist(FOLLOW_SYSTEM_THEME_STORAGE_KEY, followSystem ? '1' : '0')
+function refreshTheme(appearance = getSystemAppearance(), result?: ThemePersistenceResult) {
+  const state = themeState(readThemeSnapshot(), appearance)
+  useUIStore.setState({ ...state, themePersistence: result ?? state.themePersistence })
+  applyTheme(state.theme, state.followSystemTheme, state.lightTheme)
 }
 
-/** The theme that should currently be on `<html>`, given the stored values. */
-function getInitialAppliedTheme(): ThemeMode {
-  return resolveAppliedTheme({
-    followSystem: readStoredFollowSystemTheme(),
-    theme: readStoredTheme(),
-    lightTheme: readStoredLightTheme(),
-    darkTheme: readStoredDarkTheme(),
-    systemAppearance: getSystemAppearance(),
-  })
+function changeTheme(update: (current: ThemePreferences) => ThemePreferences, appearance: SystemAppearance = getSystemAppearance()) {
+  const result = updateThemePreferences(update)
+  refreshTheme(appearance, result)
+}
+
+function resolvedPreferences(current: ThemePreferences, appearance: SystemAppearance): ThemePreferences {
+  return { ...current, theme: resolveAppliedTheme({ ...current, systemAppearance: appearance }) }
 }
 
 function isSettingsTab(value: unknown): value is SettingsTab {
@@ -168,57 +160,15 @@ let stopSystemAppearanceWatch: (() => void) | null = null
 let stopStorageSync: (() => void) | null = null
 
 export function initializeTheme() {
-  const state = useUIStore.getState()
-  applyTheme(state.theme, state.followSystemTheme, state.lightTheme)
-  // Pin down the inferred default so it survives the next launch.
-  persistThemeState({
-    theme: state.theme,
-    lightTheme: state.lightTheme,
-    darkTheme: state.darkTheme,
-    followSystem: state.followSystemTheme,
+  teardownTheme()
+  // Eager imports may predate startup migrations or another window's update.
+  const appearance = getSystemAppearance()
+  changeTheme(current => resolvedPreferences(current, appearance), appearance)
+  stopSystemAppearanceWatch = subscribeSystemAppearance((nextAppearance) => {
+    changeTheme(current => resolvedPreferences(current, nextAppearance), nextAppearance)
   })
-
-  stopSystemAppearanceWatch?.()
-  stopSystemAppearanceWatch = subscribeSystemAppearance((appearance) => {
-    // Read the preference from storage rather than this window's store. The
-    // pet window runs the same bootstrap with its own store instance over one
-    // shared localStorage, so after the main window changes the setting its
-    // in-memory copy is stale — and acting on it here would
-    // write the user's choice straight back out.
-    if (!readStoredFollowSystemTheme()) return
-    const lightTheme = readStoredLightTheme()
-    const darkTheme = readStoredDarkTheme()
-    const current = useUIStore.getState()
-    const next = resolveAppliedTheme({
-      followSystem: true,
-      theme: current.theme,
-      lightTheme,
-      darkTheme,
-      systemAppearance: appearance,
-    })
-    if (next === current.theme) return
-    applyTheme(next, true, lightTheme)
-    persistThemeState({ theme: next, lightTheme, darkTheme, followSystem: true })
-    useUIStore.setState({ theme: next, lightTheme, darkTheme, followSystemTheme: true })
-  })
-
-  stopStorageSync?.()
-  stopStorageSync = subscribeThemeStorageChanges(() => {
-    // Another window changed the appearance. Catch this window's store up so
-    // its next decision is made on current values, and repaint it.
-    const followSystemTheme = readStoredFollowSystemTheme()
-    const lightTheme = readStoredLightTheme()
-    const darkTheme = readStoredDarkTheme()
-    const theme = resolveAppliedTheme({
-      followSystem: followSystemTheme,
-      theme: readStoredTheme(),
-      lightTheme,
-      darkTheme,
-      systemAppearance: getSystemAppearance(),
-    })
-    useUIStore.setState({ theme, lightTheme, darkTheme, followSystemTheme })
-    if (typeof document !== 'undefined') paintDocumentTheme(theme)
-  })
+  // Storage events project authority only; they must never repair/write it.
+  stopStorageSync = subscribeThemeStorageChanges(() => refreshTheme())
 }
 
 /** Test seam: drop the listeners installed by initializeTheme. */
@@ -302,6 +252,8 @@ type UIStore = {
   lightTheme: LightThemeMode
   /** Which ink palette the dark half of "follow the system" resolves to. */
   darkTheme: DarkThemeMode
+  /** Domain outcome only; never persisted as another preference. */
+  themePersistence: ThemePersistenceResult | null
   sidebarOpen: boolean
   /** Expanded-state sidebar width in px, user-resizable within the clamp range. */
   sidebarWidth: number
@@ -323,7 +275,7 @@ type UIStore = {
   activeModal: string | null
   toasts: Toast[]
 
-  setTheme: (theme: ThemeMode) => void
+  setTheme: (theme: ThemeMode, followSystem?: boolean) => void
   setFollowSystemTheme: (follow: boolean) => void
   toggleTheme: () => void
   toggleSidebar: () => void
@@ -355,10 +307,7 @@ let newSessionDraftRevision = 0
 let draftWorkspaceRequestNonce = 0
 
 export const useUIStore = create<UIStore>((set) => ({
-  theme: getInitialAppliedTheme(),
-  followSystemTheme: readStoredFollowSystemTheme(),
-  lightTheme: readStoredLightTheme(),
-  darkTheme: readStoredDarkTheme(),
+  ...themeState(),
   sidebarOpen: true,
   sidebarWidth: getStoredSidebarWidth(),
   activeView: 'code',
@@ -375,57 +324,37 @@ export const useUIStore = create<UIStore>((set) => ({
   // Picking a palette while following the system does not fight the OS: it
   // becomes the preference for its own half and shows up once the OS is on
   // that ground. So choosing ink-blue at noon is remembered for tonight.
-  setTheme: (theme) => {
-    set((state) => {
-      const lightTheme = isLightThemeMode(theme) ? theme : state.lightTheme
-      const darkTheme = isDarkThemeMode(theme) ? theme : state.darkTheme
-      const applied = resolveAppliedTheme({
-        followSystem: state.followSystemTheme,
-        theme,
-        lightTheme,
-        darkTheme,
-        systemAppearance: getSystemAppearance(),
-      })
-      applyTheme(applied, state.followSystemTheme, lightTheme)
-      persistThemeState({ theme: applied, lightTheme, darkTheme, followSystem: state.followSystemTheme })
-      return { theme: applied, lightTheme, darkTheme }
-    })
+  setTheme: (theme, followSystem) => {
+    const appearance = getSystemAppearance()
+    changeTheme(current => resolvedPreferences({
+      ...current,
+      theme,
+      lightTheme: isLightThemeMode(theme) ? theme : current.lightTheme,
+      darkTheme: isDarkThemeMode(theme) ? theme : current.darkTheme,
+      followSystem: followSystem ?? current.followSystem,
+    }, appearance), appearance)
   },
 
-  // Turning the switch off freezes whatever is on screen rather than snapping
-  // back to an older manual pick.
+  // Turning the switch off freezes the currently resolved palette.
   setFollowSystemTheme: (follow) => {
-    set((state) => {
-      const applied = resolveAppliedTheme({
-        followSystem: follow,
-        theme: state.theme,
-        lightTheme: state.lightTheme,
-        darkTheme: state.darkTheme,
-        systemAppearance: getSystemAppearance(),
-      })
-      applyTheme(applied, follow, state.lightTheme)
-      persistThemeState({
-        theme: applied,
-        lightTheme: state.lightTheme,
-        darkTheme: state.darkTheme,
-        followSystem: follow,
-      })
-      return { followSystemTheme: follow, theme: applied }
-    })
+    const appearance = getSystemAppearance()
+    changeTheme(current => resolvedPreferences({
+      ...resolvedPreferences(current, appearance), followSystem: follow,
+    }, appearance), appearance)
   },
 
-  // Cycling through the palettes by hand is an explicit takeover, so it also
-  // releases the OS switch.
+  // Cycling is an explicit takeover, so it also releases the OS switch.
   toggleTheme: () => {
-    set((state) => {
-      const currentIndex = THEME_MODES.indexOf(state.theme)
-      const next = THEME_MODES[(currentIndex + 1) % THEME_MODES.length] ?? 'white'
-      const lightTheme = isLightThemeMode(next) ? next : state.lightTheme
-      const darkTheme = isDarkThemeMode(next) ? next : state.darkTheme
-      applyTheme(next, false, lightTheme)
-      persistThemeState({ theme: next, lightTheme, darkTheme, followSystem: false })
-      return { theme: next, lightTheme, darkTheme, followSystemTheme: false }
-    })
+    const appearance = getSystemAppearance()
+    changeTheme(current => {
+      const applied = resolvedPreferences(current, appearance).theme
+      const next = THEME_MODES[(THEME_MODES.indexOf(applied) + 1) % THEME_MODES.length] ?? 'white'
+      return {
+        ...current, theme: next, followSystem: false,
+        lightTheme: isLightThemeMode(next) ? next : current.lightTheme,
+        darkTheme: isDarkThemeMode(next) ? next : current.darkTheme,
+      }
+    }, appearance)
   },
 
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),

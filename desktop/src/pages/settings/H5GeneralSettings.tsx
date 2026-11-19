@@ -64,7 +64,7 @@ export function H5GeneralSettings() {
     {failed && <p role="alert" className="mb-4 text-[13px] text-[var(--color-error)]">{t('publicAccess.genericError')}</p>}
     <SettingsSection className="mt-0" title={t('settings.general.appearanceTitle')} description={t('h5Settings.browserOnly')}>
       <SettingsGroup>
-        {select<ThemeMode>(t('settings.general.appearanceTitle'), { value: theme, options: themes, onChange: (value) => { useUIStore.getState().setFollowSystemTheme(false); void settings.setTheme(value) } })}
+        {select<ThemeMode>(t('settings.general.appearanceTitle'), { value: theme, options: themes, onChange: (value) => void settings.setTheme(value, false) })}
         {select<Locale>(t('settings.general.languageTitle'), { value: settings.locale, options: languages, onChange: settings.setLocale })}
       </SettingsGroup>
     </SettingsSection>

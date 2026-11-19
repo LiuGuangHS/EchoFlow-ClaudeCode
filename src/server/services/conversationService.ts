@@ -324,6 +324,8 @@ type SessionProcess = {
   officialOAuthToken: string | null
   officialOAuthRefreshPromise?: Promise<void>
   pendingPermissionRequests: Map<string, TrackedPermissionRequest>
+  // Keep submitted IDs until this owner retires: send can throw after consumption.
+  permissionResponseRequestIds?: Set<string>
   autoResolvedRequestIds?: Set<string>
   pendingControlRequests: Map<string, (reason: Error) => void>
   /** Last value sent with `set_prompt_suggestions`; the CLI starts disabled. */
@@ -474,7 +476,7 @@ export class ConversationService {
   refreshAutoQuestionSettings(): void {
     for (const [sessionId, session] of this.sessions) {
       for (const [requestId, request] of session.pendingPermissionRequests) {
-        if (request.toolName !== 'AskUserQuestion' || request.autoAnswerCancelled) continue
+        if (request.toolName !== 'AskUserQuestion' || request.autoAnswerCancelled || session.permissionResponseRequestIds?.has(requestId)) continue
         this.clearAutoAnswerWait(request)
         request.autoAnswerGeneration = (request.autoAnswerGeneration ?? 0) + 1
         request.autoAnswerTimer = undefined
@@ -490,13 +492,13 @@ export class ConversationService {
     requestId: string,
     request: TrackedPermissionRequest,
   ): Promise<void> {
-    if (request.toolName !== 'AskUserQuestion') return
+    if (request.toolName !== 'AskUserQuestion' || session.permissionResponseRequestIds?.has(requestId)) return
     const generation = request.autoAnswerGeneration ?? 0
     try {
       const settings = normalizeAutoQuestionSettings(
         (await new SettingsService().getUserSettings()).autoQuestion,
       )
-      if (request.autoAnswerCancelled ||
+      if (request.autoAnswerCancelled || session.permissionResponseRequestIds?.has(requestId) ||
         (request.autoAnswerGeneration ?? 0) !== generation || this.sessions.get(sessionId) !== session ||
         session.pendingPermissionRequests.get(requestId) !== request) return
       request.autoAnswerCreatedAt ??= Date.now()
@@ -522,7 +524,7 @@ export class ConversationService {
     requestId: string,
     request: TrackedPermissionRequest,
   ): Promise<void> {
-    if (request.autoAnswerCancelled || this.sessions.get(sessionId) !== session ||
+    if (request.autoAnswerCancelled || session.permissionResponseRequestIds?.has(requestId) || this.sessions.get(sessionId) !== session ||
       session.pendingPermissionRequests.get(requestId) !== request) return
     const skip = (reason: string) => {
       console.info(`[ConversationService] Automatic answer left pending: session=${sessionId} request=${requestId} reason=${reason}`)
@@ -1235,17 +1237,17 @@ export class ConversationService {
     permissionUpdates?: unknown[],
     automaticQuestionAnswer = false,
   ): boolean {
-    const child = [...this.sessions.entries()].find(([, entry]) => entry.teamWorker?.parentSessionId === sessionId && entry.pendingPermissionRequests.has(requestId))
+    const child = [...this.sessions.entries()].find(([, entry]) => entry.teamWorker?.parentSessionId === sessionId && (entry.pendingPermissionRequests.has(requestId) || entry.permissionResponseRequestIds?.has(requestId)))
     if (child) return this.respondToPermission(child[0], requestId, allowed, rule, updatedInput, denyMessage, permissionUpdates, automaticQuestionAnswer)
     const session = this.sessions.get(sessionId)
-    if (session?.autoResolvedRequestIds?.has(requestId)) return false
-    const pendingRequest = session?.pendingPermissionRequests.get(requestId)
-    this.clearAutoAnswerWait(pendingRequest)
-    if (session) {
-      if (session.pendingPermissionRequests.delete(requestId)) powerActivityClock.changed()
+    if (!session || session.autoResolvedRequestIds?.has(requestId)) return false
+    const pendingRequest = session.pendingPermissionRequests.get(requestId)
+    if (session.permissionResponseRequestIds?.has(requestId)) {
+      if (pendingRequest) throw new Error('Permission response outcome is uncertain; automatic resubmission is blocked')
+      return false
     }
 
-    return this.sendSdkMessage(sessionId, {
+    const payload = {
       type: 'control_response',
       response: {
         subtype: 'success',
@@ -1283,7 +1285,13 @@ export class ConversationService {
               message: buildDenyMessage(pendingRequest?.toolName, denyMessage),
             },
       },
-    })
+    }
+    session.permissionResponseRequestIds ??= new Set()
+    session.permissionResponseRequestIds.add(requestId)
+    this.clearAutoAnswerWait(pendingRequest)
+    const sent = this.sendSdkMessage(sessionId, payload)
+    if (sent && session.pendingPermissionRequests.delete(requestId)) powerActivityClock.changed()
+    return sent
   }
 
   async setPermissionMode(sessionId: string, mode: string, timeoutMs = 10_000): Promise<boolean> {
@@ -1752,6 +1760,12 @@ export class ConversationService {
         ) {
           this.recoverOfficialOAuthAfter401(sessionId, session)
         }
+        if (
+          msg?.type === 'control_request' &&
+          msg.request?.subtype === 'can_use_tool' &&
+          typeof msg.request_id === 'string' &&
+          session.permissionResponseRequestIds?.has(msg.request_id)
+        ) continue
         if (
           msg?.type === 'control_request' &&
           msg.request?.subtype === 'can_use_tool' &&

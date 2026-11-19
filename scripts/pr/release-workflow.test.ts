@@ -100,6 +100,20 @@ describe('release desktop workflow', () => {
     return findUpdateFile(files, 'zip', processArch, ['pkg', 'dmg'])
   }
 
+  test('release runs never cancel in-progress publication while development builds remain latest-wins', () => {
+    const release = parse(readReleaseWorkflow())
+    expect(release.concurrency).toEqual({
+      group: 'release-desktop-${{ github.ref }}',
+      'cancel-in-progress': false,
+    })
+    expect(release.on.push.tags).toEqual(['v*.*.*'])
+    expect(release.on.workflow_call.inputs.official_release.type).toBe('boolean')
+    expect(release.on.workflow_dispatch.inputs.draft.default).toBe(true)
+    const development = parse(readFileSync('.github/workflows/build-desktop-dev.yml', 'utf8'))
+    expect(development.concurrency['cancel-in-progress']).toBe(true)
+    expect(development.concurrency.group).toStartWith('build-desktop-dev-')
+  })
+
   test('delivery summary always reports publication, site sync and native pipeline outcomes without claiming delivery', () => {
     const workflow = parse(readReleaseWorkflow())
     const job = workflow.jobs['delivery-summary']
@@ -276,8 +290,8 @@ describe('release desktop workflow', () => {
     }
   })
 
-  test('development builds freeze every workspace install while retaining cross-architecture desktop addons', () => {
-    const steps = parse(readFileSync('.github/workflows/build-desktop-dev.yml', 'utf8')).jobs.build.steps as Array<{
+  test.each(['build-desktop-dev', 'release-desktop'])('%s freezes every workspace install while retaining cross-architecture desktop addons', name => {
+    const steps = parse(readFileSync(`.github/workflows/${name}.yml`, 'utf8')).jobs.build.steps as Array<{
       run?: string
       'working-directory'?: string
     }>
@@ -288,6 +302,19 @@ describe('release desktop workflow', () => {
       expect(install).toBeLessThan(build)
       expect(steps[install].run).toBe(workspace === 'desktop' ? 'bun install --frozen-lockfile --cpu="*"' : 'bun install --frozen-lockfile')
     }
+  })
+
+  test('release publication freezes its root dependencies before using release helpers', () => {
+    const steps = parse(readReleaseWorkflow()).jobs['publish-release'].steps as Array<{
+      run?: string
+      'working-directory'?: string
+    }>
+    const installs = steps.filter(step => step.run?.startsWith('bun install'))
+    expect(installs).toHaveLength(1)
+    expect(installs[0]['working-directory']).toBeUndefined()
+    expect(installs[0].run).toBe('bun install --frozen-lockfile')
+    const helper = steps.findIndex(step => step.run?.includes('bun run scripts/'))
+    expect(helper).toBeGreaterThan(steps.indexOf(installs[0]))
   })
 
   test('desktop build workflows install the phone app before building the renderer', () => {

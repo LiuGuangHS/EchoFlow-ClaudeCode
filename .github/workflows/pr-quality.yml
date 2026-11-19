@@ -35,6 +35,7 @@ jobs:
       chat_contract_checks: ${{ steps.policy.outputs.chat_contract_checks }}
       agent_flow_checks: ${{ steps.policy.outputs.agent_flow_checks }}
       agent_e2e_checks: ${{ steps.policy.outputs.agent_e2e_checks }}
+      harness_checks: ${{ steps.policy.outputs.harness_checks }}
       persistence_checks: ${{ steps.policy.outputs.persistence_checks }}
       policy_checks: ${{ steps.policy.outputs.policy_checks }}
       docs_checks: ${{ steps.policy.outputs.docs_checks }}
@@ -113,6 +114,16 @@ jobs:
       - name: Audit public product content
         run: bun run check:upstream-content
 
+      - name: Record Bun version
+        id: bun-cache-version
+        if: needs.scope-plan.outputs.policy_checks == 'true'
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        if: needs.scope-plan.outputs.policy_checks == 'true'
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         if: needs.scope-plan.outputs.policy_checks == 'true'
         run: bun install --frozen-lockfile
@@ -157,6 +168,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -167,11 +186,13 @@ jobs:
       - name: Install adapter dependencies
         working-directory: adapters
         run: bun install --frozen-lockfile
-      # `bun run build` also exports the phone app (mobile/) into dist/m, and Expo needs Node 22.
+      # Only the last shard builds dist/m; the test-only shard does not need Expo.
       - uses: actions/setup-node@v5
+        if: matrix.shard == 2
         with:
           node-version: 22
       - name: Install mobile dependencies
+        if: matrix.shard == 2
         working-directory: mobile
         run: bun install --frozen-lockfile
       - name: Run desktop checks
@@ -192,6 +213,14 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install mobile dependencies
@@ -220,6 +249,14 @@ jobs:
           bun-version-file: package.json
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -239,6 +276,30 @@ jobs:
       - name: Run root runtime checks
         run: bun run check:server --shard=${{ matrix.shard }}/3
 
+  harness-checks:
+    name: harness-checks
+    needs: scope-plan
+    if: needs.scope-plan.outputs.harness_checks == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: harness/package-lock.json
+      - name: Install harness dependencies
+        run: npm --prefix harness ci
+      - name: Run independent harness suite
+        run: bun run --cwd harness test
+      - name: Run required repository harness audit
+        run: bun run audit:harness
+
   provider-contract-checks:
     name: provider-contract-checks
     needs: scope-plan
@@ -251,6 +312,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Run offline provider contracts
@@ -268,6 +337,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -288,6 +365,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Run deterministic agent flow
@@ -313,6 +398,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Run the agent loop against a mock LLM and recorded traffic
@@ -337,6 +430,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install adapter dependencies
         working-directory: adapters
         run: bun install --frozen-lockfile
@@ -362,6 +463,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -423,6 +532,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -468,6 +585,14 @@ jobs:
           bun-version-file: package.json
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -514,6 +639,7 @@ jobs:
       - chat-contract-checks
       - agent-flow-checks
       - agent-e2e-checks
+      - harness-checks
       - adapter-checks
       - desktop-native-checks
       - macos-swift-checks
@@ -560,6 +686,7 @@ jobs:
           require_selected "chat-contract-checks" "${{ needs.scope-plan.outputs.chat_contract_checks }}" "${{ needs.chat-contract-checks.result }}"
           require_selected "agent-flow-checks" "${{ needs.scope-plan.outputs.agent_flow_checks }}" "${{ needs.agent-flow-checks.result }}"
           require_selected "agent-e2e-checks" "${{ needs.scope-plan.outputs.agent_e2e_checks }}" "${{ needs.agent-e2e-checks.result }}"
+          require_selected "harness-checks" "${{ needs.scope-plan.outputs.harness_checks }}" "${{ needs.harness-checks.result }}"
           require_selected "adapter-checks" "${{ needs.scope-plan.outputs.adapter_checks }}" "${{ needs.adapter-checks.result }}"
           require_selected "desktop-native-checks" "${{ needs.scope-plan.outputs.desktop_native_checks }}" "${{ needs.desktop-native-checks.result }}"
           require_selected "macos-swift-checks" "${{ needs.scope-plan.outputs.desktop_native_checks }}" "${{ needs.macos-swift-checks.result }}"
