@@ -676,7 +676,18 @@ try {
     -FilePath $appExe `
     -InstallDirectory $installDir `
     -IsolatedUserProfile $userProfile
-  Move-Item -LiteralPath (Join-Path $localAppData $productIdentity.name) -Destination (Join-Path $testRoot 'fresh-storage')
+  $freshStorage = Join-Path $localAppData $productIdentity.name
+  $freshSentinel = Join-Path $freshStorage 'fresh-profile-sentinel.txt'
+  [IO.File]::WriteAllText($freshSentinel, 'fresh-profile-must-survive')
+  Invoke-InstalledApplicationSmoke `
+    -FilePath $appExe `
+    -InstallDirectory $installDir `
+    -IsolatedUserProfile $userProfile
+  if ([IO.File]::ReadAllText($freshSentinel) -cne 'fresh-profile-must-survive') {
+    throw 'The fresh install changed its default profile sentinel on second launch.'
+  }
+  Write-SmokeDiagnostic ('Fresh default profile retained its sentinel on second launch.')
+  Move-Item -LiteralPath $freshStorage -Destination (Join-Path $testRoot 'fresh-storage')
   Invoke-LegacyRecoveryDiagnostic
 
   $legacyProfile = Join-Path $appData $productIdentity.legacyDesktopPackageName
@@ -773,7 +784,7 @@ try {
     throw 'Portable reinstall without CLR modified legacy data instead of failing closed.'
   }
 
-  $results['packaged-smoke'] = [ordered]@{ status = 'passed'; reason = 'All reached packaged smoke assertions completed.'; evidence = 'Unicode-path launch, loopback readiness, profile preservation and process/refusal checks; profile-specific no-CLR coverage is reported separately.' }
+  $results['packaged-smoke'] = [ordered]@{ status = 'passed'; reason = 'All reached packaged smoke assertions completed.'; evidence = 'Two default-profile Unicode-path launches with fresh loopback readiness, sentinel preservation, and process/refusal checks. Profile-specific no-CLR coverage is reported separately.' }
   Write-SmokeDiagnostic ('Windows installer smoke execution passed; consult result.json for passed/failed/unexercised coverage.')
 } catch {
   $failure = [string]$_.Exception.Message

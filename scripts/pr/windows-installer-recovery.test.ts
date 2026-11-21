@@ -603,7 +603,7 @@ SectionEnd
     }
   }, 90_000)
 
-  test('launches the fresh install at the isolated default storage root before seeding a legacy profile', () => {
+  test('launches the fresh install twice at the isolated default storage root before seeding a legacy profile', () => {
     const smoke = readFileSync('desktop/scripts/windows-installer-smoke.ps1', 'utf8')
     const launch = smoke.match(/function Invoke-InstalledApplicationSmoke \{[\s\S]*?^\}/m)?.[0] ?? ''
     expect(launch).toMatch(/Join-Path \$(?:localAppData|env:LOCALAPPDATA) (?:'EchoFlow Code'|\$productIdentity\.name)/)
@@ -611,6 +611,9 @@ SectionEnd
     expect(launch).toMatch(/Remove-Item Env:CLAUDE_CONFIG_DIR[^\r\n]*[\s\S]*Start-Process -FilePath \$FilePath/)
     expect(launch).not.toMatch(/\$env:CLAUDE_CONFIG_DIR\s*=/i)
     expect(smoke).toMatch(/\$localAppData = Join-Path \$testRoot 'AppData\\Local'[\s\S]*\$env:LOCALAPPDATA = \$localAppData[\s\S]*-Stage 'Fresh install'[^\r\n]*[\s\S]*?Invoke-InstalledApplicationSmoke[\s\S]*?-IsolatedUserProfile \$userProfile\r?\n[\s\S]*?WriteAllText\(\$legacyModeFile,/)
+    const fresh = smoke.match(/-Stage 'Fresh install'[\s\S]*?(?=\r?\n  Invoke-LegacyRecoveryDiagnostic\b)/)?.[0] ?? ''
+    expect(fresh.match(/Invoke-InstalledApplicationSmoke\b/g)).toHaveLength(2)
+    expect(fresh).toMatch(/Invoke-InstalledApplicationSmoke[\s\S]*WriteAllText\(\$freshSentinel,[\s\S]*Invoke-InstalledApplicationSmoke[\s\S]*ReadAllText\(\$freshSentinel\)[\s\S]*Move-Item/)
   })
 
   test('exercises the packaged installer recovery bridge with an install-contained source', () => {
@@ -629,7 +632,7 @@ SectionEnd
 
   test('reports legacy startup separately and verifies packaged reinstall preserves the profile', () => {
     const smoke = readFileSync('desktop/scripts/windows-installer-smoke.ps1', 'utf8')
-    expect(smoke).toMatch(/Invoke-InstalledApplicationSmoke\s+`[\s\S]*?Move-Item -LiteralPath \(Join-Path \$localAppData \$productIdentity\.name\)[\s\S]*?Invoke-LegacyRecoveryDiagnostic\s+[\s\S]*?\[IO\.File\]::WriteAllText\(\$legacyModeFile,/)
+    expect(smoke).toMatch(/\$freshStorage = Join-Path \$localAppData \$productIdentity\.name[\s\S]*?Move-Item -LiteralPath \$freshStorage[\s\S]*?Invoke-LegacyRecoveryDiagnostic\s+[\s\S]*?\[IO\.File\]::WriteAllText\(\$legacyModeFile,/)
     expect(smoke).toMatch(/-Stage 'Legacy-package profile reinstall'[^\r\n]*[\s\S]*?Get-FileHash -LiteralPath \$legacyModeFile[\s\S]*?created competing state/)
     expect(smoke).toMatch(/\$results\['legacy-profile-startup'\] = \[ordered\]@\{ status = 'unexercised'; reason = 'Windows native per-PID inventory/)
     expect(smoke).toContain("@($windowLog, $serverStateFile)")
