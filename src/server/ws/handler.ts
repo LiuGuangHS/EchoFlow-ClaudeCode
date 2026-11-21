@@ -283,7 +283,7 @@ const scheduledTurnResults = new WeakMap<object, { sessionId: string; metadata: 
 const sessionClearInProgress = new Set<string>()
 const deferredRuntimeRestarts = new Map<string, RuntimeOverride>()
 const cliRuntimeOverrides = new Map<string, ClaudeCodeRuntimeId>()
-const deferredCliRuntimeRestarts = new Map<string, ClaudeCodeRuntimeId>()
+const deferredCliRuntimeRestarts = new Map<string, { runtimeId: ClaudeCodeRuntimeId; requester: SessionConnection }>()
 const rejectedCliRuntimeConfigs = new Map<string, string>()
 const deferredPermissionModes = new Map<string, PermissionMode>()
 
@@ -889,6 +889,7 @@ export const handleWebSocket = {
       // WebSocket connection; the normal session-list refresh remains a fallback.
     })
     syncPermissionRequests(ws)
+    void syncCliRuntime(ws)
     replayAgentStopFailures(ws, sessionId)
     for (const task of activeNonAgentTasks.get(sessionId)?.values() ?? []) {
       if (task.localStopConfirmed) void emitAuthoritativeNonAgentStopped(sessionId, task)
@@ -1020,6 +1021,7 @@ export const handleWebSocket = {
 
         case 'sync_state':
           syncPermissionRequests(ws)
+          void syncCliRuntime(ws)
           sendMessage(ws, {
             type: 'session_state',
             turnState: hasLiveUserTurnForClient(ws.data.sessionId)
@@ -1852,22 +1854,22 @@ function applyDeferredRuntimeRestartAfterActiveTurn(
       currentOverride.modelId === deferred.modelId &&
       currentOverride.effort === deferred.effort &&
       (currentOverride.openAIFastMode ?? false) === (deferred.openAIFastMode ?? false)
-    const cliSelectionCurrent = deferredCliRuntime &&
-      cliRuntimeOverrides.get(sessionId) === deferredCliRuntime
-    if (!modelSelectionCurrent && !cliSelectionCurrent) return
+    const cliSelection = deferredCliRuntime?.runtimeId === cliRuntimeOverrides.get(sessionId)
+      ? deferredCliRuntime : undefined
+    if (!modelSelectionCurrent && !cliSelection) return
     if (!conversationService.hasSession(sessionId)) {
-      if (deferredCliRuntime && cliSelectionCurrent) {
-        await commitCliRuntime(sessionId, deferredCliRuntime)
+      if (cliSelection) {
+        await commitCliRuntime(sessionId, cliSelection.runtimeId)
         rejectedCliRuntimeConfigs.delete(sessionId)
-        sendToSession(sessionId, { type: CLI_RUNTIME_APPLIED_EVENT, cliRuntimeId: deferredCliRuntime })
+        sendToSession(sessionId, { type: CLI_RUNTIME_APPLIED_EVENT, cliRuntimeId: cliSelection.runtimeId })
       }
       return
     }
-    await restartSessionWithRuntimeConfig(ws, sessionId)
+    await restartSessionWithRuntimeConfig(ws, sessionId, cliSelection?.requester)
   }).catch((error) => {
     if (deferredCliRuntime) rejectedCliRuntimeConfigs.set(sessionId, 'The CLI runtime selection could not be applied.')
     console.error(`[WS] Failed to apply deferred runtime for ${sessionId}:`, error)
-    sendMessage(ws, { type: 'error', message: 'Unable to apply the deferred runtime selection.', code: 'CLI_RESTART_FAILED' })
+    sendMessage(deferredCliRuntime?.requester ?? ws, { type: 'error', message: 'Unable to apply the deferred runtime selection.', code: 'CLI_RESTART_FAILED' })
   })
 }
 
@@ -2029,6 +2031,20 @@ function syncPermissionRequests(ws: SessionConnection): void {
     computerUseRequestIds: replayPendingComputerUsePermissionRequests(ws, sessionId),
     turnActive: hasLiveUserTurnForClient(sessionId),
   })
+}
+
+async function syncCliRuntime(ws: SessionConnection): Promise<void> {
+  const { sessionId } = ws.data
+  try {
+    const launchInfo = conversationService.hasSession(sessionId)
+      ? null : await sessionService.getSessionLaunchInfo(sessionId)
+    if (!activeSessions.get(sessionId)?.has(ws)) return
+    const cliRuntimeId = conversationService.hasSession(sessionId)
+      ? conversationService.getSessionCliRuntimeId(sessionId) : launchInfo?.cliRuntimeId
+    if (cliRuntimeId) sendMessage(ws, { type: CLI_RUNTIME_APPLIED_EVENT, cliRuntimeId })
+  } catch {
+    // An unreadable transcript must not prevent reconnecting.
+  }
 }
 
 function sendApprovalError(ws: SessionConnection, message: Extract<ServerMessage, { type: 'error' }>): void {
@@ -2513,15 +2529,19 @@ async function handleSetCliRuntime(
       return
     }
 
-    const launchInfo = await sessionService.getSessionLaunchInfo(sessionId)
-    const currentRuntimeId = cliRuntimeOverrides.get(sessionId) ??
-      conversationService.getSessionCliRuntimeId(sessionId) ?? launchInfo?.cliRuntimeId
+    const pendingSelection = deferredCliRuntimeRestarts.get(sessionId)
+    if (pendingSelection?.runtimeId === cliRuntimeId) {
+      pendingSelection.requester = ws
+      return
+    }
+    const currentRuntimeId = conversationService.hasSession(sessionId)
+      ? conversationService.getSessionCliRuntimeId(sessionId)
+      : (await sessionService.getSessionLaunchInfo(sessionId))?.cliRuntimeId
     if (currentRuntimeId === cliRuntimeId && !rejectedCliRuntimeConfigs.has(sessionId)) {
-      if (!deferredCliRuntimeRestarts.has(sessionId)) {
-        await commitCliRuntime(sessionId, cliRuntimeId)
-        cliRuntimeOverrides.set(sessionId, cliRuntimeId)
-        sendToSession(sessionId, { type: CLI_RUNTIME_APPLIED_EVENT, cliRuntimeId })
-      }
+      deferredCliRuntimeRestarts.delete(sessionId)
+      await commitCliRuntime(sessionId, cliRuntimeId)
+      cliRuntimeOverrides.set(sessionId, cliRuntimeId)
+      sendToSession(sessionId, { type: CLI_RUNTIME_APPLIED_EVENT, cliRuntimeId })
       return
     }
 
@@ -2529,7 +2549,7 @@ async function handleSetCliRuntime(
     cliRuntimeOverrides.set(sessionId, cliRuntimeId)
     runtimeOverrideVersions.set(sessionId, (runtimeOverrideVersions.get(sessionId) ?? 0) + 1)
     if (shouldDeferRuntimeRestartForActiveTurn(sessionId)) {
-      deferredCliRuntimeRestarts.set(sessionId, cliRuntimeId)
+      deferredCliRuntimeRestarts.set(sessionId, { runtimeId: cliRuntimeId, requester: ws })
       return
     }
 
@@ -2815,6 +2835,7 @@ async function commitCliRuntime(
 async function restartSessionWithRuntimeConfig(
   ws: SessionConnection,
   sessionId: string,
+  errorRecipient = ws,
 ): Promise<boolean> {
   const cliRuntimeId = cliRuntimeOverrides.get(sessionId)
   try {
@@ -2825,7 +2846,7 @@ async function restartSessionWithRuntimeConfig(
       resolveClaudeCodeRuntimePath(runtimeSettings.cliRuntimeId)
     } catch {
       rejectedCliRuntimeConfigs.set(sessionId, 'The selected CLI runtime is unavailable.')
-      sendMessage(ws, { type: 'error', message: 'Unable to select the requested CLI runtime.', code: 'CLI_RUNTIME_INVALID' })
+      sendMessage(errorRecipient, { type: 'error', message: 'Unable to select the requested CLI runtime.', code: 'CLI_RUNTIME_INVALID' })
       return false
     }
     const startupSettings = {
@@ -2867,7 +2888,7 @@ async function restartSessionWithRuntimeConfig(
     })
     console.error(`[WS] Failed to restart CLI for ${sessionId} after runtime override: ${errMsg}`)
     if (cliRuntimeId) rejectedCliRuntimeConfigs.set(sessionId, 'The CLI runtime selection could not be applied.')
-    sendMessage(ws, {
+    sendMessage(errorRecipient, {
       type: 'error',
       message: await buildSessionStartupDiagnosticMessage(
         sessionId,

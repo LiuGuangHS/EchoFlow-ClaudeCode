@@ -293,8 +293,10 @@ function networkRoutingFingerprint(
   })
 }
 
+type ResolvedCliRuntime = { cliRuntimeId?: ClaudeCodeRuntimeId; command: string[] }
+
 type SessionProcess = {
-  cliRuntimeId?: ClaudeCodeRuntimeId
+  cliRuntime: ResolvedCliRuntime
   runtimeSelection?: SessionRuntimeSelection
   proc: ReturnType<typeof Bun.spawn>
   outputCallbacks: SessionOutputCallback[]
@@ -710,7 +712,7 @@ export class ConversationService {
     workDir: string,
     sdkUrl: string,
     options?: SessionStartOptions,
-    resolvedRuntime?: { cliRuntimeId?: ClaudeCodeRuntimeId; command: string[] },
+    resolvedRuntime?: ResolvedCliRuntime,
   ): Promise<void> {
     migrationMaintenance.assertAvailable()
     if (this.deletedSessions.has(sessionId)) {
@@ -727,18 +729,22 @@ export class ConversationService {
     if (isSideChatId(sessionId) && (!side || side.closed || side.started)) {
       throw new ConversationStartupError('This temporary side chat has expired. Open a new side chat.', 'SESSION_DELETED')
     }
-    if (options?.teamWorker && (await sessionService.getSessionLaunchInfo(options.teamWorker.parentSessionId))?.agentProfile === 'lean') {
+    const parentSessionId = options?.teamWorker?.parentSessionId
+    const parentLaunchInfo = parentSessionId ? await sessionService.getSessionLaunchInfo(parentSessionId) : null
+    if (parentLaunchInfo?.agentProfile === 'lean') {
       throw new ConversationStartupError('Agent teams are unavailable in lean sessions', 'LEAN_CAPABILITY_UNAVAILABLE')
     }
     const launchInfo = options?.teamWorker ? null : await sessionService.getSessionLaunchInfo(sessionId)
+    resolvedRuntime ??= parentSessionId ? this.sessions.get(parentSessionId)?.cliRuntime : undefined
     if (!resolvedRuntime) {
-      const cliRuntimeId = resolveClaudeCodeRuntimeId(options?.cliRuntimeId ?? launchInfo?.cliRuntimeId)
-      // Validate before launch mutations and retain the command across stale-lock retries.
-      resolvedRuntime = { cliRuntimeId, command: this.resolveCliArgs([], cliRuntimeId) }
+      const selected = resolveClaudeCodeRuntimeId(options?.cliRuntimeId ?? launchInfo?.cliRuntimeId ?? parentLaunchInfo?.cliRuntimeId)
+      // Resolve before launch mutations and keep the same command across stale-lock retries.
+      resolvedRuntime = {
+        cliRuntimeId: selected ?? (process.env.CLAUDE_CLI_PATH ? undefined : 'bundled'),
+        command: this.resolveCliArgs([], selected),
+      }
     }
-    const additionalDirectories = (options?.teamWorker
-      ? (await sessionService.getSessionLaunchInfo(options.teamWorker.parentSessionId))?.additionalDirectories
-      : launchInfo?.additionalDirectories) ?? []
+    const additionalDirectories = (options?.teamWorker ? parentLaunchInfo : launchInfo)?.additionalDirectories ?? []
     if (launchInfo?.agentProfile === 'lean' && (options?.permissionMode ?? launchInfo.permissionMode) === 'plan') {
       throw new ConversationStartupError('Plan mode is unavailable in lean sessions. Choose another permission mode before continuing.', 'LEAN_CAPABILITY_UNAVAILABLE')
     }
@@ -942,7 +948,7 @@ export class ConversationService {
     })
     const session: SessionProcess = {
       proc,
-      cliRuntimeId: resolvedRuntime.cliRuntimeId ?? 'bundled',
+      cliRuntime: resolvedRuntime,
       teamWorker: options?.teamWorker,
       outputCallbacks: [],
       workDir: launchWorkDir,
@@ -1424,7 +1430,7 @@ export class ConversationService {
   }
 
   getSessionCliRuntimeId(sessionId: string): ClaudeCodeRuntimeId | undefined {
-    return this.sessions.get(sessionId)?.cliRuntimeId
+    return this.sessions.get(sessionId)?.cliRuntime.cliRuntimeId
   }
 
   /** The process's acknowledged runtime, unaffected by a queued next-turn selection. */

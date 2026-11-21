@@ -131,6 +131,33 @@ describe.skipIf(process.platform === 'win32')('WebSocket CLI runtime transitions
     await __enqueueRuntimeTransitionForTests(sessionId, Promise.resolve())
   }
 
+  it('replaces a running legacy launcher even when the previous pin is bundled', async () => {
+    launchInfo.cliRuntimeId = 'bundled'
+    spyOn(conversationService, 'getSessionCliRuntimeId').mockReturnValue(undefined)
+    handleWebSocket.open(ws)
+    handleWebSocket.message(ws, JSON.stringify({ type: 'set_cli_runtime', cliRuntimeId: 'bundled' }))
+    await drainTransitions()
+    expect(conversationService.startSession).toHaveBeenCalledWith(
+      sessionId, root, expect.any(String), expect.objectContaining({ cliRuntimeId: 'bundled' }),
+    )
+    expect(sent).toContainEqual({ type: 'cli_runtime_applied', cliRuntimeId: 'bundled' })
+  })
+
+  it('replays the saved pin on connect and the running runtime on sync', async () => {
+    running = false
+    launchInfo.cliRuntimeId = 'installed'
+    handleWebSocket.open(ws)
+    await flushMicrotasks()
+    expect(sent).toContainEqual({ type: 'cli_runtime_applied', cliRuntimeId: 'installed' })
+
+    running = true
+    spyOn(conversationService, 'getSessionCliRuntimeId').mockReturnValue('bundled')
+    sent.length = 0
+    handleWebSocket.message(ws, JSON.stringify({ type: 'sync_state' }))
+    await flushMicrotasks()
+    expect(sent).toContainEqual({ type: 'cli_runtime_applied', cliRuntimeId: 'bundled' })
+  })
+
   it('defers an installed CLI selection during an active turn and uses it after Stop without replaying cancelled input', async () => {
     const firstSend = deferred()
     const nextSend = deferred()
@@ -259,10 +286,16 @@ describe.skipIf(process.platform === 'win32')('WebSocket CLI runtime transitions
       running = true
     })
 
+    const requesterFrames: Record<string, unknown>[] = []
+    const requester: SessionConnection = {
+      ...ws,
+      send: mock(payload => { requesterFrames.push(JSON.parse(String(payload))); return 1 }),
+    }
     handleWebSocket.open(ws)
+    handleWebSocket.open(requester)
     handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content: 'Accepted work' }))
     await accepted.promise
-    handleWebSocket.message(ws, JSON.stringify({ type: 'set_cli_runtime', cliRuntimeId: 'installed' }))
+    handleWebSocket.message(requester, JSON.stringify({ type: 'set_cli_runtime', cliRuntimeId: 'installed' }))
     await drainTransitions()
     expect(getSessionTurnState(sessionId)).toBe('running')
     expect(startSession).not.toHaveBeenCalled()
@@ -278,8 +311,9 @@ describe.skipIf(process.platform === 'win32')('WebSocket CLI runtime transitions
       sessionId, root, expect.stringContaining(`/sdk/${sessionId}`),
       expect.objectContaining({ cliRuntimeId: 'installed', providerId: 'provider-a', model: 'deepseek-v4-pro' }),
     )
-    expect(sent).toContainEqual(expect.objectContaining({ type: 'error', code: 'CLI_RESTART_FAILED' }))
-    expect(sent).not.toContainEqual(expect.objectContaining({ type: 'error', code: 'CLI_RUNTIME_INVALID' }))
+    expect(requesterFrames).toContainEqual(expect.objectContaining({ type: 'error', code: 'CLI_RESTART_FAILED' }))
+    expect(sent).not.toContainEqual(expect.objectContaining({ type: 'error', code: 'CLI_RESTART_FAILED' }))
+    expect(requesterFrames).not.toContainEqual(expect.objectContaining({ type: 'error', code: 'CLI_RUNTIME_INVALID' }))
     expect(launchInfo.cliRuntimeId).toBe('bundled')
     expect(await getRuntimeSettings(sessionId)).toMatchObject({ cliRuntimeId: 'installed' })
 
