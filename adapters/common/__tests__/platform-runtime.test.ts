@@ -175,6 +175,7 @@ test('Slack authenticates before Socket Mode, answers in the incoming thread and
   await import('../../slack/runtime.js')
   await waitForSocketEvent(() => acknowledge !== undefined && slackReplies.length > 0, 'Slack acknowledgment and reply')
   expect(slackRequests).toEqual(['/api/auth.test', 'openSocketConnection', '/api/users.info', '/api/chat.postMessage'])
+  expect(open.mock.calls).toEqual([[fixtureEnv.SLACK_APP_TOKEN]])
   expect(acknowledge).toEqual({ envelope_id: 'envelope' })
   expect(slackReplies).toEqual([{ channel: 'fixture-dm', thread_ts: '1.0', text: expect.stringContaining('/sessions') }])
 
