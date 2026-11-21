@@ -4391,6 +4391,53 @@ describe('WebSocket Chat Integration', () => {
     }
   }, 20_000)
 
+  it('rejects an unavailable installed CLI runtime before stopping the current process or persisting a choice', async () => {
+    const workDir = path.join(tmpDir, `cli-runtime-${crypto.randomUUID()}`)
+    await fs.mkdir(workDir)
+    const createRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir }),
+    })
+    expect(createRes.status).toBe(201)
+    const { sessionId } = await createRes.json() as { sessionId: string }
+    await runTurn(sessionId, 'establish the existing CLI runtime')
+    const launchInfo = (await sessionService.getSessionLaunchInfo(sessionId))!
+    const originalTranscript = await fs.readFile(launchInfo.filePath, 'utf8')
+    const previousConfig = process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+    process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = path.join(tmpDir, 'missing-runtime.json')
+    const stopSpy = spyOn(conversationService, 'stopSessionAndWait')
+    const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+    try {
+      const error = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Timed out waiting for CLI runtime rejection')), 5_000)
+        ws.onmessage = event => {
+          const message = JSON.parse(String(event.data))
+          if (message.type === 'connected') {
+            ws.send(JSON.stringify({ type: 'set_cli_runtime', cliRuntimeId: 'installed' }))
+          } else if (message.type === 'error') {
+            clearTimeout(timeout)
+            resolve(message)
+          }
+        }
+        ws.onerror = () => {
+          clearTimeout(timeout)
+          reject(new Error('WebSocket failed during CLI runtime validation'))
+        }
+      })
+      expect(error).toMatchObject({ type: 'error', code: 'CLI_RUNTIME_INVALID' })
+      expect(stopSpy).not.toHaveBeenCalled()
+      expect(conversationService.hasSession(sessionId)).toBe(true)
+      expect(await sessionService.getSessionLaunchInfo(sessionId)).not.toHaveProperty('cliRuntimeId')
+      expect(await fs.readFile(launchInfo.filePath, 'utf8')).toBe(originalTranscript)
+    } finally {
+      ws.close()
+      stopSpy.mockRestore()
+      if (previousConfig === undefined) delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+      else process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = previousConfig
+    }
+  }, 20_000)
+
   it('should not send a turn to the custom runtime while OpenAI runtime validation is pending', async () => {
     const providerService = new ProviderService()
     const customProvider = await providerService.addProvider({
