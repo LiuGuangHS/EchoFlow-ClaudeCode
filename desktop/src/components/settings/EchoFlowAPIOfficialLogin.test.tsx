@@ -216,6 +216,54 @@ describe('EchoFlowAPIOfficialLogin', () => {
     expect(screen.getByText(userIdSummary(dedicatedAccount.userId))).toBeVisible()
   })
 
+  it('keeps checking an unknown result when the initial account read has not settled', async () => {
+    mockAccounts(mainAccount, null)
+    vi.mocked(echoflowApi.getAccounts).mockReturnValueOnce(new Promise(() => {}))
+    hostMocks.openLogin.mockResolvedValue('unknown')
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
+    expect(await screen.findByText(userIdSummary(mainAccount.userId))).toBeVisible()
+    expect(screen.getByRole('status')).toHaveTextContent(L('echoflowApiOfficialLogin.signInUnknown'))
+    mockAccounts({ ...mainAccount, userId: 'late-web-user' }, null)
+    expect(await screen.findByText(userIdSummary('late-web-user'))).toBeVisible()
+  })
+
+  it('reconciles an earlier binding when an immediate retry is cancelled by the host', async () => {
+    mockAccounts(null, null)
+    let resolveLogin!: (result: 'authenticated') => void
+    const opening = new Promise<'authenticated'>(resolve => { resolveLogin = resolve })
+    hostMocks.openLogin.mockReturnValueOnce(opening).mockResolvedValueOnce('cancelled')
+    hostMocks.whenAccountRestored.mockResolvedValueOnce(false).mockResolvedValueOnce(false)
+      .mockImplementation(endpoint => endpoint === 'main' ? opening.then(() => true) : Promise.resolve(false))
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    const signIn = () => fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
+    signIn()
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.cancel') }))
+    await act(async () => { signIn() })
+    expect(hostMocks.openLogin).toHaveBeenCalledTimes(2)
+
+    mockAccounts(mainAccount, null)
+    await act(async () => { resolveLogin('authenticated') })
+    expect(await screen.findByText(userIdSummary(mainAccount.userId))).toBeVisible()
+    expect(echoflowApi.refreshAccount).not.toHaveBeenCalled()
+  })
+
+  it('recovers an existing account after a failed bind supersedes its initial read', async () => {
+    mockAccounts(mainAccount, null)
+    let resolveInitial!: (value: Awaited<ReturnType<typeof echoflowApi.getAccounts>>) => void
+    vi.mocked(echoflowApi.getAccounts).mockReturnValueOnce(new Promise(resolve => { resolveInitial = resolve }))
+    vi.mocked(echoflowApi.bindAccount).mockRejectedValue(new Error('invalid token'))
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    fireEvent.change(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.userId')), { target: { value: 'manual-user' } })
+    fireEvent.change(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.managementToken')), { target: { value: 'invalid-token' } })
+    fireEvent.click(screen.getByRole('button', { name: bindLabel('main') }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(L('echoflowApiOfficialLogin.bindFailed'))
+    await act(async () => { resolveInitial({ account: mainAccount, accounts: { main: mainAccount, dedicated: null } }) })
+    expect(await screen.findByText(userIdSummary(mainAccount.userId))).toBeVisible()
+  })
+
   it('preserves a manually entered user ID during an unknown-result reread', async () => {
     mockAccounts(mainAccount, null)
     hostMocks.openLogin.mockResolvedValue('unknown')

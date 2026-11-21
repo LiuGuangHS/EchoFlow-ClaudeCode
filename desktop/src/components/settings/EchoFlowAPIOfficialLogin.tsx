@@ -73,7 +73,6 @@ type LineFeedback = {
 }
 
 const ENDPOINTS = ['main', 'dedicated'] as const
-const EMPTY_ACCOUNTS: Accounts = { main: null, dedicated: null }
 const ACCOUNT_RECHECK_DELAYS = [0, 250, 750]
 
 function isLive(account: EchoFlowAccount | null | undefined): account is EchoFlowAccount {
@@ -104,7 +103,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
   const cancelButtonRef = useRef<HTMLButtonElement>(null)
   const restoreSignInFocus = useRef(false)
   const { providers } = useProviderStore()
-  const [accounts, setAccounts] = useState<Accounts>(EMPTY_ACCOUNTS)
+  const [accounts, setAccounts] = useState<Partial<Accounts>>({})
   const accountVersions = useRef({ main: 0, dedicated: 0 })
   const readVersions = useRef({ main: 0, dedicated: 0 })
   const loadAccounts = useRef<LoadAccounts | null>(null)
@@ -246,7 +245,9 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
       }))
       setCredentialEditor(current => current === endpoint ? null : current)
     } catch {
-      if (isCurrent()) setLineFeedback(endpoint, { error: t('echoflowApiOfficialLogin.bindFailed') })
+      if (!isCurrent()) return
+      setLineFeedback(endpoint, { error: t('echoflowApiOfficialLogin.bindFailed') })
+      await loadAccounts.current?.([endpoint], false)
     } finally {
       if (isCurrent()) setLineFeedback(endpoint, { busy: undefined })
     }
@@ -262,9 +263,10 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
     onLoginActive?.(true)
     const onClose = () => onLoginActive?.(false)
     setLogin({ id, endpoint, onClose, run: async (bounds) => {
+      const host = getDesktopHost().echoFlow
       let outcome: Awaited<ReturnType<DesktopHost['echoFlow']['openLogin']>>
       try {
-        outcome = await getDesktopHost().echoFlow.openLogin(endpoint, id, bounds)
+        outcome = await host.openLogin(endpoint, id, bounds)
       } catch {
         outcome = 'failed'
       }
@@ -277,15 +279,18 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
       const load = loadAccounts.current
       if (!load || !isCurrent()) return
 
-      if (outcome === 'unknown') {
-        if (paneOpen) setLineFeedback(endpoint, { notice: t('echoflowApiOfficialLogin.signInUnknown') })
-        for (const delay of ACCOUNT_RECHECK_DELAYS) {
+      if (outcome === 'unknown' || outcome === 'cancelled') {
+        const unknown = outcome === 'unknown'
+        if (unknown && paneOpen) setLineFeedback(endpoint, { notice: t('echoflowApiOfficialLogin.signInUnknown') })
+        // The host can decline an overlapping open while the earlier write is still settling.
+        const recheck = unknown || await host.whenAccountRestored(endpoint).catch(() => false)
+        for (const delay of recheck ? ACCOUNT_RECHECK_DELAYS : [0]) {
           if (delay) await new Promise(resolve => setTimeout(resolve, delay))
           if (!isCurrent()) return
           const { [endpoint]: loaded } = await load([endpoint], false)
           if (!isCurrent()) return
-          // Rebinding the same live account can leave its public summary unchanged.
-          if (isLive(loaded) && (!isLive(account) || loaded.userId !== account.userId)) {
+          // A live account alone does not confirm a new binding without a prior snapshot.
+          if (unknown && account !== undefined && isLive(loaded) && (!isLive(account) || loaded.userId !== account.userId)) {
             if (paneOpen) setLineFeedback(endpoint, { notice: undefined })
             return
           }
