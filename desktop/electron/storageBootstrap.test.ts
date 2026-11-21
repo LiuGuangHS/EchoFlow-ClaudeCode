@@ -1,5 +1,6 @@
 // @vitest-environment node
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { runInNewContext } from 'node:vm'
@@ -20,6 +21,10 @@ afterEach(() => { for (const directory of directories.splice(0)) rmSync(director
 function fixture(options: { error?: string, missingWorker?: boolean, timeout?: boolean, differentRoot?: boolean, response?: unknown } = {}) {
   const home = mkdtempSync(path.join(os.tmpdir(), 'desktop-cold-bootstrap-'))
   directories.push(home)
+  const bundleDir = path.join(home, 'electron-dist')
+  const workerPath = path.join(bundleDir, 'storage-bootstrap.cjs')
+  mkdirSync(bundleDir)
+  if (!options.missingWorker) writeFileSync(workerPath, '')
   const root = path.join(home, 'selected')
   const binding = { root, internalDir: path.join(root, 'echoflow-code'), selection: 'explicit' }
   const finalRoot = options.differentRoot ? path.join(home, 'admitted') : root
@@ -62,7 +67,7 @@ function fixture(options: { error?: string, missingWorker?: boolean, timeout?: b
     switch (name) {
       case 'electron': return { app, dialog }
       case 'node:path': return path
-      case 'node:fs': return { existsSync: () => !options.missingWorker, mkdirSync: mkdir }
+      case 'node:fs': return { mkdirSync: mkdir }
       case 'node:worker_threads': return { Worker }
       case '../../src/utils/echoFlowConfigRoot': return { bindStorageRoot: bind }
       case './services/desktopStorageStartup': return { discoverDesktopStorage: () => ({ binding, sources: [], issues: [], controls: {
@@ -76,12 +81,13 @@ function fixture(options: { error?: string, missingWorker?: boolean, timeout?: b
   }
   const exports: { desktopRelaunchArgs?: string[] } = {}
   const run = () => runInNewContext(source, {
-    require: requireMock, exports, __dirname: path.join(home, 'electron-dist'),
+    require: Object.assign(requireMock, { resolve: createRequire(path.join(bundleDir, 'main.cjs')).resolve }),
+    exports, __dirname: path.join(home, 'source'),
     process: { env, argv: ['electron', 'main.cjs', '--unrelated'], exit() { throw new Error('fixture process exited') } },
     SharedArrayBuffer, TextDecoder,
     Atomics: { wait: () => { events.push('barrier'); return options.timeout ? 'timed-out' : 'not-equal' }, load: Atomics.load },
   })
-  return { run, root, binding, finalRoot, finalBinding, env, switches, events, app, dialog, bind, mkdir, makeWorker, unref, exports }
+  return { run, root, binding, finalRoot, finalBinding, env, switches, events, app, dialog, bind, mkdir, makeWorker, workerPath, unref, exports }
 }
 
 describe('pre-Chromium desktop bootstrap entry', () => {
@@ -89,7 +95,7 @@ describe('pre-Chromium desktop bootstrap entry', () => {
     const f = fixture()
     f.run()
     expect(f.events.slice(0, 3)).toEqual(['worker', 'barrier', 'bind'])
-    expect(f.makeWorker).toHaveBeenCalledWith(expect.stringMatching(/storage-bootstrap\.cjs$/))
+    expect(f.makeWorker).toHaveBeenCalledWith(f.workerPath)
     expect(f.app.setPath).toHaveBeenCalledWith('userData', f.root)
     expect(f.app.setPath).toHaveBeenCalledWith('sessionData', f.root)
     expect(f.app.setPath).toHaveBeenCalledWith('crashDumps', path.join(f.binding.internalDir, 'crashes'))

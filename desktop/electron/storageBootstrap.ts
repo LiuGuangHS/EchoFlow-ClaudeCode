@@ -1,6 +1,6 @@
 import { app, dialog } from 'electron'
 import path from 'node:path'
-import { existsSync, mkdirSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { Worker } from 'node:worker_threads'
 import { bindStorageRoot } from '../../src/utils/echoFlowConfigRoot'
 import { assertDesktopStorageControls, desktopStorageRelaunchArgs, discoverDesktopStorage, desktopStorageIdentity } from './services/desktopStorageStartup'
@@ -14,8 +14,9 @@ try {
   const launch = discoverDesktopStorage(app)
   // Block before ready/defaultSession. The worker resolves the final binding
   // and checks launch controls before the shared transaction touches either root.
-  const bootstrapFile = path.join(__dirname, 'storage-bootstrap.cjs')
-  if (!existsSync(bootstrapFile)) throw new Error('Packaged storage bootstrap is missing')
+  // Resolve the separately built worker relative to the running bundle.
+  const workerModule = './storage-bootstrap.cjs'
+  const bootstrapFile = require.resolve(workerModule)
   const memory = new SharedArrayBuffer(64 * 1024)
   const state = new Int32Array(memory, 0, 2)
   const worker = new Worker(bootstrapFile, { workerData: { launch, memory } })
