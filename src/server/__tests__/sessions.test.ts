@@ -903,7 +903,10 @@ describe('SessionService', () => {
     const fallbackTime = new Date('2026-07-03T03:00:00.000Z')
     await fs.utimes(filePath, fallbackTime, fallbackTime)
 
-    const result = await service.listSessions({ project: '/tmp/incomplete-summary' })
+    const project = '/tmp/incomplete-summary'
+    expect(await service.listSessions({ project })).toEqual({ sessions: [], total: 0 })
+    await service.setSessionArchived(sessionId, false)
+    const result = await service.listSessions({ project })
 
     expect(result.sessions).toHaveLength(1)
     expect(result.sessions[0]).toMatchObject({
@@ -1022,6 +1025,7 @@ describe('SessionService', () => {
     expect(scanned).toEqual(reduced.summary)
     expect(scanned).toEqual({
       agentProfile: 'standard',
+      legacyArchived: null,
       title: 'Canonical parity title',
       createdAt: '2026-07-01T01:00:00.000Z',
       modifiedAt: '2026-07-01T02:05:00.000Z',

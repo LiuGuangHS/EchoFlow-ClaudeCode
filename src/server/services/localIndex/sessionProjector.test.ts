@@ -88,6 +88,74 @@ async function sourceHash(path: string): Promise<string> {
 }
 
 describe('session projector', () => {
+  it.each(['session-meta', 'session-archive'] as const)('projects a deep oversized %s archive record, then applies a later restore in file order', async type => {
+    const root = await createTempDir('projector-deep-archive')
+    const padding = line({ type: 'progress', ignored: 'x'.repeat(8192) }).repeat(128)
+    const content = line(user('Deep history', '2026-01-01T00:00:00Z')) + padding
+      + line({ type, archived: true, timestamp: '2020-01-01T00:00:00Z', futureExtension: 'x'.repeat(2048) })
+      + padding + line({ type: 'session-meta', workDir: '/decoded/-repo' })
+    const candidate = await createCandidate({ root, projectPath: '-repo', sessionId: 'deep-archive', content })
+    const database = openLocalIndexDatabase({ path: join(root, 'index.sqlite') })
+    const index = createSessionIndex(database)
+    try {
+      const before = await sourceHash(candidate.path)
+      const projector = createSessionProjector({ database, index, scope: root, recordStreamingThresholdBytes: 512 })
+      expect(await projector.projectSource(candidate)).toMatchObject({ kind: 'indexed', projection: { summary: { legacyArchived: true } } })
+      expect(index.getSession(candidate.sessionId)).toMatchObject({ legacyArchived: true })
+      expect(index.getProjectionSeed(candidate.path)?.summary).toMatchObject({ legacyArchived: true })
+      expect(await sourceHash(candidate.path)).toBe(before)
+      await appendFile(candidate.path, line({ type: type === 'session-meta' ? 'session-archive' : 'session-meta', archived: false, timestamp: '2010-01-01T00:00:00Z' })
+        + line({ type: 'session-meta', permissionMode: 'plan' }))
+      expect(await projector.projectSource(candidate)).toMatchObject({ kind: 'indexed', action: 'append', projection: { summary: { legacyArchived: false } } })
+      expect(index.getProjectionSeed(candidate.path)?.summary).toMatchObject({ legacyArchived: false })
+    } finally { database.close() }
+  })
+
+  it.each([
+    '{malformed unrelated record}\n',
+    '{"type":"session-meta","archived":"false"}\n',
+    '{"type":"session-archive","archived":false',
+  ])('persists unresolved archive knowledge across restart until the source is repaired: %s', async tail => {
+    const root = await createTempDir('projector-unresolved-archive')
+    const content = line(user('Readable prefix', '2026-01-01T00:00:00Z'))
+    const candidate = await createCandidate({ root, projectPath: '-repo', sessionId: 'unresolved', content: content + tail })
+    const databasePath = join(root, 'index.sqlite')
+    const database = openLocalIndexDatabase({ path: databasePath })
+    try {
+      const index = createSessionIndex(database)
+      expect(await createSessionProjector({ database, index, scope: root }).projectSource(candidate)).toMatchObject({
+        kind: 'indexed', projection: { summary: { legacyArchived: null } },
+      })
+    } finally { database.close() }
+    const restarted = openLocalIndexDatabase({ path: databasePath })
+    try {
+      const index = createSessionIndex(restarted)
+      expect(index.getSession(candidate.sessionId)).toMatchObject({ legacyArchived: null })
+      expect(index.getProjectionSeed(candidate.path)?.summary).toMatchObject({ legacyArchived: null })
+      const projector = createSessionProjector({ database: restarted, index, scope: root })
+      expect(await projector.projectSource(candidate)).toMatchObject({ kind: 'indexed', projection: { summary: { legacyArchived: null } } })
+      await writeFile(candidate.path, content + line({ type: 'session-archive', archived: true }))
+      expect(await projector.projectSource(candidate)).toMatchObject({ kind: 'indexed', action: 'rebuild', projection: { summary: { legacyArchived: true } } })
+      expect(index.getProjectionSeed(candidate.path)?.summary).toMatchObject({ legacyArchived: true })
+    } finally { restarted.close() }
+  })
+
+  it('rebuilds pre-archive parser summaries rather than treating old projections as ordinary', async () => {
+    const root = await createTempDir('projector-archive-parser-upgrade')
+    const candidate = await createCandidate({ root, projectPath: '-repo', sessionId: 'legacy-parser', content:
+      line(user('Archived before upgrade', '2026-01-01T00:00:00Z')) + line({ type: 'session-archive', archived: true }),
+    })
+    const database = openLocalIndexDatabase({ path: join(root, 'index.sqlite') })
+    const index = createSessionIndex(database)
+    try {
+      await createSessionProjector({ database, index, scope: root, parserVersion: 13 }).projectSource(candidate)
+      expect(SESSION_SUMMARY_PARSER_VERSION).toBeGreaterThan(13)
+      expect(await createSessionProjector({ database, index, scope: root }).projectSource(candidate)).toMatchObject({
+        kind: 'indexed', action: 'rebuild', projection: { summary: { legacyArchived: true } },
+      })
+    } finally { database.close() }
+  })
+
   it('rebuilds a v7 cached runtime selection to clear effort omitted by its replacement', async () => {
     const root = await createTempDir('projector-runtime-effort')
     const database = openLocalIndexDatabase({ path: join(root, 'index.sqlite') })

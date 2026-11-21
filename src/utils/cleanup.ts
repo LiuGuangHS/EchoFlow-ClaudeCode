@@ -19,7 +19,7 @@ import {
 } from './settings/settings.js'
 import { TOOL_RESULTS_SUBDIR } from './toolResultStorage.js'
 import { cleanupStaleAgentWorktrees } from './worktree.js'
-import { readSessionArchives, withSessionArchiveLock } from './sessionArchiveStore.js'
+import { ensureSessionArchivesMigrated, readSessionArchiveRetentionIds, readSessionArchives, withSessionArchiveLock } from './sessionArchiveStore.js'
 
 /** Subagent transcripts live under `<projectsDir>/<project>/<sessionId>/subagents`. */
 const SUBAGENTS_SUBDIR = 'subagents'
@@ -161,9 +161,10 @@ async function unlinkIfOld(
 ): Promise<boolean> {
   const stats = await fsImpl.stat(filePath)
   if (stats.mtime < cutoffDate) {
+    if (dryRun) return true
     const remove = async () => {
       if (archiveSessionId && readSessionArchives(getClaudeConfigHomeDir()).ids.has(archiveSessionId)) return false
-      if (!dryRun) await fsImpl.unlink(filePath)
+      await fsImpl.unlink(filePath)
       return true
     }
     return archiveSessionId ? withSessionArchiveLock(getClaudeConfigHomeDir(), remove) : remove()
@@ -199,9 +200,13 @@ export async function cleanupOldSessionFiles(
   const result: CleanupResult = { messages: 0, errors: 0 }
   const projectsDir = getProjectsDir()
   const fsImpl = getFsImplementation()
+  const configDir = getClaudeConfigHomeDir()
   // A saved archive is an explicit retention choice. If its metadata cannot be
   // read, stop this sweep rather than silently deleting protected history.
-  const archivedIds = readSessionArchives(getClaudeConfigHomeDir()).ids
+  if (!dryRun) await ensureSessionArchivesMigrated(configDir)
+  const archivedIds = dryRun
+    ? await readSessionArchiveRetentionIds(configDir)
+    : readSessionArchives(configDir).ids
   const removeEmptyDir = async (dirPath: string): Promise<void> => {
     if (!dryRun) {
       await tryRmdir(dirPath, fsImpl)
@@ -380,6 +385,7 @@ export async function cleanupOldFileHistoryBackups(): Promise<CleanupResult> {
   const cutoffDate = getGeneralCleanupCutoffDate()
   const result: CleanupResult = { messages: 0, errors: 0 }
   const fsImpl = getFsImplementation()
+  await ensureSessionArchivesMigrated(getClaudeConfigHomeDir())
   const archivedIds = readSessionArchives(getClaudeConfigHomeDir()).ids
 
   try {
@@ -429,6 +435,7 @@ export async function cleanupOldSessionEnvDirs(): Promise<CleanupResult> {
   const cutoffDate = getGeneralCleanupCutoffDate()
   const result: CleanupResult = { messages: 0, errors: 0 }
   const fsImpl = getFsImplementation()
+  await ensureSessionArchivesMigrated(getClaudeConfigHomeDir())
   const archivedIds = readSessionArchives(getClaudeConfigHomeDir()).ids
 
   try {

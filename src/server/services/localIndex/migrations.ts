@@ -1,6 +1,11 @@
-import type { Database } from 'bun:sqlite'
+// Shared with the Node/Electron migration preflight; no Bun-only types cross that boundary.
+type Database = {
+  prepare(sql: string): { get(): unknown; finalize(): void }
+  exec(sql: string): unknown
+  transaction(operation: () => void): () => unknown
+}
 
-export const LOCAL_INDEX_SCHEMA_VERSION = 8
+export const LOCAL_INDEX_SCHEMA_VERSION = 9
 export const LOCAL_INDEX_SCHEMA_UNSUPPORTED =
   'LOCAL_INDEX_SCHEMA_UNSUPPORTED' as const
 
@@ -203,6 +208,11 @@ const SCHEMA_V8 = `
 ALTER TABLE sessions ADD COLUMN agent_profile TEXT NOT NULL DEFAULT 'standard' CHECK (agent_profile IN ('standard', 'lean'));
 `
 
+// Old projections carry no evidence that an absent legacy archive record means false.
+const SCHEMA_V9 = `
+ALTER TABLE sessions ADD COLUMN legacy_archived INTEGER CHECK (legacy_archived IN (0, 1));
+`
+
 const MIGRATIONS = [
   { version: 1, sql: SCHEMA_V1 },
   { version: 2, sql: SCHEMA_V2 },
@@ -212,6 +222,7 @@ const MIGRATIONS = [
   { version: 6, sql: SCHEMA_V6 },
   { version: 7, sql: SCHEMA_V7 },
   { version: 8, sql: SCHEMA_V8 },
+  { version: 9, sql: SCHEMA_V9 },
 ] as const
 
 export class UnsupportedLocalIndexSchemaError extends Error {

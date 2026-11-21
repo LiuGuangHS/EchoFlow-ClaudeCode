@@ -41,7 +41,7 @@ async function seed(n: number, options: { root?: string; workDir?: string; times
     ...(worktreeSession ? [{ type: 'worktree-state', worktreeSession }] : []),
     { type: 'user', timestamp, uuid: `message-${n}`, message: { role: 'user', content: `History ${n}` } },
   ].map(entry => JSON.stringify(entry)).join('\n') + '\n')
-  return { transcriptPath, id: idFor(n), title: `History ${n}`, createdAt: timestamp, modifiedAt: timestamp, messageCount: 1, projectPath, workDir, worktreeSession, permissionMode: 'plan', runtimeProviderId: 'fixture', runtimeModelId: 'fixture-model' }
+  return { transcriptPath, id: idFor(n), legacyArchived: false, title: `History ${n}`, createdAt: timestamp, modifiedAt: timestamp, messageCount: 1, projectPath, workDir, worktreeSession, permissionMode: 'plan', runtimeProviderId: 'fixture', runtimeModelId: 'fixture-model' }
 }
 
 function gateway(rows: IndexedSessionRow[], mode: LocalIndexMode, state: LocalIndexStatus['state'] = 'ready'): LocalIndexGateway {

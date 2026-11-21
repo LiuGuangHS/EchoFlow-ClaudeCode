@@ -57,6 +57,56 @@ function assistant(timestamp: string, extra: Record<string, unknown> = {}) {
 }
 
 describe('reduceTranscript', () => {
+  it.each([
+    ['session-meta', 'session-archive', true],
+    ['session-archive', 'session-meta', true],
+    ['session-meta', 'session-archive', false],
+    ['session-archive', 'session-meta', false],
+  ] as const)('classifies legacy %s then %s in file order with final archived=%s', (first, last, archived) => {
+    const entries = [
+      user('Legacy archive', '2026-01-01T00:00:00Z'),
+      { type: first, archived: !archived, timestamp: '2030-01-01T00:00:00Z' },
+      { type: last, archived, timestamp: '2020-01-01T00:00:00Z' },
+      { type: 'session-meta', permissionMode: 'plan' },
+    ]
+    const prefix = reduceTranscript(completeChunks(entries.slice(0, 2)), initialProjection())
+    const incremental = reduceTranscript(completeChunks(entries.slice(2), prefix.indexedBytes), prefix)
+    for (const projection of [incremental, reduceTranscript(completeChunks(entries), initialProjection())]) {
+      expect(projection.summary).toMatchObject({ legacyArchived: archived })
+    }
+    expect(reduceTranscript(completeChunks([entries[0]!]), initialProjection()).summary).toMatchObject({ legacyArchived: false })
+  })
+
+  it.each([
+    '{malformed unrelated record}',
+    { type: 'session-archive', archived: 'false' },
+    { type: 'session-meta', archived: null },
+    { type: 'session-archive' },
+  ])('does not classify unknown legacy input as ordinary, even after valid appends: %j', damaged => {
+    const prefix = reduceTranscript(completeChunks([
+      user('Still readable', '2026-01-01T00:00:00Z'),
+      { type: 'session-meta', archived: true },
+      damaged,
+    ]), initialProjection())
+    const appended = reduceTranscript(completeChunks([{ type: 'session-archive', archived: false }], prefix.indexedBytes), prefix)
+    expect(prefix.summary).toMatchObject({ legacyArchived: null })
+    expect(appended.summary).toMatchObject({ legacyArchived: null })
+  })
+
+  it.each(['{"type":"assistant"', '{"type":"session-archive","archived":false}'])(
+    'keeps pending input unresolved and restores prefix knowledge once the line completes: %s', tail => {
+      const chunks = completeChunks([user('Prefix', '2026-01-01T00:00:00Z'), { type: 'session-archive', archived: true }])
+      const prefix = reduceTranscript(chunks, initialProjection())
+      const pending = reduceTranscript([{ text: tail, byteStart: prefix.indexedBytes, completeLine: false }], prefix)
+      expect(pending.summary).toMatchObject({ legacyArchived: null })
+      expect(pending.pendingTailBytes).toBe(Buffer.byteLength(tail))
+      const entry = tail.endsWith('}') ? JSON.parse(tail) : { type: 'assistant', message: { role: 'assistant', content: 'completed' } }
+      const completed = reduceTranscript(completeChunks([entry], prefix.indexedBytes), pending)
+      expect(completed.summary).toMatchObject({ legacyArchived: tail.endsWith('}') ? false : true })
+      expect(completed.pendingTailBytes).toBe(0)
+    },
+  )
+
   it('preserves Fast mode across old partial metadata and applies explicit false incrementally', () => {
     const old = { type: 'session-meta', runtimeProviderId: 'openai-official', runtimeModelId: 'future-model' }
     const enabled = { type: 'session-meta', openAIFastMode: true }
@@ -145,6 +195,7 @@ describe('reduceTranscript', () => {
     const result = reduceTranscript(chunks, initialProjection())
 
     expect(result.summary).toEqual({
+      legacyArchived: false,
       agentProfile: 'standard',
       title: 'Pinned title',
       createdAt: '2026-01-01T00:00:00.000Z',
@@ -410,6 +461,7 @@ describe('reduceTranscript', () => {
     const result = reduceTranscript(chunks, initialProjection())
 
     expect(result.summary).toEqual({
+      legacyArchived: false,
       agentProfile: 'standard',
       title: 'Untitled Session',
       createdAt: birthtime,

@@ -635,27 +635,46 @@ describe('local index database', () => {
     }
   })
 
-  it('upgrades a frozen v7 cache with standard profiles without losing extension data', async () => {
-    const databasePath = join(process.env.CLAUDE_CONFIG_DIR!, 'frozen-v7-profile.sqlite')
-    await mkdir(dirname(databasePath), { recursive: true })
-    const seed = await openRawDatabase(databasePath)
-    seedFrozenV3(seed)
-    seed.exec('ALTER TABLE activity_sessions ADD COLUMN active_duration_ms INTEGER NOT NULL DEFAULT 0')
-    seed.exec('ALTER TABLE sessions ADD COLUMN session_api_format TEXT')
-    seed.exec('ALTER TABLE sessions ADD COLUMN is_team_worker INTEGER NOT NULL DEFAULT 0')
-    seed.exec('ALTER TABLE sessions ADD COLUMN openai_fast_mode INTEGER')
-    seed.exec("INSERT INTO schema_meta (key, value) VALUES ('future-extension', 'preserved')")
-    seed.exec('PRAGMA user_version = 7')
-    const original = queryAll<Record<string, unknown>>(seed, 'SELECT * FROM sessions')
-    seed.close(true)
-    const { openLocalIndexDatabase } = await loadDatabase()
-    const reopened = openLocalIndexDatabase({ path: databasePath })
-    try {
-      expect(reopened.read(operation => operation.all('SELECT * FROM sessions'))).toEqual(original.map(row => ({ ...row, agent_profile: 'standard' })))
-      expect(reopened.read(operation => operation.get<{ value: string }>("SELECT value FROM schema_meta WHERE key = 'future-extension'")?.value)).toBe('preserved')
-      expect(reopened.read(operation => operation.get<{ user_version: number }>('PRAGMA user_version')?.user_version)).toBe(LOCAL_INDEX_SCHEMA_VERSION)
-    } finally { reopened.close() }
-  })
+  for (const version of [7, 8]) {
+    it(`upgrades a frozen v${version} cache without inventing archive evidence or losing extension data`, async () => {
+      const databasePath = join(process.env.CLAUDE_CONFIG_DIR!, `frozen-v${version}-profile.sqlite`)
+      await mkdir(dirname(databasePath), { recursive: true })
+      const seed = await openRawDatabase(databasePath)
+      seedFrozenV3(seed)
+      seed.exec('ALTER TABLE activity_sessions ADD COLUMN active_duration_ms INTEGER NOT NULL DEFAULT 0')
+      seed.exec('ALTER TABLE sessions ADD COLUMN session_api_format TEXT')
+      seed.exec('ALTER TABLE sessions ADD COLUMN is_team_worker INTEGER NOT NULL DEFAULT 0')
+      seed.exec('ALTER TABLE sessions ADD COLUMN openai_fast_mode INTEGER')
+      if (version === 8) {
+        seed.exec("ALTER TABLE sessions ADD COLUMN agent_profile TEXT NOT NULL DEFAULT 'standard' CHECK (agent_profile IN ('standard', 'lean'))")
+        seed.exec("UPDATE sessions SET agent_profile = 'lean'")
+      }
+      seed.exec("ALTER TABLE sessions ADD COLUMN fixture_extension TEXT DEFAULT 'preserved'")
+      seed.exec("INSERT INTO schema_meta (key, value) VALUES ('future-extension', 'preserved')")
+      seed.exec(`PRAGMA user_version = ${version}`)
+      const original = queryAll<Record<string, unknown>>(seed, 'SELECT * FROM sessions')
+      seed.close(true)
+      const { openLocalIndexDatabase } = await loadDatabase()
+      const reopened = openLocalIndexDatabase({ path: databasePath })
+      try {
+        expect(reopened.read(operation => operation.all('SELECT * FROM sessions'))).toEqual(original.map(row => ({ agent_profile: 'standard', ...row, legacy_archived: null })))
+        expect(reopened.read(operation => operation.get<{ value: string }>("SELECT value FROM schema_meta WHERE key = 'future-extension'")?.value)).toBe('preserved')
+        expect(reopened.read(operation => operation.get<{ user_version: number }>('PRAGMA user_version')?.user_version)).toBe(LOCAL_INDEX_SCHEMA_VERSION)
+        expect(reopened.read(operation => operation.get('SELECT legacy_archived FROM sessions'))).toEqual({ legacy_archived: null })
+        for (const value of [0, 1, null]) {
+          reopened.write(operation => operation.run('UPDATE sessions SET legacy_archived = ?', value))
+          expect(reopened.read(operation => operation.get('SELECT legacy_archived FROM sessions'))).toEqual({ legacy_archived: value })
+        }
+        expect(() => reopened.write(operation => operation.run('UPDATE sessions SET legacy_archived = 2'))).toThrow()
+        reopened.write(operation => operation.run('UPDATE sessions SET legacy_archived = 1'))
+      } finally { reopened.close() }
+      const again = openLocalIndexDatabase({ path: databasePath })
+      try {
+        expect(again.read(operation => operation.all('SELECT * FROM sessions'))).toEqual(original.map(row => ({ agent_profile: 'standard', ...row, legacy_archived: 1 })))
+        expect(again.read(operation => operation.get<{ user_version: number }>('PRAGMA user_version')?.user_version)).toBe(LOCAL_INDEX_SCHEMA_VERSION)
+      } finally { again.close() }
+    })
+  }
 
   it('reopens a frozen v5 cache after protocol rollback without losing existing data', async () => {
     const databasePath = join(process.env.CLAUDE_CONFIG_DIR!, 'frozen-v5.sqlite')
@@ -677,7 +696,7 @@ describe('local index database', () => {
       expect(reopened.read(operation => operation.get<{ user_version: number }>(
         'PRAGMA user_version',
       )?.user_version)).toBe(LOCAL_INDEX_SCHEMA_VERSION)
-      expect(reopened.read(operation => operation.all('SELECT * FROM sessions'))).toEqual(originalSessions.map(row => ({ ...row, is_team_worker: 0, openai_fast_mode: null, agent_profile: 'standard' })))
+      expect(reopened.read(operation => operation.all('SELECT * FROM sessions'))).toEqual(originalSessions.map(row => ({ ...row, is_team_worker: 0, openai_fast_mode: null, agent_profile: 'standard', legacy_archived: null })))
       expect(reopened.read(operation => operation.all('SELECT * FROM activity_sessions'))).toEqual(originalActivity)
       expect(reopened.read(operation => operation.get<{ value: string }>(
         "SELECT value FROM schema_meta WHERE key = 'future-extension'",

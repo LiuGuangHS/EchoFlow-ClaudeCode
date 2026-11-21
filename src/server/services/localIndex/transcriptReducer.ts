@@ -77,6 +77,7 @@ type ReducerEntry = {
 }
 
 type ReducerState = {
+  legacyArchived: boolean | null
   isTeamWorker: boolean
   fallbackCreatedAt: string
   fallbackModifiedAt: string
@@ -282,6 +283,7 @@ function createInitialState(
     effortLevel: undefined,
     openAIFastMode: undefined,
     isTeamWorker: false,
+    legacyArchived: false,
     repository: undefined,
     worktreeSession: undefined,
     nextOrdinal: 0,
@@ -546,7 +548,14 @@ function applyActivityEntry(state: ReducerState, entry: ReducerEntry): void {
   accumulateAdvisorUsage(state, entry, timestamp.date, usage)
 }
 
+export function reduceLegacyArchive(previous: boolean | null, entry: Record<string, unknown>): boolean | null {
+  if (previous === null) return null
+  if (entry.type !== 'session-archive' && !(entry.type === 'session-meta' && Object.hasOwn(entry, 'archived'))) return previous
+  return typeof entry.archived === 'boolean' ? entry.archived : null
+}
+
 function applyEntry(state: ReducerState, entry: ReducerEntry): void {
+  state.legacyArchived = reduceLegacyArchive(state.legacyArchived, entry)
   if (entry.entrypoint === 'claude-desktop-team-worker') state.isTeamWorker = true
   applyActivityEntry(state, entry)
   if (!state.hasCreatedAt && entry.timestamp) {
@@ -636,6 +645,7 @@ function applyEntry(state: ReducerState, entry: ReducerEntry): void {
 
 function summaryFromState(state: ReducerState): SessionListSummary {
   return {
+    legacyArchived: state.legacyArchived,
     title: state.customTitle ||
       state.goalTitle ||
       state.aiTitle ||
@@ -796,8 +806,10 @@ export function reduceTranscriptWithLocators(
       entry = JSON.parse(trimmed) as ReducerEntry
     } catch {
       malformedLineCount += 1
+      state.legacyArchived = null
       continue
     }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) state.legacyArchived = null
     if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
       options.validateRetainedMetadata?.(entry)
     }
@@ -810,7 +822,7 @@ export function reduceTranscriptWithLocators(
   }
 
   const projection: TranscriptProjection = {
-    summary: summaryFromState(state),
+    summary: { ...summaryFromState(state), legacyArchived: pendingTailBytes > 0 ? null : state.legacyArchived },
     indexedBytes,
     pendingTailBytes,
     malformedLineCount,
