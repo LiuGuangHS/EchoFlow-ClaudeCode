@@ -74,6 +74,9 @@ export function getEchoFlowGrokOAuthFilePath(): string {
 
 export class EchoFlowGrokOAuthService {
   private sessions = new Map<string, GrokOAuthSession>()
+  private exchangingSession?: GrokOAuthSession
+  private generation = 0
+  private writes = Promise.resolve()
   private refreshFn: GrokRefreshFn = refreshGrokTokens
 
   setRefreshFn(fn: GrokRefreshFn): void {
@@ -93,7 +96,17 @@ export class EchoFlowGrokOAuthService {
     }
   }
 
-  async saveTokens(tokens: StoredGrokOAuthTokens): Promise<void> {
+  private enqueueWrite<T>(write: () => Promise<T>): Promise<T> {
+    const operation = this.writes.then(write)
+    this.writes = operation.then(() => undefined, () => undefined)
+    return operation
+  }
+
+  saveTokens(tokens: StoredGrokOAuthTokens): Promise<void> {
+    return this.enqueueWrite(() => this.writeTokens(tokens))
+  }
+
+  private async writeTokens(tokens: StoredGrokOAuthTokens): Promise<void> {
     const filePath = this.getOAuthFilePath()
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     const temporaryPath = `${filePath}.tmp.${process.pid}.${Date.now()}`
@@ -107,17 +120,23 @@ export class EchoFlowGrokOAuthService {
     }
   }
 
-  async deleteTokens(): Promise<void> {
-    await fs.rm(this.getOAuthFilePath(), { force: true })
+  deleteTokens(): Promise<void> {
+    this.dispose()
+    return this.enqueueWrite(() => fs.rm(this.getOAuthFilePath(), { force: true }))
   }
 
   async startSession(): Promise<GrokOAuthSession> {
     this.dispose()
+    const generation = this.generation
     const codeVerifier = generateGrokCodeVerifier()
     const state = generateGrokState()
     const nonce = generateGrokNonce()
     const authCodeListener = new AuthCodeListener(CALLBACK_PATH)
     const port = await authCodeListener.start(undefined, '127.0.0.1')
+    if (generation !== this.generation) {
+      authCodeListener.close()
+      throw new Error('Grok OAuth sign-in was cancelled')
+    }
     const redirectUri = `http://127.0.0.1:${port}${CALLBACK_PATH}`
     const authorizeUrl = buildGrokAuthorizeUrl({ redirectUri, codeVerifier, state, nonce })
     const session: GrokOAuthSession = {
@@ -174,28 +193,46 @@ export class EchoFlowGrokOAuthService {
       throw new Error('Grok OAuth session not found or expired')
     }
     this.sessions.delete(state)
-    const response = await exchangeGrokCodeForTokens({
-      code,
-      redirectUri: session.redirectUri,
-      codeVerifier: session.codeVerifier,
-      ...(await this.getTokenFetchOptions()),
-    })
-    const normalized = normalizeGrokTokens(response)
-    const tokens: StoredGrokOAuthTokens = {
-      accessToken: normalized.accessToken,
-      refreshToken: normalized.refreshToken,
-      expiresAt: normalized.expiresAt,
-      idToken: normalized.idToken ?? null,
-      email: normalized.email ?? null,
-      clientId: normalized.clientId ?? null,
+    clearTimeout(session.expiresTimer)
+    session.expiresTimer = undefined
+    const generation = this.generation
+    this.exchangingSession = session
+    try {
+      const response = await exchangeGrokCodeForTokens({
+        code,
+        redirectUri: session.redirectUri,
+        codeVerifier: session.codeVerifier,
+        ...(await this.getTokenFetchOptions()),
+      })
+      const normalized = normalizeGrokTokens(response)
+      const tokens: StoredGrokOAuthTokens = {
+        accessToken: normalized.accessToken,
+        refreshToken: normalized.refreshToken,
+        expiresAt: normalized.expiresAt,
+        idToken: normalized.idToken ?? null,
+        email: normalized.email ?? null,
+        clientId: normalized.clientId ?? null,
+      }
+      await this.enqueueWrite(async () => {
+        if (generation !== this.generation) throw new Error('Grok OAuth sign-in was cancelled')
+        const committedGeneration = ++this.generation
+        await this.writeTokens(tokens)
+        if (committedGeneration !== this.generation) throw new Error('Grok OAuth sign-in was cancelled')
+      })
+      return tokens
+    } finally {
+      if (this.exchangingSession === session) this.exchangingSession = undefined
+      // The loopback handler still owns a pending HTTP response.
+      if (!session.authCodeListener?.hasPendingResponse()) this.closeSession(session)
     }
-    await this.saveTokens(tokens)
-    return tokens
   }
 
   async ensureFreshTokens(): Promise<StoredGrokOAuthTokens | null> {
+    const generation = this.generation
+    await this.writes
+    if (generation !== this.generation) return null
     const tokens = await this.loadTokens()
-    if (!tokens) return null
+    if (!tokens || generation !== this.generation) return null
     if (tokens.expiresAt === null || !isGrokTokenExpired(tokens.expiresAt)) return tokens
     if (!tokens.refreshToken) return null
     try {
@@ -216,8 +253,11 @@ export class EchoFlowGrokOAuthService {
         email: normalized.email ?? null,
         clientId: normalized.clientId ?? null,
       }
-      await this.saveTokens(updated)
-      return updated
+      return await this.enqueueWrite(async () => {
+        if (generation !== this.generation) return null
+        await this.writeTokens(updated)
+        return generation === this.generation ? updated : null
+      })
     } catch (error) {
       logTokenRefreshFailure('[EchoFlowGrokOAuthService]', error)
       return null
@@ -225,8 +265,11 @@ export class EchoFlowGrokOAuthService {
   }
 
   dispose(): void {
+    this.generation += 1
     for (const session of this.sessions.values()) this.closeSession(session)
     this.sessions.clear()
+    if (this.exchangingSession) this.closeSession(this.exchangingSession)
+    this.exchangingSession = undefined
   }
 
   private closeSession(session: GrokOAuthSession): void {

@@ -39,7 +39,6 @@ export async function handleHahaGrokOAuthApi(
     }
 
     if (action === undefined && req.method === 'DELETE') {
-      hahaGrokOAuthService.dispose()
       await hahaGrokOAuthService.deleteTokens()
       return Response.json({ ok: true })
     }

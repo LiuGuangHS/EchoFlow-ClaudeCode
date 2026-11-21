@@ -90,6 +90,9 @@ export function getEchoFlowOpenAIOAuthFilePath(): string {
 
 export class EchoFlowOpenAIOAuthService {
   private sessions = new Map<string, OpenAIOAuthSession>()
+  private exchangingSession?: OpenAIOAuthSession
+  private generation = 0
+  private writes = Promise.resolve()
   private refreshFn: OpenAIRefreshFn = refreshOpenAITokens
   private callbackPort: number
 
@@ -125,7 +128,17 @@ export class EchoFlowOpenAIOAuthService {
     }
   }
 
-  async saveTokens(tokens: StoredOpenAIOAuthTokens): Promise<void> {
+  private enqueueWrite<T>(write: () => Promise<T>): Promise<T> {
+    const operation = this.writes.then(write)
+    this.writes = operation.then(() => undefined, () => undefined)
+    return operation
+  }
+
+  saveTokens(tokens: StoredOpenAIOAuthTokens): Promise<void> {
+    return this.enqueueWrite(() => this.writeTokens(tokens))
+  }
+
+  private async writeTokens(tokens: StoredOpenAIOAuthTokens): Promise<void> {
     const filePath = this.getOAuthFilePath()
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`
@@ -141,17 +154,15 @@ export class EchoFlowOpenAIOAuthService {
     }
   }
 
-  async deleteTokens(): Promise<void> {
-    try {
-      await fs.unlink(this.getOAuthFilePath())
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
-    }
+  deleteTokens(): Promise<void> {
+    this.dispose()
+    return this.enqueueWrite(() => fs.rm(this.getOAuthFilePath(), { force: true }))
   }
 
   async startSession(_input: { serverPort: number }): Promise<OpenAIOAuthSession> {
     this.pruneExpiredSessions()
     this.dispose()
+    const generation = this.generation
 
     const codeVerifier = generateOpenAICodeVerifier()
     const state = generateOpenAIState()
@@ -165,6 +176,11 @@ export class EchoFlowOpenAIOAuthService {
       throw new Error(
         `OpenAI OAuth callback port ${this.callbackPort} is unavailable: ${message}`,
       )
+    }
+
+    if (generation !== this.generation) {
+      authCodeListener.close()
+      throw new Error('OpenAI OAuth sign-in was cancelled')
     }
 
     const redirectUri = `http://localhost:${this.callbackPort}${OPENAI_CODEX_REDIRECT_PATH}`
@@ -275,10 +291,13 @@ export class EchoFlowOpenAIOAuthService {
   }
 
   dispose(): void {
+    this.generation += 1
     for (const session of this.sessions.values()) {
       this.closeSession(session)
     }
     this.sessions.clear()
+    if (this.exchangingSession) this.closeSession(this.exchangingSession)
+    this.exchangingSession = undefined
   }
 
   async completeSession(
@@ -290,30 +309,46 @@ export class EchoFlowOpenAIOAuthService {
       throw new Error('OpenAI OAuth session not found or expired')
     }
 
-    const response = await exchangeOpenAICodeForTokens({
-      code: authorizationCode,
-      redirectUri: session.redirectUri,
-      codeVerifier: session.codeVerifier,
-      ...(await this.getOpenAITokenFetchOptions()),
-    })
+    const generation = this.generation
+    this.exchangingSession = session
+    try {
+      const response = await exchangeOpenAICodeForTokens({
+        code: authorizationCode,
+        redirectUri: session.redirectUri,
+        codeVerifier: session.codeVerifier,
+        ...(await this.getOpenAITokenFetchOptions()),
+      })
 
-    const normalized = normalizeOpenAITokens(response)
-    const tokens: StoredOpenAIOAuthTokens = {
-      accessToken: normalized.accessToken,
-      refreshToken: normalized.refreshToken,
-      expiresAt: normalized.expiresAt,
-      idToken: normalized.idToken ?? null,
-      email: normalized.email ?? null,
-      accountId: normalized.accountId ?? null,
-      clientId: normalized.clientId ?? null,
+      const normalized = normalizeOpenAITokens(response)
+      const tokens: StoredOpenAIOAuthTokens = {
+        accessToken: normalized.accessToken,
+        refreshToken: normalized.refreshToken,
+        expiresAt: normalized.expiresAt,
+        idToken: normalized.idToken ?? null,
+        email: normalized.email ?? null,
+        accountId: normalized.accountId ?? null,
+        clientId: normalized.clientId ?? null,
+      }
+      await this.enqueueWrite(async () => {
+        if (generation !== this.generation) throw new Error('OpenAI OAuth sign-in was cancelled')
+        const committedGeneration = ++this.generation
+        await this.writeTokens(tokens)
+        if (committedGeneration !== this.generation) throw new Error('OpenAI OAuth sign-in was cancelled')
+      })
+      return tokens
+    } finally {
+      if (this.exchangingSession === session) this.exchangingSession = undefined
+      // The loopback handler still owns a pending HTTP response.
+      if (!session.authCodeListener?.hasPendingResponse()) this.closeSession(session)
     }
-    await this.saveTokens(tokens)
-    return tokens
   }
 
   async ensureFreshTokens(): Promise<StoredOpenAIOAuthTokens | null> {
+    const generation = this.generation
+    await this.writes
+    if (generation !== this.generation) return null
     const tokens = await this.loadTokens()
-    if (!tokens) return null
+    if (!tokens || generation !== this.generation) return null
 
     if (tokens.expiresAt === null) return tokens
 
@@ -347,8 +382,11 @@ export class EchoFlowOpenAIOAuthService {
         accountId: normalized.accountId ?? null,
         clientId: normalized.clientId ?? null,
       }
-      await this.saveTokens(updated)
-      return updated
+      return await this.enqueueWrite(async () => {
+        if (generation !== this.generation) return null
+        await this.writeTokens(updated)
+        return generation === this.generation ? updated : null
+      })
     } catch (err) {
       logTokenRefreshFailure('[EchoFlowOpenAIOAuthService]', err)
       return null

@@ -269,6 +269,31 @@ describe('EchoFlowOpenAIOAuthService — session management', () => {
     }
   })
 
+  test('releases the callback port and discards an in-flight exchange on sign-out', async () => {
+    const originalFetch = globalThis.fetch
+    const session = await service.startSession({ serverPort: 54321 })
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<Response>()
+    globalThis.fetch = (async () => {
+      started.resolve()
+      return finish.promise
+    }) as typeof fetch
+    const exchange = service.completeSession('fixture-code', session.state).catch(error => error)
+
+    try {
+      await started.promise
+      await service.deleteTokens()
+      const next = await service.startSession({ serverPort: 54321 })
+      expect(next.state).not.toBe(session.state)
+    } finally {
+      finish.resolve(Response.json({ access_token: 'discarded', refresh_token: 'fixture', expires_in: 3600 }))
+      await exchange
+      globalThis.fetch = originalFetch
+    }
+    expect(await exchange).toBeInstanceOf(Error)
+    expect(await service.loadTokens()).toBeNull()
+  })
+
   test('callback listener uses saved manual network proxy for token exchange', async () => {
     const originalFetch = globalThis.fetch
     await fs.writeFile(
@@ -520,6 +545,32 @@ describe('EchoFlowOpenAIOAuthService — ensureFreshAccessToken', () => {
     expect(loaded?.refreshToken).toBe('refresh-to-preserve')
     expect(loaded?.idToken).toBe('id-token-to-preserve')
     expect(loaded?.clientId).toBe('app_EMoamEEZ73f0CkXaXp7hrann')
+  })
+
+  test('does not restore tokens from a refresh that finishes after sign-out', async () => {
+    await service.saveTokens({
+      accessToken: 'expired',
+      refreshToken: 'fixture-refresh',
+      expiresAt: Date.now() - 1_000,
+      email: null,
+      accountId: null,
+    })
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<{ access_token: string; expires_in: number }>()
+    service.setRefreshFn(() => {
+      started.resolve()
+      return finish.promise
+    })
+
+    const refresh = service.ensureFreshTokens()
+    try {
+      await started.promise
+      await service.deleteTokens()
+    } finally {
+      finish.resolve({ access_token: 'discarded', expires_in: 3600 })
+    }
+    expect(await refresh).toBeNull()
+    expect(await service.loadTokens()).toBeNull()
   })
 
   test('returns null when refresh fails', async () => {

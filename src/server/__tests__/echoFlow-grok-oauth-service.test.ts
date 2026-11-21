@@ -106,6 +106,31 @@ describe('EchoFlowGrokOAuthService', () => {
     })
   })
 
+  test('does not restore tokens from a refresh that finishes after sign-out', async () => {
+    await service.saveTokens({
+      accessToken: 'expired',
+      refreshToken: 'fixture-refresh',
+      expiresAt: Date.now() - 1_000,
+      email: null,
+    })
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<{ access_token: string; expires_in: number }>()
+    service.setRefreshFn(() => {
+      started.resolve()
+      return finish.promise
+    })
+
+    const refresh = service.ensureFreshTokens()
+    try {
+      await started.promise
+      await service.deleteTokens()
+    } finally {
+      finish.resolve({ access_token: 'discarded', expires_in: 3600 })
+    }
+    expect(await refresh).toBeNull()
+    expect(await service.loadTokens()).toBeNull()
+  })
+
   test('uses direct, system, and manual network settings for token refresh', async () => {
     process.env[SYSTEM_PROXY_URL_ENV] = 'http://127.0.0.1:7897'
     process.env.HTTP_PROXY = 'http://stale-parent.example:8080'

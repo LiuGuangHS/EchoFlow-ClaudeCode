@@ -39,7 +39,6 @@ export async function handleEchoFlowGrokOAuthApi(
     }
 
     if (action === undefined && req.method === 'DELETE') {
-      echoFlowGrokOAuthService.dispose()
       await echoFlowGrokOAuthService.deleteTokens()
       return Response.json({ ok: true })
     }
