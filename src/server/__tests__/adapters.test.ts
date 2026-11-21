@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { handleAdaptersApi, cleanupStaleWhatsAppLoginDirectories } from '../api/adapters.js'
+import { diagnosticsService } from '../services/diagnosticsService.js'
 import * as whatsappProtocol from '../../../adapters/whatsapp/protocol.js'
 
 let tmpDir: string
@@ -298,6 +299,7 @@ describe('Adapters API', () => {
     const externalDir = await fs.mkdtemp(path.join(os.tmpdir(), 'whatsapp-login-sentinel-'))
     const originalAuthDir = process.env.WHATSAPP_AUTH_DIR
     const startLogin = spyOn(whatsappProtocol, 'startWhatsAppLoginWithQr').mockRejectedValue(new Error('Unexpected login'))
+    const recordDiagnostic = spyOn(diagnosticsService, 'recordEvent').mockResolvedValue({ ok: true })
     try {
       const sentinel = path.join(externalDir, 'creds.json')
       await fs.writeFile(sentinel, 'external fixture')
@@ -308,9 +310,14 @@ describe('Adapters API', () => {
       const { req, url, segments } = makeRequest('POST', '/api/adapters/whatsapp/login/start')
       expect((await handleAdaptersApi(req, url, segments)).status).toBe(500)
       expect(startLogin).not.toHaveBeenCalled()
+      expect(recordDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'api_unhandled_error',
+        summary: expect.stringContaining('outside the selected storage root'),
+      }))
       expect(await fs.readFile(sentinel, 'utf8')).toBe('external fixture')
       expect(await fs.readdir(tmpDir)).toEqual(['adapters.json'])
     } finally {
+      recordDiagnostic.mockRestore()
       startLogin.mockRestore()
       if (originalAuthDir === undefined) delete process.env.WHATSAPP_AUTH_DIR
       else process.env.WHATSAPP_AUTH_DIR = originalAuthDir
