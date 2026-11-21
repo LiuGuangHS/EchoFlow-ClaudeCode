@@ -29,8 +29,8 @@ function normalizeAccountJid(jid: unknown) {
 }
 
 // The caller supplies a stopped, bounded snapshot and verifies its ancestors and byte identities.
-export async function validateWhatsAppAuthDirectory(directory: string, expectedAccountJid: string): Promise<void> {
-  if (!await validateSnapshot(directory, expectedAccountJid).catch(() => false)) {
+export async function validateWhatsAppAuthDirectory(directory: string, expectedAccountJid: string, { readOnly = false } = {}): Promise<void> {
+  if (!await validateSnapshot(directory, expectedAccountJid, readOnly).catch(() => false)) {
     throw new Error('WhatsApp authentication directory could not be validated')
   }
 }
@@ -40,7 +40,7 @@ function hasKeyPair(pair: AuthenticationCreds['noiseKey'] | undefined): boolean 
     pair.private instanceof Uint8Array && pair.private.length === 32
 }
 
-async function validateSnapshot(path: string, expectedAccountJid: string): Promise<boolean> {
+async function validateSnapshot(path: string, expectedAccountJid: string, readOnly: boolean): Promise<boolean> {
   const directory = resolve(path)
   const expected = normalizeAccountJid(expectedAccountJid)
   if (!expected || !(await lstat(directory)).isDirectory()) return false
@@ -53,9 +53,19 @@ async function validateSnapshot(path: string, expectedAccountJid: string): Promi
     if (!stat.isFile() || stat.nlink !== 1) return false
   }
 
-  // Use the disk reader without loading the socket and optional media dependencies.
-  const { useMultiFileAuthState } = await import('@whiskeysockets/baileys/lib/Utils/use-multi-file-auth-state.js')
-  const { state } = await useMultiFileAuthState(directory)
+  const { BufferJSON } = await import('@whiskeysockets/baileys/lib/Utils/generics.js')
+  const readJson = async (name: string) => JSON.parse(await readFile(join(directory, name), 'utf8'), BufferJSON.reviver)
+  // Baileys can create a missing auth directory. Only use its disk reader on copies.
+  const diskReader = readOnly ? undefined : await import('@whiskeysockets/baileys/lib/Utils/use-multi-file-auth-state.js')
+  const state = (await diskReader?.useMultiFileAuthState(directory))?.state
+  const keyFileName = (category: keyof SignalDataTypeMap, id: string) => `${category}-${id.replaceAll('/', '__').replaceAll(':', '-')}.json`
+  const getKey = async (category: keyof SignalDataTypeMap, id: string) => {
+    if (state) return (await state.keys.get(category, [id]))[id]
+    const value = await readJson(keyFileName(category, id))
+    if (category !== 'app-state-sync-key' || !value) return value
+    const { proto } = await import('@whiskeysockets/baileys/WAProto/index.js')
+    return proto.Message.AppStateSyncKeyData.fromObject(value)
+  }
   const matchesAccount = async (creds: AuthenticationCreds) => {
     // Baileys also returns fresh credentials on read failure, but these lack me.id.
     if (normalizeAccountJid(creds?.me?.id) !== expected || !hasKeyPair(creds.noiseKey) ||
@@ -66,22 +76,17 @@ async function validateSnapshot(path: string, expectedAccountJid: string): Promi
     const id = creds.myAppStateKeyId
     if (id === undefined) return true
     if (typeof id !== 'string' || !id) return false
-    const name = `app-state-sync-key-${id.replaceAll('/', '__').replaceAll(':', '-')}.json`
-    if (!files.has(name)) return false
-    const keyData = (await state.keys.get('app-state-sync-key', [id]))[id]?.keyData
+    if (!files.has(keyFileName('app-state-sync-key', id))) return false
+    const keyData = (await getKey('app-state-sync-key', id))?.keyData
     return keyData instanceof Uint8Array && keyData.length > 0
   }
 
-  if (!await matchesAccount(state.creds)) return false
-  if (files.has(backupFile)) {
-    const { BufferJSON } = await import('@whiskeysockets/baileys/lib/Utils/generics.js')
-    const backup = JSON.parse(await readFile(join(directory, backupFile), 'utf8'), BufferJSON.reviver)
-    if (!await matchesAccount(backup)) return false
-  }
+  if (!await matchesAccount(state ? state.creds : await readJson(credsFile))) return false
+  if (files.has(backupFile) && !await matchesAccount(await readJson(backupFile))) return false
 
   for (const name of files) {
     const key = parseKeyFile(name)
-    if (key && (await state.keys.get(key.category, [key.id]))[key.id] == null) return false
+    if (key && await getKey(key.category, key.id) == null) return false
   }
   return true
 }

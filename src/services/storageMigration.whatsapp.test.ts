@@ -154,6 +154,25 @@ test.each(['missing', 'empty'] as const)('rejects an app-state key that is %s be
   expect(await readFile(f.config, 'utf8')).toBe(f.configBytes)
 })
 
+test('stopping the cold migration before publication leaves the approval cancellable', async () => {
+  const f = await fixture()
+  await mkdir(f.binding.root)
+  await writeFile(path.join(f.binding.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+  const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)
+  const launch = await armWhatsAppStorageApproval(f.binding, preview, true)
+  const sources = await readApprovedWhatsAppSources(f.binding, launch)
+  const controller = new AbortController()
+  const result = await executeStorageMigration({ binding: f.binding, sources, hooks: {
+    ...f.hooks, signal: controller.signal,
+    assertQuiescent: async () => { controller.abort() },
+  } })
+  expect(result.state).toBe('blocked')
+  expect(await readApprovedStorageTransaction(f.binding, launch.id)).toBeUndefined()
+  await cancelColdStorageApproval(f.binding, launch.id)
+  expect(await Bun.file(path.join(f.directory, 'creds.json')).exists()).toBe(true)
+  expect(await readFile(f.config, 'utf8')).toBe(f.configBytes)
+})
+
 test('a late account file prevents acceptance and recovery finishes the same unchanged snapshot', async () => {
   const f = await fixture()
   const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)

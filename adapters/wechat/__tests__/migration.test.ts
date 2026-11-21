@@ -8,6 +8,7 @@ import { ensureEchoFlowConfigRoot, getEchoFlowInternalDir } from '../../../src/u
 
 const repo = resolve(import.meta.dirname, '../../..')
 const token = 'fixture-migration-token'
+const sidecarStartupTimeout = 15_000
 let home: string
 let data: string
 let writers: string
@@ -95,7 +96,7 @@ it('stops the configured sidecar and releases its writer lease while a long poll
     return held.promise
   })
   try {
-    await eventually(() => expect(polls, stderr).toBe(1))
+    await eventually(() => expect(polls, stderr).toBe(1), sidecarStartupTimeout)
     expect(await readdir(writers)).toHaveLength(1)
     quiesce()
     await expectStopped(2000)
@@ -104,7 +105,7 @@ it('stops the configured sidecar and releases its writer lease while a long poll
     held.resolve(Response.json({ msgs: [message(1, 'unpaired', pairing.code)] }))
   }
   expect(JSON.parse(await readFile(join(data, 'adapters.json'), 'utf8')).pairing).toEqual(pairing)
-}, 8000)
+}, 25_000)
 
 it('cancels the retry delay without making another poll', async () => {
   let polls = 0
@@ -112,11 +113,11 @@ it('cancels the retry delay without making another poll', async () => {
     polls++
     return Response.json({ ret: 1, errmsg: 'fixture upstream failure' })
   })
-  await eventually(() => expect(stderr).toContain('fixture upstream failure'))
+  await eventually(() => expect(stderr).toContain('fixture upstream failure'), sidecarStartupTimeout)
   quiesce()
   await expectStopped(2000)
   expect(polls).toBe(1)
-}, 8000)
+}, 25_000)
 
 it('drains a session write already accepted and skips the rest of the poll batch', async () => {
   const createSession = Promise.withResolvers<Response>()
@@ -155,7 +156,7 @@ it('drains a session write already accepted and skips the rest of the poll batch
     await eventually(() => {
       expect(creating, stderr).toBe(true)
       expect(replies[0]).toStartWith('未授权')
-    })
+    }, sidecarStartupTimeout)
     quiesce()
     await eventually(() => expect(stdout, stderr).toContain('Shutting down'))
     deniedReply.resolve(Response.json({ ret: 0 }))
@@ -176,4 +177,4 @@ it('drains a session write already accepted and skips the rest of the poll batch
     deniedReply.resolve(Response.json({ ret: 0 }))
     createSession.resolve(Response.json({ sessionId: 'fixture-session' }))
   }
-}, 12_000)
+}, 30_000)

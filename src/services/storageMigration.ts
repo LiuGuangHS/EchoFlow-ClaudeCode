@@ -2052,36 +2052,20 @@ export async function executeStorageMigration(input: StorageMigrationInput): Pro
     if (input.legacySelection && !binding.location) throw new Error('Missing location database for legacy storage selection')
     legacySelectionEntry({ legacySelection: input.legacySelection, sources, entries })
     if (!sources.length) return { state: 'ready', issues: [] }
+    if (whatsapp) {
+      // Validate the stopped account before the journal takes ownership of its approval.
+      const account = whatsapp.whatsapp!
+      const config = await readWhatsAppAdoptionConfig(account.config, account.configIdentity)
+      const { validateWhatsAppAuthDirectory } = await import('../../adapters/whatsapp/storageAdoption.js')
+      await validateWhatsAppAuthDirectory(account.directory, config.jid, { readOnly: true })
+      await assertWhatsAppSource(whatsapp, whatsapp.files)
+    }
+    hooks.signal?.throwIfAborted()
     const id = randomUUID()
     const transaction = transactionPath(binding, id)
     const pending = path.join(transactionHome(binding), `.pending-${id}`)
     await fs.mkdir(pending, { mode: 0o700 })
     const identity = await migrationDirectoryIdentity(pending)
-    if (whatsapp) {
-      // Validate the stopped account before the journal takes ownership of its approval.
-      try {
-        const signal = hooks.signal ?? new AbortController().signal
-        if ((hooks.platform ?? process.platform) === 'win32') {
-          if (!hooks.permissions) throw new Error('Windows migration permission hooks are required')
-          await hooks.permissions.restrictStaging(pending, signal)
-        }
-        const account = whatsapp.whatsapp!
-        const backup = path.join(pending, 'sources', '0')
-        for (const file of whatsapp.files.filter(file => path.dirname(file.source) === account.directory)) {
-          signal.throwIfAborted()
-          await checkFile(file.source, file.identity)
-          await copyExclusive(file.source, path.join(backup, file.relative), file.identity.digest, pending, binding.root)
-        }
-        const config = await readWhatsAppAdoptionConfig(account.config, account.configIdentity)
-        const { validateWhatsAppAuthDirectory } = await import('../../adapters/whatsapp/storageAdoption.js')
-        await validateWhatsAppAuthDirectory(backup, config.jid)
-        await assertWhatsAppSource(whatsapp, whatsapp.files)
-      } catch (error) {
-        await assertMigrationDirectory(pending, identity)
-        await fs.rm(pending, { recursive: true })
-        throw error
-      }
-    }
     const initial: StorageJournal = { version: 2, id, root: binding.root, rootIdentity: await migrationDirectoryIdentity(binding.root),
       transactionIdentity: { ...identity, canonical: path.join(path.dirname(identity.canonical), id) }, globalConfigDestination,
       ...(input.legacySelection ? { legacySelection: input.legacySelection } : {}),
@@ -2090,6 +2074,7 @@ export async function executeStorageMigration(input: StorageMigrationInput): Pro
     await assertMigrationDirectory(pending, identity)
     await assertMigrationDirectory(binding.root, initial.rootIdentity)
     if (await present(transaction)) throw new Error('Storage transaction already exists')
+    hooks.signal?.throwIfAborted()
     await fs.rename(pending, transaction)
     await syncDirectory(transactionHome(binding))
     await assertMigrationDirectory(transaction, initial.transactionIdentity)
