@@ -7,6 +7,43 @@ import { dependentFilesForChangeSet, WIDE_NET_FALLBACK_FILES } from './module-gr
 import { createSandboxedTestEnvironment } from './test-environment'
 
 describe('evaluateChangePolicy', () => {
+  test.each([
+    'src/utils/echoFlowConfigRoot.ts',
+    'src/utils/envUtils.ts',
+    'src/utils/managedStoragePath.test.ts',
+    'src/services/storageMigration.ts',
+    'src/services/storageStartup.ts',
+    'src/services/storageStartup.test.ts',
+    'src/services/storageAdoption.ts',
+    'src/server/migrationInventoryWindows.ts',
+    'src/server/serverRuntime.ts',
+    'scripts/quality-gate/sandbox.ts',
+    'src/entrypoints/cli.tsx',
+    'src/localRecoveryCli.ts',
+    'src/server/index.ts',
+    'src/services/api/traceCapture.ts',
+    'src/server/services/localIndex/managedDatabasePath.ts',
+    'src/server/services/teamService.ts',
+    'src/server/services/hahaOAuthService.ts',
+    'src/server/services/echoFlowOAuthService.ts',
+    'src/server/services/doctorService.ts',
+    'adapters/common/config.ts',
+    'adapters/telegram/index.ts',
+    'bin/echoflow-code',
+    'desktop/electron/storageBootstrap.ts',
+    'desktop/electron/storageValidation.ts',
+    'desktop/electron/services/desktopStorageValidation.ts',
+    'desktop/electron/services/desktopStorageAdoption.ts',
+    'desktop/electron/services/desktopStorageMove.ts',
+    'desktop/electron/services/desktopStorageProvenance.ts',
+    'desktop/electron/services/desktopStorageStartup.ts',
+    'desktop/electron/services/dataMigrationLegacyRecovery.test.ts',
+    'desktop/sidecars/installerStorageRecovery.ts',
+    'desktop/sidecars/installerStorageRecovery.test.ts',
+  ])('routes single-root startup and persistent consumers to persistence checks: %s', file => {
+    expect(evaluateChangePolicy([file]).checks.persistence).toBe(true)
+  })
+
   test('routes the product identity manifest to policy checks', () => {
     expect(evaluateChangePolicy(['product.json']).checks.policy).toBe(true)
     const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'))
