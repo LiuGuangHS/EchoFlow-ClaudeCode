@@ -50,7 +50,7 @@ order: 6
 | 自动做梦 | 默认关闭。会话积累足够后，可在后台整理 auto-memory；会产生额外模型调用和 token 消耗。 |
 | Agent Trace | 默认开启。新会话的原始请求、响应与状态事件写入本机 traces 目录，出错时在会话「轨迹」里点开助手行，看「原始请求」页；关闭后不再产生新记录，旧记录仍可查看。 |
 
-Agent Trace 与其他产品数据共用一个数据根：JSONL 文件位于 `<data-root>/echoflow-code/traces`，辅助索引位于 `<data-root>/echoflow-code/db`。旧 `CC_HAHA_TRACE_DIR` 只作为兼容迁移输入，不再开启第二个活动写入目录。如果旧版本把 Trace 放在根外，应先处理迁移；路径、归属或内容冲突会明确报错，不会静默改读一个空目录。要换磁盘，应迁移完整数据根，而不是只切换 Trace。
+在采用统一数据根的版本中，Agent Trace 默认将 JSONL 文件写入 `<data-root>/echoflow-code/traces`，辅助索引位于 `<data-root>/echoflow-code/db`。`CC_HAHA_TRACE_DIR` 可以指定数据根内的绝对目录；根外路径仅用于查找旧数据，迁移成功后使用根内的目标目录。未迁移的根外路径会明确报错，不会静默切到空目录。v0.7.7 等旧版本默认使用配置目录下的 `cc-haha/traces`，并允许该变量直接指定根外写入目录。
 
 ### 网络、联网搜索和提醒
 

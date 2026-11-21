@@ -50,7 +50,7 @@ General covers four areas: appearance and replies, how the agent works, network 
 | Auto-dream | Off by default. After enough sessions have accumulated, it can organize auto-memory in the background, using additional model calls and tokens. |
 | Agent Trace | On by default. New sessions write raw request, response, and status events to a local traces directory. To investigate a failure, open an assistant line in the session's **Trajectory** and switch to its **Raw request** tab; turning it off stops new records, while old ones remain readable. |
 
-Agent Trace shares one data root with all other product data: JSONL files live in `<data-root>/echoflow-code/traces`, and auxiliary indexes live in `<data-root>/echoflow-code/db`. The old `CC_HAHA_TRACE_DIR` is a migration compatibility input, not a second active write location. If an older version stored traces outside the root, resolve their migration first. Path, ownership, or content conflicts produce an explicit error instead of silently switching to an empty directory. To change disks, migrate the complete data root rather than Trace alone.
+In versions that use one data root, Agent Trace writes JSONL files to `<data-root>/echoflow-code/traces` by default, with auxiliary indexes in `<data-root>/echoflow-code/db`. `CC_HAHA_TRACE_DIR` can select an absolute directory inside the data root. An external path identifies legacy data; after migration, Trace uses the destination inside the root. An external path that has not been migrated produces an error instead of silently switching to an empty directory. Older releases such as v0.7.7 default to `cc-haha/traces` inside the config directory and allow the variable to write directly to a directory outside it.
 
 ### Network, web search, and notifications
 

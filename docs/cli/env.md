@@ -59,7 +59,7 @@ AZURE_OPENAI_CODEX_DEPLOYMENT=your_codex_deployment
 | 变量 | 说明 |
 |------|------|
 | `CLAUDE_CONFIG_DIR` | 为桌面、CLI 和 IM 指定同一个绝对数据根目录；覆盖下表的平台默认目录。为空时使用默认值，适合便携模式和隔离测试 |
-| `CC_HAHA_TRACE_DIR` | 旧版独立 Trace 路径的兼容输入，不再用于根外写入。当前 Trace 位于 `<data-root>/echoflow-code/traces`；保留根外值时须先完成迁移，不能静默切到空目录。详见 [设置](../desktop/settings.md) |
+| `CC_HAHA_TRACE_DIR` | 指定 Trace 的绝对目录。在采用统一数据根的版本中，默认使用 `<data-root>/echoflow-code/traces`，根外值须先迁移；v0.7.7 等旧版本允许直接写入根外目录。详见 [设置](../desktop/settings.md) |
 | `CLAUDE_CODE_FORCE_RECOVERY_CLI` | 设为 `1` 使用简化的 Recovery CLI |
 | `CLAUDE_CODE_SHELL_PREFIX` | 为 Bash 工具增加 Shell 前缀，例如 Windows 下的 `wsl -e bash -lc` |
 | `DISABLE_TELEMETRY` | 设为 `1` 禁用遥测 |

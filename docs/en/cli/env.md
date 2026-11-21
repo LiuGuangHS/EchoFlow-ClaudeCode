@@ -59,7 +59,7 @@ AZURE_OPENAI_CODEX_DEPLOYMENT=your_codex_deployment
 | Variable | Description |
 |----------|-------------|
 | `CLAUDE_CONFIG_DIR` | Select one absolute data root shared by Desktop, CLI, and IM, overriding the platform defaults below. An empty value uses the default; useful for portable mode and isolated tests |
-| `CC_HAHA_TRACE_DIR` | Compatibility input for an old separate Trace directory, not a second write location. Current traces live in `<data-root>/echoflow-code/traces`; an external value requires migration rather than silently switching to an empty directory. See [Settings](../desktop/settings.md) |
+| `CC_HAHA_TRACE_DIR` | Select an absolute Trace directory. In versions that use one data root, it defaults to `<data-root>/echoflow-code/traces` and external paths require migration. Older releases such as v0.7.7 allow writing directly to an external directory. See [Settings](../desktop/settings.md) |
 | `CLAUDE_CODE_FORCE_RECOVERY_CLI` | Set to `1` to use the simplified Recovery CLI |
 | `CLAUDE_CODE_SHELL_PREFIX` | Prefix Bash tool commands, for example `wsl -e bash -lc` on Windows |
 | `DISABLE_TELEMETRY` | Set to `1` to disable telemetry |
