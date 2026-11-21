@@ -20,6 +20,8 @@ const bindLabel = (endpoint: 'main' | 'dedicated') =>
 vi.mock('../../api/echoflow')
 const hostMocks = vi.hoisted(() => ({
   openLogin: vi.fn(),
+  setLoginBounds: vi.fn(),
+  cancelLogin: vi.fn(),
   signOut: vi.fn(),
   whenAccountRestored: vi.fn(),
   open: vi.fn(),
@@ -82,6 +84,8 @@ describe('EchoFlowAPIOfficialLogin', () => {
     hostMocks.open.mockResolvedValue(undefined)
     vi.mocked(echoflowApi.getTokenKey).mockResolvedValue({ token: { id: 'shared-token-id', name: 'Main key', key: 'sk-main-secret' } })
     hostMocks.openLogin.mockReset()
+    hostMocks.setLoginBounds.mockReset().mockResolvedValue(undefined)
+    hostMocks.cancelLogin.mockReset().mockResolvedValue(undefined)
     hostMocks.signOut.mockReset()
     hostMocks.whenAccountRestored.mockReset()
     hostMocks.whenAccountRestored.mockResolvedValue(false)
@@ -117,19 +121,82 @@ describe('EchoFlowAPIOfficialLogin', () => {
     expect(useProviderStore.getState().providers).toContainEqual(activeProvider)
   })
 
-  it('signs in with the selected endpoint and refreshes that account', async () => {
+  it.each(['main', 'dedicated'] as const)('embeds sign-in for %s and only refreshes that account', async (endpoint) => {
     mockAccounts(null, null)
-    hostMocks.openLogin.mockResolvedValue('authenticated')
-    vi.mocked(echoflowApi.refreshAccount).mockResolvedValue({ account: mainAccount })
+    let resolveLogin!: (result: 'authenticated') => void
+    hostMocks.openLogin.mockReturnValue(new Promise((resolve) => { resolveLogin = resolve }))
+    const signedIn = endpoint === 'main' ? mainAccount : dedicatedAccount
+    vi.mocked(echoflowApi.refreshAccount).mockResolvedValue({ account: signedIn })
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 
-    fireEvent.click(await screen.findByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
-    await waitFor(() => expect(hostMocks.openLogin).toHaveBeenCalledWith('main'))
-    await waitFor(() => expect(echoflowApi.refreshAccount).toHaveBeenCalledWith('main'))
-
-    fireEvent.click(screen.getByRole('tab', { name: endpointTab('dedicated') }))
+    fireEvent.click(screen.getByRole('tab', { name: endpointTab(endpoint) }))
     fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
-    await waitFor(() => expect(hostMocks.openLogin).toHaveBeenLastCalledWith('dedicated'))
+    expect(screen.getByRole('region', { name: L('echoflowApiOfficialLogin.signIn') })).toBeInTheDocument()
+    expect(screen.getByText(endpointTab(endpoint), { selector: 'header p' })).toBeVisible()
+    expect(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.cancel') })).toHaveFocus()
+    expect(hostMocks.openLogin).toHaveBeenCalledExactlyOnceWith(endpoint, expect.any(String), null)
+    expect(echoflowApi.refreshAccount).not.toHaveBeenCalled()
+
+    await act(async () => { resolveLogin('authenticated') })
+    expect(echoflowApi.refreshAccount).toHaveBeenCalledExactlyOnceWith(endpoint)
+    expect(screen.getByText(userIdSummary(signedIn.userId))).toBeVisible()
+    expect(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') })).toHaveFocus()
+    expect(hostMocks.cancelLogin).not.toHaveBeenCalled()
+  })
+
+  it('sends raw CSS bounds, hides under overlapping app UI, and rereads a committed account after Escape', async () => {
+    mockAccounts(null, null)
+    let resolveLogin!: (result: 'authenticated') => void
+    hostMocks.openLogin.mockReturnValue(new Promise((resolve) => { resolveLogin = resolve }))
+    let rect = new DOMRect(245.5, 120, 403.25, 270)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.dataset.testid === 'echoflow-login-placeholder' ? rect : new DOMRect()
+    })
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    const signIn = screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') })
+    fireEvent.click(signIn)
+    const [, id] = hostMocks.openLogin.mock.calls[0]!
+    expect(hostMocks.openLogin).toHaveBeenCalledWith('main', id, { x: 245.5, y: 120, width: 403.25, height: 270 })
+    rect = new DOMRect(230, 120, 360, 270)
+    fireEvent.resize(window)
+    expect(hostMocks.setLoginBounds).toHaveBeenLastCalledWith(id, { x: 230, y: 120, width: 360, height: 270 })
+
+    const overlay = document.createElement('div')
+    overlay.className = 'z-[var(--z-dropdown)]'
+    vi.spyOn(overlay, 'getBoundingClientRect').mockReturnValue(new DOMRect(570, 128, 70, 32))
+    document.body.append(overlay)
+    await waitFor(() => expect(hostMocks.setLoginBounds).toHaveBeenLastCalledWith(id, null))
+    overlay.remove()
+    await waitFor(() => expect(hostMocks.setLoginBounds).toHaveBeenLastCalledWith(id, { x: 230, y: 120, width: 360, height: 270 }))
+
+    fireEvent.keyDown(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.cancel') }), { key: 'Escape' })
+    expect(hostMocks.cancelLogin).toHaveBeenCalledExactlyOnceWith(id)
+    expect(signIn).toHaveFocus()
+    mockAccounts(mainAccount, null)
+    await act(async () => { resolveLogin('authenticated') })
+    expect(screen.getByText(userIdSummary(mainAccount.userId))).toBeVisible()
+    expect(echoflowApi.refreshAccount).not.toHaveBeenCalled()
+  })
+
+  it('rereads the account when a login from a previous mount settles', async () => {
+    mockAccounts(null, null)
+    let resolveLogin!: (result: 'authenticated') => void
+    const opening = new Promise<'authenticated'>(resolve => { resolveLogin = resolve })
+    hostMocks.openLogin.mockReturnValue(opening)
+    const first = render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
+    const [, id] = hostMocks.openLogin.mock.calls[0]!
+    first.unmount()
+    expect(hostMocks.cancelLogin).toHaveBeenCalledExactlyOnceWith(id)
+
+    hostMocks.whenAccountRestored.mockReturnValue(opening.then(() => true))
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    expect(screen.queryByText(userIdSummary(mainAccount.userId))).not.toBeInTheDocument()
+    mockAccounts(mainAccount, null)
+    await act(async () => { resolveLogin('authenticated') })
+    expect(screen.getByText(userIdSummary(mainAccount.userId))).toBeVisible()
+    expect(echoflowApi.refreshAccount).not.toHaveBeenCalled()
   })
 
   it.each(['main', 'dedicated'] as const)('keeps web authorization available for a bound %s account without disconnecting it', async (endpoint) => {
@@ -141,7 +208,7 @@ describe('EchoFlowAPIOfficialLogin', () => {
     fireEvent.click(screen.getByRole('tab', { name: endpointTab(endpoint) }))
     expect(hostMocks.openLogin).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
-    await waitFor(() => expect(hostMocks.openLogin).toHaveBeenCalledExactlyOnceWith(endpoint))
+    await waitFor(() => expect(hostMocks.openLogin).toHaveBeenCalledExactlyOnceWith(endpoint, expect.any(String), null))
     expect(echoflowApi.disconnectAccount).not.toHaveBeenCalled()
     expect(hostMocks.signOut).not.toHaveBeenCalled()
     expect(echoflowApi.refreshAccount).not.toHaveBeenCalled()

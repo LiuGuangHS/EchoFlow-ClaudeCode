@@ -11,6 +11,7 @@ import {
   type EchoFlowLoginWindow,
   type SiteCookie,
 } from './services/echoFlowLogin'
+import { EchoFlowLoginViewHost } from './services/echoFlowLoginView'
 import { resolveSiteIdentity, type EchoFlowLoginIdentity } from './services/echoFlowSiteIdentity'
 import { readStoredDedicatedCredential } from './services/echoFlowDedicatedRestore'
 import { readStoredSiteCredential } from './services/echoFlowSiteRestore'
@@ -123,7 +124,6 @@ import {
   writeLocalePreference,
 } from './services/localePreference'
 import { resolveSupportedLocale, type Locale } from '../src/i18n/locale'
-import { ECHOFLOW_SIHUB_NAME } from '../src/constants/brand'
 import {
   createCustomPetCatalogLoader,
   createCustomPetFromAtlas,
@@ -473,85 +473,60 @@ async function readEchoFlowLoginCredential(
 async function bootstrapEchoFlowAccount(
   endpoint: EchoFlowLoginEndpoint,
   credential: EchoFlowLoginCredential,
+  beginRequest: () => boolean,
 ): Promise<EchoFlowLoginVerification> {
   // Each endpoint accepts exactly the credential its own page produces.
   if (credential.kind === 'session' && endpoint !== 'main') return 'rejected'
   if (credential.kind === 'bearer' && endpoint !== 'dedicated') return 'rejected'
-  try {
-    const runtime = getServerRuntime()
-    const serverUrl = await runtime.getServerUrl()
-    const bridgeToken = echoFlowSiteBridgeToken
-    console.info('[echoFlowLogin] credential-verify:', JSON.stringify({
-      endpoint,
-      kind: credential.kind,
-      serverUrl,
-      bridgeTokenPresent: Boolean(bridgeToken),
-    }))
-    // No server to ask yet: the credential is unverified, not rejected.
-    if (!bridgeToken) return 'unavailable'
-    const response = await fetch(`${serverUrl}/api/echoflow/account/credential`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-echoflow-site-session-bridge': bridgeToken,
-      },
-      body: JSON.stringify(credential.kind === 'session'
-        ? {
-            endpoint,
-            kind: 'session',
-            cookie: credential.cookie,
-            userId: credential.userId,
-            ...(credential.userAgent ? { userAgent: credential.userAgent } : {}),
-            ...(credential.acceptLanguage ? { acceptLanguage: credential.acceptLanguage } : {}),
-          }
-        : { endpoint, kind: 'bearer', accessToken: credential.accessToken, userId: credential.userId }),
-      signal: AbortSignal.timeout(15_000),
-    })
-    if (response.ok) {
-      console.info('[echoFlowLogin] credential-verified:', JSON.stringify({ endpoint, kind: credential.kind }))
-      return 'ok'
-    }
-    const body = await response.json().catch(() => null) as { error?: unknown }
-    // Only the site saying the credential is bad is a verdict; a bridge or
-    // upstream failure is the server not answering and keeps the window open.
-    if (response.status === 400) {
-      if (body?.error === 'token_invalid') return 'rejected'
-    }
-    return 'unavailable'
-  } catch {
-    return 'unavailable'
+  const runtime = getServerRuntime()
+  const serverUrl = await runtime.getServerUrl()
+  const bridgeToken = echoFlowSiteBridgeToken
+  console.info('[echoFlowLogin] credential-verify:', JSON.stringify({
+    endpoint,
+    kind: credential.kind,
+    serverUrl,
+    bridgeTokenPresent: Boolean(bridgeToken),
+  }))
+  if (!bridgeToken || !beginRequest()) return 'unavailable'
+  const response = await fetch(`${serverUrl}/api/echoflow/account/credential`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-echoflow-site-session-bridge': bridgeToken,
+    },
+    body: JSON.stringify(credential.kind === 'session'
+      ? {
+          endpoint,
+          kind: 'session',
+          cookie: credential.cookie,
+          userId: credential.userId,
+          ...(credential.userAgent ? { userAgent: credential.userAgent } : {}),
+          ...(credential.acceptLanguage ? { acceptLanguage: credential.acceptLanguage } : {}),
+        }
+      : { endpoint, kind: 'bearer', accessToken: credential.accessToken, userId: credential.userId }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (response.ok) {
+    console.info('[echoFlowLogin] credential-verified:', JSON.stringify({ endpoint, kind: credential.kind }))
+    return 'ok'
   }
+  const body = await response.json() as { error?: unknown }
+  if (response.status === 400 && body?.error === 'token_invalid') return 'rejected'
+  return 'unavailable'
 }
+
+const echoFlowLoginView = new EchoFlowLoginViewHost(partition => {
+  const view = new WebContentsView({
+    webPreferences: { partition, contextIsolation: true, nodeIntegration: false, sandbox: true },
+  })
+  view.setBackgroundColor(resolveStartupWindowBackground())
+  configurePreviewSessionPermissions(view.webContents.session)
+  return view
+})
 
 function getEchoFlowLoginSession(): EchoFlowLoginSession {
   echoFlowLoginSession ??= new EchoFlowLoginSession({
-    createWindow(partition): EchoFlowLoginWindow {
-      const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
-      const loginWindow = new BrowserWindow({
-        title: `${ECHOFLOW_SIHUB_NAME} 账号登录`,
-        width: 520,
-        height: 720,
-        show: true,
-        autoHideMenuBar: true,
-        // The site login page is a heavy SPA bundle; without a background the
-        // window sits white and reads as hung while it downloads.
-        backgroundColor: resolveStartupWindowBackground(),
-        ...(parent ? { parent, modal: true } : {}),
-        webPreferences: {
-          partition,
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-        },
-      })
-
-      // Electron exposes BrowserWindow.webContents as a getter-only accessor.
-      // Assigning to it (for example with Object.assign) throws after the
-      // window has already been shown, leaving an orphan modal window that
-      // never loads. The session reads the account from the site's own
-      // session, so the window needs no extra fields.
-      return loginWindow as unknown as EchoFlowLoginWindow
-    },
+    createWindow: partition => echoFlowLoginView.createWindow(partition),
     profiles: ECHOFLOW_LOGIN_PROFILES,
     readCredential: readEchoFlowLoginCredential,
     verifySession: bootstrapEchoFlowAccount,
@@ -578,20 +553,20 @@ async function rehydrateEchoFlowSiteSession(): Promise<boolean> {
 }
 
 async function signOutEchoFlowSiteSession(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
-  const runtime = getServerRuntime()
-  const serverUrl = await runtime.getServerUrl()
-  const response = await fetch(`${serverUrl}/api/echoflow/account`, {
-    method: 'DELETE',
-    headers: {
-      Authorization: `Bearer ${runtime.getLocalAccessToken()}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ endpoint }),
-    signal: AbortSignal.timeout(10_000),
+  await getEchoFlowLoginSession().clear(endpoint, async () => {
+    const runtime = getServerRuntime()
+    const serverUrl = await runtime.getServerUrl()
+    const response = await fetch(`${serverUrl}/api/echoflow/account`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${runtime.getLocalAccessToken()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ endpoint }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!response.ok) throw new Error('Could not sign out of the EchoFlow account.')
   })
-  if (!response.ok) throw new Error('Could not sign out of the EchoFlow account.')
-  // Clearing only this partition leaves the other endpoint signed in.
-  await getEchoFlowLoginSession().clear(endpoint)
 }
 
 function getDeepSeekHarnessRuntime() {
@@ -1091,15 +1066,25 @@ function registerIpcHandlers() {
     if (event.senderFrame !== event.sender.mainFrame) throw new Error('Native navigation requires the main frame')
     return nativeMenuNavigation.take()
   })
-  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, async (_event, payload) => {
-    const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
-    return await getEchoFlowLoginSession().open(requested === 'dedicated' ? 'dedicated' : 'main')
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, (event, payload) => {
+    const { endpoint, attemptId, bounds } = payload as { endpoint: EchoFlowLoginEndpoint; attemptId: string; bounds: PreviewBounds | null }
+    return echoFlowLoginView.open(currentWindow(event), attemptId, bounds, signal => getEchoFlowLoginSession().open(endpoint, signal))
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginSetBounds, (_event, payload) => {
+    const { attemptId, bounds } = payload as { attemptId: string; bounds: PreviewBounds | null }
+    echoFlowLoginView.setBounds(attemptId, bounds)
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginCancel, (_event, payload) => {
+    echoFlowLoginView.cancel((payload as { attemptId: string }).attemptId)
   })
   registerHandler(ELECTRON_IPC_CHANNELS.echoFlowSignOut, async (_event, payload) => {
     const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
     await signOutEchoFlowSiteSession(requested === 'dedicated' ? 'dedicated' : 'main')
   })
-  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored, () => echoFlowRestore)
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored, async () => {
+    const [restored, settled] = await Promise.all([echoFlowRestore, echoFlowLoginView.whenAccountSettled()])
+    return restored || settled
+  })
   registerHandler(ELECTRON_IPC_CHANNELS.configImportTake, event =>
     BrowserWindow.fromWebContents(event.sender) === mainWindow ? deepLinkHandler.take() : null)
   registerHandler(ELECTRON_IPC_CHANNELS.configImportAck, event => {
@@ -1525,7 +1510,10 @@ function registerIpcHandlers() {
     window.webContents.setZoomFactor(normalizeZoomFactor(payload))
     // Electron pushes the embedder's zoom into every browser guest; app zoom
     // must not change the pages' own zoom.
-    if (window === mainWindow) workspaceBrowserService?.restorePageZoom()
+    if (window === mainWindow) {
+      workspaceBrowserService?.restorePageZoom()
+      echoFlowLoginView.refreshBounds()
+    }
   })
   registerHandler(ELECTRON_IPC_CHANNELS.appearanceSetApplied, (_event, payload) => {
     if (!isAppliedAppearance(payload)) return

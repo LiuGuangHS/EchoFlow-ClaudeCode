@@ -120,6 +120,7 @@ type MakeLoginOptions = {
   persisted?: boolean
   readCredential?: (endpoint: 'main' | 'dedicated', window: EchoFlowLoginWindow | null) => Promise<EchoFlowLoginCredential | null>
   verifySession?: (endpoint: 'main' | 'dedicated', credential: EchoFlowLoginCredential) => Promise<EchoFlowLoginVerification>
+  prepareVerification?: () => Promise<void>
   clearCookies?: (endpoint: 'main' | 'dedicated') => Promise<void>
   clearStorage?: (endpoint: 'main' | 'dedicated') => Promise<void>
   loadRetries?: number
@@ -143,7 +144,11 @@ function makeLogin(options: MakeLoginOptions = {}) {
     createWindow,
     profiles: { main: MAIN_LOGIN_PROFILE, dedicated: TEST_DEDICATED },
     readCredential,
-    verifySession,
+    verifySession: async (endpoint, credential, beginRequest) => {
+      if (options.prepareVerification) await options.prepareVerification()
+      if (!beginRequest()) return 'unavailable'
+      return verifySession(endpoint, credential)
+    },
     clearCookies,
     clearStorage,
     pollIntervalMs: 10,
@@ -259,7 +264,7 @@ describe('EchoFlow site login session', () => {
 
   it('keeps the login window open when session verification is unavailable', async () => {
     const { login, window, createWindow } = makeLogin({
-      verifySession: async () => { throw new Error('offline') },
+      verifySession: async () => 'unavailable',
     })
     const result = login.open()
     await waitFor(() => createWindow.mock.calls.length === 1)
@@ -463,58 +468,127 @@ describe('EchoFlow site login session', () => {
     })
     const restoring = login.rehydrate('main')
     await waitFor(() => verifySession.mock.calls.length === 1)
-    await login.clear('main')
+    const clearing = login.clear('main')
     verification.resolve(verdict)
 
+    await clearing
     await expect(restoring).resolves.toBe(false)
     expect(clearCookies).toHaveBeenCalledTimes(1)
     expect(clearStorage).toHaveBeenCalledTimes(1)
   })
 
-  it('does not reopen login when sign-out cancels an in-flight restore', async () => {
-    const verification = pendingVerification()
-    const { login, verifySession, createWindow } = makeLogin({
-      persisted: true,
-      verifySession: () => verification.promise,
+  it('cancels before verification without waiting for the stored credential', async () => {
+    let finishRead!: (credential: EchoFlowLoginCredential) => void
+    const { login, credential, readCredential, verifySession, createWindow } = makeLogin({
+      readCredential: () => new Promise(resolve => { finishRead = resolve }),
     })
-    const opening = login.open('main')
-    await waitFor(() => verifySession.mock.calls.length === 1)
-    await login.clear('main')
-    verification.resolve('ok')
+    const abort = new AbortController()
+    const opening = login.open('main', abort.signal)
+    await waitFor(() => readCredential.mock.calls.length === 1)
+    abort.abort()
     await expect(opening).resolves.toBe('cancelled')
+    finishRead(credential)
+    await new Promise(resolve => setImmediate(resolve))
+    expect(verifySession).not.toHaveBeenCalled()
     expect(createWindow).not.toHaveBeenCalled()
   })
 
-  it('does not authenticate a window from a verification arriving after cancellation', async () => {
-    const verification = pendingVerification()
-    let holdVerification = true
+  it.each(['restore', 'window'] as const)('cancels %s during verifier setup without sending a write', async source => {
+    let finishSetup!: () => void
     const { login, window, credential, verifySession } = makeLogin({
-      verifySession: () => holdVerification ? verification.promise : Promise.resolve('ok'),
+      persisted: source === 'restore',
+      prepareVerification: () => new Promise(resolve => { finishSetup = resolve }),
     })
-    const cancelled = login.open()
-    await waitFor(() => window.loadCount === 1)
-    window.signIn(credential)
-    await waitFor(() => verifySession.mock.calls.length === 1)
-    window.close()
-    await expect(cancelled).resolves.toBe('cancelled')
-    verification.resolve('ok')
+    const abort = new AbortController()
+    const opening = login.open('main', abort.signal)
+    if (source === 'window') {
+      await waitFor(() => window.loadCount === 1)
+      window.signIn(credential)
+    }
+    await waitFor(() => Boolean(finishSetup))
+    abort.abort()
+    await expect(opening).resolves.toBe('cancelled')
+    finishSetup()
     await new Promise(resolve => setImmediate(resolve))
-
-    holdVerification = false
-    const next = login.open()
-    await expect(next).resolves.toBe('authenticated')
-    expect(verifySession).toHaveBeenCalledTimes(2)
+    expect(verifySession).not.toHaveBeenCalled()
   })
 
-  it('ignores an old window verification while a new login is waiting', async () => {
+  it.each(['restore', 'window'] as const)('reports the committed account after cancelling %s verification', async source => {
     const verification = pendingVerification()
+    let account: string | undefined
+    const { login, window, credential, verifySession, createWindow, clearStorage, clearCookies } = makeLogin({
+      persisted: source === 'restore',
+      verifySession: async (_endpoint, credential) => {
+        const verdict = await verification.promise
+        account = credential.userId
+        return verdict
+      },
+    })
+    const abort = new AbortController()
+    const opening = login.open('main', abort.signal)
+    const settled = vi.fn()
+    void opening.then(settled)
+    if (source === 'window') {
+      await waitFor(() => window.loadCount === 1)
+      window.signIn(credential)
+    }
+    await waitFor(() => verifySession.mock.calls.length === 1)
+    abort.abort()
+    await new Promise(resolve => setImmediate(resolve))
+    expect(settled).not.toHaveBeenCalled()
+    expect(window.closedCount).toBe(source === 'window' ? 1 : 0)
+    expect(account).toBeUndefined()
+
+    verification.resolve('ok')
+    await expect(opening).resolves.toBe('authenticated')
+    expect(account).toBe(credential.userId)
+    expect(verifySession).toHaveBeenCalledOnce()
+    expect(createWindow).toHaveBeenCalledTimes(source === 'window' ? 1 : 0)
+    expect(clearStorage).not.toHaveBeenCalled()
+    expect(clearCookies).not.toHaveBeenCalled()
+  })
+
+  it.each(['restore', 'window'] as const)('orders explicit sign-out after a submitted %s write', async source => {
+    const verification = pendingVerification()
+    let account: string | undefined
+    const { login, window, credential, verifySession, createWindow } = makeLogin({
+      persisted: source === 'restore',
+      verifySession: async () => {
+        const verdict = await verification.promise
+        account = credential.userId
+        return verdict
+      },
+    })
+    const opening = login.open('main')
+    if (source === 'window') {
+      await waitFor(() => window.loadCount === 1)
+      window.signIn(credential)
+    }
+    await waitFor(() => verifySession.mock.calls.length === 1)
+    const disconnect = vi.fn(async () => {
+      expect(account).toBe(credential.userId)
+      account = undefined
+    })
+    const clearing = login.clear('main', disconnect)
+    await expect(login.open('main')).resolves.toBe('cancelled')
+    expect(disconnect).not.toHaveBeenCalled()
+    verification.resolve('ok')
+    await clearing
+    await expect(opening).resolves.toBe('cancelled')
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(account).toBeUndefined()
+    expect(createWindow).toHaveBeenCalledTimes(source === 'window' ? 1 : 0)
+  })
+
+  it('ignores a credential from an old window while the next login is waiting', async () => {
+    let finishRead!: (credential: EchoFlowLoginCredential) => void
     const { login, window, createWindow, credential, verifySession } = makeLogin({
-      verifySession: async () => verifySession.mock.calls.length === 1 ? verification.promise : 'ok',
+      readCredential: async (_endpoint, target) => target === window
+        ? new Promise(resolve => { finishRead = resolve })
+        : (target as FakeLoginWindow | null)?.credential ?? null,
     })
     const first = login.open()
-    await waitFor(() => window.loadCount === 1)
-    window.signIn(credential)
-    await waitFor(() => verifySession.mock.calls.length === 1)
+    await waitFor(() => Boolean(finishRead))
     window.close()
     await expect(first).resolves.toBe('cancelled')
 
@@ -522,11 +596,29 @@ describe('EchoFlow site login session', () => {
     createWindow.mockResolvedValueOnce(nextWindow)
     const next = login.open()
     await waitFor(() => nextWindow.loadCount === 1)
-    verification.resolve('ok')
+    finishRead(credential)
     await new Promise(resolve => setImmediate(resolve))
+    expect(verifySession).not.toHaveBeenCalled()
     nextWindow.signIn(credential)
     await expect(next).resolves.toBe('authenticated')
-    expect(verifySession).toHaveBeenCalledTimes(2)
+    expect(verifySession).toHaveBeenCalledOnce()
+  })
+
+  it.each(['restore', 'window'] as const)('does not replay a submitted %s write whose response is lost', async source => {
+    const { login, window, credential, verifySession, createWindow, clearCookies, clearStorage } = makeLogin({
+      persisted: source === 'restore',
+      verifySession: async () => { throw new Error('response lost') },
+    })
+    const opening = login.open()
+    if (source === 'window') {
+      await waitFor(() => window.loadCount === 1)
+      window.signIn(credential)
+    }
+    await expect(opening).resolves.toBe('failed')
+    expect(verifySession).toHaveBeenCalledOnce()
+    expect(createWindow).toHaveBeenCalledTimes(source === 'window' ? 1 : 0)
+    expect(clearCookies).not.toHaveBeenCalled()
+    expect(clearStorage).not.toHaveBeenCalled()
   })
 
   it('clears only the endpoint it was asked to sign out of', async () => {

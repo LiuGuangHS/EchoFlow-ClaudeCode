@@ -6,8 +6,10 @@ import type { EchoFlowAccount } from '../../api/echoflow'
 import { browserHost } from '../../lib/desktopHost/browserHost'
 import { useProviderStore } from '../../stores/providerStore'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { useUIStore } from '../../stores/uiStore'
 import { BUNDLED_PROVIDER_PRESETS } from '../../config/providerPresets'
 import { translate } from '../../i18n'
+import { DesktopSettings } from '../Settings'
 import { ProviderSettings } from './ProviderSettings'
 
 vi.mock('../../components/settings/ClaudeOfficialLogin', () => ({ ClaudeOfficialLogin: () => null }))
@@ -20,6 +22,8 @@ vi.mock('../../components/settings/OfficialProviderModelSettings', () => ({ Offi
 // mock: no real web login, no network, no keychain, no real account or token.
 const hostMocks = vi.hoisted(() => ({
   openLogin: vi.fn(),
+  setLoginBounds: vi.fn(),
+  cancelLogin: vi.fn(),
   signOut: vi.fn(),
   whenAccountRestored: vi.fn(),
   open: vi.fn(),
@@ -65,6 +69,8 @@ describe('ProviderSettings EchoFlow official account entry', () => {
       capabilities: { ...browserHost.capabilities, echoFlowAccount: true },
       echoFlow: {
         openLogin: hostMocks.openLogin,
+        setLoginBounds: hostMocks.setLoginBounds,
+        cancelLogin: hostMocks.cancelLogin,
         signOut: hostMocks.signOut,
         whenAccountRestored: hostMocks.whenAccountRestored,
       },
@@ -74,6 +80,8 @@ describe('ProviderSettings EchoFlow official account entry', () => {
     for (const fn of Object.values(hostMocks)) fn.mockReset()
     for (const fn of Object.values(apiMocks)) fn.mockReset()
     hostMocks.whenAccountRestored.mockResolvedValue(false)
+    hostMocks.setLoginBounds.mockResolvedValue(undefined)
+    hostMocks.cancelLogin.mockResolvedValue(undefined)
     hostMocks.open.mockResolvedValue(undefined)
     hostMocks.signOut.mockResolvedValue(undefined)
 
@@ -94,6 +102,7 @@ describe('ProviderSettings EchoFlow official account entry', () => {
     vi.spyOn(providersApi, 'create').mockResolvedValue({ provider: { id: 'unexpected' } } as never)
     vi.spyOn(useSettingsStore.getState(), 'fetchAll').mockResolvedValue()
     useSettingsStore.setState({ locale: 'en' })
+    useUIStore.setState({ activeSettingsTab: 'providers', pendingSettingsTab: null })
     useProviderStore.setState({ presets: BUNDLED_PROVIDER_PRESETS })
   })
 
@@ -123,15 +132,53 @@ describe('ProviderSettings EchoFlow official account entry', () => {
     render(<ProviderSettings />)
 
     fireEvent.click(await screen.findByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
-    await waitFor(() => expect(hostMocks.openLogin).toHaveBeenCalledWith('main'))
+    await waitFor(() => expect(hostMocks.openLogin).toHaveBeenCalledWith('main', expect.any(String), null))
     await waitFor(() => expect(apiMocks.refreshAccount).toHaveBeenCalledWith('main'))
+  })
+
+  it('keeps the settings rail usable and preserves the account page on cancel', async () => {
+    hostMocks.openLogin.mockReturnValue(new Promise(() => {}))
+    const { unmount } = render(<DesktopSettings />)
+    await screen.findByText(/main-user/)
+    fireEvent.click(screen.getByRole('tab', { name: endpointTab('dedicated') }))
+    const scroller = screen.getByTestId('settings-page-frame').parentElement!
+    scroller.scrollTop = 90
+    const signIn = screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') })
+    fireEvent.click(signIn)
+    const [, firstId] = hostMocks.openLogin.mock.calls[0]!
+    const login = screen.getByRole('region', { name: L('echoflowApiOfficialLogin.signIn') })
+    expect(login.parentElement).toBe(scroller.parentElement)
+    expect(scroller).toHaveAttribute('inert')
+    expect(screen.getByRole('navigation', { name: L('settings.title') })).toBeVisible()
+    fireEvent.click(within(login).getByRole('button', { name: L('echoflowApiOfficialLogin.cancel') }))
+    expect(hostMocks.cancelLogin).toHaveBeenCalledExactlyOnceWith(firstId)
+    expect(scroller).not.toHaveAttribute('inert')
+    expect(scroller.scrollTop).toBe(90)
+    expect(screen.getByRole('tab', { name: endpointTab('dedicated'), selected: true })).toBeVisible()
+    expect(signIn).toHaveFocus()
+
+    fireEvent.click(signIn)
+    const [, secondId] = hostMocks.openLogin.mock.calls[1]!
+    expect(secondId).not.toEqual(firstId)
+    fireEvent.click(screen.getByRole('button', { name: L('settings.tab.about') }))
+    expect(hostMocks.cancelLogin).toHaveBeenLastCalledWith(secondId)
+    expect(screen.queryByRole('region', { name: L('echoflowApiOfficialLogin.signIn') })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: L('settings.tab.providers') }))
+    await screen.findByText(/main-user/)
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
+    expect(hostMocks.openLogin).toHaveBeenCalledTimes(3)
+    const [, thirdId] = hostMocks.openLogin.mock.calls[2]!
+    unmount()
+    expect(hostMocks.cancelLogin).toHaveBeenLastCalledWith(thirdId)
+    expect(hostMocks.cancelLogin).toHaveBeenCalledTimes(3)
   })
 
   it('does not refresh the account when the desktop login is cancelled or fails', async () => {
     apiMocks.getAccounts.mockResolvedValue(accountsResponse(null, null))
     hostMocks.openLogin
       .mockResolvedValueOnce('cancelled')
-      .mockRejectedValueOnce(new Error('login window failed'))
+      .mockRejectedValueOnce(new Error('embedded login failed'))
     render(<ProviderSettings />)
 
     fireEvent.click(await screen.findByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))

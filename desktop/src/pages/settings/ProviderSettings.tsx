@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo, useRef, useId, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useState, useEffect, useMemo, useRef, useId, type CSSProperties, type ReactNode, type RefObject } from 'react'
 import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -266,7 +266,11 @@ function ProviderTabLabel({ label, count, holdsDefault, defaultLabel }: { label:
   )
 }
 
-export function ProviderSettings({ browserMode = false }: { browserMode?: boolean }) {
+export function ProviderSettings({ browserMode = false, loginPaneHost, onLoginActive }: {
+  browserMode?: boolean
+  loginPaneHost?: RefObject<HTMLDivElement>
+  onLoginActive?: (active: boolean) => void
+}) {
   const {
     providers,
     providerOrder,
@@ -602,6 +606,8 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
             <EchoFlowAPIOfficialLogin
               onAddFromToken={openEchoFlowProviderModal}
               onBindingChange={setEchoFlowHasAccount}
+              loginPaneHost={loginPaneHost}
+              onLoginActive={onLoginActive}
             />
             <p className="mt-3 text-xs leading-5 text-[var(--color-text-tertiary)]">{t('settings.providers.echoflowAPIOfficialDisclaimer')}</p>
           </div>

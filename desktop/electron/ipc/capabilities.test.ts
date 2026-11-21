@@ -9,6 +9,22 @@ import {
 } from './capabilities'
 
 describe('Electron IPC capabilities', () => {
+  it('validates the login attempt and only accepts settings geometry, not site data', () => {
+    const { echoFlowLoginOpen: open, echoFlowLoginSetBounds: resize, echoFlowLoginCancel: cancel } = ELECTRON_IPC_CHANNELS
+    const attemptId = 'inline-1'
+    const bounds = { x: 21.5, y: 40, width: 650, height: 420 }
+    const payload = { endpoint: 'dedicated', attemptId, bounds }
+    expect(validateElectronIpcPayload(open, payload)).toBe(true)
+    expect(validateElectronIpcPayload(open, { ...payload, endpoint: 'main', bounds: null })).toBe(true)
+    expect(validateElectronIpcPayload(resize, { attemptId, bounds: null })).toBe(true)
+    expect(validateElectronIpcPayload(cancel, { attemptId })).toBe(true)
+    for (const invalid of [{ endpoint: 'other' }, { attemptId: '../other' }, { url: 'https://example.test' }, { bounds: { ...bounds, x: Infinity } }, { bounds: { ...bounds, width: -1 } }]) {
+      expect(validateElectronIpcPayload(open, { ...payload, ...invalid })).toBe(false)
+    }
+    expect(validateElectronIpcPayload(cancel, { attemptId, bounds })).toBe(false)
+    for (const channel of [open, resize, cancel]) expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
+  })
+
   it('only lets native navigation be drained without renderer-supplied destinations', () => {
     const channel = ELECTRON_IPC_CHANNELS.windowTakeNativeMenuNavigation
     expect(validateElectronIpcPayload(channel, undefined)).toBe(true)

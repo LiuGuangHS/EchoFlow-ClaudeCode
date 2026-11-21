@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { CirclePlus, ExternalLink, Eye, EyeOff, Plus, RefreshCw, Unlink } from 'lucide-react'
+import { SettingsPageHeader } from '@/components/settings/SettingsSection'
 import { Button } from '@/components/ui/Button'
 import { SegmentedControl } from '@/components/ui/SegmentedControl'
+import { Spinner } from '@/components/ui/Spinner'
 import {
   ECHOFLOW_BASE_URLS,
   echoflowApi,
@@ -13,12 +16,39 @@ import { useProviderStore } from '../../stores/providerStore'
 import { normalizeProviderBaseUrl } from '../../config/providerPresets'
 import { useTranslation } from '../../i18n'
 import { getDesktopHost } from '@/lib/desktopHost'
+import type { PreviewBounds } from '@/lib/desktopHost/types'
 import { ApiError } from '../../api/client'
 
 
 type Props = {
   onAddFromToken: (source: EchoFlowTokenSource) => void
   onBindingChange?: (hasAccount: boolean) => void
+  loginPaneHost?: RefObject<HTMLDivElement>
+  onLoginActive?: (active: boolean) => void
+}
+
+type LoginAttempt = {
+  id: string
+  endpoint: EchoFlowEndpoint
+  run: (bounds: PreviewBounds | null) => Promise<void>
+}
+
+const APP_OVERLAYS = '[aria-modal="true"],' + ['scrim', 'drawer', 'dialog', 'sheet', 'dropdown', 'popover', 'tooltip', 'toast']
+  .flatMap((layer) => [`[class*="z-[var(--z-${layer})]"]`, `[style*="var(--z-${layer})"]`]).join(',')
+
+function readLoginBounds(placeholder: HTMLElement): PreviewBounds | null {
+  const rect = placeholder.getBoundingClientRect()
+  if (document.hidden || !rect.width || !rect.height || placeholder.closest('[hidden], [inert]')) return null
+
+  // The native view always paints above the renderer, even above DOM overlays.
+  for (const overlay of document.querySelectorAll(APP_OVERLAYS)) {
+    if (overlay.contains(placeholder) || window.getComputedStyle(overlay).visibility === 'hidden') continue
+    const other = overlay.getBoundingClientRect()
+    if (other.width && other.height && other.left < rect.right && other.right > rect.left &&
+        other.top < rect.bottom && other.bottom > rect.top) return null
+  }
+
+  return { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
 }
 
 type Credentials = {
@@ -44,11 +74,19 @@ function formatQuota(remainQuota?: number, unlimitedQuota?: boolean, unlimitedLa
   return ''
 }
 
-export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Props) {
+export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, loginPaneHost, onLoginActive }: Props) {
   const t = useTranslation()
+  const loginTitleId = useId()
+  const [login, setLogin] = useState<LoginAttempt | null>(null)
+  const activeLoginId = useRef<string | null>(null)
+  const placeholderRef = useRef<HTMLDivElement>(null)
+  const signInButtonRef = useRef<HTMLButtonElement>(null)
+  const cancelButtonRef = useRef<HTMLButtonElement>(null)
+  const restoreSignInFocus = useRef(false)
   const { providers } = useProviderStore()
   const [accounts, setAccounts] = useState<Accounts>(EMPTY_ACCOUNTS)
   const accountVersions = useRef<Record<EchoFlowEndpoint, number>>({ main: 0, dedicated: 0 })
+  const loadAccounts = useRef<(() => Promise<void>) | null>(null)
   const [selectedEndpoint, setSelectedEndpoint] = useState<EchoFlowEndpoint>('main')
   const [credentials, setCredentials] = useState<Record<EchoFlowEndpoint, Credentials>>({
     main: { userId: '', managementToken: '' },
@@ -57,7 +95,6 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
   const [showManagementToken, setShowManagementToken] = useState(false)
   const [isSavingAccount, setIsSavingAccount] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [isSigningIn, setIsSigningIn] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
   const [showCredentialEditor, setShowCredentialEditor] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -116,16 +153,18 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
           if (active && seq === loadSeq) setError(t('echoflowApiOfficialLogin.loadFailed'))
         })
     }
+    loadAccounts.current = load
     void load()
-    // The desktop restores the stored site session in the background; until
-    // that verification lands the account has no live credential, so the
-    // signed-in state only appears on a second read.
+    // A restore or a login from the previous mount can still be committing.
     void getDesktopHost().echoFlow.whenAccountRestored()
-      .then((restored) => {
-        if (active && restored) void load()
+      .then((changed) => {
+        if (active && changed) void load()
       })
       .catch(() => {})
-    return () => { active = false }
+    return () => {
+      active = false
+      loadAccounts.current = null
+    }
   }, [])
 
   useEffect(() => {
@@ -163,28 +202,96 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
     }
   }
 
-  // The account lives on the site, so signing in there is the only way to
-  // obtain a credential we can manage; the window hands it back over IPC.
-  const signIn = async () => {
-    if (isSigningIn) return
+  const signIn = () => {
+    if (activeLoginId.current) return
     const endpoint = selectedEndpoint
-    setIsSigningIn(true)
+    const id = crypto.randomUUID()
+    activeLoginId.current = id
+    restoreSignInFocus.current = true
     setError(null)
-    try {
-      const outcome = await getDesktopHost().echoFlow.openLogin(endpoint)
-      if (outcome === 'authenticated') {
-        const { account: signedIn } = await echoflowApi.refreshAccount(endpoint)
-        accountVersions.current[endpoint]++
-        setAccounts((current) => ({ ...current, [endpoint]: signedIn }))
-      } else if (outcome === 'failed') {
-        setError(t('echoflowApiOfficialLogin.signInFailed'))
+    onLoginActive?.(true)
+    setLogin({ id, endpoint, run: async (bounds) => {
+      try {
+        const outcome = await getDesktopHost().echoFlow.openLogin(endpoint, id, bounds)
+        if (outcome === 'cancelled') return
+        if (activeLoginId.current !== id) {
+          void loadAccounts.current?.()
+        } else if (outcome === 'authenticated') {
+          const { account: signedIn } = await echoflowApi.refreshAccount(endpoint)
+          if (activeLoginId.current !== id) {
+            void loadAccounts.current?.()
+            return
+          }
+          accountVersions.current[endpoint]++
+          setAccounts((current) => ({ ...current, [endpoint]: signedIn }))
+        } else {
+          void loadAccounts.current?.()
+          setError(t('echoflowApiOfficialLogin.signInFailed'))
+        }
+      } catch {
+        void loadAccounts.current?.()
+        if (activeLoginId.current === id) setError(t('echoflowApiOfficialLogin.signInFailed'))
+      } finally {
+        if (activeLoginId.current === id) {
+          activeLoginId.current = null
+          onLoginActive?.(false)
+          setLogin(null)
+        }
       }
-    } catch {
-      setError(t('echoflowApiOfficialLogin.signInFailed'))
-    } finally {
-      setIsSigningIn(false)
-    }
+    } })
   }
+
+  const cancelLogin = () => {
+    const id = activeLoginId.current
+    if (!id) return
+    activeLoginId.current = null
+    void getDesktopHost().echoFlow.cancelLogin(id).catch(() => {})
+    onLoginActive?.(false)
+    setLogin(null)
+  }
+
+  useLayoutEffect(() => {
+    const placeholder = placeholderRef.current
+    if (!login || !placeholder) {
+      if (restoreSignInFocus.current) signInButtonRef.current?.focus({ preventScroll: true })
+      restoreSignInFocus.current = false
+      return
+    }
+
+    cancelButtonRef.current?.focus({ preventScroll: true })
+    const host = getDesktopHost().echoFlow
+    let bounds = readLoginBounds(placeholder)
+    void login.run(bounds)
+
+    const update = () => {
+      if (activeLoginId.current !== login.id) return
+      const next = readLoginBounds(placeholder)
+      if (next?.x === bounds?.x && next?.y === bounds?.y && next?.width === bounds?.width && next?.height === bounds?.height) return
+      bounds = next
+      void host.setLoginBounds(login.id, next).catch(() => {})
+    }
+    const resize = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
+    resize?.observe(placeholder)
+    const overlays = new MutationObserver(update)
+    overlays.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'inert', 'aria-modal'] })
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    document.addEventListener('visibilitychange', update)
+    document.addEventListener('transitionend', update)
+    return () => {
+      resize?.disconnect()
+      overlays.disconnect()
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+      document.removeEventListener('visibilitychange', update)
+      document.removeEventListener('transitionend', update)
+      if (activeLoginId.current === login.id) {
+        activeLoginId.current = null
+        void host.cancelLogin(login.id).catch(() => {})
+        onLoginActive?.(false)
+      }
+    }
+  }, [login, onLoginActive])
 
   const refreshAccount = async () => {
     if (isRefreshing || !account) return
@@ -302,8 +409,34 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
         </div>
   )
 
-  return (
-    <div className="flex flex-col gap-3">
+  const loginHost = loginPaneHost?.current
+  const loginPane = login && (
+    <section
+      aria-labelledby={loginTitleId}
+      className={loginHost ? 'absolute inset-0 flex overflow-hidden bg-[var(--color-surface)]' : 'flex min-h-0 flex-1'}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || event.defaultPrevented) return
+        event.preventDefault()
+        event.stopPropagation()
+        cancelLogin()
+      }}
+    >
+      <div className="mx-auto flex min-w-0 w-full max-w-[1120px] flex-col gap-4 px-10 pt-9 pb-4">
+        <SettingsPageHeader
+          titleId={loginTitleId}
+          title={t('echoflowApiOfficialLogin.signIn')}
+          description={endpointLabels[login.endpoint]}
+          action={<Button ref={cancelButtonRef} variant="secondary" size="base" onClick={cancelLogin}>{t('echoflowApiOfficialLogin.cancel')}</Button>}
+        />
+        <div ref={placeholderRef} data-testid="echoflow-login-placeholder" className="flex min-h-0 flex-1 items-center justify-center bg-[var(--color-surface-container-low)]">
+          <Spinner label={t('common.loading')} />
+        </div>
+      </div>
+    </section>
+  )
+
+  return (<>
+    <div className={login && !loginHost ? 'hidden' : 'flex flex-col gap-3'} aria-hidden={login && !loginHost ? true : undefined}>
       {/* `tablist`, not the default `radiogroup`: switching endpoints swaps the
           whole panel below it — summary, credential fields, and token list are
           per-endpoint — so a screen reader should announce a tab with a
@@ -332,7 +465,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
             <div className="min-w-0 flex-1 text-sm text-[var(--color-text-secondary)]">{accountSummary}</div>
             <div className="flex shrink-0 items-center gap-2">
               {canSignIn && (
-                <Button variant="primary" size="sm" onClick={() => void signIn()} loading={isSigningIn}>
+                <Button ref={signInButtonRef} variant="primary" size="sm" onClick={signIn}>
                   {t('echoflowApiOfficialLogin.signIn')}
                 </Button>
               )}
@@ -357,7 +490,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             {canSignIn && (
-              <Button variant="primary" size="md" onClick={() => void signIn()} loading={isSigningIn}>
+              <Button ref={signInButtonRef} variant="primary" size="md" onClick={signIn}>
                 {t('echoflowApiOfficialLogin.signIn')}
               </Button>
             )}
@@ -462,5 +595,6 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
         </div>
       )}
     </div>
-  )
+    {loginPane && (loginHost ? createPortal(loginPane, loginHost) : loginPane)}
+  </>)
 }

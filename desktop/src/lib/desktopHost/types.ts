@@ -495,7 +495,9 @@ export type DesktopHost = {
   isDesktop: boolean
   capabilities: DesktopHostCapabilities
   echoFlow: {
-    openLogin(endpoint?: EchoFlowLoginEndpoint): Promise<'authenticated' | 'cancelled' | 'failed'>
+    openLogin(endpoint: EchoFlowLoginEndpoint, attemptId: string, bounds: PreviewBounds | null): Promise<'authenticated' | 'cancelled' | 'failed'>
+    setLoginBounds(attemptId: string, bounds: PreviewBounds | null): Promise<void>
+    cancelLogin(attemptId: string): Promise<void>
     signOut(endpoint?: EchoFlowLoginEndpoint): Promise<void>
     /** Resolves once the startup restore has settled, reporting whether it signed an account back in. */
     whenAccountRestored(): Promise<boolean>

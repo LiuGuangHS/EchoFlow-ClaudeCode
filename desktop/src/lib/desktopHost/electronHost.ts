@@ -90,7 +90,9 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
       zoom: true,
     },
     echoFlow: {
-      openLogin: (endpoint = 'main') => invoke(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint }),
+      openLogin: (endpoint, attemptId, bounds) => invoke(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint, attemptId, bounds }),
+      setLoginBounds: (attemptId, bounds) => invoke(ELECTRON_IPC_CHANNELS.echoFlowLoginSetBounds, { attemptId, bounds }),
+      cancelLogin: attemptId => invoke(ELECTRON_IPC_CHANNELS.echoFlowLoginCancel, { attemptId }),
       signOut: (endpoint = 'main') => invoke(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint }),
       whenAccountRestored: () => invoke(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored),
     },

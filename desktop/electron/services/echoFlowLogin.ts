@@ -69,11 +69,13 @@ export type EchoFlowWindowOpenResult =
   | { action: 'allow'; overrideBrowserWindowOptions?: Record<string, unknown> }
 
 /**
- * The host's verdict on a credential. `unavailable` means the local server
- * could not be asked at all (not running, missing bridge token, timeout); that
- * is not evidence against the credential and must not close the window.
+ * `unavailable` permits another check. `unknown` means a submitted request
+ * lost its answer, so the attempt must stop and reconcile without replay.
  */
-export type EchoFlowLoginVerification = 'ok' | 'rejected' | 'unavailable'
+export type EchoFlowLoginVerification = 'ok' | 'rejected' | 'unavailable' | 'unknown'
+
+type Verification = { sent: boolean; result: Promise<EchoFlowLoginVerification> }
+type Restore = { signal?: AbortSignal; verification?: Verification; result: Promise<EchoFlowLoginVerification> }
 
 export interface EchoFlowLoginWindow {
   webContents: {
@@ -95,7 +97,8 @@ export type EchoFlowLoginSessionDeps = {
   profiles: Record<EchoFlowLoginEndpoint, EchoFlowLoginProfile>
   /** Reads the signed-in credential from a live window, or from the persistent jar when `window` is null. */
   readCredential: (endpoint: EchoFlowLoginEndpoint, window: EchoFlowLoginWindow | null) => Promise<EchoFlowLoginCredential | null>
-  verifySession: (endpoint: EchoFlowLoginEndpoint, credential: EchoFlowLoginCredential) => Promise<EchoFlowLoginVerification>
+  /** Call before sending the account write. A false return means it must not be sent. */
+  verifySession: (endpoint: EchoFlowLoginEndpoint, credential: EchoFlowLoginCredential, beginRequest: () => boolean) => Promise<EchoFlowLoginVerification>
   clearCookies?: (endpoint: EchoFlowLoginEndpoint) => Promise<void>
   /** Wipes the partition's page storage, where the gateway keeps its token. */
   clearStorage?: (endpoint: EchoFlowLoginEndpoint) => Promise<void>
@@ -246,7 +249,8 @@ export class EchoFlowLoginSession {
   private activeProfile: EchoFlowLoginProfile | null = null
   private pending: Promise<EchoFlowLoginResult> | null = null
   private opening: Promise<void> | null = null
-  private readonly restoring = new Map<EchoFlowLoginEndpoint, Promise<boolean>>()
+  private readonly restoring = new Map<EchoFlowLoginEndpoint, Restore>()
+  private readonly signingOut = new Map<EchoFlowLoginEndpoint, Promise<void>>()
   private readonly generations = new Map<EchoFlowLoginEndpoint, number>()
   private settled: ((result: EchoFlowLoginResult) => void) | null = null
   private readonly verified = new Set<EchoFlowLoginEndpoint>()
@@ -258,7 +262,7 @@ export class EchoFlowLoginSession {
   private loadTimer: ReturnType<typeof setTimeout> | null = null
   private loginTimer: ReturnType<typeof setTimeout> | null = null
   private pollTimer: ReturnType<typeof setInterval> | null = null
-  private identityInFlight: EchoFlowLoginWindow | null = null
+  private identityInFlight: Verification | null = null
   private identityRejections = 0
   private lastCredentialKey = ''
   private pageLoaded = false
@@ -283,78 +287,110 @@ export class EchoFlowLoginSession {
     this.loadRetryLimit = deps.loadRetries ?? DEFAULT_LOAD_RETRIES
   }
 
-  async open(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<EchoFlowLoginResult> {
+  async open(endpoint: EchoFlowLoginEndpoint = 'main', signal?: AbortSignal): Promise<EchoFlowLoginResult> {
+    if (signal?.aborted || this.signingOut.has(endpoint)) return 'cancelled'
     if (this.pending) {
       this.focusWindow()
       return this.pending
     }
 
-    // An existing credential is the common "already signed in" case. Reusing
-    // it avoids opening a window that the site would immediately redirect
-    // away from the login page.
+    let pending: Promise<EchoFlowLoginResult> | undefined
     const generation = this.generations.get(endpoint)
-    const restored = await this.restoreSession(endpoint)
-    if (this.generations.get(endpoint) !== generation) return 'cancelled'
-    if (restored) return 'authenticated'
-    if (this.pending) {
-      this.focusWindow()
-      return this.pending
+    const restore = this.restoreSession(endpoint, signal)
+    let resolveCancelled!: () => void
+    const cancelled = new Promise<void>(resolve => { resolveCancelled = resolve })
+    const onAbort = () => {
+      if (!restore.verification?.sent) resolveCancelled()
+      if (pending && this.pending === pending) this.cancelLogin()
     }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      const verdict = await Promise.race([restore.result, cancelled])
+      if (this.generations.get(endpoint) !== generation) return 'cancelled'
+      if (verdict === 'ok') return 'authenticated'
+      if (verdict === 'unknown') return 'failed'
+      if (signal?.aborted) return 'cancelled'
+      if (this.pending) {
+        this.focusWindow()
+        return await this.pending
+      }
 
-    this.pending = new Promise(resolve => { this.settled = resolve })
-    this.opening = this.startWindow(endpoint)
-    void this.opening.then(() => { this.opening = null })
-    return this.pending
+      pending = this.pending = new Promise(resolve => { this.settled = resolve })
+      const opening = this.opening = this.startWindow(endpoint, pending)
+      void opening.then(() => { if (this.opening === opening) this.opening = null })
+      return await pending
+    } finally {
+      signal?.removeEventListener('abort', onAbort)
+    }
   }
 
   async rehydrate(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<boolean> {
-    this.verified.delete(endpoint)
-    return await this.restoreSession(endpoint)
+    if (this.signingOut.has(endpoint)) return false
+    return await this.restoreSession(endpoint).result === 'ok'
   }
 
-  async clear(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
+  async clear(endpoint: EchoFlowLoginEndpoint = 'main', disconnect?: () => Promise<void>): Promise<void> {
+    const signingOut = this.signingOut.get(endpoint)
+    if (signingOut) return signingOut
+    const restore = this.restoring.get(endpoint)
+    const active = this.activeProfile?.endpoint === endpoint
+    const identity = active ? this.identityInFlight : null
     this.generations.set(endpoint, (this.generations.get(endpoint) ?? 0) + 1)
     this.restoring.delete(endpoint)
     this.verified.delete(endpoint)
-    if (this.activeProfile?.endpoint === endpoint) this.cancelLogin()
-    // Both must run even when one of them fails: the gateway token lives in
-    // storage, the main site session in cookies.
-    await Promise.all([
-      this.deps.clearCookies?.(endpoint),
-      this.deps.clearStorage?.(endpoint),
-    ])
+    if (active) this.cancelLogin()
+    const clearing = (async () => {
+      // An already-sent write must settle before the explicit sign-out deletes it.
+      await Promise.all([restore?.verification?.sent ? restore.result : undefined, identity?.sent ? identity.result : undefined])
+      await disconnect?.()
+      await this.clearEndpointState(endpoint)
+    })().finally(() => this.signingOut.delete(endpoint))
+    this.signingOut.set(endpoint, clearing)
+    await clearing
   }
 
   private focusWindow(): void {
     if (this.window) this.window.focus()
-    else void this.opening?.then(() => this.window?.focus())
-  }
-
-  private restoreSession(endpoint: EchoFlowLoginEndpoint): Promise<boolean> {
-    const existing = this.restoring.get(endpoint)
-    if (existing) return existing
-    const generation = this.generations.get(endpoint)
-    const restoring = this.tryRestoreSession(endpoint, generation)
-      .catch(() => false)
-      .finally(() => {
-        if (this.restoring.get(endpoint) === restoring) this.restoring.delete(endpoint)
-      })
-    this.restoring.set(endpoint, restoring)
-    return restoring
-  }
-
-  private async tryRestoreSession(endpoint: EchoFlowLoginEndpoint, generation: number | undefined): Promise<boolean> {
-    this.verified.delete(endpoint)
-    const credential = await this.deps.readCredential(endpoint, null)
-    if (!credential || this.generations.get(endpoint) !== generation) return false
-    const verdict = await this.deps.verifySession(endpoint, credential)
-    if (this.generations.get(endpoint) !== generation) return false
-    if (verdict !== 'ok') {
-      if (verdict === 'rejected') await this.clearEndpointState(endpoint)
-      return false
+    else {
+      const pending = this.pending
+      void this.opening?.then(() => { if (this.pending === pending) this.window?.focus() })
     }
-    this.verified.add(endpoint)
-    return true
+  }
+
+  private restoreSession(endpoint: EchoFlowLoginEndpoint, signal?: AbortSignal): Restore {
+    const existing = this.restoring.get(endpoint)
+    if (existing && (!existing.signal?.aborted || existing.verification?.sent)) {
+      if (!signal) existing.signal = undefined
+      return existing
+    }
+    const generation = this.generations.get(endpoint)
+    const restore: Restore = { signal, result: Promise.resolve('unavailable') }
+    const isCurrent = () => !restore.signal?.aborted && this.generations.get(endpoint) === generation
+    this.verified.delete(endpoint)
+    restore.result = (async () => {
+      const credential = await this.deps.readCredential(endpoint, null)
+      if (!credential || !isCurrent()) return 'unavailable' as const
+      const verification = restore.verification = this.verify(endpoint, credential, isCurrent)
+      const verdict = await verification.result
+      if (this.generations.get(endpoint) !== generation) return 'unavailable' as const
+      if (verdict === 'ok') this.verified.add(endpoint)
+      if (verdict === 'rejected' && isCurrent()) await this.clearEndpointState(endpoint)
+      return verdict
+    })().catch(() => 'unavailable' as const).finally(() => {
+      if (this.restoring.get(endpoint) === restore) this.restoring.delete(endpoint)
+    })
+    this.restoring.set(endpoint, restore)
+    return restore
+  }
+
+  private verify(endpoint: EchoFlowLoginEndpoint, credential: EchoFlowLoginCredential, isCurrent: () => boolean): Verification {
+    let sent = false
+    const result = (async () => this.deps.verifySession(endpoint, credential, () => {
+      if (sent || !isCurrent()) return false
+      sent = true
+      return true
+    }))().catch(() => sent ? 'unknown' as const : 'unavailable' as const)
+    return { get sent() { return sent }, result }
   }
 
   private async clearEndpointState(endpoint: EchoFlowLoginEndpoint): Promise<void> {
@@ -365,29 +401,20 @@ export class EchoFlowLoginSession {
   }
 
   private cancelLogin(): void {
-    this.clearTimers()
-    const window = this.window
-    this.window = null
-    this.activeProfile = null
-    if (window) {
-      try {
-        window.close()
-      } catch {
-        // The window may already be gone; the pending promise still settles.
-      }
-      this.finish('cancelled')
-      return
-    }
-    if (this.pending) this.finish('cancelled')
+    if (this.window) this.finishAndClose(this.window, 'cancelled')
+    else this.finish('cancelled')
   }
 
-  private async startWindow(endpoint: EchoFlowLoginEndpoint): Promise<void> {
-    const profile = this.deps.profiles[endpoint]
+  private async startWindow(endpoint: EchoFlowLoginEndpoint, pending: Promise<EchoFlowLoginResult>): Promise<void> {
+    const profile = this.activeProfile = this.deps.profiles[endpoint]
     let window: EchoFlowLoginWindow | null = null
     try {
       window = await this.deps.createWindow(profile.partition)
+      if (this.pending !== pending) {
+        window.close()
+        return
+      }
       this.window = window
-      this.activeProfile = profile
       this.loadRetriesUsed = 0
       this.loadAttemptId = 0
       this.loadFailureEventReceived = false
@@ -430,7 +457,7 @@ export class EchoFlowLoginSession {
 
       await this.loadLoginPage(loginWindow, profile)
     } catch (error) {
-      this.failAndClose(window, 'window-start-failed', error)
+      if (this.pending === pending) this.failAndClose(window, 'window-start-failed', error)
     }
   }
 
@@ -533,7 +560,7 @@ export class EchoFlowLoginSession {
   }
 
   private async pollSession(window: EchoFlowLoginWindow, endpoint: EchoFlowLoginEndpoint): Promise<void> {
-    if (this.window !== window || this.identityInFlight === window || this.verified.has(endpoint)) return
+    if (this.window !== window || this.identityInFlight || this.verified.has(endpoint)) return
 
     let credential: EchoFlowLoginCredential | null
     try {
@@ -541,7 +568,7 @@ export class EchoFlowLoginSession {
     } catch {
       return
     }
-    if (this.window !== window || !credential) return
+    if (this.window !== window || this.identityInFlight || !credential) return
 
     const fingerprint = credentialFingerprint(credential)
     const now = Date.now()
@@ -554,10 +581,14 @@ export class EchoFlowLoginSession {
     this.lastCredentialKey = fingerprint
     this.lastIdentityAttemptAt = now
 
-    this.identityInFlight = window
+    const verification = this.identityInFlight = this.verify(endpoint, credential, () => this.window === window)
     try {
-      const verdict = await this.deps.verifySession(endpoint, credential)
+      const verdict = await verification.result
       if (this.window !== window) return
+      if (verdict === 'unknown') {
+        this.finishAndClose(window, 'failed')
+        return
+      }
       if (verdict === 'rejected') {
         this.identityRejections += 1
         if (this.identityRejections >= MAX_IDENTITY_REJECTIONS) {
@@ -583,7 +614,7 @@ export class EchoFlowLoginSession {
     } catch {
       // Transient read or bridge failures are retried on the next poll.
     } finally {
-      if (this.identityInFlight === window) this.identityInFlight = null
+      if (this.identityInFlight === verification) this.identityInFlight = null
     }
   }
 
@@ -606,7 +637,6 @@ export class EchoFlowLoginSession {
   private onWindowClosed(window: EchoFlowLoginWindow): void {
     if (this.window !== window) return
     this.window = null
-    this.activeProfile = null
     this.clearTimers()
     this.finish('cancelled')
   }
@@ -614,7 +644,6 @@ export class EchoFlowLoginSession {
   private finishAndClose(window: EchoFlowLoginWindow, result: EchoFlowLoginResult): void {
     if (this.window !== window) return
     this.window = null
-    this.activeProfile = null
     this.clearTimers()
     try {
       window.close()
@@ -632,7 +661,6 @@ export class EchoFlowLoginSession {
     const target = window ?? this.window
     if (target && this.window !== target) return
     if (target) this.window = null
-    this.activeProfile = null
     this.clearTimers()
     if (target) {
       try {
@@ -679,9 +707,24 @@ export class EchoFlowLoginSession {
 
   private finish(result: EchoFlowLoginResult): void {
     const resolve = this.settled
+    if (!resolve) return
     this.settled = null
-    this.pending = null
-    resolve?.(result)
+    const endpoint = this.activeProfile?.endpoint
+    const verification = this.identityInFlight
+    const complete = (outcome: EchoFlowLoginResult) => {
+      this.activeProfile = null
+      this.pending = null
+      if (this.identityInFlight === verification) this.identityInFlight = null
+      resolve(outcome)
+    }
+    if (result !== 'authenticated' && verification?.sent) {
+      void verification.result.then(verdict => {
+        if (endpoint && this.signingOut.has(endpoint)) complete('cancelled')
+        else if (verdict === 'ok') complete('authenticated')
+        else if (verdict === 'unknown') complete('failed')
+        else complete(result)
+      })
+    } else complete(result)
   }
 }
 

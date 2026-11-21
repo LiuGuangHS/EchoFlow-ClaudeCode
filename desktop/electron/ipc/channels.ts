@@ -1,5 +1,7 @@
 export const ELECTRON_IPC_CHANNELS = {
   echoFlowLoginOpen: 'desktop:echoflow:login-open',
+  echoFlowLoginSetBounds: 'desktop:echoflow:login-set-bounds',
+  echoFlowLoginCancel: 'desktop:echoflow:login-cancel',
   echoFlowSignOut: 'desktop:echoflow:sign-out',
   echoFlowWhenRestored: 'desktop:echoflow:when-restored',
   configImportTake: 'desktop:config-import:take',

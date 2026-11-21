@@ -59,6 +59,12 @@ export const browserHost: DesktopHost = {
     async openLogin() {
       unsupported('EchoFlow site account login')
     },
+    async setLoginBounds() {
+      unsupported('EchoFlow site account login')
+    },
+    async cancelLogin() {
+      unsupported('EchoFlow site account login')
+    },
     async signOut() {
       unsupported('EchoFlow site account login')
     },
