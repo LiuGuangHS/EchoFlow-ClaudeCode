@@ -229,13 +229,18 @@ describe('EchoFlowAPIOfficialLogin', () => {
     expect(await screen.findByText(userIdSummary('late-web-user'))).toBeVisible()
   })
 
-  it('reconciles an earlier binding when an immediate retry is cancelled by the host', async () => {
+  it.each(['pending', 'settled'] as const)('reconciles an earlier %s binding when an immediate retry is cancelled', async (phase) => {
     mockAccounts(null, null)
-    let resolveLogin!: (result: 'authenticated') => void
-    const opening = new Promise<'authenticated'>(resolve => { resolveLogin = resolve })
-    hostMocks.openLogin.mockReturnValueOnce(opening).mockResolvedValueOnce('cancelled')
-    hostMocks.whenAccountRestored.mockResolvedValueOnce(false).mockResolvedValueOnce(false)
-      .mockImplementation(endpoint => endpoint === 'main' ? opening.then(() => true) : Promise.resolve(false))
+    let resolveLogin!: (result: 'authenticated' | 'unknown') => void
+    const opening = new Promise<'authenticated' | 'unknown'>(resolve => { resolveLogin = resolve })
+    hostMocks.openLogin.mockReturnValueOnce(opening).mockImplementationOnce(async () => {
+      if (phase === 'settled') resolveLogin('unknown')
+      return 'cancelled'
+    })
+    if (phase === 'pending') {
+      hostMocks.whenAccountRestored.mockResolvedValueOnce(false).mockResolvedValueOnce(false)
+        .mockImplementation(endpoint => endpoint === 'main' ? opening.then(() => true) : Promise.resolve(false))
+    }
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
     const signIn = () => fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
     signIn()
@@ -244,7 +249,7 @@ describe('EchoFlowAPIOfficialLogin', () => {
     expect(hostMocks.openLogin).toHaveBeenCalledTimes(2)
 
     mockAccounts(mainAccount, null)
-    await act(async () => { resolveLogin('authenticated') })
+    if (phase === 'pending') await act(async () => { resolveLogin('authenticated') })
     expect(await screen.findByText(userIdSummary(mainAccount.userId))).toBeVisible()
     expect(echoflowApi.refreshAccount).not.toHaveBeenCalled()
   })

@@ -282,9 +282,9 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
       if (outcome === 'unknown' || outcome === 'cancelled') {
         const unknown = outcome === 'unknown'
         if (unknown && paneOpen) setLineFeedback(endpoint, { notice: t('echoflowApiOfficialLogin.signInUnknown') })
-        // The host can decline an overlapping open while the earlier write is still settling.
-        const recheck = unknown || await host.whenAccountRestored(endpoint).catch(() => false)
-        for (const delay of recheck ? ACCOUNT_RECHECK_DELAYS : [0]) {
+        // A cancelled retry can race the end of an earlier write with an unknown outcome.
+        if (!unknown) await host.whenAccountRestored(endpoint).catch(() => false)
+        for (const delay of ACCOUNT_RECHECK_DELAYS) {
           if (delay) await new Promise(resolve => setTimeout(resolve, delay))
           if (!isCurrent()) return
           const { [endpoint]: loaded } = await load([endpoint], false)
