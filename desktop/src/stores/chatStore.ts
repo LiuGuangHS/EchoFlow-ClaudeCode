@@ -17,6 +17,8 @@ import { useSessionStore } from './sessionStore'
 import { useCLITaskStore, type CLITaskSnapshot } from './cliTaskStore'
 import { useWorkflowStore } from './workflowStore'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
+import { useSessionCliRuntimeStore } from './sessionCliRuntimeStore'
+import type { ClaudeCodeRuntimeId } from '../lib/desktopHost'
 import { useProviderStore } from './providerStore'
 import { reconcileRuntimeSelection, resolveActiveProviderRuntimeSelection } from '../lib/runtimeSelection'
 import { useSettingsStore } from './settingsStore'
@@ -489,6 +491,7 @@ type ChatStore = {
     response: ComputerUsePermissionResponse,
   ) => void
   setSessionRuntime: (sessionId: string, selection: RuntimeSelection) => void
+  setSessionCliRuntime: (sessionId: string, runtimeId: ClaudeCodeRuntimeId) => void
   setSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void
   stopGeneration: (sessionId: string) => void
   stopBackgroundTask: (sessionId: string, taskId: string) => void
@@ -3314,6 +3317,10 @@ export const useChatStore = create<ChatStore>((setState, get) => {
     wsManager.onConnectionState(sessionId, (connectionState) => {
       const currentSession = get().sessions[sessionId]
       if (!currentSession) return
+      if (connectionState === 'reconnecting' || connectionState === 'disconnected') {
+        // The receipt may have been lost. Do not replay the selection on the next socket.
+        useSessionCliRuntimeStore.getState().fail(sessionId)
+      }
       const currentBoundary = terminalReconnectHistoryBoundaries.get(sessionId)
       const hasCurrentReconnectBoundary =
         currentBoundary?.lifecycleGeneration === currentHistoryLifecycle(sessionId)
@@ -3781,6 +3788,22 @@ export const useChatStore = create<ChatStore>((setState, get) => {
       type: 'set_runtime_config',
       ...reconciled,
     })
+  },
+
+  setSessionCliRuntime: (sessionId, runtimeId) => {
+    const runtime = useSessionCliRuntimeStore.getState()
+    if (
+      get().sessions[sessionId]?.connectionState !== 'connected' ||
+      !wsManager.isConnected(sessionId) ||
+      runtime.statusBySessionId[sessionId] === 'pending'
+    ) return
+
+    runtime.request(sessionId, runtimeId)
+    try {
+      wsManager.send(sessionId, { type: 'set_cli_runtime', cliRuntimeId: runtimeId })
+    } catch {
+      runtime.fail(sessionId)
+    }
   },
 
   setSessionPermissionMode: (sessionId, mode) => {
@@ -5212,6 +5235,12 @@ export const useChatStore = create<ChatStore>((setState, get) => {
         )
         break
 
+      case 'cli_runtime_applied':
+        if (msg.cliRuntimeId === 'bundled' || msg.cliRuntimeId === 'installed') {
+          useSessionCliRuntimeStore.getState().apply(sessionId, msg.cliRuntimeId)
+        }
+        break
+
       case 'runtime_config_applied': {
         const selected = useSessionRuntimeStore.getState().selections[sessionId]
         const matchesSelection = (runtime: { providerId: string | null; modelId: string; effortLevel?: string; openAIFastMode?: boolean }) =>
@@ -5903,6 +5932,14 @@ export const useChatStore = create<ChatStore>((setState, get) => {
       }
 
       case 'error': {
+        const cliRuntime = useSessionCliRuntimeStore.getState()
+        const cliSelectionRejected = msg.code === 'CLI_RUNTIME_INVALID' || msg.code === 'CLI_RUNTIME_CHANGE_FAILED' || (
+          cliRuntime.statusBySessionId[sessionId] === 'pending' && !msg.requestId &&
+          (msg.code === 'SIDE_CHAT_RUNTIME_RESTART_UNAVAILABLE' || msg.code === 'MIGRATION_IN_PROGRESS')
+        )
+        if (cliSelectionRejected || msg.code === 'CLI_RESTART_FAILED') {
+          cliRuntime.fail(sessionId)
+        }
         if (msg.code === 'RUNTIME_CONFIG_INVALID' || msg.code === 'CLI_RESTART_FAILED') {
           // Let a fresh server snapshot reconcile a rejected optimistic choice.
           useSessionRuntimeStore.getState().settleSelection(sessionId)
@@ -5934,8 +5971,8 @@ export const useChatStore = create<ChatStore>((setState, get) => {
           wsManager.send(sessionId, { type: 'sync_state' })
           break
         }
-        if (msg.code === 'RUNTIME_CONFIG_INVALID') {
-          // Validation rejects the selection before changing the runtime. It
+        if (msg.code === 'RUNTIME_CONFIG_INVALID' || cliSelectionRejected) {
+          // Rejection happens without ending the current runtime. It
           // neither ends the active turn nor invalidates an in-flight history load.
           update((s) => ({ messages: [...s.messages, errorMessage] }))
           break

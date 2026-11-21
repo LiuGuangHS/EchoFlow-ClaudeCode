@@ -20,6 +20,8 @@ import {
 } from '../stores/tabStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useChatStore } from '../stores/chatStore'
+import { useSessionCliRuntimeStore } from '@/stores/sessionCliRuntimeStore'
+import { CliRuntimeSelector } from '@/components/controls/CliRuntimeSelector'
 import { useCLITaskStore } from '../stores/cliTaskStore'
 import { teamTaskWindowsForSnapshot, useTeamStore } from '../stores/teamStore'
 import { interruptedTeamNameOf, useTeamPlanStore } from '../stores/teamPlanStore'
@@ -67,6 +69,7 @@ import { useWorkspaceAdaptiveLayout } from '@/hooks/useWorkspaceAdaptiveLayout'
 import { useMobileViewport } from '../hooks/useMobileViewport'
 import { useWorkspaceShortcuts } from '../hooks/useWorkspaceShortcuts'
 import { useWorkspaceFocusReturn } from '../hooks/useWorkspaceFocusReturn'
+import { getDesktopHost } from '@/lib/desktopHost'
 import { isDesktopRuntime } from '../lib/desktopRuntime'
 import { formatTokenCount } from '../lib/formatTokenCount'
 import {
@@ -354,6 +357,17 @@ export function ActiveSession({ sessionId, active = true }: { sessionId?: string
   const connectToSession = useChatStore((s) => s.connectToSession)
   const stopBackgroundTask = useChatStore((s) => s.stopBackgroundTask)
   const sessionState = useChatStore((s) => activeTabId ? s.sessions[activeTabId] : undefined)
+  const setSessionCliRuntime = useChatStore((s) => s.setSessionCliRuntime)
+  const cliRuntimeEffective = useSessionCliRuntimeStore((s) =>
+    activeTabId ? s.effectiveBySessionId[activeTabId] : undefined,
+  )
+  const cliRuntimeRequested = useSessionCliRuntimeStore((s) =>
+    activeTabId ? s.requestedBySessionId[activeTabId] : undefined,
+  )
+  const cliRuntimeStatus = useSessionCliRuntimeStore((s) =>
+    activeTabId ? s.statusBySessionId[activeTabId] : undefined,
+  )
+  const [hasInstalledCliRuntime, setHasInstalledCliRuntime] = useState(false)
   const fetchSessionTasks = useCLITaskStore((s) => s.fetchSessionTasks)
   const trackedTaskSessionId = useCLITaskStore((s) => s.sessionId)
   const cliTasks = useCLITaskStore((s) => s.tasks)
@@ -442,6 +456,16 @@ export function ActiveSession({ sessionId, active = true }: { sessionId?: string
       void fetchTeamForSession(activeTabId)
     }
   }, [activeTabId, connectToSession, fetchTeamForSession])
+
+  useEffect(() => {
+    if (!active || !isSessionTabState(activeTabId, activeTabType) || !isDesktopRuntime()) return
+    let cancelled = false
+    void getDesktopHost().runtime.getClaudeCode().then(
+      (status) => { if (!cancelled) setHasInstalledCliRuntime(status.hasInstalledRuntime) },
+      () => { if (!cancelled) setHasInstalledCliRuntime(false) },
+    )
+    return () => { cancelled = true }
+  }, [active, activeTabId, activeTabType])
 
   useEffect(() => {
     if (!activeTabId || !isSessionTabState(activeTabId, activeTabType)) return
@@ -972,6 +996,19 @@ export function ActiveSession({ sessionId, active = true }: { sessionId?: string
                           ? t('session.worktreeRemoved', { dir: session.projectRoot || '' })
                           : t('session.workspaceUnavailable', { dir: session.workDir || 'directory no longer exists' })}
                       </span>
+                    </div>
+                  )}
+                  {isSessionTabState(activeTabId, activeTabType) && (
+                    <div className="mt-2">
+                      <CliRuntimeSelector
+                        key={activeTabId}
+                        effectiveRuntime={cliRuntimeEffective}
+                        requestedRuntime={cliRuntimeRequested}
+                        status={cliRuntimeStatus}
+                        hasInstalledRuntime={hasInstalledCliRuntime}
+                        disabled={sessionState?.connectionState !== 'connected'}
+                        onChange={(runtimeId) => setSessionCliRuntime(activeTabId, runtimeId)}
+                      />
                     </div>
                   )}
                   <ActiveGoalStrip

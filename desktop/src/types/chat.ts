@@ -1,4 +1,4 @@
-import type { ServerMessage as WireServerMessage } from '../../../src/server/ws/events'
+import type { ClientMessage as WireClientMessage, ServerMessage as WireServerMessage } from '../../../src/server/ws/events'
 import type { ScheduledTaskTrigger } from './task'
 import type { PermissionMode } from './settings'
 import type { RuntimeSelection } from './runtime'
@@ -30,6 +30,7 @@ export type ClientMessage =
     }
   | { type: 'set_permission_mode'; mode: PermissionMode }
   | ({ type: 'set_runtime_config' } & RuntimeSelection)
+  | Extract<WireClientMessage, { type: 'set_cli_runtime' }>
   | { type: 'stop_generation' }
   | { type: 'ask_user_question_activity'; requestId: string }
   | { type: 'stop_background_task'; taskId: string }
@@ -147,6 +148,7 @@ export type ServerMessage =
       openAIFastMode?: boolean
       requestedConfig?: { providerId: string | null; modelId: string; effortLevel?: string; openAIFastMode?: boolean }
     }
+  | Extract<WireServerMessage, { type: 'cli_runtime_applied' }>
   // CLI 回传的权限模式变化（如 ExitPlanMode 退出 plan 后恢复、Shift+Tab）。
   // 桌面端据此把选择器校正回 CLI 的真实权限，避免本地影子值漂移。
   | { type: 'permission_mode_changed'; mode: PermissionMode }

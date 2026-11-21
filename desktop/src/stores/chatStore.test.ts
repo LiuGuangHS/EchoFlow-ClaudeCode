@@ -10,6 +10,8 @@ import {
   hasVisibleSessionActivity,
 } from '../components/activity/sessionActivityModel'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
+import { useSessionCliRuntimeStore } from './sessionCliRuntimeStore'
+import { wsManager } from '../api/websocket'
 import { hasRunningBackgroundTasks } from '../lib/backgroundTasks'
 import { registerSideChatSession, unregisterSideChatSession } from '../lib/sideChatSessions'
 
@@ -103,6 +105,7 @@ vi.mock('../api/websocket', () => ({
   wsManager: {
     connect: vi.fn(),
     disconnect: vi.fn(),
+    isConnected: vi.fn(() => true),
     onConnectionState: vi.fn((sessionId: string, handler: (state: 'connecting' | 'connected' | 'reconnecting' | 'disconnected') => void) => {
       connectionStateHandlers.set(sessionId, handler)
       handler('connecting')
@@ -233,6 +236,102 @@ function makeSession(overrides: Partial<PerSessionState> = {}): PerSessionState 
     ...overrides,
   }
 }
+
+describe('chatStore session CLI runtime', () => {
+  let receive: (message: ServerMessage) => void
+
+  beforeEach(() => {
+    useChatStore.setState({ sessions: {} })
+    useSessionCliRuntimeStore.setState(useSessionCliRuntimeStore.getInitialState(), true)
+    useChatStore.getState().connectToSession(TEST_SESSION_ID, { minimalBootstrap: true, prewarm: false })
+    connectionStateHandlers.get(TEST_SESSION_ID)!('connected')
+    receive = vi.mocked(wsManager.onMessage).mock.lastCall![1]
+    sendMock.mockClear()
+  })
+
+  afterEach(() => {
+    useChatStore.getState().disconnectSession(TEST_SESSION_ID)
+    useSessionCliRuntimeStore.setState(useSessionCliRuntimeStore.getInitialState(), true)
+    connectionStateHandlers.delete(TEST_SESSION_ID)
+    sendMock.mockClear()
+  })
+
+  it('sends the session CLI runtime and waits for its matching server receipt', () => {
+    receive({ type: 'cli_runtime_applied', cliRuntimeId: 'bundled' })
+    useChatStore.getState().setSessionCliRuntime(TEST_SESSION_ID, 'installed')
+    expect(sendMock).toHaveBeenCalledWith(TEST_SESSION_ID, { type: 'set_cli_runtime', cliRuntimeId: 'installed' })
+    useChatStore.getState().setSessionCliRuntime(TEST_SESSION_ID, 'bundled')
+    receive({ type: 'status', state: 'idle' })
+    receive({ type: 'cli_runtime_applied', cliRuntimeId: 'bundled' })
+    expect(useSessionCliRuntimeStore.getState()).toMatchObject({
+      effectiveBySessionId: { [TEST_SESSION_ID]: 'bundled' },
+      statusBySessionId: { [TEST_SESSION_ID]: 'pending' },
+    })
+
+    receive({ type: 'cli_runtime_applied', cliRuntimeId: 'installed' })
+    expect(useSessionCliRuntimeStore.getState()).toMatchObject({
+      effectiveBySessionId: { [TEST_SESSION_ID]: 'installed' },
+      statusBySessionId: { [TEST_SESSION_ID]: 'applied' },
+    })
+    expect(sendMock).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['CLI_RUNTIME_INVALID', 'CLI_RUNTIME_CHANGE_FAILED', 'SIDE_CHAT_RUNTIME_RESTART_UNAVAILABLE', 'MIGRATION_IN_PROGRESS'])(
+    'settles %s without interrupting streaming or altering the confirmed runtime',
+    (code) => {
+      receive({ type: 'cli_runtime_applied', cliRuntimeId: 'bundled' })
+      useChatStore.setState((state) => ({ sessions: {
+        ...state.sessions,
+        [TEST_SESSION_ID]: makeSession({ streamingText: 'in progress', historyMutationEpoch: 4 }),
+      } }))
+      useChatStore.getState().setSessionCliRuntime(TEST_SESSION_ID, 'installed')
+      receive({ type: 'error', code, message: 'Unable to change CLI runtime' })
+
+      expect(useSessionCliRuntimeStore.getState()).toMatchObject({
+        effectiveBySessionId: { [TEST_SESSION_ID]: 'bundled' },
+        statusBySessionId: { [TEST_SESSION_ID]: 'failed' },
+      })
+      expect(useChatStore.getState().sessions[TEST_SESSION_ID]).toMatchObject({
+        chatState: 'streaming', streamingText: 'in progress', historyMutationEpoch: 4,
+        messages: [expect.objectContaining({ type: 'error', code })],
+      })
+    },
+  )
+
+  it('does not queue a switch after the socket has closed', () => {
+    vi.mocked(wsManager.isConnected).mockReturnValueOnce(false)
+    useChatStore.getState().setSessionCliRuntime(TEST_SESSION_ID, 'installed')
+
+    expect(sendMock).not.toHaveBeenCalled()
+    expect(useSessionCliRuntimeStore.getState().statusBySessionId[TEST_SESSION_ID]).toBeUndefined()
+  })
+
+  it('ends pending when sending the request throws', () => {
+    sendMock.mockImplementationOnce(() => { throw new Error('Socket closed') })
+    useChatStore.getState().setSessionCliRuntime(TEST_SESSION_ID, 'installed')
+
+    expect(useSessionCliRuntimeStore.getState()).toMatchObject({
+      effectiveBySessionId: {},
+      statusBySessionId: { [TEST_SESSION_ID]: 'failed' },
+    })
+  })
+
+  it.each(['restart failure', 'connection loss'])('ends pending after %s without replaying the command', (event) => {
+    useChatStore.getState().setSessionCliRuntime(TEST_SESSION_ID, 'installed')
+    if (event === 'restart failure') {
+      receive({ type: 'error', code: 'CLI_RESTART_FAILED', message: 'Restart failed' })
+    } else {
+      connectionStateHandlers.get(TEST_SESSION_ID)!('reconnecting')
+      useChatStore.getState().setSessionCliRuntime(TEST_SESSION_ID, 'installed')
+      connectionStateHandlers.get(TEST_SESSION_ID)!('connected')
+    }
+    expect(useSessionCliRuntimeStore.getState()).toMatchObject({
+      effectiveBySessionId: {},
+      statusBySessionId: { [TEST_SESSION_ID]: 'failed' },
+    })
+    expect(sendMock).toHaveBeenCalledTimes(1)
+  })
+})
 
 describe('stripGeneratedImageMetadataLines', () => {
   it('removes simple, detailed, and resize metadata lines but keeps the prompt body', () => {
