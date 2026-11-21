@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import {
+  LEGACY_WORKSPACE_BROWSER_PARTITION,
   WORKSPACE_BROWSER_INITIAL_SRC,
   WORKSPACE_BROWSER_PARTITION,
 } from '../../src/lib/workspace/browserGuestContract'
@@ -7,10 +11,33 @@ import {
   applyWorkspaceBrowserAttachPolicy,
   installWorkspaceBrowserGuestPolicy,
   resolveWorkspaceBrowserGuest,
+  resolveWorkspaceBrowserPartition,
 } from './workspaceBrowserGuest'
 
 const PRELOAD = '/app/electron-dist/preview-preload.cjs'
+const guestOptions = { preload: PRELOAD, session: { name: 'bound-browser' } }
 const browserAttach = { partition: WORKSPACE_BROWSER_PARTITION, src: WORKSPACE_BROWSER_INITIAL_SRC }
+
+it('reuses the legacy partition until the current profile contains data', () => {
+  const profile = mkdtempSync(path.join(tmpdir(), 'workspace-browser-profile-'))
+  try {
+    expect(resolveWorkspaceBrowserPartition(profile)).toBe(WORKSPACE_BROWSER_PARTITION)
+    const legacy = path.join(profile, 'Partitions', LEGACY_WORKSPACE_BROWSER_PARTITION.slice('persist:'.length))
+    mkdirSync(legacy, { recursive: true })
+    expect(resolveWorkspaceBrowserPartition(profile)).toBe(LEGACY_WORKSPACE_BROWSER_PARTITION)
+    const current = path.join(profile, 'Partitions', WORKSPACE_BROWSER_PARTITION.slice('persist:'.length))
+    writeFileSync(current, '')
+    expect(() => resolveWorkspaceBrowserPartition(profile)).toThrow('ordinary directories')
+    rmSync(current)
+    mkdirSync(current)
+    writeFileSync(path.join(legacy, 'Preferences'), '{}')
+    expect(resolveWorkspaceBrowserPartition(profile)).toBe(LEGACY_WORKSPACE_BROWSER_PARTITION)
+    writeFileSync(path.join(current, 'Preferences'), '{}')
+    expect(resolveWorkspaceBrowserPartition(profile)).toBe(WORKSPACE_BROWSER_PARTITION)
+  } finally {
+    rmSync(profile, { recursive: true, force: true })
+  }
+})
 
 describe('workspace browser attach policy', () => {
   it('pins the sandboxed preferences and the preview preload, whatever the element asked for', () => {
@@ -19,6 +46,7 @@ describe('workspace browser attach policy', () => {
     const requested: Record<string, unknown> = {
       preload: '/tmp/evil.js',
       preloadURL: 'file:///tmp/evil.js',
+      session: { name: 'renderer' },
       nodeIntegration: true,
       nodeIntegrationInSubFrames: true,
       nodeIntegrationInWorker: true,
@@ -34,9 +62,10 @@ describe('workspace browser attach policy', () => {
       webviewTag: true,
       zoomFactor: 3,
     }
-    expect(applyWorkspaceBrowserAttachPolicy(requested, browserAttach, { preload: PRELOAD })).toBe(true)
+    expect(applyWorkspaceBrowserAttachPolicy(requested, browserAttach, guestOptions)).toBe(true)
     expect(requested).toEqual({
       preload: PRELOAD,
+      session: guestOptions.session,
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
       contextIsolation: true,
@@ -57,14 +86,14 @@ describe('workspace browser attach policy', () => {
     ['a local file', { partition: WORKSPACE_BROWSER_PARTITION, src: 'file:///etc/passwd' }],
   ])('denies a guest for %s', (_name, params) => {
     const preferences: Record<string, unknown> = { nodeIntegration: true }
-    expect(applyWorkspaceBrowserAttachPolicy(preferences, params, { preload: PRELOAD })).toBe(false)
+    expect(applyWorkspaceBrowserAttachPolicy(preferences, params, guestOptions)).toBe(false)
   })
 
   it('cancels a denied attach and confines every attached guest until it is adopted', () => {
     const handlers = new Map<string, (...args: never[]) => void>()
     installWorkspaceBrowserGuestPolicy({
       on: (event, handler) => { handlers.set(event, handler) },
-    }, { preload: PRELOAD })
+    }, guestOptions)
     const willAttach = handlers.get('will-attach-webview') as unknown as (
       event: { preventDefault(): void }, preferences: Record<string, unknown>, params: unknown,
     ) => void

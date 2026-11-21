@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { assertUnlinkedDirectoryPath, readStorageMigrationStatus } from '../../../src/services/storageMigration'
+import { assertUnlinkedDirectoryPath, migrationManifest, readStorageMigrationStatus, type StorageMigrationSource, type VerifiedMigrationFile } from '../../../src/services/storageMigration'
 import { DatabaseSync } from 'node:sqlite'
 import { validateStorageSQLite as validateDesktopSQLite } from '../../../src/services/storageMigrationValidation'
 export { createStorageMigrationHooks as createDesktopStorageHooks } from '../../../src/services/storageMigrationValidation'
@@ -12,9 +12,11 @@ export { validateDesktopSQLite }
 import type { StorageBinding } from '../../../src/utils/echoFlowConfigRoot'
 import { APP_ZOOM_STORAGE_KEY, LEGACY_UI_ZOOM_STORAGE_KEY, isValidStoredAppZoomLevel, normalizeAppZoomLevel } from '../../src/lib/appZoom'
 import { CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION, DESKTOP_PERSISTENCE_VERSION_KEY, runDesktopPersistenceMigrations } from '../../src/lib/persistenceMigrations'
+import { LEGACY_WORKSPACE_BROWSER_PARTITION, WORKSPACE_BROWSER_PARTITION } from '../../src/lib/workspace/browserGuestContract'
 import { WORKSPACE_STORAGE_KEY, WORKSPACE_STORAGE_VERSION } from '../../src/lib/workspace/storageKey'
 import { ECHOFLOW_LOGIN_PROFILES, type EchoFlowLoginEndpoint } from './echoFlowLogin'
 import { resolveRendererEntry } from './rendererEntry'
+import { resolveWorkspaceBrowserPartition } from './workspaceBrowserGuest'
 
 export type NativeStorageSnapshot = {
   localStorage: Record<string, string>
@@ -92,6 +94,8 @@ const profileEntries = ['Local Storage', 'IndexedDB', 'Session Storage', 'WebSto
 const loginPartitions = Object.values(ECHOFLOW_LOGIN_PROFILES)
 const partitionDirectory = (partition: string) => partition.slice('persist:'.length)
 const cookieFamily = /^Cookies(?:-journal|-wal|-shm)?$/
+const browserPartitions = [LEGACY_WORKSPACE_BROWSER_PARTITION, WORKSPACE_BROWSER_PARTITION].map(partitionDirectory)
+const browserCaches = new Set(['Cache', 'Code Cache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'GPUCache'])
 // Keep these Chromium-generated files in the migration, but never load them in the reader.
 const loginRuntimeEntries = new Set([
   'Cache', 'Code Cache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'GPUCache', 'blob_storage',
@@ -124,7 +128,7 @@ async function copyProfile(source: string, target: string, login?: EchoFlowLogin
     if (await exists(partitions)) {
       await assertUnlinkedDirectoryPath(partitions)
       for (const name of await fs.readdir(partitions)) {
-        if (!loginPartitions.some(({ partition }) => partitionDirectory(partition) === name) && await populated(path.join(partitions, name))) {
+        if (!browserPartitions.includes(name) && !loginPartitions.some(({ partition }) => partitionDirectory(partition) === name) && await populated(path.join(partitions, name))) {
           throw new Error('Restricted validation has no lossless Partitions persistence owner')
         }
       }
@@ -171,6 +175,89 @@ async function copyProfile(source: string, target: string, login?: EchoFlowLogin
     }
   }
   return profile
+}
+
+type DesktopValidationJournal = {
+  sources: (StorageMigrationSource & { directories: { relative: string }[] })[]
+  entries: { source: number; relative: string; destination: string; original: { digest: string }; published?: { digest: string } }[]
+}
+
+async function browserPartitionManifest(directory: string): Promise<VerifiedMigrationFile[] | undefined> {
+  if (!await exists(directory)) return
+  await assertUnlinkedDirectoryPath(directory)
+  const tree = await fs.readdir(directory, { recursive: true, withFileTypes: true })
+  for (const item of tree) {
+    if (!item.isDirectory() && (!item.isFile() || (await fs.lstat(path.join(item.parentPath, item.name))).nlink !== 1)) {
+      throw new Error('Browser partition contains linked or special data')
+    }
+  }
+  const manifest = await migrationManifest(directory)
+  if (manifest.length !== tree.length || manifest.some(item => item.kind === 'link')) throw new Error('Browser partition manifest does not cover the complete tree')
+  return manifest
+}
+
+function matchesBrowserManifest(actual: VerifiedMigrationFile[] | undefined, expected: Map<string, VerifiedMigrationFile>): boolean {
+  return actual !== undefined && actual.length === expected.size && actual.every(item => {
+    const receipt = expected.get(item.relative)
+    return receipt?.kind === item.kind && receipt.digest === item.digest
+  })
+}
+
+async function validateBrowserPartitions(root: string, journal: DesktopValidationJournal, work: string): Promise<void> {
+  for (const name of browserPartitions) {
+    const relative = path.join('Partitions', name)
+    const prefix = relative + path.sep
+    const directory = path.join(root, relative)
+    let target: VerifiedMigrationFile[] | undefined
+    for (const [index, source] of journal.sources.entries()) {
+      if (source.destination || source.ownership === 'legacy-internal' || source.layout || source.archive) continue
+      const original = await browserPartitionManifest(path.join(source.directory, relative))
+      const recorded = source.directories.some(item => item.relative === relative)
+      const expected = new Map<string, VerifiedMigrationFile>()
+      for (const item of source.directories) {
+        if (!item.relative.startsWith(prefix)) continue
+        const leaf = item.relative.slice(prefix.length)
+        expected.set(leaf, { relative: leaf, kind: 'directory' })
+      }
+      for (const entry of journal.entries) {
+        if (entry.source !== index || !entry.relative.startsWith(prefix)) continue
+        if (entry.destination !== entry.relative || entry.published?.digest !== entry.original.digest) throw new Error('Browser partition publication receipt changed')
+        const leaf = entry.relative.slice(prefix.length)
+        expected.set(leaf, { relative: leaf, kind: 'file', digest: entry.original.digest })
+      }
+      if (!recorded && !original && !expected.size) continue
+      target ??= await browserPartitionManifest(directory)
+      if (!recorded || !matchesBrowserManifest(original, expected) || !matchesBrowserManifest(target, expected)) {
+        throw new Error(`Browser partition ${name} changed or is missing from the migration`)
+      }
+    }
+    if (!target) continue
+
+    // shortcut: arbitrary-origin stores and saved cookies need a restricted consumer before they can be admitted.
+    const databases = new Set<string>()
+    for (const item of target) {
+      if (item.kind !== 'file') continue
+      const parent = path.dirname(item.relative)
+      if (parent !== '.' && browserCaches.has(item.relative.split(path.sep)[0]!)) continue
+      if ((parent !== '.' && parent !== 'Network') || !cookieFamily.test(path.basename(item.relative))) {
+        throw new Error('Restricted validation has no lossless browser partition persistence owner for this file')
+      }
+      databases.add(path.join(parent, 'Cookies'))
+    }
+    for (const database of databases) {
+      const members = target.filter(item => item.kind === 'file' && path.dirname(item.relative) === path.dirname(database) && cookieFamily.test(path.basename(item.relative)))
+      if (!members.some(item => item.relative === database)) throw new Error('Incomplete browser cookie database')
+      const copy = await fs.mkdtemp(path.join(work, 'browser-cookies-'))
+      for (const item of members) await fs.copyFile(path.join(directory, item.relative), path.join(copy, path.basename(item.relative)))
+      await validateDesktopSQLite(path.join(copy, 'Cookies'), file => {
+        const db = new DatabaseSync(file, { readOnly: true })
+        try {
+          if (db.prepare("PRAGMA main.table_list('cookies')").get()?.type !== 'table') throw new Error('Unsupported browser cookie database schema')
+          if (db.prepare('SELECT 1 FROM main.cookies LIMIT 1').get()) throw new Error('Saved browser cookies require a restricted Chromium consumer')
+        } finally { db.close() }
+      })
+    }
+  }
 }
 
 async function expectedLoginCookieCount(profile: string, origin: string): Promise<number> {
@@ -395,8 +482,12 @@ export async function validateRestrictedDesktopStorage(binding: StorageBinding, 
   const work = await fs.mkdtemp(path.join(transaction, 'native-validation-'))
   await fs.chmod(work, 0o700)
   try {
+    const journal = JSON.parse(await fs.readFile(path.join(transaction, 'journal.json'), 'utf8')) as DesktopValidationJournal
+    await validateBrowserPartitions(binding.root, journal, work)
+    resolveWorkspaceBrowserPartition(binding.root)
     // Executed via the installed Electron binary, not a user-supplied script or renderer.
-    const childEntry = options.childEntry ?? path.join(__dirname, 'storage-validation.cjs')
+    const validatorModule = './storage-validation.cjs'
+    const childEntry = options.childEntry ?? require.resolve(validatorModule)
     if (!await exists(childEntry)) throw new Error('Packaged restricted storage validator is missing')
     const desktopRoot = path.dirname(path.dirname(childEntry))
     const entry = resolveRendererEntry({ isPackaged: desktopRoot.endsWith('.asar'), appRoot: desktopRoot, env: process.env })
@@ -438,7 +529,6 @@ export async function validateRestrictedDesktopStorage(binding: StorageBinding, 
     }
     const target = await consume(binding.root, 'published')
     const targetLogins = await consumeLogins(binding.root, 'published')
-    const journal = JSON.parse(await fs.readFile(path.join(transaction, 'journal.json'), 'utf8')) as { sources: { directory: string; destination?: string; ownership?: string; layout?: string; archive?: boolean }[] }
     for (const [index, source] of journal.sources.entries()) {
       if (source.destination || source.ownership === 'legacy-internal' || source.layout || source.archive) continue
       const before = await consume(source.directory, `source-${index}`)

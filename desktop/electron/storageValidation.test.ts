@@ -6,7 +6,8 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { execFileSync, spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
+import { promisify } from 'node:util'
 import { buildEchoFlowOwnershipMarker, resolveStorageBinding } from '../../src/utils/echoFlowConfigRoot'
 import { completeStorageMigration, executeStorageMigration } from '../../src/services/storageMigration'
 import { CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION, DESKTOP_PERSISTENCE_VERSION_KEY } from '../src/lib/persistenceMigrations'
@@ -178,7 +179,17 @@ app.whenReady().then(async()=>{
     const original = await tree(source)
     const published = await tree(root)
     const selectedEntry = variant === 'package-entry' ? path.dirname(childEntry) : childEntry
-    const validation = validateRestrictedDesktopStorage(binding, { executable: electron, childEntry: selectedEntry })
+    const validation = variant === 'valid' ? (async () => {
+      const driver = path.join(directory, 'validator-driver.ts')
+      const bundled = path.join(path.dirname(childEntry), 'validator-driver.cjs')
+      const validator = path.join(import.meta.dirname, 'services', 'desktopStorageValidation.ts')
+      await fs.writeFile(driver, `import { validateRestrictedDesktopStorage } from ${JSON.stringify(validator)}
+validateRestrictedDesktopStorage(JSON.parse(process.argv[2]), { executable: process.argv[3] }).catch(error => { console.error(error); process.exitCode = 1 })`)
+      execFileSync('bun', ['build', driver, '--target=node', '--format=cjs', '--outfile', bundled], { stdio: 'pipe' })
+      await promisify(execFile)(process.execPath, [bundled, JSON.stringify(binding), electron], {
+        cwd: directory, env: { ...env, ELECTRON_RENDERER_URL: url }, timeout: 120_000,
+      })
+    })() : validateRestrictedDesktopStorage(binding, { executable: electron, childEntry: selectedEntry })
     const valid = ['valid', 'package-entry', 'file-origin', 'login-partitions', 'login-legacy-layout', 'login-transport-policy', 'logged-out-login'].includes(variant)
     if (valid) await validation
     else if (variant === 'logged-out-missing-current') await expect(validation).rejects.toThrow(/manifest/i)
@@ -193,6 +204,10 @@ app.whenReady().then(async()=>{
     expect(await tree(root)).toEqual(published)
     expect(requests).toBe(0)
     expect(await fs.stat(ordinaryMarker).catch(() => null)).toBeNull()
+    if (variant === 'package-entry') {
+      execFileSync(electron, [path.dirname(childEntry), '--disable-gpu', '--disable-dev-shm-usage'], { cwd: directory, env, timeout: 30_000, stdio: 'pipe' })
+      expect(await fs.readFile(ordinaryMarker, 'utf8')).toBe('ordinary writer started')
+    }
     const transaction = path.join(binding.internalDir, 'migrations', result.id!)
     expect((await fs.readdir(transaction)).filter(name => name.startsWith('native-validation-'))).toEqual([])
     if (valid) expect((await completeStorageMigration(binding, result.id!, hooks)).state).toBe('ready')

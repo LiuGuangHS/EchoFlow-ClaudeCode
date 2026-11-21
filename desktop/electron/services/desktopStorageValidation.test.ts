@@ -6,7 +6,7 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
 import { buildEchoFlowOwnershipMarker, resolveStorageBinding } from '../../../src/utils/echoFlowConfigRoot'
-import { executeStorageMigration } from '../../../src/services/storageMigration'
+import { completeStorageMigration, executeStorageMigration } from '../../../src/services/storageMigration'
 import { CURRENT_PROVIDER_INDEX_SCHEMA_VERSION } from '../../../src/server/services/persistentStorageMigrations'
 import { APP_ZOOM_STORAGE_KEY, LEGACY_UI_ZOOM_STORAGE_KEY } from '../../src/lib/appZoom'
 import { CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION, DESKTOP_PERSISTENCE_VERSION_KEY, runDesktopPersistenceMigrations } from '../../src/lib/persistenceMigrations'
@@ -156,20 +156,27 @@ describe('production desktop storage validators', () => {
     const shared = path.join(home, '.claude')
     const old = path.join(home, 'obsolete-root')
     const binding = resolveStorageBinding({ env: {}, roots: [root] })
+    const resident = path.join(root, 'Partitions', 'echoflow-code-browser-app', 'Preferences')
+    await fs.mkdir(path.dirname(resident), { recursive: true })
+    await fs.writeFile(resident, '{"fixture":"resident browser state"}')
     for (const directory of [shared, old]) {
       await fs.mkdir(path.join(directory, 'Partitions'), { recursive: true })
       await fs.writeFile(path.join(directory, 'Partitions/foreign'), 'foreign partition, never opened')
     }
     await fs.writeFile(path.join(old, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
     await fs.writeFile(path.join(shared, 'terminal-config.json'), '{"bash_path":null,"future":7}')
+    await fs.writeFile(path.join(root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+    await fs.writeFile(path.join(root, '.config.json'), '{"future":7}')
     const receiptFile = path.join(shared, 'data-migration-v1.json')
     await fs.writeFile(receiptFile, '{"version":1,"unknown":7}')
     const stat = await fs.lstat(receiptFile, { bigint: true })
+    const hooks = { platform: 'linux' as const, assertQuiescent: async () => {} }
     const result = await executeStorageMigration({ binding, sources: [
+      { directory: root, markerRoot: root, layout: 'root-config' },
       { directory: shared, markerRoot: shared, layout: 'desktop-state' },
       { directory: shared, markerRoot: shared, layout: 'legacy-controls', controls: { 'data-migration-v1.json': { digest: await digest(receiptFile), dev: String(stat.dev), ino: String(stat.ino) } } },
       { directory: old, markerRoot: old, archive: true },
-    ], hooks: { platform: 'linux', assertQuiescent: async () => {} } })
+    ], hooks })
     expect(result.state).toBe('validation-required')
     const childEntry = path.join(home, 'app/electron/storage-validation.cjs')
     await fs.mkdir(path.dirname(childEntry), { recursive: true })
@@ -178,11 +185,70 @@ describe('production desktop storage validators', () => {
       const request = JSON.parse(fs.readFileSync(process.argv.find(arg => arg.startsWith('--echoflow-storage-validation-request=')).split('=').slice(1).join('='), 'utf8'));
       fs.appendFileSync(path.join(__dirname, 'calls.jsonl'), JSON.stringify(request.profile) + '\\n');
       fs.writeFileSync(path.join(request.directory, 'result.json'), JSON.stringify({ localStorage: {}, indexedDB: [] }));`)
+    const malformed = path.join(root, 'Partitions', 'cc-haha-browser-app')
+    await fs.writeFile(malformed, 'fixture file in place of a directory')
+    await expect(validateRestrictedDesktopStorage(binding, { executable: process.execPath, childEntry })).rejects.toThrow('ordinary directories')
+    await fs.unlink(malformed)
     await validateRestrictedDesktopStorage(binding, { executable: process.execPath, childEntry })
     const calls = (await fs.readFile(path.join(path.dirname(childEntry), 'calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line))
     expect(calls).toHaveLength(1)
     expect(calls[0]).toContain(`${path.sep}published${path.sep}profile`)
+    expect((await completeStorageMigration(binding, result.id!, hooks)).state).toBe('ready')
+    expect(await fs.readFile(resident, 'utf8')).toBe('{"fixture":"resident browser state"}')
     expect(await fs.readFile(path.join(shared, 'Partitions/foreign'), 'utf8')).toBe('foreign partition, never opened')
+  })
+
+  it.each(['unchanged', 'changed leaf', 'missing companion', 'missing empty directory', 'extra leaf', 'missing source leaf', 'saved cookie', 'saved site data', 'unknown partition'])('checks complete named browser partitions across roots: %s', async variant => {
+    const home = await fixture()
+    const source = path.join(home, 'source')
+    const root = path.join(home, 'selected')
+    const binding = resolveStorageBinding({ env: {}, roots: [root] })
+    const legacy = path.join('Partitions', 'echoflow-code-browser-app')
+    const current = path.join('Partitions', 'cc-haha-browser-app')
+    const cookies = path.join(legacy, 'Network', 'Cookies')
+    const empty = path.join(current, 'empty')
+    const cache = path.join(current, 'Cache', 'fixture')
+    await fs.mkdir(path.join(source, empty), { recursive: true })
+    await fs.mkdir(path.dirname(path.join(source, cache)), { recursive: true })
+    await fs.mkdir(path.dirname(path.join(source, cookies)), { recursive: true })
+    await fs.writeFile(path.join(source, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+    await fs.writeFile(path.join(source, cache), 'regenerable cache')
+    const live = path.join(home, 'sqlite')
+    const writer = new DatabaseSync(live)
+    try {
+      writer.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE cookies (encrypted_value BLOB)')
+      if (variant === 'saved cookie') writer.exec("INSERT INTO cookies VALUES (X'010203')")
+      for (const suffix of ['', '-wal', '-shm']) await fs.copyFile(live + suffix, path.join(source, cookies) + suffix)
+    } finally { writer.close() }
+    if (variant === 'saved site data') await fs.writeFile(path.join(source, legacy, 'Preferences'), 'unvalidated persistent state')
+    if (variant === 'unknown partition') await fs.writeFile(path.join(source, 'Partitions', 'unrecognized'), 'unvalidated partition')
+    const hooks = { ...createDesktopStorageHooks(binding), platform: 'linux' as const, assertQuiescent: async () => {} }
+    const migration = await executeStorageMigration({ binding, sources: [{ directory: source, markerRoot: source }], hooks })
+    expect(migration.issues).toEqual([])
+    expect(migration.state).toBe('validation-required')
+    if (variant === 'changed leaf') await fs.writeFile(path.join(root, cache), 'different bytes')
+    if (variant === 'missing companion') await fs.unlink(path.join(root, cookies) + '-shm')
+    if (variant === 'missing empty directory') await fs.rmdir(path.join(root, empty))
+    if (variant === 'extra leaf') await fs.writeFile(path.join(root, current, 'Cache', 'extra'), 'target-only cache')
+    if (variant === 'missing source leaf') await fs.unlink(path.join(source, cache))
+    const childEntry = path.join(home, 'empty-reader.cjs')
+    // The default-renderer protocol is mocked. Browser partition checks use real files and SQLite.
+    await fs.writeFile(childEntry, `require('node:fs').writeFileSync('result.json', '{"localStorage":{},"indexedDB":[]}');`)
+    const validation = validateRestrictedDesktopStorage(binding, { executable: process.execPath, childEntry })
+    if (variant === 'unchanged') {
+      await validation
+      for (const leaf of [cache, cookies, cookies + '-wal', cookies + '-shm']) {
+        expect(await digest(path.join(root, leaf))).toBe(await digest(path.join(source, leaf)))
+      }
+      expect(await fs.readdir(path.join(root, empty))).toEqual([])
+      expect((await completeStorageMigration(binding, migration.id!, hooks)).state).toBe('ready')
+    } else {
+      const expected = variant === 'saved cookie' ? /browser cookies.*consumer/i :
+        variant === 'saved site data' ? /browser partition.*persistence owner/i :
+        variant === 'unknown partition' ? /no lossless Partitions persistence owner/ : /browser partition.*(?:changed|missing)/i
+      await expect(validation).rejects.toThrow(expected)
+      expect((await fs.lstat(path.join(source, 'app.json'))).isFile()).toBe(true)
+    }
   })
 
   it.skipIf(process.platform !== 'linux').each([undefined, '', 'session/Xauthority', '/fixture/alias/../Xauthority'])('keeps Linux display access under the isolated home with XAUTHORITY=%s', async authority => {

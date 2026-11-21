@@ -111,7 +111,7 @@ describe('Electron preview security boundary', () => {
     // A shared *persistent* partition is deliberate — one browsing profile for
     // the user — but it must never be the renderer's own session, which is
     // where the local token is injected.
-    expect(workspaceBrowserServiceSource).toContain('WORKSPACE_BROWSER_PARTITION')
+    expect(workspaceBrowserServiceSource).toContain("resolveWorkspaceBrowserPartition(app.getPath('sessionData'))")
     expect(workspaceBrowserServiceSource).not.toContain('defaultSession')
     expect(workspaceBrowserServiceSource).toContain('configurePreviewSessionPermissions')
   })
@@ -123,7 +123,7 @@ describe('Electron preview security boundary', () => {
     expect(applyWorkspaceBrowserAttachPolicy(preferences, {
       partition: WORKSPACE_BROWSER_PARTITION,
       src: WORKSPACE_BROWSER_INITIAL_SRC,
-    }, { preload: '/preview-preload.cjs' })).toBe(true)
+    }, { preload: '/preview-preload.cjs', session: {} })).toBe(true)
     expect(preferences).toMatchObject({ sandbox: true, contextIsolation: true, nodeIntegration: false })
     expect(mainWindowSource).toContain('installWorkspaceBrowserGuestPolicy(mainWindow.webContents')
   })
@@ -169,7 +169,7 @@ describe('Electron preview security boundary', () => {
     // A shared *persistent* partition is deliberate — one browsing profile for
     // the user — but it must never be the renderer's own session, which is
     // where the local token is injected.
-    expect(workspaceBrowserServiceSource).toContain('WORKSPACE_BROWSER_PARTITION')
+    expect(workspaceBrowserServiceSource).toContain("resolveWorkspaceBrowserPartition(app.getPath('sessionData'))")
     expect(workspaceBrowserServiceSource).not.toContain('defaultSession')
     expect(workspaceBrowserServiceSource).toContain('configurePreviewSessionPermissions')
   })
@@ -181,7 +181,7 @@ describe('Electron preview security boundary', () => {
     expect(applyWorkspaceBrowserAttachPolicy(preferences, {
       partition: WORKSPACE_BROWSER_PARTITION,
       src: WORKSPACE_BROWSER_INITIAL_SRC,
-    }, { preload: '/preview-preload.cjs' })).toBe(true)
+    }, { preload: '/preview-preload.cjs', session: {} })).toBe(true)
     expect(preferences).toMatchObject({ sandbox: true, contextIsolation: true, nodeIntegration: false })
     expect(mainWindowSource).toContain('installWorkspaceBrowserGuestPolicy(mainWindow.webContents')
   })

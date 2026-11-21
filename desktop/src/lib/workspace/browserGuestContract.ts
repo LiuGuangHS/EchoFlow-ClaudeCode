@@ -12,6 +12,7 @@
  * turned into a partition name, or every tab would get its own cookie jar.
  */
 export const WORKSPACE_BROWSER_PARTITION = 'persist:cc-haha-browser-app'
+export const LEGACY_WORKSPACE_BROWSER_PARTITION = 'persist:echoflow-code-browser-app'
 
 /**
  * A `<webview>` creates no guest until it has a `src`. The renderer always

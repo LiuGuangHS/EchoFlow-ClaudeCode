@@ -2,7 +2,6 @@ import { app, BrowserWindow, session } from 'electron'
 import fs from 'node:fs/promises'
 import { lstatSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { createRequire } from 'node:module'
 import { createHmac } from 'node:crypto'
 import { ECHOFLOW_LOGIN_PROFILES } from './services/echoFlowLogin'
 import type { NativeStorageSnapshot, StorageValidationRequest } from './services/desktopStorageValidation'
@@ -11,7 +10,8 @@ import type { NativeStorageSnapshot, StorageValidationRequest } from './services
 // Dispatch before ordinary bootstrap; restricted mode never imports business code.
 const argument = process.argv.find(value => value.startsWith('--echoflow-storage-validation-request='))
 if (!process.argv.some(value => value.startsWith('--echoflow-storage-validation'))) {
-  createRequire(__filename)('./main.cjs')
+  const mainModule = './main.cjs'
+  require(mainModule)
 } else {
   let window: BrowserWindow | undefined
   const timeout = setTimeout(() => app.exit(1), 55_000)

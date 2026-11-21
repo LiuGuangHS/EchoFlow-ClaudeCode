@@ -72,7 +72,6 @@ import { ElectronTerminalService, type TerminalSpawnInput } from './services/ter
 import { ElectronPreviewService, type PreviewBounds } from './services/preview'
 import {
   ElectronWorkspaceBrowserService,
-  WORKSPACE_BROWSER_PARTITION,
   type WorkspaceBrowserCaptureKind,
   type WorkspaceBrowserCreateOptions,
   type WorkspaceBrowserFindOptions,
@@ -81,6 +80,7 @@ import {
 import {
   installWorkspaceBrowserGuestPolicy,
   resolveWorkspaceBrowserGuest,
+  resolveWorkspaceBrowserPartition,
 } from './services/workspaceBrowserGuest'
 import {
   configureLocalServerRequestAuth,
@@ -169,7 +169,7 @@ let updaterService: ElectronUpdaterService | null = null
 let terminalService: ElectronTerminalService | null = null
 let previewService: ElectronPreviewService | null = null
 let workspaceBrowserService: ElectronWorkspaceBrowserService | null = null
-let workspaceBrowserSessionConfigured = false
+let boundWorkspaceBrowserSession: Electron.Session | undefined
 let petWindowController: PetWindowController | null = null
 const traceWindows = new Map<string, BrowserWindow>()
 let isQuitting = false
@@ -964,16 +964,15 @@ function getWorkspaceBrowserService() {
  * every new tab into a fresh, logged-out browser.
  */
 function workspaceBrowserSession() {
-  const browserSession = session.fromPartition(WORKSPACE_BROWSER_PARTITION)
+  if (boundWorkspaceBrowserSession) return boundWorkspaceBrowserSession
+  const browserSession = session.fromPartition(resolveWorkspaceBrowserPartition(app.getPath('sessionData')))
   // Same boundary as the singleton preview: OS permissions are denied, and
   // `configureLocalServerRequestAuth` is deliberately NOT installed here.
   // These pages render arbitrary remote sites, so attaching the desktop's
   // local access token to their loopback requests would hand any visited
   // site the local API.
-  if (!workspaceBrowserSessionConfigured) {
-    workspaceBrowserSessionConfigured = true
-    configurePreviewSessionPermissions(browserSession)
-  }
+  configurePreviewSessionPermissions(browserSession)
+  boundWorkspaceBrowserSession = browserSession
   return browserSession
 }
 
@@ -1613,8 +1612,7 @@ async function createMainWindow() {
   })
   // Before any guest can exist: its session denies OS permissions, and its
   // preferences are replaced with the sandboxed set the policy pins.
-  workspaceBrowserSession()
-  installWorkspaceBrowserGuestPolicy(mainWindow.webContents, { preload: previewPreloadPath() })
+  installWorkspaceBrowserGuestPolicy(mainWindow.webContents, { preload: previewPreloadPath(), session: workspaceBrowserSession() })
   configureLocalServerRequestAuth(
     mainWindow.webContents.session.webRequest,
     resolveMainRendererServerAccess,
