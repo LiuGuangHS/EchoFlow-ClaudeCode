@@ -314,6 +314,7 @@ export const jp: Record<TranslationKey, string> = {
   'echoflowApiOfficialLogin.signIn': 'EchoFlow SiHub にログイン',
   'echoflowApiOfficialLogin.signingIn': 'ログイン中…',
   'echoflowApiOfficialLogin.signInFailed': 'ログインが完了しませんでした。再試行するか、下の手動バインドを開いてください。',
+  'echoflowApiOfficialLogin.signInUnknown': 'ログイン結果を確認できませんでした。しばらくすると、ここにアカウントが表示されることがあります。',
   'echoflowApiOfficialLogin.manualBind': '手動バインド（上級）',
   'echoflowApiOfficialLogin.needsRelogin': 'ログインの有効期限が切れました。再度ログインしてください。',
   'echoflowApiOfficialLogin.userId': 'ユーザー ID',

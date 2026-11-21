@@ -101,8 +101,10 @@ const contract = `
     assert.equal(signedIn.data.account.endpoint, endpoint)
     assert.equal(signedIn.data.account.live, true)
 
-    // The renderer refreshes again after host authentication; login alone is
-    // not evidence that this second account/token-list round trip works.
+    assert.deepEqual(await account(), signedIn.data.account)
+    assert.deepEqual(calls, [profile.origin + selfPath], 'the committed account can be read without a remote refresh')
+
+    // Balance and tokens can be synced separately after showing the account.
     const refreshed = await refresh()
     assert.equal(refreshed.status, 200)
     assert.equal(refreshed.data.account.balance, 2)

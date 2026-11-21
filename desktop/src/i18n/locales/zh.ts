@@ -314,6 +314,7 @@ export const zh: Record<TranslationKey, string> = {
   'echoflowApiOfficialLogin.signIn': '登录 EchoFlow SiHub',
   'echoflowApiOfficialLogin.signingIn': '正在登录…',
   'echoflowApiOfficialLogin.signInFailed': '登录未完成，请重试，或展开下方的手动绑定。',
+  'echoflowApiOfficialLogin.signInUnknown': '暂时无法确认登录结果，账户可能稍后显示在这里。',
   'echoflowApiOfficialLogin.manualBind': '手动绑定（高级）',
   'echoflowApiOfficialLogin.needsRelogin': '登录状态已失效，请重新登录。',
   'echoflowApiOfficialLogin.userId': '用户 ID',

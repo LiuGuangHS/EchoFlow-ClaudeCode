@@ -17,8 +17,8 @@ import {
 import { EchoFlowLoginViewHost } from './services/echoFlowLoginView'
 import { resolveSiteIdentity, type EchoFlowLoginIdentity } from './services/echoFlowSiteIdentity'
 import { readStoredDedicatedCredential } from './services/echoFlowDedicatedRestore'
-import { readStoredSiteCredential } from './services/echoFlowSiteRestore'
-import { startSiteNetworkBridge, type SiteNetworkBridge } from './services/siteNetworkBridge'
+import { readSiteRestoreIdentity, readStoredSiteCredential } from './services/echoFlowSiteRestore'
+import { startSiteNetworkBridge, SITE_NETWORK_FORWARD_TIMEOUT_MS, type SiteNetworkBridge } from './services/siteNetworkBridge'
 import { configureP2PSessionPermissions, P2P_PARTITION, p2pEndpointUrl, p2pHostWanted, P2PTerminator } from './services/p2pTerminator'
 import type { DesktopPublicAccessConfiguration, DesktopPublicAccessStatus } from '../src/lib/desktopHost/types'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, screen, session, systemPreferences, WebContentsView, webContents } from 'electron'
@@ -390,20 +390,19 @@ async function clearEchoFlowSiteStorage(endpoint: EchoFlowLoginEndpoint = 'main'
 
 async function readStoredEchoFlowAccountIdentity(
   endpoint: EchoFlowLoginEndpoint,
+  signal?: AbortSignal,
 ): Promise<EchoFlowLoginIdentity | null> {
   try {
-    const serverUrl = await getServerRuntime().getServerUrl()
-    const response = await fetch(`${serverUrl}/api/echoflow`, { signal: AbortSignal.timeout(10_000) })
+    const runtime = getServerRuntime()
+    const serverUrl = await runtime.getServerUrl()
+    const timeout = AbortSignal.timeout(10_000)
+    const response = await fetch(`${serverUrl}/api/echoflow`, {
+      headers: { Authorization: `Bearer ${runtime.getLocalAccessToken()}` },
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    })
     if (!response.ok) return null
-    const body = await response.json() as {
-      accounts?: Record<string, { userId?: unknown; username?: unknown } | null>
-    }
-    const account = body.accounts?.[endpoint]
-    if (!account || typeof account.userId !== 'string') return null
-    return {
-      userId: account.userId,
-      username: typeof account.username === 'string' ? account.username : '',
-    }
+    const body = await response.json() as { accounts?: Record<string, Parameters<typeof readSiteRestoreIdentity>[0]> }
+    return readSiteRestoreIdentity(body.accounts?.[endpoint])
   } catch {
     return null
   }
@@ -412,32 +411,21 @@ async function readStoredEchoFlowAccountIdentity(
 async function readEchoFlowLoginCredential(
   endpoint: EchoFlowLoginEndpoint,
   window: EchoFlowLoginWindow | null,
+  signal?: AbortSignal,
 ): Promise<EchoFlowLoginCredential | null> {
-  if (endpoint === 'dedicated') {
-    // The gateway keeps its JWT in page storage. We never copy it into the
-    // account file; sign-out wipes that storage (clearEchoFlowSiteStorage) so
-    // the next login cannot replay it.
-    const credential = window
-      ? await readDedicatedCredential(window, ECHOFLOW_LOGIN_PROFILES.dedicated.origin)
-      : await readStoredDedicatedCredential(
-          ECHOFLOW_LOGIN_PROFILES.dedicated.partition,
-          ECHOFLOW_LOGIN_PROFILES.dedicated.origin,
-        ).catch(() => null)
-    console.info('[echoFlowLogin] credential-read:', JSON.stringify({ endpoint, present: Boolean(credential) }))
-    return credential
-  }
-  const profile = ECHOFLOW_LOGIN_PROFILES.main
-  // The gateway binds the session to the client that created it and refuses to
-  // recognise it from any other one, so every identity probe leaves through the
-  // sign-in window's own partition; the restore after a restart has no window
-  // to fall back on.
+  const profile = ECHOFLOW_LOGIN_PROFILES[endpoint]
   if (!window) {
-    // The gateway account call needs New-Api-User — the identity itself — so the
-    // restore reads the identity the sign-in stored and keeps the network out of
-    // it; the verification in bootstrapEchoFlowAccount confirms the pair.
-    const identity = await readStoredEchoFlowAccountIdentity(endpoint)
-    return await readStoredSiteCredential(profile.partition, profile.origin, app.getLocale(), identity)
+    const identity = await readStoredEchoFlowAccountIdentity(endpoint, signal)
+    if (!identity || signal?.aborted) return null
+    if (endpoint === 'main') {
+      return await readStoredSiteCredential(profile.partition, profile.origin, app.getLocale(), identity)
+    }
+    const credential = await readStoredDedicatedCredential(profile.partition, profile.origin, signal)
+    return credential?.userId === identity.userId ? credential : null
   }
+  if (endpoint === 'dedicated') return await readDedicatedCredential(window, profile.origin)
+
+  // The gateway only recognizes the session from the Chromium client that signed in.
   const cookies = await readEchoFlowSiteCookies(endpoint)
   const cookie = siteCookieHeader(cookies)
   if (!cookie) return null
@@ -463,6 +451,7 @@ async function bootstrapEchoFlowAccount(
   endpoint: EchoFlowLoginEndpoint,
   credential: EchoFlowLoginCredential,
   beginRequest: () => boolean,
+  fromRestore: boolean,
 ): Promise<EchoFlowLoginVerification> {
   // Each endpoint accepts exactly the credential its own page produces.
   if (credential.kind === 'session' && endpoint !== 'main') return 'rejected'
@@ -476,6 +465,10 @@ async function bootstrapEchoFlowAccount(
     serverUrl,
     bridgeTokenPresent: Boolean(bridgeToken),
   }))
+  if (fromRestore) {
+    const identity = await readStoredEchoFlowAccountIdentity(endpoint)
+    if (identity?.userId !== credential.userId) return 'unavailable'
+  }
   if (!bridgeToken || !beginRequest()) return 'unavailable'
   const response = await fetch(`${serverUrl}/api/echoflow/account/credential`, {
     method: 'POST',
@@ -493,7 +486,7 @@ async function bootstrapEchoFlowAccount(
           ...(credential.acceptLanguage ? { acceptLanguage: credential.acceptLanguage } : {}),
         }
       : { endpoint, kind: 'bearer', accessToken: credential.accessToken, userId: credential.userId }),
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(SITE_NETWORK_FORWARD_TIMEOUT_MS + 5_000),
   })
   if (response.ok) {
     console.info('[echoFlowLogin] credential-verified:', JSON.stringify({ endpoint, kind: credential.kind }))
@@ -501,7 +494,9 @@ async function bootstrapEchoFlowAccount(
   }
   const body = await response.json() as { error?: unknown }
   if (response.status === 400 && body?.error === 'token_invalid') return 'rejected'
-  return 'unavailable'
+  // Only a known pre-commit gateway failure may be retried automatically.
+  if (response.status === 502 && (body?.error === 'service_unavailable' || body?.error === 'invalid_response')) return 'unavailable'
+  return 'unknown'
 }
 
 const echoFlowLoginView = new EchoFlowLoginViewHost(partition => {
@@ -531,14 +526,13 @@ const ECHOFLOW_LOGIN_ENDPOINTS: EchoFlowLoginEndpoint[] = ['main', 'dedicated']
 // the restore has put the credential back into the server. Exposing the promise
 // lets the account card re-read the list once that answer exists instead of
 // showing a restored account as signed out.
-let echoFlowRestore: Promise<boolean> = Promise.resolve(false)
+const echoFlowRestores = new Map<EchoFlowLoginEndpoint, Promise<boolean>>()
 
-async function rehydrateEchoFlowSiteSession(): Promise<boolean> {
+function rehydrateEchoFlowSiteSession() {
   const login = getEchoFlowLoginSession()
-  // Each line keeps its own partition and stored account, so one line failing
-  // to rehydrate must not stop the other from coming back.
-  const restored = await Promise.all(ECHOFLOW_LOGIN_ENDPOINTS.map(endpoint => login.rehydrate(endpoint)))
-  return restored.some(Boolean)
+  for (const endpoint of ECHOFLOW_LOGIN_ENDPOINTS) {
+    echoFlowRestores.set(endpoint, login.rehydrate(endpoint))
+  }
 }
 
 async function signOutEchoFlowSiteSession(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
@@ -657,7 +651,7 @@ function getServerRuntime() {
       updateTrayServiceStatus('ready')
       void publicAccessManager?.serverChanged()
       void p2pTerminator?.refresh()
-      echoFlowRestore = rehydrateEchoFlowSiteSession()
+      rehydrateEchoFlowSiteSession()
     },
     desktopRoot: unpackedRoot(),
     appRoot: appRoot(),
@@ -1087,7 +1081,7 @@ function registerIpcHandlers() {
   })
   registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, (event, payload) => {
     const { endpoint, attemptId, bounds } = payload as { endpoint: EchoFlowLoginEndpoint; attemptId: string; bounds: PreviewBounds | null }
-    return echoFlowLoginView.open(currentWindow(event), attemptId, bounds, signal => getEchoFlowLoginSession().open(endpoint, signal))
+    return echoFlowLoginView.open(currentWindow(event), attemptId, bounds, signal => getEchoFlowLoginSession().open(endpoint, signal), endpoint)
   })
   registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginSetBounds, (_event, payload) => {
     const { attemptId, bounds } = payload as { attemptId: string; bounds: PreviewBounds | null }
@@ -1100,9 +1094,11 @@ function registerIpcHandlers() {
     const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
     await signOutEchoFlowSiteSession(requested === 'dedicated' ? 'dedicated' : 'main')
   })
-  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored, async () => {
-    const [restored, settled] = await Promise.all([echoFlowRestore, echoFlowLoginView.whenAccountSettled()])
-    return restored || settled
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored, async (_event, payload) => {
+    const endpoint = (payload as { endpoint: EchoFlowLoginEndpoint } | undefined)?.endpoint
+    const pending = endpoint ? [echoFlowRestores.get(endpoint)] : [...echoFlowRestores.values()]
+    const outcomes = await Promise.all([...pending, echoFlowLoginView.whenAccountSettled(endpoint)])
+    return outcomes.some(Boolean)
   })
   registerHandler(ELECTRON_IPC_CHANNELS.configImportTake, event =>
     BrowserWindow.fromWebContents(event.sender) === mainWindow ? deepLinkHandler.take() : null)

@@ -10,24 +10,27 @@ describe('embedded EchoFlow login', () => {
     expect(loginViewBounds({ x: -100, y: 20, width: 90, height: 100 }, 1, [900, 600]).width).toBe(0)
   })
 
-  it('exposes a cancelled view’s pending account result to a remounted renderer', async () => {
+  it.each(['authenticated', 'unknown'] as const)('exposes a cancelled view’s %s account result to a remounted renderer', async outcome => {
     const owner = Object.assign(new EventEmitter(), { webContents: new EventEmitter() }) as unknown as BrowserWindow
     const host = new EchoFlowLoginViewHost(vi.fn())
-    let complete!: (result: 'authenticated') => void
+    let complete!: (result: typeof outcome) => void
     const stop = vi.fn()
     const opening = host.open(owner, 'first', null, signal => {
       signal.addEventListener('abort', stop)
       return new Promise(resolve => { complete = resolve })
-    })
+    }, 'dedicated')
     host.cancel('first')
     expect(stop).toHaveBeenCalledOnce()
-    const settled = host.whenAccountSettled()
+    await expect(host.whenAccountSettled('main')).resolves.toBe(false)
+    const settled = host.whenAccountSettled('dedicated')
+    const settledWithoutEndpoint = host.whenAccountSettled()
     const signInAgain = vi.fn(async () => 'cancelled' as const)
     await expect(host.open(owner, 'second', null, signInAgain)).resolves.toBe('cancelled')
     expect(signInAgain).not.toHaveBeenCalled()
-    complete('authenticated')
-    await expect(opening).resolves.toBe('authenticated')
+    complete(outcome)
+    await expect(opening).resolves.toBe(outcome)
     await expect(settled).resolves.toBe(true)
+    await expect(settledWithoutEndpoint).resolves.toBe(true)
     await expect(host.open(owner, 'second', null, signInAgain)).resolves.toBe('cancelled')
     expect(signInAgain).toHaveBeenCalledOnce()
   })

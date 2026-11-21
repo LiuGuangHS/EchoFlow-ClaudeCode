@@ -25,6 +25,17 @@ describe('Electron IPC capabilities', () => {
     for (const channel of [open, resize, cancel]) expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
   })
 
+  it('limits restore settlement IPC to the desktop and an optional login endpoint', () => {
+    const channel = ELECTRON_IPC_CHANNELS.echoFlowWhenRestored
+    for (const payload of [undefined, { endpoint: 'main' }, { endpoint: 'dedicated' }]) {
+      expect(validateElectronIpcPayload(channel, payload)).toBe(true)
+    }
+    for (const payload of [null, 'main', {}, { endpoint: 'other' }, { endpoint: 'main', userId: 'fixture' }]) {
+      expect(validateElectronIpcPayload(channel, payload)).toBe(false)
+    }
+    expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
+  })
+
   it('only lets native navigation be drained without renderer-supplied destinations', () => {
     const channel = ELECTRON_IPC_CHANNELS.windowTakeNativeMenuNavigation
     expect(validateElectronIpcPayload(channel, undefined)).toBe(true)

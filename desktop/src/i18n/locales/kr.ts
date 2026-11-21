@@ -314,6 +314,7 @@ export const kr: Record<TranslationKey, string> = {
   'echoflowApiOfficialLogin.signIn': 'EchoFlow SiHub 로그인',
   'echoflowApiOfficialLogin.signingIn': '로그인 중…',
   'echoflowApiOfficialLogin.signInFailed': '로그인이 완료되지 않았습니다. 다시 시도하거나 아래 수동 연결을 여세요.',
+  'echoflowApiOfficialLogin.signInUnknown': '로그인 결과를 확인할 수 없었습니다. 잠시 후 여기에 계정이 표시될 수 있습니다.',
   'echoflowApiOfficialLogin.manualBind': '수동 연결(고급)',
   'echoflowApiOfficialLogin.needsRelogin': '로그인 상태가 만료되었습니다. 다시 로그인하세요.',
   'echoflowApiOfficialLogin.userId': '사용자 ID',

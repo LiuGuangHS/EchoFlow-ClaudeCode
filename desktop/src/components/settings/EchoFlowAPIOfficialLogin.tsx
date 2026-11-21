@@ -16,7 +16,7 @@ import { useProviderStore } from '../../stores/providerStore'
 import { normalizeProviderBaseUrl } from '../../config/providerPresets'
 import { useTranslation } from '../../i18n'
 import { getDesktopHost } from '@/lib/desktopHost'
-import type { PreviewBounds } from '@/lib/desktopHost/types'
+import type { DesktopHost, PreviewBounds } from '@/lib/desktopHost/types'
 import { ApiError } from '../../api/client'
 
 
@@ -31,6 +31,7 @@ type LoginAttempt = {
   id: string
   endpoint: EchoFlowEndpoint
   run: (bounds: PreviewBounds | null) => Promise<void>
+  onClose: () => void
 }
 
 const APP_OVERLAYS = [
@@ -59,11 +60,25 @@ function readLoginBounds(placeholder: HTMLElement): PreviewBounds | null {
 type Credentials = {
   userId: string
   managementToken: string
+  userIdEdited?: boolean
 }
 
 type Accounts = Record<EchoFlowEndpoint, EchoFlowAccount | null>
+type LoadAccounts = (endpoints: readonly EchoFlowEndpoint[], reportFailure?: boolean) => Promise<Partial<Accounts>>
+type LineFeedback = {
+  busy?: 'bind' | 'refresh' | 'disconnect' | 'createToken'
+  loadError?: string
+  error?: string
+  notice?: string
+}
 
+const ENDPOINTS = ['main', 'dedicated'] as const
 const EMPTY_ACCOUNTS: Accounts = { main: null, dedicated: null }
+const ACCOUNT_RECHECK_DELAYS = [0, 250, 750]
+
+function isLive(account: EchoFlowAccount | null | undefined): account is EchoFlowAccount {
+  return Boolean(account && account.live !== false)
+}
 
 // The gateway says why it refused; a bare "failed" leaves the user guessing.
 function withReason(message: string, caught: unknown): string {
@@ -90,22 +105,19 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
   const restoreSignInFocus = useRef(false)
   const { providers } = useProviderStore()
   const [accounts, setAccounts] = useState<Accounts>(EMPTY_ACCOUNTS)
-  const accountVersions = useRef<Record<EchoFlowEndpoint, number>>({ main: 0, dedicated: 0 })
-  const loadAccounts = useRef<(() => Promise<void>) | null>(null)
+  const accountVersions = useRef({ main: 0, dedicated: 0 })
+  const readVersions = useRef({ main: 0, dedicated: 0 })
+  const loadAccounts = useRef<LoadAccounts | null>(null)
   const [selectedEndpoint, setSelectedEndpoint] = useState<EchoFlowEndpoint>('main')
   const [credentials, setCredentials] = useState<Record<EchoFlowEndpoint, Credentials>>({
     main: { userId: '', managementToken: '' },
     dedicated: { userId: '', managementToken: '' },
   })
   const [showManagementToken, setShowManagementToken] = useState(false)
-  const [isSavingAccount, setIsSavingAccount] = useState(false)
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const [isDisconnecting, setIsDisconnecting] = useState(false)
-  const [showCredentialEditor, setShowCredentialEditor] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
-  const [isCreatingToken, setIsCreatingToken] = useState(false)
+  const [credentialEditor, setCredentialEditor] = useState<EchoFlowEndpoint | null>(null)
+  const [feedback, setFeedback] = useState<Record<EchoFlowEndpoint, LineFeedback>>({ main: {}, dedicated: {} })
 
+  const { busy, error, loadError, notice } = feedback[selectedEndpoint]
   const account = accounts[selectedEndpoint]
   const currentCredentials = credentials[selectedEndpoint]
   const tokenOptions = account?.tokens ?? []
@@ -123,53 +135,62 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
   )
 
   useEffect(() => {
-    let active = true
-    let loadSeq = 0
-    const load = () => {
-      // The restore refetch can overlap the initial read; only the newest read
-      // may write state or a late first response would undo the signed-in card.
-      const seq = ++loadSeq
+    const load: LoadAccounts = async (endpoints, reportFailure = true) => {
+      if (!endpoints.length || loadAccounts.current !== load) return {}
       const versions = { ...accountVersions.current }
-      return echoflowApi.getAccounts()
-        .then(({ account: legacyAccount, accounts: loadedAccounts }) => {
-          if (!active || seq !== loadSeq) return
-          const nextAccounts = loadedAccounts ?? {
-            main: legacyAccount,
-            dedicated: null,
-          }
-          const mainUnchanged = versions.main === accountVersions.current.main
-          const dedicatedUnchanged = versions.dedicated === accountVersions.current.dedicated
-          setAccounts((current) => ({
-            main: mainUnchanged ? nextAccounts.main : current.main,
-            dedicated: dedicatedUnchanged ? nextAccounts.dedicated : current.dedicated,
+      const reads = { ...readVersions.current }
+      for (const endpoint of endpoints) reads[endpoint] = ++readVersions.current[endpoint]
+      const currentEndpoints = () => loadAccounts.current === load ? endpoints.filter(endpoint =>
+        versions[endpoint] === accountVersions.current[endpoint] && reads[endpoint] === readVersions.current[endpoint],
+      ) : []
+
+      try {
+        const { account: legacyAccount, accounts: loadedAccounts } = await echoflowApi.getAccounts()
+        const next = loadedAccounts ?? { main: legacyAccount, dedicated: null }
+        const accepted: Partial<Accounts> = {}
+        for (const endpoint of currentEndpoints()) {
+          const loaded = next[endpoint]
+          accepted[endpoint] = loaded
+          if (loaded) setCredentials(current => current[endpoint].userIdEdited ? current : {
+            ...current,
+            [endpoint]: { ...current[endpoint], userId: loaded.userId },
+          })
+          setFeedback(current => ({
+            ...current,
+            [endpoint]: { ...current[endpoint], loadError: undefined },
           }))
-          setCredentials((current) => ({
-            main: {
-              userId: (mainUnchanged && nextAccounts.main?.userId) || current.main.userId,
-              managementToken: current.main.managementToken,
-            },
-            dedicated: {
-              userId: (dedicatedUnchanged && nextAccounts.dedicated?.userId) || current.dedicated.userId,
-              managementToken: current.dedicated.managementToken,
-            },
+        }
+        if (Object.keys(accepted).length) {
+          if (signInButtonRef.current === document.activeElement) restoreSignInFocus.current = true
+          setAccounts(current => ({ ...current, ...accepted }))
+        }
+        return accepted
+      } catch {
+        if (reportFailure) {
+          for (const endpoint of currentEndpoints()) setFeedback(current => ({
+            ...current,
+            [endpoint]: { ...current[endpoint], loadError: t('echoflowApiOfficialLogin.loadFailed') },
           }))
-        })
-        .catch(() => {
-          if (active && seq === loadSeq) setError(t('echoflowApiOfficialLogin.loadFailed'))
-        })
+        }
+        return {}
+      }
     }
     loadAccounts.current = load
-    void load()
-    // A restore or a login from the previous mount can still be committing.
-    void getDesktopHost().echoFlow.whenAccountRestored()
-      .then((changed) => {
-        if (active && changed) void load()
-      })
-      .catch(() => {})
-    return () => {
-      active = false
-      loadAccounts.current = null
+    void load(ENDPOINTS)
+    const host = getDesktopHost().echoFlow
+    for (const endpoint of ENDPOINTS) {
+      const version = accountVersions.current[endpoint]
+      void host.whenAccountRestored(endpoint).then(async (changed) => {
+        if (!changed) return
+        // A previous mount's unknown result can leave the old account live until a delayed commit.
+        for (const delay of ACCOUNT_RECHECK_DELAYS) {
+          if (delay) await new Promise(resolve => setTimeout(resolve, delay))
+          if (loadAccounts.current !== load || accountVersions.current[endpoint] !== version) return
+          await load([endpoint], delay === 0)
+        }
+      }).catch(() => {})
     }
+    return () => { loadAccounts.current = null }
   }, [])
 
   useEffect(() => {
@@ -179,69 +200,103 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
   const updateCredentials = (patch: Partial<Credentials>) => {
     setCredentials((current) => ({
       ...current,
-      [selectedEndpoint]: { ...current[selectedEndpoint], ...patch },
+      [selectedEndpoint]: {
+        ...current[selectedEndpoint],
+        ...patch,
+        ...(patch.userId !== undefined && { userIdEdited: true }),
+      },
     }))
   }
 
+  const setLineFeedback = (endpoint: EchoFlowEndpoint, patch: LineFeedback) => {
+    setFeedback(current => ({ ...current, [endpoint]: { ...current[endpoint], ...patch } }))
+  }
+
+  const startOperation = (endpoint: EchoFlowEndpoint, busy?: LineFeedback['busy']) => {
+    const mount = loadAccounts.current
+    const version = ++accountVersions.current[endpoint]
+    setLineFeedback(endpoint, { busy, error: undefined, loadError: undefined, notice: undefined })
+    return () => mount !== null && loadAccounts.current === mount && accountVersions.current[endpoint] === version
+  }
+
+  const storeAccount = (endpoint: EchoFlowEndpoint, next: EchoFlowAccount | null) => {
+    readVersions.current[endpoint]++
+    setAccounts(current => ({ ...current, [endpoint]: next }))
+  }
+
+  const isWriting = busy !== undefined && busy !== 'refresh'
+
   const saveAccount = async () => {
-    if (!currentCredentials.userId.trim() || !currentCredentials.managementToken.trim() || isSavingAccount) return
-    setIsSavingAccount(true)
-    setError(null)
+    if (!currentCredentials.userId.trim() || !currentCredentials.managementToken.trim() || isWriting) return
+    const endpoint = selectedEndpoint
+    const isCurrent = startOperation(endpoint, 'bind')
     try {
+      if (canSignIn) await getDesktopHost().echoFlow.whenAccountRestored(endpoint)
+      if (!isCurrent()) return
       const { account: savedAccount } = await echoflowApi.bindAccount(
-        selectedEndpoint,
+        endpoint,
         currentCredentials.userId,
         currentCredentials.managementToken,
       )
-      accountVersions.current[selectedEndpoint]++
-      setAccounts((current) => ({ ...current, [selectedEndpoint]: savedAccount }))
-      setCredentials((current) => ({
+      if (!isCurrent()) return
+      storeAccount(endpoint, savedAccount)
+      setCredentials(current => ({
         ...current,
-        [selectedEndpoint]: { userId: savedAccount.userId, managementToken: '' },
+        [endpoint]: { userId: savedAccount.userId, managementToken: '' },
       }))
-      setShowCredentialEditor(false)
+      setCredentialEditor(current => current === endpoint ? null : current)
     } catch {
-      setError(t('echoflowApiOfficialLogin.bindFailed'))
+      if (isCurrent()) setLineFeedback(endpoint, { error: t('echoflowApiOfficialLogin.bindFailed') })
     } finally {
-      setIsSavingAccount(false)
+      if (isCurrent()) setLineFeedback(endpoint, { busy: undefined })
     }
   }
 
   const signIn = () => {
-    if (activeLoginId.current) return
+    if (activeLoginId.current || isWriting) return
     const endpoint = selectedEndpoint
     const id = crypto.randomUUID()
+    const isCurrent = startOperation(endpoint)
     activeLoginId.current = id
     restoreSignInFocus.current = true
-    setError(null)
     onLoginActive?.(true)
-    setLogin({ id, endpoint, run: async (bounds) => {
+    const onClose = () => onLoginActive?.(false)
+    setLogin({ id, endpoint, onClose, run: async (bounds) => {
+      let outcome: Awaited<ReturnType<DesktopHost['echoFlow']['openLogin']>>
       try {
-        const outcome = await getDesktopHost().echoFlow.openLogin(endpoint, id, bounds)
-        if (outcome === 'cancelled') return
-        if (activeLoginId.current !== id) {
-          void loadAccounts.current?.()
-        } else if (outcome === 'authenticated') {
-          const { account: signedIn } = await echoflowApi.refreshAccount(endpoint)
-          if (activeLoginId.current !== id) {
-            void loadAccounts.current?.()
+        outcome = await getDesktopHost().echoFlow.openLogin(endpoint, id, bounds)
+      } catch {
+        outcome = 'failed'
+      }
+      const paneOpen = activeLoginId.current === id
+      if (paneOpen) {
+        activeLoginId.current = null
+        onClose()
+        setLogin(null)
+      }
+      const load = loadAccounts.current
+      if (!load || !isCurrent()) return
+
+      if (outcome === 'unknown') {
+        if (paneOpen) setLineFeedback(endpoint, { notice: t('echoflowApiOfficialLogin.signInUnknown') })
+        for (const delay of ACCOUNT_RECHECK_DELAYS) {
+          if (delay) await new Promise(resolve => setTimeout(resolve, delay))
+          if (!isCurrent()) return
+          const { [endpoint]: loaded } = await load([endpoint], false)
+          if (!isCurrent()) return
+          // Rebinding the same live account can leave its public summary unchanged.
+          if (isLive(loaded) && (!isLive(account) || loaded.userId !== account.userId)) {
+            if (paneOpen) setLineFeedback(endpoint, { notice: undefined })
             return
           }
-          accountVersions.current[endpoint]++
-          setAccounts((current) => ({ ...current, [endpoint]: signedIn }))
-        } else {
-          void loadAccounts.current?.()
-          setError(t('echoflowApiOfficialLogin.signInFailed'))
         }
-      } catch {
-        void loadAccounts.current?.()
-        if (activeLoginId.current === id) setError(t('echoflowApiOfficialLogin.signInFailed'))
-      } finally {
-        if (activeLoginId.current === id) {
-          activeLoginId.current = null
-          onLoginActive?.(false)
-          setLogin(null)
-        }
+      } else if (outcome === 'authenticated' && paneOpen) {
+        setLineFeedback(endpoint, { busy: 'refresh' })
+        await load([endpoint])
+        if (isCurrent()) void refreshLine(endpoint, isCurrent)
+      } else {
+        if (outcome === 'failed' && paneOpen) setLineFeedback(endpoint, { error: t('echoflowApiOfficialLogin.signInFailed') })
+        void load([endpoint], false)
       }
     } })
   }
@@ -251,17 +306,19 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
     if (!id) return
     activeLoginId.current = null
     void getDesktopHost().echoFlow.cancelLogin(id).catch(() => {})
-    onLoginActive?.(false)
+    login?.onClose()
     setLogin(null)
   }
 
   useLayoutEffect(() => {
+    if (login || !restoreSignInFocus.current) return
+    signInButtonRef.current?.focus({ preventScroll: true })
+    restoreSignInFocus.current = false
+  }, [login, accounts])
+
+  useLayoutEffect(() => {
     const placeholder = placeholderRef.current
-    if (!login || !placeholder) {
-      if (restoreSignInFocus.current) signInButtonRef.current?.focus({ preventScroll: true })
-      restoreSignInFocus.current = false
-      return
-    }
+    if (!login || !placeholder || activeLoginId.current !== login.id) return
 
     cancelButtonRef.current?.focus({ preventScroll: true })
     const host = getDesktopHost().echoFlow
@@ -293,74 +350,70 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
       if (activeLoginId.current === login.id) {
         activeLoginId.current = null
         void host.cancelLogin(login.id).catch(() => {})
-        onLoginActive?.(false)
+        login.onClose()
       }
     }
-  }, [login, onLoginActive])
+  }, [login])
 
-  const refreshAccount = async () => {
-    if (isRefreshing || !account) return
-    setIsRefreshing(true)
-    setError(null)
+  const refreshLine = async (endpoint: EchoFlowEndpoint, isCurrent: () => boolean) => {
     try {
-      const { account: refreshedAccount } = await echoflowApi.refreshAccount(selectedEndpoint)
-      accountVersions.current[selectedEndpoint]++
-      setAccounts((current) => ({ ...current, [selectedEndpoint]: refreshedAccount }))
+      const { account: refreshed } = await echoflowApi.refreshAccount(endpoint)
+      if (isCurrent()) storeAccount(endpoint, refreshed)
     } catch (caught) {
-      setError(withReason(t('echoflowApiOfficialLogin.refreshFailed'), caught))
-      // The server drops a credential the site rejected, so re-read the list:
-      // a now-dead account stops looking live and the sign-in button returns.
-      await echoflowApi.getAccounts()
-        .then(({ account: legacyAccount, accounts: loaded }) => {
-          setAccounts(loaded ?? { main: legacyAccount, dedicated: null })
-        })
-        .catch(() => {})
+      if (!isCurrent()) return
+      setLineFeedback(endpoint, { error: withReason(t('echoflowApiOfficialLogin.refreshFailed'), caught) })
+      // The server can drop a rejected credential, so re-read its line locally.
+      await loadAccounts.current?.([endpoint], false)
     } finally {
-      setIsRefreshing(false)
+      if (isCurrent()) setLineFeedback(endpoint, { busy: undefined })
     }
   }
 
+  const refreshAccount = () => {
+    if (busy || !account) return
+    void refreshLine(selectedEndpoint, startOperation(selectedEndpoint, 'refresh'))
+  }
+
   const disconnectAccount = async () => {
-    if (isDisconnecting || !account) return
-    setIsDisconnecting(true)
-    setError(null)
+    if (isWriting || !account) return
+    const endpoint = selectedEndpoint
+    const isCurrent = startOperation(endpoint, 'disconnect')
     try {
       // In Electron only the host can drop the partition cookies; without that
       // the next rehydrate would silently sign the user back in.
       if (canSignIn) {
-        await getDesktopHost().echoFlow.signOut(selectedEndpoint)
+        await getDesktopHost().echoFlow.signOut(endpoint)
       } else {
-        await echoflowApi.disconnectAccount(selectedEndpoint)
+        await echoflowApi.disconnectAccount(endpoint)
       }
-      accountVersions.current[selectedEndpoint]++
-      setAccounts((current) => ({ ...current, [selectedEndpoint]: null }))
-      setCredentials((current) => ({
+      if (!isCurrent()) return
+      storeAccount(endpoint, null)
+      setCredentials(current => ({
         ...current,
-        [selectedEndpoint]: { userId: '', managementToken: '' },
+        [endpoint]: { userId: '', managementToken: '' },
       }))
     } catch {
-      setError(t('echoflowApiOfficialLogin.disconnectFailed'))
+      if (isCurrent()) setLineFeedback(endpoint, { error: t('echoflowApiOfficialLogin.disconnectFailed') })
     } finally {
-      setIsDisconnecting(false)
+      if (isCurrent()) setLineFeedback(endpoint, { busy: undefined })
     }
   }
 
   // The site console creates tokens with unlimited quota and no expiry, so a
   // user who never opened the console still gets a usable key here.
   const createToken = async () => {
-    if (isCreatingToken || !account) return
-    setIsCreatingToken(true)
-    setError(null)
-    setNotice(null)
+    if (isWriting || !account) return
+    const endpoint = selectedEndpoint
+    const isCurrent = startOperation(endpoint, 'createToken')
     try {
-      const { account: refreshed } = await echoflowApi.createToken(selectedEndpoint)
-      accountVersions.current[selectedEndpoint]++
-      setAccounts((current) => ({ ...current, [selectedEndpoint]: refreshed }))
-      setNotice(t('echoflowApiOfficialLogin.tokenCreated'))
+      const { account: refreshed } = await echoflowApi.createToken(endpoint)
+      if (!isCurrent()) return
+      storeAccount(endpoint, refreshed)
+      setLineFeedback(endpoint, { notice: t('echoflowApiOfficialLogin.tokenCreated') })
     } catch (caught) {
-      setError(withReason(t('echoflowApiOfficialLogin.createTokenFailed'), caught))
+      if (isCurrent()) setLineFeedback(endpoint, { error: withReason(t('echoflowApiOfficialLogin.createTokenFailed'), caught) })
     } finally {
-      setIsCreatingToken(false)
+      if (isCurrent()) setLineFeedback(endpoint, { busy: undefined })
     }
   }
 
@@ -401,13 +454,13 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
             size="md"
             className="shrink-0"
             onClick={() => void saveAccount()}
-            loading={isSavingAccount}
-            disabled={isSavingAccount || !currentCredentials.userId.trim() || !currentCredentials.managementToken.trim()}
+            loading={busy === 'bind'}
+            disabled={isWriting || !currentCredentials.userId.trim() || !currentCredentials.managementToken.trim()}
           >
             {account ? t('echoflowApiOfficialLogin.updateToken') : t('echoflowApiOfficialLogin.bindAccount', { endpoint: endpointLabels[selectedEndpoint] })}
           </Button>
           {account && (
-            <Button variant="secondary" size="md" className="shrink-0" onClick={() => setShowCredentialEditor(false)}>
+            <Button variant="secondary" size="md" className="shrink-0" onClick={() => setCredentialEditor(null)}>
               {t('echoflowApiOfficialLogin.cancel')}
             </Button>
           )}
@@ -451,8 +504,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
         value={selectedEndpoint}
         onChange={(endpoint) => {
           setSelectedEndpoint(endpoint)
-          setError(null)
-          setNotice(null)
+          setShowManagementToken(false)
         }}
         label={t('echoflowApiOfficialLogin.endpointSwitch')}
         as="tablist"
@@ -462,7 +514,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
       />
       <p className="text-xs text-[var(--color-text-tertiary)]">{t('echoflowApiOfficialLogin.endpointHint')}</p>
 
-      {showCredentialEditor ? (
+      {credentialEditor === selectedEndpoint ? (
         credentialForm
       ) : account ? (
         <div className="flex flex-col gap-2">
@@ -470,19 +522,19 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
             <div className="min-w-0 flex-1 text-sm text-[var(--color-text-secondary)]">{accountSummary}</div>
             <div className="flex shrink-0 items-center gap-2">
               {canSignIn && (
-                <Button ref={signInButtonRef} variant="primary" size="sm" onClick={signIn}>
+                <Button ref={signInButtonRef} variant="primary" size="sm" onClick={signIn} disabled={isWriting}>
                   {t('echoflowApiOfficialLogin.signIn')}
                 </Button>
               )}
-              <Button variant="secondary" size="sm" onClick={() => setShowCredentialEditor(true)}>
+              <Button variant="secondary" size="sm" onClick={() => setCredentialEditor(selectedEndpoint)}>
                 {t('echoflowApiOfficialLogin.updateToken')}
               </Button>
               {account.live !== false && (
-                <Button variant="secondary" size="sm" icon={<RefreshCw className="h-4 w-4" />} onClick={() => void refreshAccount()} loading={isRefreshing}>
+                <Button variant="secondary" size="sm" icon={<RefreshCw className="h-4 w-4" />} onClick={refreshAccount} disabled={isWriting} loading={busy === 'refresh'}>
                   {t('echoflowApiOfficialLogin.refresh')}
                 </Button>
               )}
-              <Button variant="secondary" size="sm" icon={<Unlink className="h-4 w-4" />} onClick={() => void disconnectAccount()} loading={isDisconnecting}>
+              <Button variant="secondary" size="sm" icon={<Unlink className="h-4 w-4" />} onClick={() => void disconnectAccount()} disabled={isWriting} loading={busy === 'disconnect'}>
                 {t('echoflowApiOfficialLogin.unbind')}
               </Button>
             </div>
@@ -495,7 +547,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             {canSignIn && (
-              <Button ref={signInButtonRef} variant="primary" size="md" onClick={signIn}>
+              <Button ref={signInButtonRef} variant="primary" size="md" onClick={signIn} disabled={isWriting}>
                 {t('echoflowApiOfficialLogin.signIn')}
               </Button>
             )}
@@ -516,16 +568,17 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
 
       {/* Feedback sits between the action that produced it and the token list,
           not at the bottom of the card where the failing button is off-screen. */}
-      {error && (
+      {[loadError, error].map((message) => message && (
         <p
+          key={message}
           role="alert"
           className="rounded-[var(--radius-md)] bg-[var(--color-error-container)] px-3 py-2 text-[13px] text-[var(--color-on-error-container)]"
         >
-          {error}
+          {message}
         </p>
-      )}
+      ))}
       {notice && (
-        <p className="rounded-[var(--radius-md)] bg-[var(--color-surface-container-high)] px-3 py-2 text-[13px] text-[var(--color-text-secondary)]">
+        <p role="status" className="rounded-[var(--radius-md)] bg-[var(--color-surface-container-high)] px-3 py-2 text-[13px] text-[var(--color-text-secondary)]">
           {notice}
         </p>
       )}
@@ -539,7 +592,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {account.live !== false && (
-                <Button variant="secondary" size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => void createToken()} loading={isCreatingToken}>
+                <Button variant="secondary" size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => void createToken()} disabled={isWriting} loading={busy === 'createToken'}>
                   {t('echoflowApiOfficialLogin.createToken')}
                 </Button>
               )}

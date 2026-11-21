@@ -94,7 +94,7 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
       setLoginBounds: (attemptId, bounds) => invoke(ELECTRON_IPC_CHANNELS.echoFlowLoginSetBounds, { attemptId, bounds }),
       cancelLogin: attemptId => invoke(ELECTRON_IPC_CHANNELS.echoFlowLoginCancel, { attemptId }),
       signOut: (endpoint = 'main') => invoke(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint }),
-      whenAccountRestored: () => invoke(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored),
+      whenAccountRestored: endpoint => invoke(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored, endpoint === undefined ? undefined : { endpoint }),
     },
     runtimeDiscovery: {
       list: options => invoke(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, options),

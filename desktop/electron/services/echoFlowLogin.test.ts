@@ -32,6 +32,7 @@ class FakeLoginWindow implements EchoFlowLoginWindow {
   loadAttempt?: () => Promise<void>
   loadFailed?: (event: unknown, errorCode: number, errorDescription: string, validatedURL: string, isMainFrame: boolean) => void
   loadFinished?: () => void
+  domReady?: () => void
   pageUrl = MAIN_LOGIN_PROFILE.url
   localStorageUser: string | null = null
   localStorage: Record<string, string | null> = {}
@@ -44,9 +45,10 @@ class FakeLoginWindow implements EchoFlowLoginWindow {
   }
 
   webContents = {
-    on: (event: 'will-navigate' | 'will-redirect' | 'did-fail-load' | 'did-finish-load', listener: (...args: never[]) => void) => {
+    on: (event: 'will-navigate' | 'will-redirect' | 'did-fail-load' | 'did-finish-load' | 'dom-ready', listener: (...args: never[]) => void) => {
       if (event === 'did-fail-load') this.loadFailed = listener as FakeLoginWindow['loadFailed']
       else if (event === 'did-finish-load') this.loadFinished = listener as FakeLoginWindow['loadFinished']
+      else if (event === 'dom-ready') this.domReady = listener as FakeLoginWindow['domReady']
       else this.navigation.set(event, listener as (event: { preventDefault(): void }, url: string) => void)
     },
     setWindowOpenHandler: (handler: (details: { url: string }) => EchoFlowWindowOpenResult) => {
@@ -421,7 +423,7 @@ describe('EchoFlow site login session', () => {
 
     await expect(login.open()).resolves.toBe('authenticated')
     expect(createWindow).not.toHaveBeenCalled()
-    expect(readCredential).toHaveBeenCalledWith('main', null)
+    expect(readCredential).toHaveBeenCalledWith('main', null, expect.any(AbortSignal))
     expect(verifySession).toHaveBeenCalledWith('main', credential)
   })
 
@@ -614,7 +616,7 @@ describe('EchoFlow site login session', () => {
       await waitFor(() => window.loadCount === 1)
       window.signIn(credential)
     }
-    await expect(opening).resolves.toBe('failed')
+    await expect(opening).resolves.toBe('unknown')
     expect(verifySession).toHaveBeenCalledOnce()
     expect(createWindow).toHaveBeenCalledTimes(source === 'window' ? 1 : 0)
     expect(clearCookies).not.toHaveBeenCalled()
@@ -673,6 +675,92 @@ describe('login navigation and restoration regressions', () => {
   afterEach(() => {
     vi.clearAllTimers()
     vi.useRealTimers()
+  })
+
+  it.each(['dom-ready', 'loadURL resolution'] as const)('keeps an interactive page open after %s', async ready => {
+    const { login, window, credential } = makeLogin({ loadTimeoutMs: 25 })
+    if (ready === 'dom-ready') {
+      window.loadAttempt = () => new Promise(() => { window.domReady?.() })
+    }
+    const result = login.open()
+    await advanceTime(30)
+
+    expect(window.closedCount).toBe(0)
+    window.signIn(credential)
+    await advanceTime(10)
+    await expect(result).resolves.toBe('authenticated')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('does not start another credential poll while a page read is pending', async () => {
+    let finishRead!: (credential: EchoFlowLoginCredential) => void
+    const { login, readCredential, credential, verifySession } = makeLogin({
+      readCredential: async (_endpoint, window) => window
+        ? new Promise(resolve => { finishRead = resolve })
+        : null,
+    })
+    const result = login.open()
+    await advanceTime(40)
+
+    expect(readCredential.mock.calls.filter(([, window]) => window)).toHaveLength(1)
+    finishRead(credential)
+    await advanceTime(0)
+    await expect(result).resolves.toBe('authenticated')
+    expect(verifySession).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the login deadline when the page is interactive', async () => {
+    const { login, window } = makeLogin({ loadTimeoutMs: 25, loginTimeoutMs: 50 })
+    window.loadAttempt = () => new Promise(() => { window.domReady?.() })
+    const result = login.open()
+    await advanceTime(30)
+    expect(window.closedCount).toBe(0)
+
+    await advanceTime(20)
+    await expect(result).resolves.toBe('failed')
+    expect(window.closedCount).toBe(1)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('does not let an earlier load resolution clear the retry deadline', async () => {
+    const { login, window } = makeLogin({ loadTimeoutMs: 25 })
+    let resolveFirstLoad!: () => void
+    window.loadAttempt = () => new Promise<void>(resolve => {
+      if (window.loadCount === 1) {
+        resolveFirstLoad = resolve
+        window.failLoad(-21, 'ERR_NETWORK_CHANGED')
+      }
+    })
+    const result = login.open()
+    await advanceTime(10)
+    expect(window.loadCount).toBe(2)
+    resolveFirstLoad()
+
+    await advanceTime(25)
+    await expect(result).resolves.toBe('failed')
+    expect(window.closedCount).toBe(1)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('recovers a blank page even when the previous attempt has a stuck page read', async () => {
+    const { login, window, createWindow } = makeLogin()
+    window.webContents.executeJavaScript.mockImplementation(() => new Promise(() => {}))
+    const first = login.open()
+    await advanceTime(20)
+    expect(window.webContents.executeJavaScript).toHaveBeenCalled()
+    window.close()
+    await expect(first).resolves.toBe('cancelled')
+
+    const nextWindow = new FakeLoginWindow()
+    nextWindow.bodyText = ''
+    createWindow.mockResolvedValueOnce(nextWindow)
+    const second = login.open()
+    const settled = vi.fn()
+    void second.then(settled)
+    await advanceTime(100)
+    expect(nextWindow.loadCount).toBe(2)
+    expect(settled).toHaveBeenCalledWith('failed')
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('starts blank recovery when loadURL resolves without did-finish-load and fails a second blank page', async () => {
@@ -751,6 +839,7 @@ describe('login navigation and restoration regressions', () => {
     const { login, window } = makeLogin({ loadTimeoutMs: 2 })
     window.loadAttempt = async () => {
       window.failLoad(-106, 'ERR_INTERNET_DISCONNECTED')
+      window.domReady?.()
       window.finishLoad()
       throw new Error('ERR_INTERNET_DISCONNECTED')
     }

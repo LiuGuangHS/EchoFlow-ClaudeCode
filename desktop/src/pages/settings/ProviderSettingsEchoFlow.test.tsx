@@ -127,12 +127,16 @@ describe('ProviderSettings EchoFlow official account entry', () => {
   })
 
   it('signs in with the selected endpoint and refreshes that account', async () => {
-    apiMocks.getAccounts.mockResolvedValue(accountsResponse(null, null))
+    apiMocks.getAccounts.mockResolvedValueOnce(accountsResponse(null, null))
+    apiMocks.refreshAccount.mockReturnValue(new Promise(() => {}))
     hostMocks.openLogin.mockResolvedValue('authenticated')
     render(<ProviderSettings />)
 
-    fireEvent.click(await screen.findByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
+    await waitFor(() => expect(apiMocks.getAccounts).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
     await waitFor(() => expect(hostMocks.openLogin).toHaveBeenCalledWith('main', expect.any(String), null))
+    expect(await screen.findByText(/main-user/)).toBeInTheDocument()
+    expect(screen.getByTestId('echoflow-account-status').className).toContain('bg-[var(--color-success)]')
     await waitFor(() => expect(apiMocks.refreshAccount).toHaveBeenCalledWith('main'))
   })
 
@@ -192,7 +196,8 @@ describe('ProviderSettings EchoFlow official account entry', () => {
 
   it('re-reads the accounts when the startup restore finishes', async () => {
     let resolveRestore: (restored: boolean) => void = () => {}
-    hostMocks.whenAccountRestored.mockReturnValue(new Promise<boolean>((resolve) => { resolveRestore = resolve }))
+    const mainRestore = new Promise<boolean>((resolve) => { resolveRestore = resolve })
+    hostMocks.whenAccountRestored.mockImplementation(endpoint => endpoint === 'main' ? mainRestore : Promise.resolve(false))
     const stored = { ...mainAccount, live: false }
     apiMocks.getAccounts
       .mockResolvedValueOnce(accountsResponse(stored, null))

@@ -471,7 +471,7 @@ export const ELECTRON_IPC_VALIDATORS = {
   [ELECTRON_IPC_CHANNELS.echoFlowLoginCancel]: value => isRecord(value)
     && hasOnlyKeys(value, ['attemptId']) && echoFlowAttemptId(value.attemptId),
   [ELECTRON_IPC_CHANNELS.echoFlowSignOut]: echoFlowLoginEndpoint,
-  [ELECTRON_IPC_CHANNELS.echoFlowWhenRestored]: noPayload,
+  [ELECTRON_IPC_CHANNELS.echoFlowWhenRestored]: echoFlowLoginEndpoint,
   [ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode]: noPayload,
   [ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode]: noPayload,
   [ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode]: claudeCodeRuntimeId,

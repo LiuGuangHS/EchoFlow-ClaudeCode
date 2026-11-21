@@ -1,6 +1,6 @@
 import type { BrowserWindow, WebContentsView } from 'electron'
 import type { PreviewBounds } from '../../src/lib/desktopHost/types'
-import type { EchoFlowLoginResult, EchoFlowLoginWindow } from './echoFlowLogin'
+import type { EchoFlowLoginEndpoint, EchoFlowLoginResult, EchoFlowLoginWindow } from './echoFlowLogin'
 
 export function loginViewBounds(bounds: PreviewBounds, zoom: number, [width = 0, height = 0]: number[]): PreviewBounds {
   const edge = (value: number, limit: number) => Math.max(0, Math.min(limit, Math.round(value * zoom)))
@@ -17,6 +17,7 @@ export class EchoFlowLoginViewHost {
   private active: {
     owner: BrowserWindow
     id: string
+    endpoint: EchoFlowLoginEndpoint
     bounds: PreviewBounds | null
     abort: AbortController
     result?: Promise<EchoFlowLoginResult>
@@ -29,10 +30,11 @@ export class EchoFlowLoginViewHost {
   async open(
     owner: BrowserWindow, id: string, bounds: PreviewBounds | null,
     signIn: (signal: AbortSignal) => Promise<EchoFlowLoginResult>,
+    endpoint: EchoFlowLoginEndpoint = 'main',
   ): Promise<EchoFlowLoginResult> {
     if (this.active) return 'cancelled'
     const abort = new AbortController()
-    const attempt: NonNullable<EchoFlowLoginViewHost['active']> = { owner, id, bounds, abort }
+    const attempt: NonNullable<EchoFlowLoginViewHost['active']> = { owner, id, endpoint, bounds, abort }
     this.active = attempt
     const cancel = () => this.cancel(id)
     const navigate = (details: { isMainFrame: boolean; isSameDocument: boolean }) => {
@@ -61,9 +63,11 @@ export class EchoFlowLoginViewHost {
     }
   }
 
-  async whenAccountSettled(): Promise<boolean> {
-    const outcome = await this.active?.result
-    return outcome === 'authenticated' || outcome === 'failed'
+  async whenAccountSettled(endpoint?: EchoFlowLoginEndpoint): Promise<boolean> {
+    const attempt = this.active
+    if (endpoint && attempt?.endpoint !== endpoint) return false
+    const outcome = await attempt?.result
+    return outcome !== undefined && outcome !== 'cancelled'
   }
 
   setBounds(id: string, bounds: PreviewBounds | null) {

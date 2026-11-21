@@ -312,6 +312,7 @@ export const en = {
   'echoflowApiOfficialLogin.signIn': 'Sign in to EchoFlow SiHub',
   'echoflowApiOfficialLogin.signingIn': 'Signing in…',
   'echoflowApiOfficialLogin.signInFailed': 'Sign-in did not complete. Retry, or open manual binding below.',
+  'echoflowApiOfficialLogin.signInUnknown': 'The sign-in result could not be confirmed. Your account may appear here shortly.',
   'echoflowApiOfficialLogin.manualBind': 'Manual binding (advanced)',
   'echoflowApiOfficialLogin.needsRelogin': 'This session has expired. Sign in again.',
   'echoflowApiOfficialLogin.userId': 'User ID',

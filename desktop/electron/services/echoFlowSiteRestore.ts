@@ -2,6 +2,18 @@ import type { EchoFlowLoginCredential, SiteCookie } from './echoFlowLogin'
 import { siteCookieHeader } from './echoFlowLogin'
 import type { EchoFlowLoginIdentity } from './echoFlowSiteIdentity'
 
+export function readSiteRestoreIdentity(account?: {
+  userId?: unknown
+  username?: unknown
+  live?: unknown
+} | null): EchoFlowLoginIdentity | null {
+  if (account?.live !== false || typeof account.userId !== 'string' || !account.userId.trim()) return null
+  return {
+    userId: account.userId,
+    username: typeof account.username === 'string' ? account.username : '',
+  }
+}
+
 export type SiteRestoreDeps = {
   readCookies: () => Promise<SiteCookie[]>
   /** The identity stored at sign-in; the gateway account call needs it as New-Api-User. */
