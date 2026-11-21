@@ -1,16 +1,17 @@
 import { randomUUID } from 'node:crypto'
+import { lstat } from 'node:fs/promises'
 import path from 'node:path'
 import type { MigrationPreview, MigrationStatus } from '../../src/lib/desktopHost/types'
 import { resolveStorageBinding, type StorageBinding } from '../../../src/utils/echoFlowConfigRoot'
 import {
   cancelColdStorageApproval, canonicalPath, completeStorageMigration,
-  prepareStorageMigration, readStorageMigrationStatus, recoverStorageMigration, storageLocationFile,
-  type StorageMigrationHooks,
+  prepareStorageMigration, previewWhatsAppAdoption, readStorageMigrationStatus, recoverStorageMigration, storageLocationFile,
+  WhatsAppAdoptionConfigRequiredError, type StorageMigrationHooks,
 } from '../../../src/services/storageMigration'
 import { normalizedCustomDir, type AppModeAppLike } from './appMode'
 import { hasExternalDesktopStorageControls } from './desktopStorageProvenance'
 import { armDesktopMove, assertDesktopMovePreview, assertNoPendingDesktopMove, cancelDesktopMove, desktopMovePreview, type DesktopMoveLaunch, type DesktopMovePreview } from './desktopStorageMove'
-import { approveImAdoption, approveOpenAiOauth, previewImAdoption, previewOpenAiOauth, type DesktopStorageAdoptionLaunch } from './desktopStorageAdoption'
+import { approveImAdoption, approveOpenAiOauth, approveWhatsAppAdoption, previewImAdoption, previewOpenAiOauth, whatsAppAdoptionError, type DesktopStorageAdoptionLaunch } from './desktopStorageAdoption'
 import { LegacyDataMigrationRecovery } from './dataMigrationLegacyRecovery'
 import { createStorageMigrationCredentialHooks, systemMigrationCredentialStore, type MigrationCredentialStore } from './migrationCredentials'
 import { preflightWindowsMigrationPermissions, preserveWindowsMigrationPermissions, restrictWindowsMigrationStaging } from './migrationPermissions'
@@ -87,7 +88,14 @@ export class DataMigration {
     const plan = await prepareStorageMigration({ binding, sources: [{ directory: this.sourceDir, markerRoot: this.sourceDir }] })
     const runtime = await this.hooks.preview()
     if (runtime.externalProcesses) throw new Error('Another process is using this data directory; close it and retry')
-    const preview = { id: randomUUID(), sourceDir: this.sourceDir, targetDir: binding.root, files: plan.files, bytes: plan.bytes, activeTasks: runtime.activeTasks }
+    const sharedDownloads = path.join(this.app.getPath('home'), '.claude', 'im-downloads')
+    const retained = await lstat(sharedDownloads).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error
+    })
+    const preview: MigrationPreview = {
+      id: randomUUID(), sourceDir: this.sourceDir, targetDir: binding.root, files: plan.files, bytes: plan.bytes,
+      activeTasks: runtime.activeTasks, ...(retained && { retainedSharedImDownloads: sharedDownloads }),
+    }
     this.previewState = { preview, cold: await desktopMovePreview(plan) }
     return preview
   }
@@ -100,8 +108,8 @@ export class DataMigration {
       const file = await choose()
       if (!file) return
       const preview = await previewOpenAiOauth(binding, file)
-      return { files: [preview], approve: () => approveOpenAiOauth(binding, preview) }
-    }, preview => confirm(preview))
+      return { sourceDir: file, targetDir: preview.target, files: [preview], confirm, approve: () => approveOpenAiOauth(binding, preview) }
+    })
   }
 
   async prepareImAdoption(
@@ -112,16 +120,48 @@ export class DataMigration {
       const selected = await choose()
       if (!selected?.length) return
       const files = await previewImAdoption(binding, selected)
-      return { files, approve: () => approveImAdoption(binding, files) }
-    }, confirm)
+      const first = files[0]!
+      return {
+        sourceDir: files.length === 1 ? first.file : path.dirname(first.file),
+        targetDir: files.length === 1 ? first.target : binding.root,
+        files, confirm: preview => confirm(preview, files), approve: () => approveImAdoption(binding, files),
+      }
+    })
+  }
+
+  async prepareWhatsAppAdoption(
+    chooseDirectory: () => Promise<string | null>,
+    chooseConfig: () => Promise<string | null>,
+    confirm: (preview: MigrationPreview, configMove?: { source: string; target: string }) => Promise<boolean>,
+  ): Promise<void> {
+    await this.prepareFileAdoption(async binding => {
+      const directory = await chooseDirectory()
+      if (!directory) return
+      const preview = await previewWhatsAppAdoption(binding, directory).catch(async error => {
+        if (!(error instanceof WhatsAppAdoptionConfigRequiredError)) throw error
+        const file = await chooseConfig()
+        if (file) return await previewWhatsAppAdoption(binding, directory, file)
+      }).catch(() => { throw new Error(whatsAppAdoptionError) })
+      if (!preview) return
+      const config = preview.files.find(file => file.source === preview.account.config)
+      return {
+        sourceDir: preview.account.directory,
+        targetDir: path.join(binding.root, preview.account.destination),
+        files: preview.files,
+        confirm: summary => confirm(summary, config && { source: config.source, target: path.join(binding.root, config.relative) }),
+        approve: () => approveWhatsAppAdoption(binding, preview).catch(() => { throw new Error(whatsAppAdoptionError) }),
+      }
+    })
   }
 
   private async prepareFileAdoption(
     select: (binding: StorageBinding) => Promise<{
-      files: readonly { file: string; target: string; identity: { size: number } }[]
+      sourceDir: string
+      targetDir: string
+      files: readonly { identity: { size: number } }[]
+      confirm(preview: MigrationPreview): Promise<boolean>
       approve(): Promise<DesktopStorageAdoptionLaunch>
     } | undefined>,
-    confirm: Parameters<DataMigration['prepareImAdoption']>[1],
   ): Promise<void> {
     if (this.running || this.choosingFiles) throw new Error('Data migration is already running')
     this.choosingFiles = true
@@ -133,14 +173,12 @@ export class DataMigration {
       const binding = { ...resolveStorageBinding({ env: {}, roots: [root] }), location: { file: storageLocationFile(this.app.getPath('home')) } }
       const selection = await select(binding)
       if (!selection) return
-      const { files, approve } = selection
+      const { files, approve, confirm, sourceDir, targetDir } = selection
       const runtime = await this.hooks.preview()
       if (runtime.externalProcesses) throw new Error('Another process is using this data directory; close it and retry')
-      const first = files[0]!
-      const preview = { id: randomUUID(), sourceDir: files.length === 1 ? first.file : path.dirname(first.file),
-        targetDir: files.length === 1 ? first.target : root, files: files.length,
+      const preview = { id: randomUUID(), sourceDir, targetDir, files: files.length,
         bytes: files.reduce((total, item) => total + item.identity.size, 0), activeTasks: runtime.activeTasks }
-      if (!await confirm(preview, files)) return
+      if (!await confirm(preview)) return
       if (this.running || root !== this.sourceDir) throw new Error('The active data directory changed while confirming')
       this.previewState = { preview, cold: { binding, approve } }
       await this.start(preview.id)

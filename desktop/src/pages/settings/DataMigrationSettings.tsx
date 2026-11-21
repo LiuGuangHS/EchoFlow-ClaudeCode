@@ -114,15 +114,18 @@ export function DataMigrationSettings({ environmentControlled, disabled = false 
     }
   }
 
-  const chooseAdoption = async (kind: 'openai-oauth' | 'im-adapters') => {
+  const chooseAdoption = async (kind: 'openai-oauth' | 'im-adapters' | 'whatsapp-auth') => {
     if (blocked || busy || preview) return
     setError(null)
     setPreparing(true)
     try {
-      if (kind === 'im-adapters') await host.appMode.migration.prepareImAdoption()
+      if (kind === 'whatsapp-auth') await host.appMode.migration.prepareWhatsAppAdoption()
+      else if (kind === 'im-adapters') await host.appMode.migration.prepareImAdoption()
       else await host.appMode.migration.prepareOpenAiOauth()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('settings.general.migration.error'))
+      setError(kind === 'whatsapp-auth'
+        ? t('settings.general.migration.whatsAppAdoptionError')
+        : cause instanceof Error ? cause.message : t('settings.general.migration.error'))
     } finally {
       setPreparing(false)
     }
@@ -222,6 +225,9 @@ export function DataMigrationSettings({ environmentControlled, disabled = false 
           <Button type="button" size="base" variant="secondary" disabled={blocked || busy || !!preview} onClick={() => void chooseAdoption('im-adapters')}>
             {t('settings.general.migration.chooseImAdoption')}
           </Button>
+          <Button type="button" size="base" variant="secondary" disabled={blocked || busy || !!preview} onClick={() => void chooseAdoption('whatsapp-auth')}>
+            {t('settings.general.migration.chooseWhatsAppAdoption')}
+          </Button>
         </div>
       </div>
       {environmentControlled && (
@@ -259,6 +265,9 @@ export function DataMigrationSettings({ environmentControlled, disabled = false 
             {preview.activeTasks > 0 && <p>{t('settings.general.migration.activeTasks', { count: preview.activeTasks })}</p>}
             <p>{t('settings.general.migration.stopWarning')}</p>
             <p>{t('settings.general.migration.externalWarning')}</p>
+            {preview.retainedSharedImDownloads && (
+              <p className="break-words">{t('settings.general.migration.retainedSharedImDownloads', { path: preview.retainedSharedImDownloads })}</p>
+            )}
             <p>{t('settings.general.migration.cleanup')}</p>
           </div>
         )}

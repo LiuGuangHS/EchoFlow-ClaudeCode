@@ -5,9 +5,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { armApprovedFileSource, executeStorageMigration, readApprovedFileSource, readStorageMigrationStatus } from '../../../src/services/storageMigration'
 import { buildEchoFlowOwnershipMarker, resolveStorageBinding } from '../../../src/utils/echoFlowConfigRoot'
-import { approveImAdoption, executeDesktopStorageAdoption, previewImAdoption, previewOpenAiOauth } from './desktopStorageAdoption'
+import { approveImAdoption, desktopStorageAdoptionLaunch, desktopStorageAdoptionRelaunchArgs, executeDesktopStorageAdoption, previewImAdoption, previewOpenAiOauth } from './desktopStorageAdoption'
 
-import { initializeDesktopStorage } from './desktopStorageStartup'
+import { desktopStorageRelaunchArgs, initializeDesktopStorage } from './desktopStorageStartup'
 
 const directories: string[] = []
 afterEach(async () => { for (const directory of directories.splice(0)) await fs.rm(directory, { recursive: true, force: true }) })
@@ -29,6 +29,24 @@ async function fixture() {
   const approve = () => armApprovedFileSource(binding, launch.id, { destination: 'echoflow-code', files: [source] })
   return { binding, source, bytes, launch, hooks, approve }
 }
+
+it('round-trips WhatsApp cold controls without carrying account paths or accepting mixed approvals', () => {
+  const launch = { kind: 'whatsapp-auth' as const, id: 'ecf00000-1111-4222-8333-444444444444', proof: 'a'.repeat(64) }
+  const args = desktopStorageAdoptionRelaunchArgs(['main.cjs', '--', 'positional'], launch)
+  const controls = Object.fromEntries(args.slice(1, -2).map(arg => arg.slice(2).split('=')))
+  const parse = () => desktopStorageAdoptionLaunch({ hasSwitch: name => name in controls, getSwitchValue: name => controls[name] ?? '' })
+  expect(args.slice(-2)).toEqual(['--', 'positional'])
+  expect(Object.keys(controls)).toEqual(['echoflow-whatsapp-adoption-id', 'echoflow-whatsapp-adoption-proof'])
+  expect(parse()).toEqual(launch)
+  expect(desktopStorageRelaunchArgs(args, { adoption: launch })).toEqual(['main.cjs', '--', 'positional'])
+  controls['echoflow-im-adoption-id'] = launch.id
+  controls['echoflow-im-adoption-proof'] = launch.proof
+  expect(parse).toThrow(/conflicting/i)
+  delete controls['echoflow-im-adoption-id']
+  delete controls['echoflow-im-adoption-proof']
+  delete controls['echoflow-whatsapp-adoption-proof']
+  expect(parse).toThrow(/invalid/i)
+})
 
 it('cold-adopts a single IM session file without validating unrelated desktop resources', async () => {
   const f = await fixture()

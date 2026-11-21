@@ -256,7 +256,7 @@ export type StorageMigrationSource = {
   approval?: string
   /** Exact files selected by that approval. */
   approvedFiles?: readonly string[]
-  approvalCategory?: 'im-adapters'
+  approvalCategory?: 'im-adapters' | 'whatsapp-auth'
   /** Inspector-validated control bytes; never installed as active launch controls. */
   controls?: Partial<Record<'data-migration-v1.json' | 'app-mode.json', { digest: string; dev: string; ino: string }>>
   /** Obsolete, independently owned v1 data is history, not an active merge input. */
@@ -518,6 +518,100 @@ async function assertImAuthDependency(
   } catch { throw unavailable() }
 }
 
+type WhatsAppApproval = {
+  directory: string
+  identity: MigrationDirectoryIdentity
+  destination: string
+  config: string
+  configIdentity: FileIdentity
+}
+
+type ApprovedStorageFile = { source: string; relative: string; identity: FileIdentity }
+
+export class WhatsAppAdoptionConfigRequiredError extends Error {
+  constructor() { super('Choose the saved adapters.json that binds this WhatsApp account') }
+}
+
+async function readWhatsAppAdoptionConfig(file: string, expected?: FileIdentity, allowSelection = false) {
+  await assertUnlinkedDirectoryPath(path.dirname(file))
+  const stat = await fs.lstat(file)
+  if (!stat.isFile() || stat.size > maxImFileBytes) throw new Error('Invalid WhatsApp adapter configuration file')
+  const identity = await regularIdentity(file)
+  if (expected && !sameFile(expected, identity)) throw new Error('WhatsApp adapter configuration changed')
+  const bytes = await fs.readFile(file)
+  if (createHash('sha256').update(bytes).digest('hex') !== identity.digest) throw new Error('WhatsApp adapter configuration changed')
+  let value: unknown
+  try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) } catch { throw new Error('Invalid WhatsApp adapter configuration file') }
+  const config = validateStoredAdapterConfig(value)
+  if (!config.whatsappAccountJid?.trim()) {
+    if (allowSelection) throw new WhatsAppAdoptionConfigRequiredError()
+    throw new Error('No saved WhatsApp account binding; originals retained')
+  }
+  return { config, identity, jid: config.whatsappAccountJid }
+}
+
+function checkWhatsAppAdoptionConfig(binding: StorageBinding, account: WhatsAppApproval, config: Awaited<ReturnType<typeof readWhatsAppAdoptionConfig>>, published = false) {
+  const savedPath = config.config.whatsappAuthDir || ''
+  const selected = resolveWhatsAppAuthPath(savedPath, published ? binding.root : path.dirname(account.config))
+  const override = process.env.WHATSAPP_AUTH_DIR
+  const expected = published ? path.join(binding.root, account.destination) : account.directory
+  const resolve = (candidate: string) => published ? relocateManagedStoragePath(candidate, 'WhatsApp sign-in directory', binding.root) : candidate
+  if (resolve(selected) !== expected ||
+    (override && resolve(resolveWhatsAppAuthPath(override, binding.root)) !== expected) ||
+    (process.env.WHATSAPP_ACCOUNT_JID && process.env.WHATSAPP_ACCOUNT_JID !== config.jid)) {
+    throw new Error('WhatsApp sign-in directory does not match the saved and effective account binding; originals retained')
+  }
+}
+
+export async function previewWhatsAppAdoption(binding: StorageBinding, directory: string, sourceConfig?: string) {
+  if (!path.isAbsolute(directory) || directory.includes('\0') || path.resolve(directory) !== directory ||
+    isWithin(directory, binding.root) || isWithin(binding.root, directory)) throw new Error('Choose an absolute legacy WhatsApp directory outside the selected root')
+  const config = sourceConfig ?? path.join(binding.root, 'adapters.json')
+  if (path.basename(config) !== 'adapters.json' || !path.isAbsolute(config) || path.resolve(config) !== config || config.includes('\0') ||
+    (sourceConfig && (isWithin(path.dirname(config), binding.root) || isWithin(binding.root, path.dirname(config)) || isWithin(directory, config)))) {
+    throw new Error('Choose the original adapters.json outside the account and selected root')
+  }
+  await assertUnlinkedDirectoryPath(directory)
+  const { isWhatsAppAuthFile } = await import('../../adapters/whatsapp/storageAdoption.js')
+  if (!sourceConfig && !await present(config)) throw new WhatsAppAdoptionConfigRequiredError()
+  const requested = await readWhatsAppAdoptionConfig(config, undefined, !sourceConfig)
+  if (!sourceConfig && resolveWhatsAppAuthPath(requested.config.whatsappAuthDir || '', path.dirname(config)) !== directory) {
+    throw new WhatsAppAdoptionConfigRequiredError()
+  }
+  const account: WhatsAppApproval = {
+    directory, identity: await migrationDirectoryIdentity(directory), config, configIdentity: requested.identity,
+    destination: path.join('whatsapp-auth', requested.config.whatsappAuthDir
+      ? createHash('sha256').update(directory).digest('hex') : 'default'),
+  }
+  checkWhatsAppAdoptionConfig(binding, account, requested)
+  const names = (await fs.readdir(directory)).sort()
+  if (!names.includes('creds.json') || names.some(name => !isWhatsAppAuthFile(name))) throw new Error('Incomplete or unrecognized WhatsApp sign-in directory; originals retained')
+  const files: ApprovedStorageFile[] = []
+  for (const relative of names) {
+    const source = path.join(directory, relative)
+    const stat = await fs.lstat(source)
+    if (!stat.isFile() || stat.size > maxImFileBytes) throw new Error('Invalid WhatsApp sign-in file; originals retained')
+    files.push({ source, relative, identity: await regularIdentity(source) })
+  }
+  const target = path.join(binding.root, account.destination)
+  if (await present(target)) {
+    await assertUnlinkedDirectoryPath(target)
+    const targetNames = (await fs.readdir(target)).sort()
+    if (targetNames.length > 0 && (JSON.stringify(targetNames) !== JSON.stringify(names) ||
+      !(await Promise.all(files.map(async file => (await regularIdentity(path.join(target, file.relative))).digest === file.identity.digest))).every(Boolean))) {
+      throw new Error('Conflicting WhatsApp sign-in directories; originals retained')
+    }
+  }
+  const activeConfig = path.join(binding.root, 'adapters.json')
+  if (sourceConfig) {
+    if (await present(activeConfig) && (await regularIdentity(activeConfig)).digest !== account.configIdentity.digest) {
+      throw new Error('Conflicting IM adapter configuration; originals retained')
+    }
+    files.push({ source: config, relative: 'adapters.json', identity: account.configIdentity })
+  }
+  return { account, files }
+}
+
 export async function previewImAdoption(binding: StorageBinding, files: readonly string[]) {
   assertImFileSelection(files)
   const directory = path.dirname(files[0]!)
@@ -579,26 +673,58 @@ type StorageApprovalReceipt = {
   id: string
   root: string
   destination?: string
-  approvalCategory?: 'im-adapters'
+  approvalCategory?: 'im-adapters' | 'whatsapp-auth'
   rootIdentity?: MigrationDirectoryIdentity
   state: 'pending' | 'cancelled'
   cohort?: string
-  files: { source: string; relative: string; identity: FileIdentity }[]
+  files: ApprovedStorageFile[]
+  whatsapp?: WhatsAppApproval
   [key: string]: unknown
 }
+
+function whatsappApprovalSources(binding: StorageBinding, receipt: StorageApprovalReceipt): StorageMigrationSource[] {
+  const account = receipt.whatsapp!
+  const paths = receipt.files.map(file => file.source)
+  const hasConfig = account.config !== path.join(binding.root, 'adapters.json')
+  const create = (directory: string, approvedFiles: string[], destination?: string): StorageMigrationSource => ({
+    directory, markerRoot: directory, layout: 'approved-external', approval: receipt.id, approvalCategory: 'whatsapp-auth', approvedFiles, destination,
+  })
+  return [create(account.directory, paths.filter(file => file !== account.config), account.destination),
+    ...(hasConfig ? [create(path.dirname(account.config), [account.config])] : [])]
+}
+
+const whatsappDestination = /^whatsapp-auth[\\/](?:default|[a-f0-9]{64})$/
+
 function parseStorageApproval(value: unknown, binding: StorageBinding, id: string): StorageApprovalReceipt {
   const receipt = value as StorageApprovalReceipt
   if (!receipt || receipt.version !== 1 || receipt.id !== id || !approvalName.test(id) ||
     receipt.root !== binding.root || !['pending', 'cancelled'].includes(receipt.state) ||
-    (receipt.approvalCategory === 'im-adapters'
+    (receipt.approvalCategory === 'im-adapters' || receipt.approvalCategory === 'whatsapp-auth'
       ? receipt.destination !== undefined || !validDirectoryIdentity(receipt.rootIdentity) || receipt.rootIdentity.canonical !== binding.root
       : receipt.approvalCategory !== undefined || !safeRelative(receipt.destination)) ||
     (receipt.cohort !== undefined && (typeof receipt.cohort !== 'string' || !receipt.cohort)) ||
     !Array.isArray(receipt.files) || !receipt.files.length ||
     !receipt.files.every(file => file && typeof file.source === 'string' && path.isAbsolute(file.source) && path.resolve(file.source) === file.source &&
-      safeRelative(file.relative) && validIdentity(file.identity) && path.join(path.dirname(file.source), file.relative) === file.source) ||
-    new Set(receipt.files.map(file => path.dirname(file.source))).size !== 1) throw new Error('Invalid storage approval receipt')
+      safeRelative(file.relative) && validIdentity(file.identity) && path.join(path.dirname(file.source), file.relative) === file.source)) throw new Error('Invalid storage approval receipt')
   if (new Set(receipt.files.map(file => file.source)).size !== receipt.files.length) throw new Error('Duplicate storage approval file')
+  if (receipt.approvalCategory === 'whatsapp-auth') {
+    const account = receipt.whatsapp
+    if (!account || typeof account.directory !== 'string' || !validDirectoryIdentity(account.identity) ||
+      account.identity.canonical !== account.directory || !whatsappDestination.test(account.destination) ||
+      typeof account.config !== 'string' || path.basename(account.config) !== 'adapters.json' ||
+      !path.isAbsolute(account.config) || path.resolve(account.config) !== account.config || !validIdentity(account.configIdentity) ||
+      !receipt.files.some(file => file.source === path.join(account.directory, 'creds.json')) ||
+      receipt.files.some(file => file.source !== account.config && path.dirname(file.source) !== account.directory)) {
+      throw new Error('Invalid WhatsApp storage approval')
+    }
+    const storedConfig = receipt.files.find(file => file.source === account.config)
+    if (account.config === path.join(binding.root, 'adapters.json') ? storedConfig : !storedConfig || !sameFile(storedConfig.identity, account.configIdentity)) {
+      throw new Error('Invalid WhatsApp configuration approval')
+    }
+    for (const source of whatsappApprovalSources(binding, receipt)) assertSourceScope(source, binding)
+  } else if (new Set(receipt.files.map(file => path.dirname(file.source))).size !== 1) {
+    throw new Error('Approved files must share one directory')
+  }
   return receipt
 }
 async function readApproval(binding: StorageBinding, id: string): Promise<StorageApprovalReceipt> {
@@ -608,11 +734,18 @@ async function readApproval(binding: StorageBinding, id: string): Promise<Storag
   const identity = await regularIdentity(file)
   const receipt = parseStorageApproval(JSON.parse(await fs.readFile(file, 'utf8')), binding, id)
   await checkFile(file, identity)
-  if (receipt.approvalCategory === 'im-adapters') await assertMigrationDirectory(binding.root, receipt.rootIdentity!)
+  if (receipt.approvalCategory) await assertMigrationDirectory(binding.root, receipt.rootIdentity!)
   return receipt
 }
 async function approvalForSource(binding: StorageBinding, source: StorageMigrationSource): Promise<StorageApprovalReceipt> {
   const receipt = await readApproval(binding, source.approval!)
+  if (source.approvalCategory === 'whatsapp-auth' && receipt.approvalCategory === 'whatsapp-auth') {
+    const match = whatsappApprovalSources(binding, receipt).find(item => item.directory === source.directory && item.destination === source.destination)
+    if (!match || receipt.state !== 'pending' || JSON.stringify(match.approvedFiles) !== JSON.stringify(source.approvedFiles)) {
+      throw new Error('WhatsApp storage source does not match its approval')
+    }
+    return { ...receipt, files: receipt.files.filter(file => match.approvedFiles!.includes(file.source)) }
+  }
   if (receipt.state !== 'pending' || receipt.destination !== source.destination || receipt.approvalCategory !== source.approvalCategory ||
     receipt.files.length !== source.approvedFiles!.length ||
     receipt.files.some((file, index) => file.source !== source.approvedFiles![index])) throw new Error('Approved storage source is not pending or does not match its approval')
@@ -661,6 +794,43 @@ async function recordApprovedFileSource(binding: StorageBinding, id: string, opt
 export async function recordColdStorageApproval(binding: StorageBinding, options: ApprovedFileSelection): Promise<StorageMigrationSource> {
   const release = await lockStorageMigration(binding, true)
   try { return await recordApprovedFileSource(binding, randomUUID(), options) } finally { await release() }
+}
+
+export type WhatsAppAdoptionPreview = Awaited<ReturnType<typeof previewWhatsAppAdoption>>
+
+type WhatsAppAdoptionLaunch = { id: string; proof: string }
+
+function whatsappApprovalProof(account: WhatsAppApproval, files: readonly ApprovedStorageFile[]): string {
+  return createHash('sha256').update(JSON.stringify([account, files])).digest('hex')
+}
+
+export async function armWhatsAppStorageApproval(binding: StorageBinding, preview: WhatsAppAdoptionPreview, cold = false): Promise<WhatsAppAdoptionLaunch> {
+  const release = await lockStorageMigration(binding, cold)
+  try {
+    const { account, files } = await previewWhatsAppAdoption(binding, preview.account.directory,
+      preview.account.config === path.join(binding.root, 'adapters.json') ? undefined : preview.account.config)
+    const proof = whatsappApprovalProof(account, files)
+    if (proof !== whatsappApprovalProof(preview.account, preview.files)) throw new Error('Approved WhatsApp files changed; choose the directory again')
+    const id = randomUUID()
+    const receipt: StorageApprovalReceipt = {
+      version: 1, id, root: binding.root, state: 'pending', approvalCategory: 'whatsapp-auth',
+      rootIdentity: await migrationDirectoryIdentity(binding.root), files, whatsapp: account,
+    }
+    parseStorageApproval(receipt, binding, id)
+    await assertUnlinkedDirectoryPath(binding.internalDir)
+    await fs.mkdir(approvalHome(binding), { recursive: true, mode: 0o700 })
+    await assertUnlinkedDirectoryPath(approvalHome(binding))
+    await syncDirectory(binding.internalDir)
+    await durableJson(path.join(approvalHome(binding), `${id}.json`), receipt)
+    return { id, proof }
+  } finally { await release() }
+}
+
+export async function readApprovedWhatsAppSources(binding: StorageBinding, launch: WhatsAppAdoptionLaunch): Promise<StorageMigrationSource[]> {
+  const receipt = await readApproval(binding, launch.id)
+  if (receipt.approvalCategory !== 'whatsapp-auth' || receipt.state !== 'pending' ||
+    whatsappApprovalProof(receipt.whatsapp!, receipt.files) !== launch.proof) throw new Error('WhatsApp storage request does not match its approval')
+  return whatsappApprovalSources(binding, receipt)
 }
 
 export function imStorageApprovalProof(files: readonly { file: string; identity: FileIdentity }[]): string {
@@ -1186,6 +1356,7 @@ async function readJournals(binding: StorageBinding): Promise<StorageJournal[]> 
       })) throw new Error('Storage operations do not match their approval')
     }
     assertImTransactionScope(journal.sources, journal)
+    await whatsappTransaction(binding, journal.sources, journal)
     journals.push(journal)
   }
   return journals
@@ -1201,7 +1372,8 @@ async function assertNoFork(journal: StorageJournal): Promise<void> {
   for (let index = 0; index < journal.sources.length; index++) {
     const source = journal.sources[index]!
     if (source.layout === 'approved-external') {
-      if (source.approvalCategory === 'im-adapters' && !await present(source.directory)) continue
+      if (source.approvalCategory && !await present(source.directory)) continue
+      if (source.approvalCategory === 'whatsapp-auth' && source.destination) throw new Error('Retired WhatsApp sign-in directory was recreated')
       await assertMigrationDirectory(source.directory, source.identity)
       for (const entry of journal.entries) {
         if (entry.source !== index) continue
@@ -1244,6 +1416,14 @@ function assertSourceScope(source: StorageMigrationSource, binding: StorageBindi
     if (source.approvalCategory === 'im-adapters') {
       if (source.destination !== undefined) throw new Error('Invalid IM storage destination')
       assertImFileSelection(source.approvedFiles)
+      return
+    }
+    if (source.approvalCategory === 'whatsapp-auth') {
+      if (source.destination === undefined) {
+        if (source.approvedFiles.length !== 1 || path.basename(source.approvedFiles[0]!) !== 'adapters.json') throw new Error('Invalid WhatsApp configuration scope')
+      } else if (!whatsappDestination.test(source.destination) || !source.approvedFiles.includes(path.join(source.directory, 'creds.json'))) {
+        throw new Error('Invalid WhatsApp sign-in scope')
+      }
       return
     }
     if (source.approvalCategory !== undefined || !safeRelative(source.destination)) throw new Error('Invalid approved external destination')
@@ -1470,10 +1650,30 @@ async function cleanupSourceCoordination(source: SourceSnapshot): Promise<void> 
     await syncDirectory(directory)
   }
 }
+async function assertWhatsAppSource(receipt: StorageApprovalReceipt, files: readonly ApprovedStorageFile[], cleanup = false): Promise<void> {
+  const account = receipt.whatsapp!
+  await assertUnlinkedDirectoryPath(account.directory)
+  await assertMigrationDirectory(account.directory, account.identity)
+  const expected = files.filter(file => path.dirname(file.source) === account.directory)
+  const names = await fs.readdir(account.directory)
+  if ((!cleanup && names.length !== expected.length) || names.some(name => !expected.some(file => file.relative === name))) {
+    throw new Error('Approved WhatsApp directory contents changed; originals retained')
+  }
+  for (const name of names) {
+    const file = expected.find(item => item.relative === name)!
+    await checkFile(file.source, file.identity)
+  }
+}
+
 async function collectSource(source: StorageMigrationSource, binding: StorageBinding, sources: readonly StorageMigrationSource[]): Promise<{ snapshot: SourceSnapshot; files: { relative: string; identity: FileIdentity }[] }> {
   assertSourceScope(source, binding)
   if (source.layout === 'approved-external') {
     const receipt = await approvalForSource(binding, source)
+    if (source.approvalCategory === 'whatsapp-auth' && source.destination) {
+      await assertWhatsAppSource(receipt, receipt.files)
+      const account = receipt.whatsapp!
+      checkWhatsAppAdoptionConfig(binding, account, await readWhatsAppAdoptionConfig(account.config, account.configIdentity))
+    }
     const files: { relative: string; identity: FileIdentity }[] = []
     for (const file of receipt.files) {
       await assertUnlinkedDirectoryPath(path.dirname(file.source))
@@ -1586,7 +1786,7 @@ async function assertBoundary(binding: StorageBinding, journal: StorageJournal, 
     if (source.handoff && !['accepted', 'completed'].includes(journal.phase)) await checkFile(path.join(source.directory, source.handoff.relative), source.handoff.identity)
   }
 }
-async function copyExclusive(source: string, target: string, digest: string, transaction: string, root: string): Promise<void> {
+async function copyExclusive(source: string, target: string, digest: string, transaction: string, root: string, preserveTimes = false): Promise<void> {
   const directory = path.dirname(target)
   if (!isWithin(root, directory)) throw new Error('Unsafe backup directory')
   await fs.mkdir(directory, { recursive: true, mode: 0o700 })
@@ -1616,12 +1816,14 @@ async function copyExclusive(source: string, target: string, digest: string, tra
       await syncDirectory(scratch)
     }
     try {
+      const times = preserveTimes ? await fs.stat(source) : undefined
       await fs.copyFile(source, temporary, constants.COPYFILE_EXCL)
       const mode = (await fs.lstat(temporary)).mode
       const readOnly = process.platform !== 'win32' && (mode & 0o200) === 0
       if (readOnly) await fs.chmod(temporary, mode | 0o200)
       const handle = await fs.open(temporary, 'r+')
       try {
+        if (times) await handle.utimes(times.atime, times.mtime)
         if (readOnly) await handle.chmod(mode)
         await handle.sync()
       } finally { await handle.close() }
@@ -1813,6 +2015,7 @@ export async function executeStorageMigration(input: StorageMigrationInput): Pro
   try {
     assertImTransactionScope(input.sources)
     release = await lockStorageMigration(binding)
+    const whatsapp = await whatsappTransaction(binding, input.sources)
     const previous = await readJournals(binding)
     for (const existing of previous) {
       if (existing.state !== 'ready') return resultOf(existing)
@@ -1839,12 +2042,13 @@ export async function executeStorageMigration(input: StorageMigrationInput): Pro
         if (isWithin(transactionHome(binding), path.join(binding.root, destination)) || isWithin(approvalHome(binding), path.join(binding.root, destination))) throw new Error('Reserved active transaction destination')
         const target = path.join(binding.root, destination)
         const baseline = await present(target) ? await regularIdentity(target) : null
-        if (source.approvalCategory === 'im-adapters' && baseline && baseline.digest !== file.identity.digest) {
+        if (source.approvalCategory && baseline && baseline.digest !== file.identity.digest) {
           throw new Error(`Conflicting IM storage file (originals retained): ${destination}`)
         }
         entries.push({ source: index, relative: file.relative, destination, original: file.identity, baseline })
       }
     }
+    if (whatsapp && input.legacySelection) throw new Error('Invalid WhatsApp transaction scope')
     if (input.legacySelection && !binding.location) throw new Error('Missing location database for legacy storage selection')
     legacySelectionEntry({ legacySelection: input.legacySelection, sources, entries })
     if (!sources.length) return { state: 'ready', issues: [] }
@@ -2098,21 +2302,27 @@ async function assertOpaqueStores(binding: StorageBinding, journal: StorageJourn
   for (const entry of journal.entries) {
     if (historicalMaterial(entry.destination)) continue
     const segments = entry.destination.split(path.sep)
-    const index = segments.findIndex(part => part === 'leveldb' || part.endsWith('.leveldb'))
+    const index = segments[0]?.toLowerCase() === 'whatsapp-auth' && segments.length > 2 ? 1
+      : segments.findIndex(part => part === 'leveldb' || part.endsWith('.leveldb'))
     if (index < 0) continue
     const store = segments.slice(0, index + 1).join(path.sep)
     stores.set(store, new Set([...(stores.get(store) ?? []), entry.source]))
   }
-  // LevelDB is an indivisible owner, never a union of SST/WAL filenames.
+  // A key store belongs to one stopped snapshot; matching individual files cannot prove a safe merge.
   for (const [store, owners] of stores) {
+    const whatsapp = store.split(path.sep)[0]?.toLowerCase() === 'whatsapp-auth'
+    const conflict = () => new Error(`Conflicting ${whatsapp ? 'WhatsApp sign-in directories' : 'LevelDB profiles'}: ${store}`)
     const expected = journal.entries.filter(entry => entry.source === [...owners][0] && isWithin(store, entry.destination))
     const shape = (entries: ImportEntry[]) => JSON.stringify(entries.map(entry => [entry.destination, entry.stagedDigest]).sort())
-    for (const owner of owners) if (shape(journal.entries.filter(entry => entry.source === owner && isWithin(store, entry.destination))) !== shape(expected)) throw new Error(`Conflicting LevelDB profiles: ${store}`)
+    for (const owner of owners) {
+      if (shape(journal.entries.filter(entry => entry.source === owner && isWithin(store, entry.destination))) !== shape(expected)) throw conflict()
+    }
     const target = path.join(binding.root, store)
     if (await present(target)) {
       const actual = await migrationManifest(target)
+      if (whatsapp && !actual.length) continue
       const files = actual.filter(entry => entry.kind === 'file').map(entry => [path.join(store, entry.relative), entry.digest]).sort()
-      if (JSON.stringify(files) !== JSON.stringify(expected.map(entry => [entry.destination, entry.stagedDigest]).sort())) throw new Error(`Conflicting LevelDB profiles: ${store}`)
+      if (JSON.stringify(files) !== shape(expected)) throw conflict()
     }
   }
 }
@@ -2190,11 +2400,56 @@ function assertImTransactionScope(sources: readonly StorageMigrationSource[], jo
   return true
 }
 
+async function whatsappTransaction(binding: StorageBinding, sources: readonly StorageMigrationSource[], journal?: StorageJournal) {
+  const index = sources.findIndex(source => source.approvalCategory === 'whatsapp-auth')
+  if (index < 0) return
+  const receipt = await readApproval(binding, sources[index]!.approval!)
+  if (receipt.approvalCategory !== 'whatsapp-auth' || receipt.state !== 'pending') throw new Error('Invalid WhatsApp transaction approval')
+  const expected = whatsappApprovalSources(binding, receipt)
+  const account = receipt.whatsapp!
+  if (sources.length !== expected.length || sources.some((source, i) => {
+    const match = expected[i]!
+    return source.approval !== match.approval || source.approvalCategory !== match.approvalCategory ||
+      source.directory !== match.directory || source.destination !== match.destination || JSON.stringify(source.approvedFiles) !== JSON.stringify(match.approvedFiles)
+  }) || journal?.legacySelection || journal?.archiveFiles?.length || journal?.directories.some(item =>
+    !isWithin(item.relative, account.destination)) || journal?.entries.some(entry =>
+    [entry.baseline?.digest, entry.published?.digest, entry.publicationIntent?.digest, entry.stagedDigest].some(digest => digest !== undefined && digest !== entry.original.digest))) {
+    throw new Error('Invalid WhatsApp transaction scope')
+  }
+  return receipt
+}
+
+async function validateWhatsAppPublication(binding: StorageBinding, journal: StorageJournal, receipt: StorageApprovalReceipt, staged: boolean): Promise<void> {
+  const account = receipt.whatsapp!
+  const target = path.join(binding.root, account.destination)
+  const configEntry = journal.entries.find(entry => entry.destination === 'adapters.json')
+  const configFile = configEntry && staged ? stagedFile(binding, journal, configEntry) : path.join(binding.root, 'adapters.json')
+  const config = await readWhatsAppAdoptionConfig(configFile, configEntry ? undefined : account.configIdentity)
+  if (config.identity.digest !== account.configIdentity.digest) throw new Error('WhatsApp adapter configuration changed before acceptance')
+  const authDirectory = staged ? path.dirname(stagedFile(binding, journal, journal.entries.find(entry => entry.source === 0)!)) : target
+  await assertUnlinkedDirectoryPath(authDirectory)
+  const files = receipt.files.filter(file => path.dirname(file.source) === account.directory)
+  const names = await fs.readdir(authDirectory)
+  if (names.length !== files.length || names.some(name => !files.some(file => file.relative === name))) throw new Error('WhatsApp sign-in copy is incomplete or contains unapproved files')
+  for (const file of files) {
+    if ((await regularIdentity(path.join(authDirectory, file.relative))).digest !== file.identity.digest) throw new Error('WhatsApp sign-in copy changed')
+  }
+  const { validateWhatsAppAuthDirectory } = await import('../../adapters/whatsapp/storageAdoption.js')
+  await validateWhatsAppAuthDirectory(authDirectory, config.jid)
+  if (!staged) {
+    checkWhatsAppAdoptionConfig(binding, account, config, true)
+    if (!readStorageRelocations(binding.root).mappings?.some(mapping => mapping.from === account.directory && mapping.to === account.destination)) {
+      throw new Error('WhatsApp relocation does not match approval')
+    }
+  }
+}
+
 async function advanceTransaction(binding: StorageBinding, journal: StorageJournal, hooks: StorageMigrationHooks): Promise<StorageMigrationResult> {
   const transaction = transactionPath(binding, journal.id)
   const signal = hooks.signal ?? new AbortController().signal
   await assertBoundary(binding, journal, hooks)
   const im = assertImTransactionScope(journal.sources, journal)
+  const whatsapp = await whatsappTransaction(binding, journal.sources, journal)
   if (journal.phase === 'copying') {
     // Each interrupted transform gets a new private attempt; verified source
     // backups are reused, never overwritten with partially transformed bytes.
@@ -2221,8 +2476,10 @@ async function advanceTransaction(binding: StorageBinding, journal: StorageJourn
       const original = path.join(source.directory, entry.relative)
       await checkFile(original, entry.original)
       const backup = path.join(transaction, 'sources', String(entry.source), entry.relative)
-      await copyExclusive(original, backup, entry.original.digest, transaction, binding.root)
-      await copyExclusive(backup, stagedFile(binding, journal, entry), entry.original.digest, transaction, binding.root)
+      // IM download expiry uses mtime; moving the profile must not extend it.
+      const preserveTimes = entry.destination.startsWith(`im-downloads${path.sep}`)
+      await copyExclusive(original, backup, entry.original.digest, transaction, binding.root, preserveTimes)
+      await copyExclusive(backup, stagedFile(binding, journal, entry), entry.original.digest, transaction, binding.root, preserveTimes)
     }
     for (let index = 0; index < journal.sources.length; index++) {
       const source = journal.sources[index]!
@@ -2258,6 +2515,7 @@ async function advanceTransaction(binding: StorageBinding, journal: StorageJourn
     }
     await prepareMergedFiles(binding, journal, hooks, signal)
     await assertOpaqueStores(binding, journal)
+    if (whatsapp) await validateWhatsAppPublication(binding, journal, whatsapp, true)
     if ((hooks.platform ?? process.platform) === 'darwin' && !hooks.prepareResources) throw new Error('macOS credential migration hooks are required')
     await hooks.prepareResources?.(transaction, journal.sources.filter(source => !source.layout && !source.archive))
     for (const entry of journal.entries) {
@@ -2279,9 +2537,14 @@ async function advanceTransaction(binding: StorageBinding, journal: StorageJourn
     await saveJournal(binding, journal)
   }
   if (journal.phase === 'publishing') {
-    if (im) {
+    if (whatsapp) {
+      await assertWhatsAppSource(whatsapp, whatsapp.files)
+      const account = whatsapp.whatsapp!
+      checkWhatsAppAdoptionConfig(binding, account, await readWhatsAppAdoptionConfig(account.config, account.configIdentity))
+    }
+    if (im || whatsapp) {
       for (const entry of journal.entries) {
-        await checkFile(path.join(journal.sources[0]!.directory, entry.relative), entry.original)
+        await checkFile(path.join(journal.sources[entry.source]!.directory, entry.relative), entry.original)
         const target = path.join(binding.root, entry.destination)
         const current = await fs.lstat(target, { bigint: true }).catch(error => {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -2355,6 +2618,10 @@ async function publishRelocations(binding: StorageBinding, journal: StorageJourn
     for (let index = 0; index < journal.sources.length; index++) {
       const source = journal.sources[index]!
       if (source.layout === 'approved-external') {
+        if (source.approvalCategory === 'whatsapp-auth' && source.destination) {
+          mappings.push({ from: source.directory, to: source.destination })
+          continue
+        }
         for (const entry of journal.entries) {
           if (entry.source === index) mappings.push({ from: path.join(source.directory, entry.relative), to: entry.destination })
         }
@@ -2404,6 +2671,11 @@ async function validatePublished(binding: StorageBinding, journal: StorageJourna
   }
   if (!journal.relocation?.published) throw new Error('Missing storage relocation receipt')
   await checkFile(path.join(binding.internalDir, 'storage-relocations.json'), journal.relocation.published)
+  const whatsapp = await whatsappTransaction(binding, journal.sources, journal)
+  if (whatsapp) {
+    await assertWhatsAppSource(whatsapp, whatsapp.files)
+    await validateWhatsAppPublication(binding, journal, whatsapp, false)
+  }
   await hooks.validateResources?.(transactionPath(binding, journal.id))
 }
 
@@ -2468,7 +2740,8 @@ export async function completeStorageMigration(
   let startupValidated = false
   if (validateStartup) {
     const journal = (await readJournals(binding)).find(entry => entry.id === id)
-    if (journal?.phase === 'validating' && !assertImTransactionScope(journal.sources, journal)) {
+    if (journal?.phase === 'validating' && !assertImTransactionScope(journal.sources, journal) &&
+      !journal.sources.some(source => source.approvalCategory === 'whatsapp-auth')) {
       await validateStartup(binding)
       startupValidated = true
     }
@@ -2492,7 +2765,7 @@ export async function completeStorageMigration(
             throw new Error('IM migration publication does not match its approval')
           }
         }
-      } else if (validateStartup && !startupValidated) {
+      } else if (validateStartup && !startupValidated && !journal.sources.some(source => source.approvalCategory === 'whatsapp-auth')) {
         throw new Error('Storage transaction changed before restricted startup validation')
       }
       journal.phase = 'accepted'
@@ -2513,13 +2786,22 @@ async function cleanupTransaction(binding: StorageBinding, journal: StorageJourn
     }
   }
   const im = assertImTransactionScope(journal.sources, journal)
-  if (im) {
+  const whatsapp = await whatsappTransaction(binding, journal.sources, journal)
+  if (whatsapp) {
     const source = journal.sources[0]!
-    if (!journal.entries.every(entry => entry.cleaned) || await present(source.directory)) {
-      await assertMigrationDirectory(source.directory, source.identity)
+    if (await present(source.directory) || journal.entries.some(entry => entry.source === 0 && !entry.cleaned)) {
+      await assertWhatsAppSource(whatsapp, whatsapp.files, true)
+    }
+    await validateWhatsAppPublication(binding, journal, whatsapp, false)
+  }
+  if (im || whatsapp) {
+    for (const [index, source] of journal.sources.entries()) {
+      if (journal.entries.some(entry => entry.source === index && !entry.cleaned) || await present(source.directory)) {
+        await assertMigrationDirectory(source.directory, source.identity)
+      }
     }
     for (const entry of journal.entries) {
-      const original = path.join(source.directory, entry.relative)
+      const original = path.join(journal.sources[entry.source]!.directory, entry.relative)
       const backup = path.join(transaction, 'sources', String(entry.source), entry.relative)
       if (!entry.published || (await regularIdentity(backup)).digest !== entry.original.digest) throw new Error('Missing verified IM migration copy')
       await checkFile(path.join(binding.root, entry.destination), entry.published)
@@ -2553,7 +2835,17 @@ async function cleanupTransaction(binding: StorageBinding, journal: StorageJourn
   const hasHandoff = journal.sources.some(source => source.handoff)
   for (const entry of journal.entries) {
     if (entry.relative !== journal.sources[entry.source]!.handoff?.relative) await cleanEntry(entry)
-    if (im && issues.length) break
+    if ((im || whatsapp) && issues.length) break
+  }
+  if (whatsapp && !issues.length && await present(whatsapp.whatsapp!.directory)) {
+    try {
+      const { directory, identity } = whatsapp.whatsapp!
+      await assertBoundary(binding, journal, hooks)
+      await assertUnlinkedDirectoryPath(directory)
+      await assertMigrationDirectory(directory, identity)
+      await fs.rmdir(directory)
+      await syncDirectory(path.dirname(directory))
+    } catch (error) { issues.push(issue(error)) }
   }
   // Keep the durable source barrier through data/resource cleanup, even if the cold PID dies.
   if (hasHandoff && !issues.length) {

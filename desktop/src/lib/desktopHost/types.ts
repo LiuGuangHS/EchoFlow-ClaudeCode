@@ -431,6 +431,7 @@ export type MigrationPreview = {
   files: number
   bytes: number
   activeTasks: number
+  retainedSharedImDownloads?: string
 }
 
 export type MigrationStatus = {
@@ -668,6 +669,7 @@ export type DesktopHost = {
       prepare(targetDir: string): Promise<MigrationPreview>
       prepareOpenAiOauth(): Promise<void>
       prepareImAdoption(): Promise<void>
+      prepareWhatsAppAdoption(): Promise<void>
       start(id: string): Promise<void>
       status(): Promise<MigrationStatus | null>
       cancel(id: string): Promise<void>

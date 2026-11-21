@@ -19,6 +19,7 @@ let progressListener: ((status: MigrationStatus) => void) | undefined
 const prepare = vi.fn()
 const prepareOpenAiOauth = vi.fn()
 const prepareImAdoption = vi.fn()
+const prepareWhatsAppAdoption = vi.fn()
 const start = vi.fn()
 const status = vi.fn()
 const cancel = vi.fn()
@@ -49,7 +50,7 @@ beforeEach(() => {
     capabilities: { ...browserHost.capabilities, appMode: true, dialogs: true, shell: true },
     dialogs: { ...browserHost.dialogs, open },
     shell: { ...browserHost.shell, openPath },
-    appMode: { ...browserHost.appMode, set: setAppMode, migration: { prepare, prepareOpenAiOauth, prepareImAdoption, start, status, cancel, onProgress } },
+    appMode: { ...browserHost.appMode, set: setAppMode, migration: { prepare, prepareOpenAiOauth, prepareImAdoption, prepareWhatsAppAdoption, start, status, cancel, onProgress } },
   }
   window.desktopHost = host
 })
@@ -101,6 +102,25 @@ describe('Data migration settings', () => {
     await waitFor(() => expect(prepareImAdoption).toHaveBeenCalledWith())
     expect(open).not.toHaveBeenCalled()
     expect(start).not.toHaveBeenCalled()
+  })
+
+  it('leaves WhatsApp selection and approval to the host and hides sensitive errors', async () => {
+    prepareWhatsAppAdoption.mockRejectedValue(new Error('session-15550100001.7.json'))
+    render(<DataMigrationSettings environmentControlled={false} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Move WhatsApp sign-in…' }))
+    await waitFor(() => expect(prepareWhatsAppAdoption).toHaveBeenCalledWith())
+    expect(await screen.findByRole('alert')).toHaveTextContent('The WhatsApp sign-in files could not be moved. Check the selected folder and saved account configuration.')
+    expect(screen.queryByText(/session-15550100001/)).not.toBeInTheDocument()
+    expect(open).not.toHaveBeenCalled()
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('explains when shared IM downloads will stay in the old directory', async () => {
+    const directory = '/fixture/home/.claude/im-downloads'
+    prepare.mockResolvedValue({ ...preview, retainedSharedImDownloads: directory })
+    render(<DataMigrationSettings environmentControlled={false} />)
+    const dialog = await chooseAndPreview()
+    expect(within(dialog).getByText(/cannot verify which files belong to EchoFlow/)).toHaveTextContent(directory)
   })
 
   it('allows cancellation of the preview without stopping tasks or changing the mode', async () => {

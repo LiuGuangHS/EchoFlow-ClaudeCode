@@ -66,7 +66,7 @@ describe('Electron IPC capabilities', () => {
     }
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.migrationStatus, undefined)).toBe(true)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.migrationStatus, {})).toBe(false)
-    const adoptionChannels = [ELECTRON_IPC_CHANNELS.migrationOpenAiOauth, ELECTRON_IPC_CHANNELS.migrationImAdoption]
+    const adoptionChannels = [ELECTRON_IPC_CHANNELS.migrationOpenAiOauth, ELECTRON_IPC_CHANNELS.migrationImAdoption, ELECTRON_IPC_CHANNELS.migrationWhatsAppAdoption]
     for (const channel of adoptionChannels) {
       expect(validateElectronIpcPayload(channel, undefined)).toBe(true)
       for (const payload of [{}, { file: '/tmp/untrusted.json' }, { approved: true }]) {

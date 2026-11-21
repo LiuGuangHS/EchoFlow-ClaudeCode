@@ -112,6 +112,7 @@ export const ELECTRON_IPC_CHANNELS = {
   migrationPrepare: 'desktop:app-mode:migration:prepare',
   migrationOpenAiOauth: 'desktop:app-mode:migration:openai-oauth',
   migrationImAdoption: 'desktop:app-mode:migration:im-adapters',
+  migrationWhatsAppAdoption: 'desktop:app-mode:migration:whatsapp-auth',
   migrationStart: 'desktop:app-mode:migration:start',
   migrationStatus: 'desktop:app-mode:migration:status',
   migrationCancel: 'desktop:app-mode:migration:cancel',

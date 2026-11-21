@@ -25,6 +25,14 @@ describe('storage adoption command', () => {
     expect(() => parseStorageAdoptionArgs(['storage', 'adopt', 'openai-oauth', '--file', '/tmp/openai-oauth.json', '--yes'])).toThrow()
   })
 
+  test('selects exactly one WhatsApp directory and an optional saved adapter config', () => {
+    expect(parseStorageAdoptionArgs(['storage', 'adopt', 'whatsapp-auth', '--directory', '/tmp/account', '--config', '/tmp/adapters.json'])).toEqual({
+      category: 'whatsapp-auth', directory: '/tmp/account', config: '/tmp/adapters.json',
+    })
+    expect(() => parseStorageAdoptionArgs(['storage', 'adopt', 'whatsapp-auth', '--directory', 'relative'])).toThrow()
+    expect(() => parseStorageAdoptionArgs(['storage', 'adopt', 'whatsapp-auth', '--directory', '/tmp/account', '--config', '/tmp/other.json'])).toThrow()
+  })
+
   test('non-TTY cancellation leaves the source untouched', async () => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-adoption-'))
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-root-'))

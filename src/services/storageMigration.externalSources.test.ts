@@ -108,6 +108,31 @@ test('a pre-existing owned external directory retains its whole auth cohort, bac
   await lease.release()
 })
 
+test.each(['existing target', 'second source'])('does not combine WhatsApp keys from a different %s', async other => {
+  const f = await fixture()
+  const source = path.join(f.home, 'old-profile')
+  const second = other === 'existing target' ? f.binding.root : path.join(f.home, 'second-profile')
+  const account = path.join('whatsapp-auth', 'default')
+  const marker = JSON.stringify(buildEchoFlowOwnershipMarker())
+  const sources = [{ directory: source, markerRoot: source }]
+  if (other === 'second source') sources.push({ directory: second, markerRoot: second })
+  for (const root of [source, second]) {
+    await f.put(path.join(root, 'app.json'), marker)
+    await f.put(path.join(root, account, 'creds.json'), '{}')
+  }
+  const firstKey = path.join(account, 'session-first.json')
+  const secondKey = path.join(account, 'session-second.json')
+  await f.put(path.join(source, firstKey), '{"test":1}')
+  await f.put(path.join(second, secondKey), '{"test":2}')
+
+  const result = await executeStorageMigration({ binding: f.binding, sources, hooks: f.hooks })
+  expect(result.state).toBe('blocked')
+  expect(result.issues.join()).toContain('Conflicting WhatsApp sign-in directories')
+  expect(await fs.readFile(path.join(source, firstKey), 'utf8')).toBe('{"test":1}')
+  expect(await fs.readFile(path.join(second, secondKey), 'utf8')).toBe('{"test":2}')
+  expect(await fs.exists(path.join(f.binding.root, firstKey))).toBe(false)
+})
+
 test('duplicate files cannot be armed in one approval', async () => {
   const f = await fixture()
   const id = '11111111-2222-4333-8444-555555555561'

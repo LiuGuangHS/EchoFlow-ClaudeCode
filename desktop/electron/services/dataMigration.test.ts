@@ -86,6 +86,20 @@ async function fixture(useDefault = false) {
     requestFile: () => path.join(source, 'echoflow-code', 'storage-handoffs', `${(hooks.restart as MockedFunction<typeof hooks.restart>).mock.calls.at(-1)![1]!.id}.json`) }
 }
 
+it('reports shared IM downloads as retained without including them in the move', async () => {
+  const f = await fixture()
+  const directory = path.join(f.home, '.claude', 'im-downloads')
+  const file = path.join(directory, 'telegram', 'session', 'attachment.txt')
+  const baseline = await f.migration.prepare(f.target)
+  await fs.mkdir(path.dirname(file), { recursive: true })
+  await fs.writeFile(file, 'shared attachment')
+
+  await expect(f.migration.prepare(f.target)).resolves.toMatchObject({
+    files: baseline.files, bytes: baseline.bytes, retainedSharedImDownloads: directory,
+  })
+  expect(await fs.readFile(file, 'utf8')).toBe('shared attachment')
+})
+
 describe('desktop OpenAI sign-in migration', () => {
   async function oauthFixture() {
     const f = await fixture(true)
@@ -223,6 +237,126 @@ describe('desktop OpenAI sign-in migration', () => {
       expect(f.hooks.resume).toHaveBeenCalledOnce()
       await expect(fs.readFile(f.file, 'utf8')).resolves.toBe(f.bytes)
     } finally { await lease.release() }
+  })
+})
+
+describe('desktop WhatsApp sign-in migration', () => {
+  it.each(['active', 'saved'] as const)('uses the %s binding and reopens the linked fixture in a fresh process', async configSource => {
+    const f = await fixture(true)
+    const active = configSource === 'active'
+    const legacy = path.join(f.root, 'legacy')
+    const source = path.join(legacy, 'whatsapp-auth', 'default')
+    const account = '15550100001@s.whatsapp.net'
+    const keyId = 'fixture-key'
+    const pairedUsers = [{ userId: 'fixture-peer', displayName: 'Fixture', pairedAt: 1 }]
+    const config = path.join(active ? f.source : legacy, 'adapters.json')
+    const configBytes = JSON.stringify({ whatsapp: { accountJid: account, pairedUsers, ...(active && { authDir: source }) }, future: true }) + '\n'
+    const relative = path.join('whatsapp-auth', active ? createHash('sha256').update(source).digest('hex') : 'default')
+    const target = path.join(f.source, relative)
+    const run = (code: string, override?: string) => promisify(execFile)('bun', ['--no-env-file', '--eval', `
+      import assert from 'node:assert/strict'
+      import { createRequire } from 'node:module'
+      import { pathToFileURL } from 'node:url'
+      import { resolve } from 'node:path'
+      const requireAdapter = createRequire(resolve('adapters/package.json'))
+      const { useMultiFileAuthState } = await import(pathToFileURL(requireAdapter.resolve('@whiskeysockets/baileys/lib/Utils/use-multi-file-auth-state.js')).href)
+      ${code}
+    `], {
+      cwd: path.resolve(import.meta.dirname, '../../..'),
+      env: createSandboxedTestEnvironment(f.home, { CLAUDE_CONFIG_DIR: f.source, ...(override && { WHATSAPP_AUTH_DIR: override }) }),
+      timeout: 10_000,
+    })
+    await run(`
+      const auth = await useMultiFileAuthState(${JSON.stringify(source)})
+      auth.state.creds.me = { id: '15550100001:7@c.us' }
+      auth.state.creds.myAppStateKeyId = ${JSON.stringify(keyId)}
+      auth.state.creds.futureField = 'preserved'
+      await auth.saveCreds()
+      await auth.state.keys.set({ 'app-state-sync-key': { [${JSON.stringify(keyId)}]: { keyData: Buffer.alloc(32, 42) } } })
+    `)
+    await fs.writeFile(config, configBytes)
+    const first = await fs.readFile(path.join(source, 'creds.json'))
+    const second = await fs.readFile(path.join(source, `app-state-sync-key-${keyId}.json`))
+    const restart = vi.fn<NonNullable<DataMigrationHooks['restartForStorageAdoption']>>()
+    f.hooks.restartForStorageAdoption = restart
+    const picker = vi.fn(async () => config)
+    const confirm = vi.fn(async () => true)
+    const lease = await acquireStorageWriter(resolveStorageBinding({ env: f.env }))
+    try {
+      await f.migration.prepareWhatsAppAdoption(async () => source, picker, confirm)
+      await f.migration.wait()
+      expect(picker).toHaveBeenCalledTimes(active ? 0 : 1)
+      expect(confirm.mock.calls).toEqual([[{
+        id: expect.any(String), sourceDir: source, targetDir: target, files: active ? 2 : 3,
+        bytes: first.length + second.length + (active ? 0 : Buffer.byteLength(configBytes)), activeTasks: 2,
+      }, active ? undefined : { source: config, target: path.join(f.source, 'adapters.json') }]])
+      expect(f.migration.status?.stage).toBe('restarting')
+      expect(await fs.readFile(path.join(source, 'creds.json'))).toEqual(first)
+      await expect(fs.lstat(target)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally { await lease.release() }
+
+    const [root, request] = restart.mock.calls[0]!
+    expect(root).toBe(f.source)
+    expect(request).toEqual({ kind: 'whatsapp-auth', id: expect.any(String), proof: expect.stringMatching(/^[a-f0-9]{64}$/) })
+    const args = desktopStorageAdoptionRelaunchArgs([], request)
+    const bootstrap = `
+      import { discoverDesktopStorage, initializeDesktopStorage } from './desktop/electron/services/desktopStorageStartup.ts'
+      const paths = ${JSON.stringify({ home: f.home, userData: root, exe: f.app.getPath('exe') })}
+      const hooks = { platform: 'linux', assertQuiescent: async () => {} }
+      const validate = async () => { throw new Error('Unexpected full-profile validation for WhatsApp') }
+      const launch = (args = []) => {
+        const switches = new Map(args.map(arg => arg.slice(2).split('=')))
+        const app = { getPath: name => paths[name], commandLine: { hasSwitch: name => switches.has(name), getSwitchValue: name => switches.get(name) ?? '' } }
+        return discoverDesktopStorage(app, {}, 'linux', paths.home)
+      }
+    `
+    const override = active ? source : undefined
+    await run(`${bootstrap}
+      const cold = launch(${JSON.stringify(args)})
+      ${active ? 'await (await initializeDesktopStorage(cold, hooks, validate)).release()' : `
+        const interrupt = { ...hooks, cleanupResources: async () => { throw new Error('fixture cleanup interruption') } }
+        await assert.rejects(initializeDesktopStorage(cold, interrupt, validate), /^Error: Could not move WhatsApp sign-in files$/)
+      `}
+    `, override)
+    await run(`${bootstrap}
+      import { loadConfig } from './adapters/common/config.ts'
+      const ordinary = await initializeDesktopStorage(launch(), hooks, validate)
+      try {
+        const { whatsapp } = loadConfig()
+        assert.equal(whatsapp.authDir, ${JSON.stringify(target)})
+        assert.equal(whatsapp.accountJid, ${JSON.stringify(account)})
+        assert.deepEqual(whatsapp.pairedUsers, ${JSON.stringify(pairedUsers)})
+        const auth = await useMultiFileAuthState(whatsapp.authDir)
+        assert.equal(auth.state.creds.me.id, '15550100001:7@c.us')
+        assert.deepEqual(Buffer.from((await auth.state.keys.get('app-state-sync-key', [${JSON.stringify(keyId)}]))[${JSON.stringify(keyId)}].keyData), Buffer.alloc(32, 42))
+      } finally { await ordinary.release() }
+    `, active ? source : undefined)
+    expect(await fs.readFile(path.join(target, 'creds.json'))).toEqual(first)
+    expect(await fs.readFile(path.join(target, `app-state-sync-key-${keyId}.json`))).toEqual(second)
+    expect(await fs.readFile(path.join(root, 'adapters.json'), 'utf8')).toBe(configBytes)
+    await expect(fs.lstat(path.join(source, 'creds.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+    if (!active) await expect(fs.lstat(config)).rejects.toMatchObject({ code: 'ENOENT' })
+  }, 20_000)
+
+  it('keeps invalid selections private and does not stop services on cancellation or failure', async () => {
+    const f = await fixture(true)
+    const legacy = path.join(f.root, 'legacy')
+    const source = path.join(legacy, 'whatsapp-auth', 'default')
+    const config = path.join(legacy, 'adapters.json')
+    const invalid = '{fake secret 15550100001@s.whatsapp.net'
+    await fs.mkdir(source, { recursive: true })
+    await fs.writeFile(config, invalid)
+    const picker = vi.fn(async () => null)
+    const confirm = vi.fn(async () => true)
+    await f.migration.prepareWhatsAppAdoption(async () => null, picker, confirm)
+    expect(picker).not.toHaveBeenCalled()
+    await f.migration.prepareWhatsAppAdoption(async () => source, picker, confirm)
+    expect(picker).toHaveBeenCalledOnce()
+    await expect(f.migration.prepareWhatsAppAdoption(async () => source, async () => config, confirm))
+      .rejects.toThrow(/^Could not move WhatsApp sign-in files$/)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(f.hooks.quiesce).not.toHaveBeenCalled()
+    expect(await fs.readFile(config, 'utf8')).toBe(invalid)
   })
 })
 

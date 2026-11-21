@@ -53,9 +53,10 @@ for (const startup of ['headless', 'desktop']) {
         await put(path.join(profile, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
         const settings = JSON.stringify({ autoMemoryDirectory: setting, future: { keep: true } }) + '\n'
         await put(path.join(profile, 'settings.json'), settings)
-        const transcript = JSON.stringify({ type: 'user', content: external, unknown: true }) + '\n'
-        await put(path.join(profile, 'projects/fixture/session.jsonl'), transcript)
         const shared = path.join(home, '.claude')
+        const attachment = path.join(shared, 'im-downloads/telegram/fixture-session/file.txt')
+        const transcript = JSON.stringify({ type: 'user', message: { role: 'user', content: '@"' + attachment + '"' }, unknown: true }) + '\n'
+        await put(path.join(profile, 'projects/fixture/fixture-session.jsonl'), transcript)
         for (const relative of [
           'settings.json',
           'adapters.json',
@@ -68,6 +69,10 @@ for (const startup of ['headless', 'desktop']) {
           await put(file, bytes)
           preserved.set(file, bytes)
         }
+        const sessions = path.join(shared, 'adapter-sessions.json')
+        const sessionBytes = JSON.stringify({ chat: { sessionId: 'fixture-session', workDir: home, updatedAt: 1 } })
+        await put(sessions, sessionBytes)
+        preserved.set(sessions, sessionBytes)
         const sharedGlobal = path.join(home, '.claude.json')
         await put(sharedGlobal, bytes)
         preserved.set(sharedGlobal, bytes)
@@ -85,7 +90,8 @@ for (const startup of ['headless', 'desktop']) {
         try {
           assert.equal(await fs.exists(profile), false)
           assert.equal(await fs.readFile(path.join(root, 'settings.json'), 'utf8'), settings)
-          assert.equal(await fs.readFile(path.join(root, 'projects/fixture/session.jsonl'), 'utf8'), transcript)
+          assert.equal(await fs.readFile(path.join(root, 'projects/fixture/fixture-session.jsonl'), 'utf8'), transcript)
+          assert.equal(await fs.exists(path.join(root, path.relative(shared, attachment))), false)
           for (const [file, raw] of preserved) assert.equal(await fs.readFile(file, 'utf8'), raw)
           assert.equal(await fs.exists(path.join(external, 'app.json')), false)
           assert.equal(await fs.exists(path.join(shared, 'app.json')), false)

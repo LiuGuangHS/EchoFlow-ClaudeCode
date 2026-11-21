@@ -9,8 +9,9 @@ const repository = resolve(import.meta.dir, '../../..')
 test('an IM-produced attachment survives real startup migration and both file-serving consumers without rewriting its transcript', async () => {
   const home = await mkdtemp(join(tmpdir(), 'storage-attachment-chain-'))
   const root = join(home, 'selected-café')
-  const env = createSandboxedTestEnvironment(home, { CLAUDE_CONFIG_DIR: root })
-  const run = async (body: string) => {
+  const finalRoot = join(home, 'moved-again')
+  const run = async (body: string, activeRoot = root) => {
+    const env = createSandboxedTestEnvironment(home, { CLAUDE_CONFIG_DIR: activeRoot })
     const child = Bun.spawn([process.execPath, '--no-env-file', '--eval', `
       import assert from 'node:assert/strict'
       import fs from 'node:fs/promises'
@@ -36,21 +37,38 @@ test('an IM-produced attachment survives real startup migration and both file-se
       const store = new AttachmentStore()
       const original = store.resolvePath('feishu', 'old-session', 'café fixture.png')
       assert.equal(await store.write(original, PNG), original)
+      const expired = await store.write(store.resolvePath('feishu', 'old-session', 'expired.txt'), Buffer.from('expired'))
+      const oldTime = new Date(Date.now() - 48 * 60 * 60 * 1000)
+      await fs.utimes(expired, oldTime, oldTime)
       const transcript = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '@"' + original + '"' }] }, unknown: { retain: true } }) + '\\n'
       await fs.mkdir(path.join(oldRoot, 'projects', 'fixture'), { recursive: true })
       await fs.writeFile(path.join(oldRoot, 'projects', 'fixture', 'session.jsonl'), transcript)
       await fs.writeFile(path.join(home, 'expected-transcript'), transcript)
     `)
-    await run(`
+    for (const activeRoot of [root, finalRoot]) await run(`
       const { mock } = await import('bun:test')
       // Replace only OS inventory: the producer has exited and all roots are private fixtures.
+      const assertQuiescent = async roots => {
+        assert.ok(roots.length > 0)
+        assert.ok(roots.every(value => value.startsWith(home + path.sep)))
+      }
       mock.module('./src/server/migrationInventory.ts', () => ({
         assertMigrationQuiescent: async (roots, owned) => {
-          assert.ok(roots.length > 0)
-          assert.ok(roots.every(value => value.startsWith(home + path.sep)))
+          await assertQuiescent(roots)
           assert.deepEqual(owned, [process.pid])
         },
       }))
+      const intermediate = ${JSON.stringify(activeRoot === finalRoot ? root : null)}
+      if (intermediate) {
+        const { resolveStorageBinding } = await import('./src/utils/echoFlowConfigRoot.ts')
+        const { executeStorageMigration, completeStorageMigration } = await import('./src/services/storageMigration.ts')
+        const binding = resolveStorageBinding()
+        const hooks = { assertQuiescent }
+        const result = await executeStorageMigration({ binding, sources: [{ directory: intermediate, markerRoot: intermediate }], hooks })
+        assert.equal(result.state, 'validation-required')
+        assert.equal((await completeStorageMigration(binding, result.id, hooks, async () => {})).state, 'ready')
+        await assert.rejects(fs.lstat(intermediate), { code: 'ENOENT' })
+      }
       const { initializeProcessStorage, releaseProcessStorage } = await import('./src/services/storageStartup.ts')
       await initializeProcessStorage()
       try {
@@ -91,10 +109,15 @@ test('an IM-produced attachment survives real startup migration and both file-se
         assert.equal(attachment?.content.type, 'image')
         assert.equal(isUserProvidedImage(imagePath), true)
         const { AttachmentStore } = await import('./adapters/common/attachment/attachment-store.ts')
-        const current = new AttachmentStore().resolvePath('feishu', 'current-session', 'next.png')
+        const store = new AttachmentStore()
+        const current = store.resolvePath('feishu', 'current-session', 'next.png')
         assert.equal(current, path.join(root, 'im-downloads', 'feishu', 'current-session', 'next.png'))
+        if (intermediate) {
+          assert.deepEqual(await store.gc(), { removed: 1, bytes: 7 })
+          assert.deepEqual(await fs.readFile(relocated), PNG)
+        }
         assert.deepEqual(await fs.readFile(path.join(root, 'projects', 'fixture', 'session.jsonl')), raw)
       } finally { await releaseProcessStorage() }
-    `)
+    `, activeRoot)
   } finally { await rm(home, { recursive: true, force: true }) }
-})
+}, 30_000)

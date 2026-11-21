@@ -90,6 +90,7 @@ describe('electron desktop host', () => {
     await host.appMode.migration.prepare('D:\\cc-haha-data')
     await host.appMode.migration.prepareOpenAiOauth()
     await host.appMode.migration.prepareImAdoption()
+    await host.appMode.migration.prepareWhatsAppAdoption()
     await host.appMode.migration.start('migration-1')
     await host.appMode.migration.status()
     await host.appMode.migration.cancel('migration-1')
@@ -97,6 +98,7 @@ describe('electron desktop host', () => {
       [ELECTRON_IPC_CHANNELS.migrationPrepare, { targetDir: 'D:\\cc-haha-data' }],
       [ELECTRON_IPC_CHANNELS.migrationOpenAiOauth, undefined],
       [ELECTRON_IPC_CHANNELS.migrationImAdoption, undefined],
+      [ELECTRON_IPC_CHANNELS.migrationWhatsAppAdoption, undefined],
       [ELECTRON_IPC_CHANNELS.migrationStart, { id: 'migration-1' }],
       [ELECTRON_IPC_CHANNELS.migrationStatus, undefined],
       [ELECTRON_IPC_CHANNELS.migrationCancel, { id: 'migration-1' }],
@@ -106,7 +108,7 @@ describe('electron desktop host', () => {
     expect(subscribe).toHaveBeenCalledWith(ELECTRON_EVENT_CHANNELS.migrationProgress, handler)
     await expect(host.appMode.migration.start('')).rejects.toThrow('Invalid Electron IPC payload')
     await expect(host.appMode.migration.prepare('bad\u0000path')).rejects.toThrow('Invalid Electron IPC payload')
-    expect(invoke).toHaveBeenCalledTimes(6)
+    expect(invoke).toHaveBeenCalledTimes(7)
   })
 
   it('routes public access through validated local IPC without exposing management in browsers', async () => {

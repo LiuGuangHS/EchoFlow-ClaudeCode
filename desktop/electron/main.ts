@@ -44,7 +44,7 @@ import { DeepSeekHarnessRuntime } from './services/deepseekHarnessRuntime'
 import { discoverRuntimes, probeRuntimePath } from './services/runtimeDiscovery'
 import { DataMigration } from './services/dataMigration'
 import { desktopMoveRelaunchArgs } from './services/desktopStorageMove'
-import { desktopStorageAdoptionRelaunchArgs, imAdoptionDialogText, openAiOauthDialogText } from './services/desktopStorageAdoption'
+import { desktopStorageAdoptionRelaunchArgs, imAdoptionDialogText, openAiOauthDialogText, whatsAppAdoptionDialogText } from './services/desktopStorageAdoption'
 import { formatBytes } from '../src/lib/formatBytes'
 import { clearDesktopStorageInjections, restoreDesktopLaunchEnvironment } from './services/desktopStorageProvenance'
 import { areStorageWritesFrozen, setStorageWritesFrozen } from './services/storageMaintenance'
@@ -1524,6 +1524,32 @@ function registerIpcHandlers() {
       })
       return response === 1 && !isQuitting && !window.isDestroyed()
     })
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.migrationWhatsAppAdoption, event => {
+    const window = currentWindow(event)
+    if (isQuitting) throw new Error('Desktop is unavailable')
+    const locale = readLocalePreference(app) ?? resolveSupportedLocale(app.getPreferredSystemLanguages())
+    const text = whatsAppAdoptionDialogText[locale]
+    const { cancel, confirm } = openAiOauthDialogText[locale]
+    const pick = async (options: Parameters<typeof openDialog>[1]) => {
+      if (isQuitting || window.isDestroyed()) return null
+      const result = await openDialog(window, options)
+      return !isQuitting && !window.isDestroyed() && typeof result === 'string' ? result : null
+    }
+    return getDataMigration().prepareWhatsAppAdoption(
+      () => pick({ title: text.choose, directory: true }),
+      () => pick({ title: text.config, filters: [{ name: 'JSON', extensions: ['json'] }] }),
+      async (preview, configMove) => {
+        if (isQuitting || window.isDestroyed()) return false
+        const moves = `${preview.sourceDir}\n→ ${preview.targetDir}` + (configMove ? `\n\n${configMove.source}\n→ ${configMove.target}` : '')
+        const { response } = await dialog.showMessageBox(window, {
+          type: 'warning', message: text.message,
+          detail: `${moves}\n${text.summary(preview.files, formatBytes(preview.bytes))}\n\n${text.detail}`,
+          buttons: [cancel, confirm], defaultId: 0, cancelId: 0, noLink: true,
+        })
+        return response === 1 && !isQuitting && !window.isDestroyed()
+      },
+    )
   })
   registerHandler(ELECTRON_IPC_CHANNELS.migrationStart, (_event, payload) => getDataMigration().start((payload as { id: string }).id))
   registerHandler(ELECTRON_IPC_CHANNELS.migrationStatus, () => getDataMigration().status)

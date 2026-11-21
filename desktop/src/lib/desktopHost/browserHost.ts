@@ -431,6 +431,7 @@ export const browserHost: DesktopHost = {
       async prepare() { return unsupported('Data migration') },
       async prepareOpenAiOauth() { unsupported('Data migration') },
       async prepareImAdoption() { unsupported('Data migration') },
+      async prepareWhatsAppAdoption() { unsupported('Data migration') },
       async start() { unsupported('Data migration') },
       async status() { return null },
       async cancel() { unsupported('Data migration') },
