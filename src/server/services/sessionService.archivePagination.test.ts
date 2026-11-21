@@ -9,6 +9,7 @@ import { ensureSessionArchivesMigrated } from '../../utils/sessionArchiveStore.j
 import * as archiveStore from '../../utils/sessionArchiveStore.js'
 import { sanitizePath } from '../../utils/sessionStoragePortable.js'
 import { SessionService } from './sessionService.js'
+import { writeActivityBackfillState } from './localIndex/activityIndex.js'
 import { openLocalIndexDatabase, type LocalIndexDatabase } from './localIndex/database.js'
 import { createSessionIndex, type LocalIndexGateway } from './localIndex/sessionIndex.js'
 import { createSessionProjector, type SessionSourceCandidate } from './localIndex/sessionProjector.js'
@@ -133,7 +134,7 @@ async function firstUseIndex(rows: Array<{ n: number; tail?: string }>, mode: 'o
     ...index, getMode: () => mode, getPublicStatus: () => status, isSessionScopeReady: () => true,
     start: async () => {}, stop: async () => {}, rebuild: async () => status,
   }
-  return { service: new SessionService(gateway), gateway, index, candidates, workDir }
+  return { service: new SessionService(gateway), gateway, index, candidates, workDir, status }
 }
 
 test.each(['ordinary', 'archived', 'previews', 'history', 'archived-history', 'summary', 'detail'] as const)(
@@ -392,6 +393,37 @@ test.each(['history', 'previews'])('%s rechecks legacy classification committed 
       expect(previews.projects).toEqual([{ projectRoot: workDir, total: 2, archivedTotal: 1 }])
     }
     expect(updated).toBe(true)
+  } finally { hydrate.mockRestore() }
+})
+
+test.each(['history', 'previews'])('%s remains browsable during activity backfill', async view => {
+  const { service, workDir, status } = await firstUseIndex([{ n: 0 }, { n: 1 }])
+  const first = await service.listProjectHistory({ projectRoot: workDir, limit: 1 })
+  expect(first.nextCursor).not.toBeNull()
+  const internals = service as unknown as { hydrateIndexedSession: (...args: unknown[]) => Promise<unknown> }
+  const originalHydrate = internals.hydrateIndexedSession.bind(internals)
+  let indexed = 0
+  const hydrate = spyOn(internals, 'hydrateIndexedSession').mockImplementation(async (...args) => {
+    database!.transaction(operation => writeActivityBackfillState(operation, {
+      scope: root, state: 'building', discovered: 100, indexed: ++indexed,
+      degraded: 0, lastErrorCode: null, updatedAtMs: indexed,
+    }))
+    // A completed coordinator sweep also publishes a newer batch timestamp.
+    status.lastUpdatedAt = new Date(Date.UTC(2026, 0, 1, 0, 0, indexed)).toISOString()
+    return originalHydrate(...args)
+  })
+  try {
+    if (view === 'history') {
+      const next = await service.listProjectHistory({ projectRoot: workDir, cursor: first.nextCursor!, limit: 1 })
+      expect(next.sessions.map(row => row.id)).toEqual([firstUseId(0)])
+      expect(next.nextCursor).toBeNull()
+      expect(indexed).toBe(1)
+    } else {
+      const previews = await service.listProjectPreviews()
+      expect(previews.sessions.map(row => row.id)).toEqual([1, 0].map(firstUseId))
+      expect(previews.projects).toEqual([{ projectRoot: workDir, total: 2 }])
+      expect(indexed).toBe(2)
+    }
   } finally { hydrate.mockRestore() }
 })
 

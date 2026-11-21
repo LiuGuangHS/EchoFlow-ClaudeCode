@@ -131,7 +131,7 @@ const checks: Check[] = [
     title: 'Local index schema compatibility after protocol rollback and archive classification',
     command: [
       'bun', 'test', './src/server/services/localIndex/database.test.ts',
-      '--test-name-pattern', 'frozen v[4578]',
+      '--test-name-pattern', 'frozen v[45789]',
     ],
   },
   {

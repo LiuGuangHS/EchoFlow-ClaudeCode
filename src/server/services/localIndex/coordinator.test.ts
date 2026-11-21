@@ -1378,6 +1378,10 @@ describe('local index coordinator', () => {
     const legacy = new Database(databasePath)
     try {
       legacy.exec(`
+        DROP TRIGGER sessions_revision_insert;
+        DROP TRIGGER sessions_revision_update;
+        DROP TRIGGER sessions_revision_delete;
+        DELETE FROM schema_meta WHERE key = 'session-read-revision';
         ALTER TABLE sessions DROP COLUMN legacy_archived;
         PRAGMA user_version = 8;
       `)
@@ -1396,6 +1400,16 @@ describe('local index coordinator', () => {
       reconcile()
       await waitFor(() => upgraded.getPublicStatus().state === 'ready')
       expect(upgraded.listSessions({ archive }).sessions.map(row => row.id)).toEqual([source.sessionId])
+      const revision = upgraded.getSessionReadRevision?.()
+      expect(revision).toEqual(expect.any(String))
+      await upgraded.stop()
+      expect(upgraded.getSessionReadRevision?.()).toBeNull()
+      await upgraded.start()
+      // The scheduled catch-up has not run. The reopened connection still
+      // serves the same catalog but has a new reader generation.
+      expect(upgraded.listSessions({ archive }).sessions.map(row => row.id)).toEqual([source.sessionId])
+      expect(upgraded.getSessionReadRevision?.()).toEqual(expect.any(String))
+      expect(upgraded.getSessionReadRevision?.()).not.toBe(revision)
     } finally {
       await upgraded.stop()
     }

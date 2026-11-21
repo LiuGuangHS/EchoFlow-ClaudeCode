@@ -51,6 +51,40 @@ function seed(rows: Array<{ id: string; project?: string; modified?: number; wor
   })
 }
 
+test('tracks committed session changes across connections without invalidating on unrelated writes', () => {
+  const beforeInsert = index.getSessionReadRevision?.()
+  seed([{ id: 'saved' }, { id: 'worker', worker: true }])
+  expect(index.getSessionReadRevision?.()).not.toBe(beforeInsert)
+  const writer = openLocalIndexDatabase({ scope: directory, path: join(getEchoFlowInternalDir(directory), 'db', 'index-v1.sqlite') })
+  try {
+    const revision = index.getSessionReadRevision?.()
+    expect(revision).not.toBeNull()
+    writer.transaction(operation => {
+      operation.run('UPDATE source_files SET updated_at_ms = 1 WHERE path = ?', '/fixture/00000.jsonl')
+      operation.run('UPDATE sessions SET message_count = 2 WHERE session_id = ?', 'worker')
+    })
+    expect(index.getSessionReadRevision?.()).toBe(revision)
+
+    expect(() => writer.transaction(operation => {
+      operation.run('UPDATE sessions SET legacy_archived = 1 WHERE session_id = ?', 'saved')
+      throw new Error('rollback fixture')
+    })).toThrow('rollback fixture')
+    expect(index.getSessionReadRevision?.()).toBe(revision)
+
+    writer.transaction(operation => {
+      operation.run('UPDATE sessions SET legacy_archived = 1 WHERE session_id = ?', 'saved')
+    })
+    const updatedRevision = index.getSessionReadRevision?.()
+    expect(updatedRevision).not.toBe(revision)
+
+    writer.transaction(operation => {
+      operation.run('DELETE FROM source_files WHERE path = ?', '/fixture/00000.jsonl')
+    })
+    expect(index.getSession('saved')).toBeNull()
+    expect(index.getSessionReadRevision?.()).not.toBe(updatedRevision)
+  } finally { writer.close() }
+})
+
 test.each([false, true])('filters before a deep small page with archived=%s without materializing history', archived => {
   const rows = Array.from({ length: 1505 }, (_, n) => ({ id: `session-${String(n).padStart(5, '0')}` }))
   seed(rows)

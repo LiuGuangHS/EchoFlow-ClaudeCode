@@ -2,10 +2,11 @@
 type Database = {
   prepare(sql: string): { get(): unknown; finalize(): void }
   exec(sql: string): unknown
-  transaction(operation: () => void): () => unknown
+  transaction(operation: () => void): { (): unknown; immediate?(): unknown }
 }
 
-export const LOCAL_INDEX_SCHEMA_VERSION = 9
+export const LOCAL_INDEX_SCHEMA_VERSION = 10
+export const SESSION_READ_REVISION_KEY = 'session-read-revision'
 export const LOCAL_INDEX_SCHEMA_UNSUPPORTED =
   'LOCAL_INDEX_SCHEMA_UNSUPPORTED' as const
 
@@ -213,6 +214,23 @@ const SCHEMA_V9 = `
 ALTER TABLE sessions ADD COLUMN legacy_archived INTEGER CHECK (legacy_archived IN (0, 1));
 `
 
+// Keep catalog invalidation in the same transaction as the session projection,
+// including deletes cascaded from source_files. Activity writes do not touch it.
+const SCHEMA_V10 = `
+INSERT INTO schema_meta (key, value) VALUES ('${SESSION_READ_REVISION_KEY}', '0');
+${Object.entries({
+  INSERT: 'NEW.is_team_worker = 0',
+  UPDATE: 'OLD.is_team_worker = 0 OR NEW.is_team_worker = 0',
+  DELETE: 'OLD.is_team_worker = 0',
+}).map(([event, condition]) => `
+CREATE TRIGGER sessions_revision_${event.toLowerCase()} AFTER ${event} ON sessions
+WHEN ${condition}
+BEGIN
+  UPDATE schema_meta SET value = CAST(value AS INTEGER) + 1
+    WHERE key = '${SESSION_READ_REVISION_KEY}';
+END;`).join('\n')}
+`
+
 const MIGRATIONS = [
   { version: 1, sql: SCHEMA_V1 },
   { version: 2, sql: SCHEMA_V2 },
@@ -223,6 +241,7 @@ const MIGRATIONS = [
   { version: 7, sql: SCHEMA_V7 },
   { version: 8, sql: SCHEMA_V8 },
   { version: 9, sql: SCHEMA_V9 },
+  { version: 10, sql: SCHEMA_V10 },
 ] as const
 
 export class UnsupportedLocalIndexSchemaError extends Error {
@@ -257,11 +276,17 @@ export function migrateLocalIndexDatabase(database: Database): void {
   }
   if (currentVersion === LOCAL_INDEX_SCHEMA_VERSION) return
 
-  database.transaction(() => {
+  const migrate = database.transaction(() => {
+    // A different process may have upgraded the cache while we waited for the lock.
+    const lockedVersion = getUserVersion(database)
+    if (lockedVersion > LOCAL_INDEX_SCHEMA_VERSION) throw new UnsupportedLocalIndexSchemaError()
     for (const migration of MIGRATIONS) {
-      if (migration.version <= currentVersion) continue
+      if (migration.version <= lockedVersion) continue
       database.exec(migration.sql)
       database.exec(`PRAGMA user_version = ${migration.version}`)
     }
-  })()
+  })
+  // The Node preflight supplies a private, in-memory schema reference.
+  if (migrate.immediate) migrate.immediate()
+  else migrate()
 }

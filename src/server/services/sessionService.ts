@@ -3819,7 +3819,7 @@ export class SessionService {
       readSessionArchiveSnapshot(scope).revision,
       indexRevision,
       indexed && (status?.state === 'ready' || status?.state === 'building')
-        ? status.lastUpdatedAt
+        ? ['indexed', indexRevision == null ? status.lastUpdatedAt : null]
         : degradedPlan
           ? ['degraded', degradedPlan.revision]
           : 'files'])

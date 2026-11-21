@@ -1,5 +1,6 @@
 import type { LocalIndexDatabase, LocalIndexReadOperation } from './database.js'
 import { createActivityIndex, type ActivityIndex } from './activityIndex.js'
+import { SESSION_READ_REVISION_KEY } from './migrations.js'
 import type {
   ClaudeCodeStats,
   StatsDateRange,
@@ -328,10 +329,9 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
   return {
     ...activityIndex,
     getSessionReadRevision() {
-      // SQLite tracks this connection and other connections separately.
-      return database.read(operation => operation.get<{ revision: string }>(
-        "SELECT total_changes() || ':' || data_version AS revision FROM pragma_data_version",
-      )?.revision ?? null)
+      return database.read(operation => operation.get<{ value: string }>(
+        'SELECT value FROM schema_meta WHERE key = ?', SESSION_READ_REVISION_KEY,
+      )?.value ?? null)
     },
     listSessions(options): SessionIndexPage {
       const limit = boundedInteger(options?.limit, 50)

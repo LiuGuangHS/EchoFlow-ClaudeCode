@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import type { Database } from 'bun:sqlite'
 import type { LocalIndexWriteOperation } from './database.js'
-import { LOCAL_INDEX_SCHEMA_VERSION } from './migrations.js'
+import { LOCAL_INDEX_SCHEMA_VERSION, migrateLocalIndexDatabase } from './migrations.js'
 
 type EnvironmentName = 'HOME' | 'CLAUDE_CONFIG_DIR' | 'CC_HAHA_LOCAL_INDEX'
 
@@ -635,7 +635,7 @@ describe('local index database', () => {
     }
   })
 
-  for (const version of [7, 8]) {
+  for (const version of [7, 8, 9]) {
     it(`upgrades a frozen v${version} cache without inventing archive evidence or losing extension data`, async () => {
       const databasePath = join(process.env.CLAUDE_CONFIG_DIR!, `frozen-v${version}-profile.sqlite`)
       await mkdir(dirname(databasePath), { recursive: true })
@@ -645,9 +645,13 @@ describe('local index database', () => {
       seed.exec('ALTER TABLE sessions ADD COLUMN session_api_format TEXT')
       seed.exec('ALTER TABLE sessions ADD COLUMN is_team_worker INTEGER NOT NULL DEFAULT 0')
       seed.exec('ALTER TABLE sessions ADD COLUMN openai_fast_mode INTEGER')
-      if (version === 8) {
+      if (version >= 8) {
         seed.exec("ALTER TABLE sessions ADD COLUMN agent_profile TEXT NOT NULL DEFAULT 'standard' CHECK (agent_profile IN ('standard', 'lean'))")
         seed.exec("UPDATE sessions SET agent_profile = 'lean'")
+      }
+      if (version === 9) {
+        seed.exec('ALTER TABLE sessions ADD COLUMN legacy_archived INTEGER CHECK (legacy_archived IN (0, 1))')
+        seed.exec('UPDATE sessions SET legacy_archived = 1')
       }
       seed.exec("ALTER TABLE sessions ADD COLUMN fixture_extension TEXT DEFAULT 'preserved'")
       seed.exec("INSERT INTO schema_meta (key, value) VALUES ('future-extension', 'preserved')")
@@ -655,12 +659,42 @@ describe('local index database', () => {
       const original = queryAll<Record<string, unknown>>(seed, 'SELECT * FROM sessions')
       seed.close(true)
       const { openLocalIndexDatabase } = await loadDatabase()
+      if (version === 9) {
+        const lagging = await openRawDatabase(databasePath)
+        const competing = await openRawDatabase(databasePath)
+        try {
+          competing.exec('PRAGMA busy_timeout = 0')
+          let versionReads = 0
+          migrateLocalIndexDatabase({
+            prepare: sql => {
+              if (sql === 'PRAGMA user_version' && ++versionReads === 2) {
+                expect(() => {
+                  competing.exec('BEGIN IMMEDIATE')
+                  competing.exec('ROLLBACK')
+                }).toThrow(expect.objectContaining({ code: 'SQLITE_BUSY' }))
+              }
+              return lagging.prepare(sql)
+            },
+            exec: sql => lagging.exec(sql),
+            transaction: operation => {
+              // The second opener upgrades after the first has observed v9.
+              openLocalIndexDatabase({ path: databasePath }).close()
+              return lagging.transaction(operation)
+            },
+          })
+          expect(versionReads).toBe(2)
+          expect(queryOne(lagging, 'PRAGMA user_version')).toEqual({ user_version: LOCAL_INDEX_SCHEMA_VERSION })
+        } finally {
+          competing.close(true)
+          lagging.close(true)
+        }
+      }
       const reopened = openLocalIndexDatabase({ path: databasePath })
       try {
-        expect(reopened.read(operation => operation.all('SELECT * FROM sessions'))).toEqual(original.map(row => ({ agent_profile: 'standard', ...row, legacy_archived: null })))
+        expect(reopened.read(operation => operation.all('SELECT * FROM sessions'))).toEqual(original.map(row => ({ agent_profile: 'standard', legacy_archived: null, ...row })))
         expect(reopened.read(operation => operation.get<{ value: string }>("SELECT value FROM schema_meta WHERE key = 'future-extension'")?.value)).toBe('preserved')
         expect(reopened.read(operation => operation.get<{ user_version: number }>('PRAGMA user_version')?.user_version)).toBe(LOCAL_INDEX_SCHEMA_VERSION)
-        expect(reopened.read(operation => operation.get('SELECT legacy_archived FROM sessions'))).toEqual({ legacy_archived: null })
+        expect(reopened.read(operation => operation.get('SELECT legacy_archived FROM sessions'))).toEqual({ legacy_archived: version === 9 ? 1 : null })
         for (const value of [0, 1, null]) {
           reopened.write(operation => operation.run('UPDATE sessions SET legacy_archived = ?', value))
           expect(reopened.read(operation => operation.get('SELECT legacy_archived FROM sessions'))).toEqual({ legacy_archived: value })
@@ -925,7 +959,7 @@ describe('local index database', () => {
       })).toBe('committed')
       expect(localIndexDatabase.read(operation =>
         operation.all<{ key: string }>(
-          'SELECT key FROM schema_meta ORDER BY key',
+          "SELECT key FROM schema_meta WHERE key IN ('first', 'second') ORDER BY key",
         ).map(row => row.key),
       )).toEqual(['first', 'second'])
       expect(() => retainedOperation!.get('SELECT 1')).toThrow(
