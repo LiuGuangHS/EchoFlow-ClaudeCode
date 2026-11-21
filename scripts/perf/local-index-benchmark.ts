@@ -183,17 +183,24 @@ export async function captureStartupResponses<TFirst, TReady>(options: {
   firstUseful: TFirst
   ready: TReady
   firstUsefulDurationMs: number
+  readyDurationMs: number
 }> {
-  const guardedReady = options.readyRequest.then(
-    value => ({ ok: true as const, value }),
-    error => ({ ok: false as const, error }),
-  )
-  const firstUseful = await options.firstUsefulRequest
-  const firstUsefulDurationMs = options.elapsedSinceServerStartMs()
-  options.onFirstUsefulSettled?.(firstUsefulDurationMs)
-  const readyResult = await guardedReady
-  if (!readyResult.ok) throw readyResult.error
-  return { firstUseful, ready: readyResult.value, firstUsefulDurationMs }
+  const [firstUseful, ready] = await Promise.all([
+    options.firstUsefulRequest.then(value => {
+      const durationMs = options.elapsedSinceServerStartMs()
+      options.onFirstUsefulSettled?.(durationMs)
+      return { value, durationMs }
+    }),
+    options.readyRequest.then(value => ({
+      value, durationMs: options.elapsedSinceServerStartMs(),
+    })),
+  ])
+  return {
+    firstUseful: firstUseful.value,
+    ready: ready.value,
+    firstUsefulDurationMs: firstUseful.durationMs,
+    readyDurationMs: ready.durationMs,
+  }
 }
 
 type RecordedSql = {
@@ -697,7 +704,14 @@ export async function runSqliteProductBenchmark(
       options.sidebarLimit,
       context.manifest.expected.summaries.length,
     )
-    const firstUsefulRequest = requestSessions()
+    // An empty building page is valid; measure the first content, not the first response.
+    const firstUsefulRequest = (async () => {
+      while (true) {
+        const result = await requestSessions()
+        if (result.body.sessions.length > 0) return result
+        await sleepWithSignal(5, signal)
+      }
+    })()
     const foregroundDurations: number[] = []
     let foregroundSuccessfulResponses = 0
     let foregroundBuildingResponses = 0
@@ -725,7 +739,7 @@ export async function runSqliteProductBenchmark(
       }
     })()
 
-    const { firstUseful, ready, firstUsefulDurationMs } =
+    const { firstUseful, ready, firstUsefulDurationMs, readyDurationMs } =
       await captureStartupResponses({
         firstUsefulRequest,
         readyRequest,
@@ -746,9 +760,6 @@ export async function runSqliteProductBenchmark(
         actualRows: ready.body.sessions.length,
       })}`)
     }
-    const readyDurationMs =
-      (Bun.nanoseconds() - serverStartedAt) / 1_000_000
-
     // Loopback stays trusted on its own — the process token is additive, and is
     // demanded only on the `/api/h5-access` control plane, so that is where the
     // proof has to be taken.
@@ -1020,6 +1031,7 @@ export async function runSqliteProductBenchmark(
     throw operationError
   } finally {
     clearTimeout(deadline)
+    controller.abort(operationError)
     stopMonitors()
     let cleanupError: unknown
     try {

@@ -464,8 +464,52 @@ describe('local index file benchmark', () => {
       firstUseful: 'first',
       ready: 'ready',
       firstUsefulDurationMs: 25,
+      readyDurationMs: 10_000,
     })
   })
+
+  it('timestamps readiness independently when it settles before first useful content', async () => {
+    const { captureStartupResponses } = await import('./local-index-benchmark.js')
+    let resolveFirst!: (value: string) => void
+    let resolveReady!: (value: string) => void
+    let elapsedMs = 0
+    const startup = captureStartupResponses({
+      firstUsefulRequest: new Promise<string>(resolve => { resolveFirst = resolve }),
+      readyRequest: new Promise<string>(resolve => { resolveReady = resolve }),
+      elapsedSinceServerStartMs: () => elapsedMs,
+    })
+    elapsedMs = 17
+    resolveReady('ready')
+    await Bun.sleep(0)
+    elapsedMs = 900
+    resolveFirst('first')
+    await expect(startup).resolves.toEqual({
+      firstUseful: 'first', ready: 'ready',
+      firstUsefulDurationMs: 900, readyDurationMs: 17,
+    })
+  })
+
+  for (const failing of ['first', 'ready'] as const) {
+    it(`propagates the ${failing} probe error while the other probe is pending`, async () => {
+      const { captureStartupResponses } = await import('./local-index-benchmark.js')
+      let finishPending!: (value: string) => void
+      const pending = new Promise<string>(resolve => { finishPending = resolve })
+      const failure = new Error(`${failing} probe failed`)
+      let observedError: unknown
+      const startup = captureStartupResponses({
+        firstUsefulRequest: failing === 'first' ? Promise.reject(failure) : pending,
+        readyRequest: failing === 'ready' ? Promise.reject(failure) : pending,
+        elapsedSinceServerStartMs: () => 0,
+      }).catch(error => { observedError = error })
+      try {
+        await Bun.sleep(0)
+        expect(observedError).toBe(failure)
+      } finally {
+        finishPending('late content')
+        await startup
+      }
+    })
+  }
 
   it('enforces the real loopback product deadline and still cleans isolated state', async () => {
     await import('../../src/server/index.js')
