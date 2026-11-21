@@ -3048,6 +3048,7 @@ export const kr: Record<TranslationKey, string> = {
   'settings.general.migration.description': '현재 세션, 설정, Skills, 플러그인과 작업을 새 디렉터리로 이전합니다.',
   'settings.general.migration.choose': '기존 데이터 이전…',
   'settings.general.migration.chooseOpenAiOauth': 'OpenAI 로그인 정보 이전…',
+  'settings.general.migration.chooseImAdoption': 'IM 데이터 이전…',
   'settings.general.migration.chooseTitle': '데이터 이전 대상 선택',
   'settings.general.migration.confirmTitle': '데이터를 이전하고 다시 시작할까요?',
   'settings.general.migration.confirm': '이전 후 다시 시작',

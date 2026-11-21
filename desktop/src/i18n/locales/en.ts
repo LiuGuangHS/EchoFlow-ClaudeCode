@@ -3045,6 +3045,7 @@ Row 9, all 8 cells: continuing from straight down, turning left through lower-le
   'settings.general.migration.description': 'Move your current sessions, settings, Skills, plugins and tasks to a new directory.',
   'settings.general.migration.choose': 'Migrate Existing Data…',
   'settings.general.migration.chooseOpenAiOauth': 'Move OpenAI sign-in…',
+  'settings.general.migration.chooseImAdoption': 'Move IM data…',
   'settings.general.migration.chooseTitle': 'Choose a migration destination',
   'settings.general.migration.confirmTitle': 'Migrate data and restart?',
   'settings.general.migration.confirm': 'Migrate and Restart',

@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { completeStorageMigration, executeStorageMigration, inspectOpenAiOauthFile, isWithin, prepareStorageMigration, readApprovedFileSource, readApprovedStorageTransaction, recordColdStorageApproval, recoverStorageMigration, regularIdentity, type FileIdentity, type StorageMigrationHooks, type StorageMigrationResult } from '../../../src/services/storageMigration'
+import { completeStorageMigration, executeStorageMigration, imStorageApprovalProof, inspectOpenAiOauthFile, isWithin, prepareStorageMigration, readApprovedFileSource, readApprovedStorageTransaction, recordColdStorageApproval, recoverStorageMigration, regularIdentity, previewImAdoption, type FileIdentity, type StorageMigrationHooks, type StorageMigrationResult } from '../../../src/services/storageMigration'
 import type { StorageBinding } from '../../../src/utils/echoFlowConfigRoot'
 import type { Locale } from '../../src/i18n/locale'
 
@@ -11,12 +11,25 @@ export const openAiOauthDialogText = {
   kr: { choose: 'openai-oauth.json 선택', message: 'OpenAI 로그인 정보를 이전하고 다시 시작할까요?', detail: '이 파일을 사용하는 앱을 먼저 종료하세요. EchoFlow는 사본을 확인한 후에만 원본을 삭제합니다.', cancel: '취소', confirm: '이전 후 다시 시작' },
 } satisfies Record<Locale, { choose: string; message: string; detail: string; cancel: string; confirm: string }>
 
+export { previewImAdoption }
+
+export const imAdoptionDialogText = {
+  en: { choose: 'Choose adapters.json or adapter-sessions.json', message: 'Move IM data and restart?', detail: 'Close apps using these files first. EchoFlow will remove the originals only after verifying the copies.' },
+  zh: { choose: '选择 adapters.json 或 adapter-sessions.json', message: '迁移 IM 数据并重启？', detail: '请先关闭使用这些文件的应用。EchoFlow 验证副本后才会删除原文件。' },
+  'zh-TW': { choose: '選擇 adapters.json 或 adapter-sessions.json', message: '遷移 IM 資料並重新啟動？', detail: '請先關閉使用這些檔案的應用程式。EchoFlow 驗證副本後才會刪除原檔。' },
+  jp: { choose: 'adapters.json または adapter-sessions.json を選択', message: 'IM データを移行して再起動しますか？', detail: '対象ファイルを使うアプリを先に終了してください。EchoFlow はコピーを確認した後で元のファイルを削除します。' },
+  kr: { choose: 'adapters.json 또는 adapter-sessions.json 선택', message: 'IM 데이터를 이전하고 다시 시작할까요?', detail: '해당 파일을 사용하는 앱을 먼저 종료하세요. EchoFlow는 사본을 확인한 후에만 원본을 삭제합니다.' },
+} satisfies Record<Locale, { choose: string; message: string; detail: string }>
+
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/
 const switchNames = ['echoflow-openai-oauth-source', 'echoflow-openai-oauth-id', 'echoflow-openai-oauth-proof'] as const
+const imSwitchNames = ['echoflow-im-adoption-id', 'echoflow-im-adoption-proof'] as const
 const basename = 'openai-oauth.json'
 export const OPENAI_OAUTH_DESTINATION = 'echoflow-code'
 
 export type DesktopOpenAiOauthLaunch = { kind: 'openai-oauth'; source: string; id: string; proof: string }
+type DesktopImAdoptionLaunch = { kind: 'im-adapters'; id: string; proof: string }
+export type DesktopStorageAdoptionLaunch = DesktopOpenAiOauthLaunch | DesktopImAdoptionLaunch
 type CommandLine = { hasSwitch(name: string): boolean; getSwitchValue(name: string): string }
 
 const absolute = (value: unknown): value is string => typeof value === 'string' && path.isAbsolute(value) && path.resolve(value) === value && !value.includes('\0')
@@ -44,7 +57,27 @@ export async function approveOpenAiOauth(binding: StorageBinding, preview: Await
   return { kind: 'openai-oauth', source: file, id: approval.approval!, proof: oauthProof(identity) }
 }
 
-export function desktopOpenAiOauthLaunch(commandLine: CommandLine): DesktopOpenAiOauthLaunch | undefined {
+export async function approveImAdoption(binding: StorageBinding, preview: Awaited<ReturnType<typeof previewImAdoption>>): Promise<DesktopImAdoptionLaunch> {
+  const approval = await recordColdStorageApproval(binding, {
+    approvalCategory: 'im-adapters', files: preview.map(item => item.file), expected: preview.map(item => item.identity),
+  })
+  return { kind: 'im-adapters', id: approval.approval!, proof: imStorageApprovalProof(preview) }
+}
+
+export function desktopStorageAdoptionSwitches(launch: DesktopStorageAdoptionLaunch): readonly string[] {
+  return launch.kind === 'im-adapters' ? imSwitchNames : switchNames
+}
+
+export function desktopStorageAdoptionLaunch(commandLine: CommandLine): DesktopStorageAdoptionLaunch | undefined {
+  const oauth = desktopOpenAiOauthLaunch(commandLine)
+  if (!imSwitchNames.some(name => commandLine.hasSwitch(name))) return oauth
+  const id = commandLine.getSwitchValue(imSwitchNames[0])
+  const proof = commandLine.getSwitchValue(imSwitchNames[1])
+  if (oauth || !uuid.test(id) || !/^[a-f0-9]{64}$/.test(proof)) throw new Error('Conflicting or invalid IM adoption launch')
+  return { kind: 'im-adapters', id, proof }
+}
+
+function desktopOpenAiOauthLaunch(commandLine: CommandLine): DesktopOpenAiOauthLaunch | undefined {
   if (!switchNames.some(name => commandLine.hasSwitch(name))) return undefined
   const source = commandLine.getSwitchValue(switchNames[0])
   const id = commandLine.getSwitchValue(switchNames[1])
@@ -53,23 +86,24 @@ export function desktopOpenAiOauthLaunch(commandLine: CommandLine): DesktopOpenA
   return { kind: 'openai-oauth', source, id, proof }
 }
 
-export function desktopOpenAiOauthRelaunchArgs(argv: readonly string[], launch: DesktopOpenAiOauthLaunch): string[] {
-  const controls = [`--${switchNames[0]}=${launch.source}`, `--${switchNames[1]}=${launch.id}`, `--${switchNames[2]}=${launch.proof}`]
+export function desktopStorageAdoptionRelaunchArgs(argv: readonly string[], launch: DesktopStorageAdoptionLaunch): string[] {
+  const values = launch.kind === 'im-adapters' ? [launch.id, launch.proof] : [launch.source, launch.id, launch.proof]
+  const controls = desktopStorageAdoptionSwitches(launch).map((name, index) => `--${name}=${values[index]}`)
   const separator = argv.indexOf('--')
   return separator < 0 ? [...argv, ...controls] : [...argv.slice(0, separator), ...controls, ...argv.slice(separator)]
 }
 
-export async function executeDesktopOpenAiOauth(
+export async function executeDesktopStorageAdoption(
   binding: StorageBinding,
-  launch: DesktopOpenAiOauthLaunch,
+  launch: DesktopStorageAdoptionLaunch,
   hooks: StorageMigrationHooks,
   validate: (binding: StorageBinding) => Promise<void>,
 ): Promise<StorageMigrationResult> {
   let result: StorageMigrationResult
   try {
-    const source = await readApprovedFileSource(binding, launch.id, {
-      file: launch.source, destination: OPENAI_OAUTH_DESTINATION, proof: launch.proof,
-    })
+    const source = await readApprovedFileSource(binding, launch.id, launch.kind === 'im-adapters'
+      ? { approvalCategory: 'im-adapters', proof: launch.proof }
+      : { file: launch.source, destination: OPENAI_OAUTH_DESTINATION, proof: launch.proof })
     const existing = await readApprovedStorageTransaction(binding, launch.id)
     if (existing?.state === 'ready') return existing
     if (existing) {
@@ -85,8 +119,7 @@ export async function executeDesktopOpenAiOauth(
     return { state: 'blocked', issues: [error instanceof Error ? error.message : String(error)] }
   }
   if (result.state === 'validation-required') {
-    await validate(binding)
-    return await completeStorageMigration(binding, result.id!, hooks)
+    return await completeStorageMigration(binding, result.id!, hooks, validate)
   }
   return result
 }

@@ -44,7 +44,7 @@ import { DeepSeekHarnessRuntime } from './services/deepseekHarnessRuntime'
 import { discoverRuntimes, probeRuntimePath } from './services/runtimeDiscovery'
 import { DataMigration } from './services/dataMigration'
 import { desktopMoveRelaunchArgs } from './services/desktopStorageMove'
-import { desktopOpenAiOauthRelaunchArgs, openAiOauthDialogText } from './services/desktopStorageAdoption'
+import { desktopStorageAdoptionRelaunchArgs, imAdoptionDialogText, openAiOauthDialogText } from './services/desktopStorageAdoption'
 import { formatBytes } from '../src/lib/formatBytes'
 import { clearDesktopStorageInjections, restoreDesktopLaunchEnvironment } from './services/desktopStorageProvenance'
 import { areStorageWritesFrozen, setStorageWritesFrozen } from './services/storageMaintenance'
@@ -716,9 +716,9 @@ function getDataMigration() {
       if (root && root !== app.getPath('userData')) throw new Error('A different complete root requires an explicit cold launch')
       restartDesktop()
     },
-    restartForOpenAiOauth(root, request) {
-      if (root !== app.getPath('userData')) throw new Error('OpenAI sign-in migration must keep the active data directory')
-      relaunchDesktop(desktopOpenAiOauthRelaunchArgs(desktopRelaunchArgs, request))
+    restartForStorageAdoption(root, request) {
+      if (root !== app.getPath('userData')) throw new Error('File migration must keep the active data directory')
+      relaunchDesktop(desktopStorageAdoptionRelaunchArgs(desktopRelaunchArgs, request))
       isQuitting = true
       app.quit()
     },
@@ -1507,6 +1507,25 @@ function registerIpcHandlers() {
         type: 'warning', message: text.message,
         detail: `${preview.sourceDir}\n→ ${preview.targetDir}\n${formatBytes(preview.bytes)}\n\n${text.detail}`,
         buttons: [text.cancel, text.confirm], defaultId: 0, cancelId: 0, noLink: true,
+      })
+      return response === 1 && !isQuitting && !window.isDestroyed()
+    })
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.migrationImAdoption, event => {
+    const window = currentWindow(event)
+    if (isQuitting) throw new Error('Desktop is unavailable')
+    const locale = readLocalePreference(app) ?? resolveSupportedLocale(app.getPreferredSystemLanguages())
+    const text = imAdoptionDialogText[locale]
+    const { cancel, confirm } = openAiOauthDialogText[locale]
+    return getDataMigration().prepareImAdoption(async () => {
+      const files = await openDialog(window, { title: text.choose, multiple: true, filters: [{ name: 'JSON', extensions: ['json'] }] })
+      return !isQuitting && !window.isDestroyed() && Array.isArray(files) ? files : null
+    }, async (_preview, files) => {
+      if (isQuitting || window.isDestroyed()) return false
+      const moves = files.map(({ file, target, identity }) => `${file}\n→ ${target}\n${formatBytes(identity.size)}`).join('\n\n')
+      const { response } = await dialog.showMessageBox(window, {
+        type: 'warning', message: text.message, detail: `${moves}\n\n${text.detail}`,
+        buttons: [cancel, confirm], defaultId: 0, cancelId: 0, noLink: true,
       })
       return response === 1 && !isQuitting && !window.isDestroyed()
     })

@@ -18,6 +18,7 @@ let host: DesktopHost
 let progressListener: ((status: MigrationStatus) => void) | undefined
 const prepare = vi.fn()
 const prepareOpenAiOauth = vi.fn()
+const prepareImAdoption = vi.fn()
 const start = vi.fn()
 const status = vi.fn()
 const cancel = vi.fn()
@@ -48,7 +49,7 @@ beforeEach(() => {
     capabilities: { ...browserHost.capabilities, appMode: true, dialogs: true, shell: true },
     dialogs: { ...browserHost.dialogs, open },
     shell: { ...browserHost.shell, openPath },
-    appMode: { ...browserHost.appMode, set: setAppMode, migration: { prepare, prepareOpenAiOauth, start, status, cancel, onProgress } },
+    appMode: { ...browserHost.appMode, set: setAppMode, migration: { prepare, prepareOpenAiOauth, prepareImAdoption, start, status, cancel, onProgress } },
   }
   window.desktopHost = host
 })
@@ -90,6 +91,14 @@ describe('Data migration settings', () => {
     render(<DataMigrationSettings environmentControlled={false} />)
     fireEvent.click(screen.getByRole('button', { name: 'Move OpenAI sign-in…' }))
     await waitFor(() => expect(prepareOpenAiOauth).toHaveBeenCalledWith())
+    expect(open).not.toHaveBeenCalled()
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('asks the host to choose and confirm IM files without renderer arguments', async () => {
+    render(<DataMigrationSettings environmentControlled={false} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Move IM data…' }))
+    await waitFor(() => expect(prepareImAdoption).toHaveBeenCalledWith())
     expect(open).not.toHaveBeenCalled()
     expect(start).not.toHaveBeenCalled()
   })

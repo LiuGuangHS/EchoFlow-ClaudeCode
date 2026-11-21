@@ -114,12 +114,13 @@ export function DataMigrationSettings({ environmentControlled, disabled = false 
     }
   }
 
-  const chooseOpenAiOauth = async () => {
+  const chooseAdoption = async (kind: 'openai-oauth' | 'im-adapters') => {
     if (blocked || busy || preview) return
     setError(null)
     setPreparing(true)
     try {
-      await host.appMode.migration.prepareOpenAiOauth()
+      if (kind === 'im-adapters') await host.appMode.migration.prepareImAdoption()
+      else await host.appMode.migration.prepareOpenAiOauth()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('settings.general.migration.error'))
     } finally {
@@ -215,8 +216,11 @@ export function DataMigrationSettings({ environmentControlled, disabled = false 
           >
             {t('settings.general.migration.choose')}
           </Button>
-          <Button type="button" size="base" variant="secondary" disabled={blocked || busy || !!preview} onClick={() => void chooseOpenAiOauth()}>
+          <Button type="button" size="base" variant="secondary" disabled={blocked || busy || !!preview} onClick={() => void chooseAdoption('openai-oauth')}>
             {t('settings.general.migration.chooseOpenAiOauth')}
+          </Button>
+          <Button type="button" size="base" variant="secondary" disabled={blocked || busy || !!preview} onClick={() => void chooseAdoption('im-adapters')}>
+            {t('settings.general.migration.chooseImAdoption')}
           </Button>
         </div>
       </div>

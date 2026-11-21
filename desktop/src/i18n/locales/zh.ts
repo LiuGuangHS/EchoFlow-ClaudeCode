@@ -3043,6 +3043,7 @@ export const zh: Record<TranslationKey, string> = {
   'settings.general.migration.description': '将当前会话、配置、Skills、插件和任务迁移到新目录。',
   'settings.general.migration.choose': '迁移现有数据…',
   'settings.general.migration.chooseOpenAiOauth': '迁移 OpenAI 登录…',
+  'settings.general.migration.chooseImAdoption': '迁移 IM 数据…',
   'settings.general.migration.chooseTitle': '选择数据迁移目标目录',
   'settings.general.migration.confirmTitle': '迁移数据并重启？',
   'settings.general.migration.confirm': '迁移并重启',

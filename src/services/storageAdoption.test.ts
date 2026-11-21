@@ -4,7 +4,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { parseStorageAdoptionArgs, runStorageAdoptionCommand } from './storageAdoption.js'
-import { resolveStorageBinding } from '../utils/echoFlowConfigRoot.js'
+import { buildEchoFlowOwnershipMarker, resolveStorageBinding } from '../utils/echoFlowConfigRoot.js'
+import { acquireStorageWriter } from './storageMigration.js'
 import { createSandboxedTestEnvironment } from '../../scripts/pr/test-environment.js'
 
 function ttyInput(value: string): NodeJS.ReadableStream & { isTTY: true } {
@@ -124,6 +125,155 @@ describe('storage adoption command', () => {
     } finally {
       process.exitCode = previousExitCode ?? 0
       await fs.rm(parent, { recursive: true, force: true })
+    }
+  })
+
+  test('adopts both IM files without touching unrelated Chromium data or shared files', async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-im-adoption-'))
+    const binding = resolveStorageBinding({ env: {}, roots: [path.join(home, 'product')] })
+    const shared = path.join(home, '.claude')
+    const config = path.join(shared, 'adapters.json')
+    const sessions = path.join(shared, 'adapter-sessions.json')
+    const sentinel = path.join(binding.root, 'Partitions', 'browser', 'fixture')
+    const configBytes = '{"serverUrl":"ws://127.0.0.1:12345","telegram":{"allowedUsers":[42]},"futureField":true}\n'
+    const sessionBytes = '{"chat":{"sessionId":"fixture","workDir":"/workspace","updatedAt":1,"futureField":true}}\n'
+    const previousExitCode = process.exitCode
+    const output: string[] = []
+    try {
+      await fs.mkdir(shared)
+      await fs.mkdir(path.dirname(sentinel), { recursive: true })
+      await fs.writeFile(path.join(binding.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+      await fs.writeFile(sentinel, 'chromium fixture')
+      await fs.writeFile(path.join(shared, 'settings.json'), '{}')
+      await fs.writeFile(config, configBytes)
+      await fs.writeFile(sessions, sessionBytes)
+      await runStorageAdoptionCommand(['storage', 'adopt', 'im-adapters', '--file', config, '--file', sessions], {
+        binding,
+        input: ttyInput('yes\n'),
+        output: { write: value => { output.push(String(value)); return true } },
+        hooks: { assertQuiescent: async () => {} },
+      })
+      expect(output.join('')).toContain('Storage adoption completed')
+      expect(await fs.readFile(path.join(binding.root, 'adapters.json'), 'utf8')).toBe(configBytes)
+      expect(await fs.readFile(path.join(binding.root, 'adapter-sessions.json'), 'utf8')).toBe(sessionBytes)
+      expect(await fs.readdir(shared)).toEqual(['settings.json'])
+      expect(await fs.readFile(sentinel, 'utf8')).toBe('chromium fixture')
+      const reader = Bun.spawn([process.execPath, '--no-env-file', '--eval', `
+        import assert from 'node:assert/strict'
+        import { loadConfig } from './adapters/common/config.ts'
+        import { SessionStore } from './adapters/common/session-store.ts'
+        import { isPaired } from './adapters/common/pairing.ts'
+        import { adapterService } from './src/server/services/adapterService.ts'
+        assert.equal(loadConfig().serverUrl, 'ws://127.0.0.1:12345')
+        assert.equal(new SessionStore().get('chat')?.sessionId, 'fixture')
+        const config = await adapterService.getRawConfig()
+        assert.equal(isPaired('telegram', 42, config), true)
+        assert.equal(config.futureField, true)
+      `], {
+        cwd: path.resolve(import.meta.dir, '../..'),
+        env: createSandboxedTestEnvironment(home, { CLAUDE_CONFIG_DIR: binding.root }),
+        stdout: 'ignore', stderr: 'inherit',
+      })
+      expect(await reader.exited).toBe(0)
+    } finally {
+      process.exitCode = previousExitCode ?? 0
+      await fs.rm(home, { recursive: true, force: true })
+    }
+  })
+
+  test.each(['invalid', 'external-auth', 'target-conflict', 'late-target', 'live-writer', 'replaced'] as const)(
+    'preserves the IM pair when adoption encounters %s', async scenario => {
+      const home = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-im-blocked-'))
+      const binding = resolveStorageBinding({ env: {}, roots: [path.join(home, 'product')] })
+      const directory = path.join(home, 'external')
+      const config = path.join(directory, 'adapters.json')
+      const sessions = path.join(directory, 'adapter-sessions.json')
+      const target = path.join(binding.root, 'adapter-sessions.json')
+      const configBytes = scenario === 'invalid' ? '{"telegram":["private-fixture"]}' : scenario === 'external-auth'
+        ? JSON.stringify({ whatsapp: { authDir: path.join(directory, 'private-fixture') } }) : '{}'
+      const previousExitCode = process.exitCode
+      const messages: string[] = []
+      let lease: Awaited<ReturnType<typeof acquireStorageWriter>> | undefined
+      try {
+        await fs.mkdir(directory)
+        await fs.mkdir(binding.root)
+        await fs.writeFile(path.join(binding.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+        await fs.writeFile(config, configBytes)
+        await fs.writeFile(sessions, '{}')
+        if (scenario === 'target-conflict') await fs.writeFile(target, '{"different":true}')
+        if (scenario === 'live-writer') lease = await acquireStorageWriter(binding)
+        const input = Readable.from((async function* () {
+          if (scenario === 'late-target') await fs.writeFile(target, '{"different":true}')
+          if (scenario === 'replaced') {
+            await fs.rename(sessions, `${sessions}.original`)
+            await fs.writeFile(sessions, '{}')
+          }
+          yield 'yes\n'
+        })()) as NodeJS.ReadableStream & { isTTY: true }
+        input.isTTY = true
+        await runStorageAdoptionCommand(['storage', 'adopt', 'im-adapters', '--file', config, '--file', sessions], {
+          binding, input, output: { write: value => { messages.push(String(value)); return true } },
+          hooks: { assertQuiescent: async () => {} },
+        })
+        const expected = {
+          invalid: 'Invalid IM adapter configuration', 'external-auth': 'migrate the complete account first',
+          'target-conflict': 'Conflicting IM storage file', 'late-target': 'Conflicting IM storage file',
+          'live-writer': 'Active storage writer', replaced: 'Approved storage file changed',
+        }
+        expect(messages.join('')).toContain(expected[scenario])
+        expect(messages.join('')).not.toContain('private-fixture')
+        expect(process.exitCode).toBe(1)
+        expect(await fs.readFile(config, 'utf8')).toBe(configBytes)
+        expect(await fs.readFile(sessions, 'utf8')).toBe('{}')
+        await expect(fs.lstat(path.join(binding.root, 'adapters.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        await lease?.release()
+        process.exitCode = previousExitCode ?? 0
+        await fs.rm(home, { recursive: true, force: true })
+      }
+    },
+  )
+
+  test.each(['overridden-saved-auth', 'unbound-default'] as const)('checks saved WhatsApp configuration: %s', async scenario => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-im-auth-'))
+    const binding = resolveStorageBinding({ env: {}, roots: [path.join(home, 'product')] })
+    const source = path.join(home, 'external', 'adapters.json')
+    const managed = path.join(binding.root, 'whatsapp-auth', 'default')
+    const external = path.join(home, 'external', 'whatsapp-auth', 'default')
+    const override = scenario === 'overridden-saved-auth'
+    const bytes = JSON.stringify({ telegram: { allowedUsers: [42] }, whatsapp: { authDir: override ? external : managed } })
+    const previousExitCode = process.exitCode
+    const previousOverride = process.env.WHATSAPP_AUTH_DIR
+    const output: string[] = []
+    try {
+      await fs.mkdir(path.dirname(source))
+      await fs.writeFile(source, bytes)
+      delete process.env.WHATSAPP_AUTH_DIR
+      if (override) {
+        await fs.mkdir(managed, { recursive: true })
+        await fs.writeFile(path.join(binding.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+        await fs.writeFile(path.join(managed, 'creds.json'), '{}')
+        process.env.WHATSAPP_AUTH_DIR = managed
+      }
+      await runStorageAdoptionCommand(['storage', 'adopt', 'im-adapters', '--file', source], {
+        binding, input: ttyInput('yes\n'), output: { write: value => { output.push(String(value)); return true } },
+        hooks: { assertQuiescent: async () => {} },
+      })
+      const target = path.join(binding.root, 'adapters.json')
+      if (override) {
+        expect(output.join('')).toContain('migrate the complete account first')
+        expect(await fs.readFile(source, 'utf8')).toBe(bytes)
+        await expect(fs.lstat(target)).rejects.toMatchObject({ code: 'ENOENT' })
+      } else {
+        expect(output.join('')).toContain('Storage adoption completed')
+        expect(await fs.readFile(target, 'utf8')).toBe(bytes)
+        await expect(fs.lstat(source)).rejects.toMatchObject({ code: 'ENOENT' })
+      }
+    } finally {
+      if (previousOverride === undefined) delete process.env.WHATSAPP_AUTH_DIR
+      else process.env.WHATSAPP_AUTH_DIR = previousOverride
+      process.exitCode = previousExitCode ?? 0
+      await fs.rm(home, { recursive: true, force: true })
     }
   })
 

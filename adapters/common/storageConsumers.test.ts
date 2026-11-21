@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createSandboxedTestEnvironment } from '../../scripts/pr/test-environment.js'
-import { loadConfig } from './config.js'
+import { loadConfig, resolveWhatsAppAuthPath, validateStoredAdapterConfig } from './config.js'
 import { SessionStore } from './session-store.js'
 import { AttachmentStore } from './attachment/attachment-store.js'
 
@@ -47,6 +47,20 @@ test('standalone adapter config, sessions and attachments use the selected root'
   expect(dirname(file)).toBe(join(root, 'im-downloads', 'telegram', 'fixture-session'))
   await store.write(file, Buffer.from('fixture'))
   expect(await readFile(file, 'utf8')).toBe('fixture')
+})
+
+test('IM migration accepts the stored pairing and adapter fields read by the runtime', async () => {
+  const stored = {
+    pairing: { code: null, createdAt: null, expiresAt: null },
+    telegram: { allowedUsers: [42], pairedUsers: [{ userId: 43, displayName: 'Fixture', pairedAt: 1 }] },
+    whatsapp: { authDir: join(root, 'whatsapp-auth', 'fixture') },
+    futureField: { keep: true },
+  }
+  await writeFile(join(root, 'adapters.json'), JSON.stringify(stored))
+  const selection = validateStoredAdapterConfig(stored)
+  expect(resolveWhatsAppAuthPath(selection.whatsappAuthDir!, root)).toBe(loadConfig().whatsapp.authDir)
+  expect(loadConfig().telegram.pairedUsers).toEqual(stored.telegram.pairedUsers)
+  expect(() => validateStoredAdapterConfig({ telegram: { pairedUsers: { privateFixture: true } } })).toThrow(/^Invalid IM adapter configuration$/)
 })
 
 test('root-external WhatsApp settings are blocked without touching source or configuration', async () => {

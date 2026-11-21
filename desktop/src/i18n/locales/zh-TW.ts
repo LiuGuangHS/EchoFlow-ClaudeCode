@@ -3045,6 +3045,7 @@ export const zh: Record<TranslationKey, string> = {
   'settings.general.migration.description': '將目前的對話、設定、Skills、外掛和任務遷移到新目錄。',
   'settings.general.migration.choose': '遷移現有資料…',
   'settings.general.migration.chooseOpenAiOauth': '遷移 OpenAI 登入…',
+  'settings.general.migration.chooseImAdoption': '遷移 IM 資料…',
   'settings.general.migration.chooseTitle': '選擇資料遷移目標目錄',
   'settings.general.migration.confirmTitle': '遷移資料並重啟？',
   'settings.general.migration.confirm': '遷移並重啟',

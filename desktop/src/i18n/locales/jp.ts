@@ -3046,6 +3046,7 @@ export const jp: Record<TranslationKey, string> = {
   'settings.general.migration.description': '現在のセッション、設定、Skills、プラグイン、タスクを新しいディレクトリに移行します。',
   'settings.general.migration.choose': '既存データを移行…',
   'settings.general.migration.chooseOpenAiOauth': 'OpenAI のログイン情報を移行…',
+  'settings.general.migration.chooseImAdoption': 'IM データを移行…',
   'settings.general.migration.chooseTitle': 'データの移行先を選択',
   'settings.general.migration.confirmTitle': 'データを移行して再起動しますか？',
   'settings.general.migration.confirm': '移行して再起動',

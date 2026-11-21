@@ -5,6 +5,9 @@ import { LOCAL_INDEX_SCHEMA_VERSION, migrateLocalIndexDatabase } from '../server
 import { constants, lstatSync, realpathSync } from 'node:fs'
 import { buildEchoFlowOwnershipMarker, ensureEchoFlowConfigRoot, resolveStorageBinding, type StorageBinding } from '../utils/echoFlowConfigRoot'
 import { relocateManagedData } from '../utils/storageMigrationMetadata'
+import { relocateManagedStoragePath } from '../utils/managedStoragePath'
+import { readStorageRelocations } from '../utils/storageRelocations'
+import { resolveWhatsAppAuthPath, validateStoredAdapterConfig } from '../../adapters/common/config'
 import { listLegacyArchiveTranscripts, migrateArchiveState, parseSessionArchiveMarker, readLegacyArchiveTranscript, sessionArchiveMarkerName, sessionArchiveStateName } from '../utils/sessionArchiveData'
 import { fileSuffixForOauthConfig } from '../constants/oauth'
 import { normalizeTokenFile } from './openaiAuth/tokenFile'
@@ -253,6 +256,7 @@ export type StorageMigrationSource = {
   approval?: string
   /** Exact files selected by that approval. */
   approvedFiles?: readonly string[]
+  approvalCategory?: 'im-adapters'
   /** Inspector-validated control bytes; never installed as active launch controls. */
   controls?: Partial<Record<'data-migration-v1.json' | 'app-mode.json', { digest: string; dev: string; ino: string }>>
   /** Obsolete, independently owned v1 data is history, not an active merge input. */
@@ -428,6 +432,108 @@ export async function inspectOpenAiOauthFile(file: string): Promise<FileIdentity
   } finally { await handle.close() }
 }
 
+const imFileNames = ['adapters.json', 'adapter-sessions.json']
+const maxImFileBytes = 16 * 1024 * 1024
+
+export function assertImFileSelection(files: readonly string[]): void {
+  if (!files.length || files.length > imFileNames.length || new Set(files).size !== files.length ||
+    files.some(file => file.includes('\0') || !path.isAbsolute(file) || path.resolve(file) !== file ||
+      path.dirname(file) !== path.dirname(files[0]!) || !imFileNames.includes(path.basename(file)))) {
+    throw new Error('Choose adapters.json and/or adapter-sessions.json from one directory using absolute paths')
+  }
+}
+
+async function inspectImFile(binding: StorageBinding, file: string, name: string, sourceDirectory: string): Promise<FileIdentity> {
+  await assertUnlinkedDirectoryPath(path.dirname(file))
+  const before = await fs.lstat(file, { bigint: true })
+  if (!before.isFile() || before.nlink !== 1n || before.size > maxImFileBytes) throw new Error(`IM migration requires a regular file of at most 16 MiB: ${name}`)
+  const handle = await fs.open(file, constants.O_RDONLY | (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK))
+  const unchanged = (stat: typeof before) => stat.isFile() && stat.nlink === 1n && stat.dev === before.dev && stat.ino === before.ino &&
+    stat.size === before.size && stat.mode === before.mode && stat.mtimeNs === before.mtimeNs && stat.ctimeNs === before.ctimeNs
+  let bytes: Buffer
+  try {
+    if (!unchanged(await handle.stat({ bigint: true }))) throw new Error(`IM storage file changed: ${name}`)
+    bytes = Buffer.alloc(Number(before.size))
+    let offset = 0
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset)
+      if (!bytesRead) throw new Error(`IM storage file changed: ${name}`)
+      offset += bytesRead
+    }
+    if (!unchanged(await fs.lstat(file, { bigint: true }))) throw new Error(`IM storage file changed: ${name}`)
+  } finally { await handle.close() }
+  let value: unknown
+  try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)) } catch { throw new Error(`Invalid IM JSON: ${name}`) }
+  if (name === 'adapters.json') {
+    const config = validateStoredAdapterConfig(value)
+    await assertImAuthDependency(binding, sourceDirectory, config)
+  } else if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.values(value).every(entry =>
+    entry && typeof entry === 'object' && typeof entry.sessionId === 'string' && entry.sessionId.length && !entry.sessionId.includes('\0') &&
+    typeof entry.workDir === 'string' && entry.workDir.length && !entry.workDir.includes('\0') && Number.isFinite(entry.updatedAt))) {
+    throw new Error('Invalid IM session map')
+  }
+  return { dev: String(before.dev), ino: String(before.ino), size: bytes.length, mode: Number(before.mode), digest: createHash('sha256').update(bytes).digest('hex') }
+}
+
+async function assertImAuthDependency(
+  binding: StorageBinding, source: string, config: ReturnType<typeof validateStoredAdapterConfig>,
+): Promise<void> {
+  const managedDefault = resolveWhatsAppAuthPath('', binding.root)
+  const legacyDefault = resolveWhatsAppAuthPath('', source)
+  const unavailable = () => new Error('IM config depends on WhatsApp sign-in data that has not been verified in the selected directory; migrate the complete account first')
+  const verify = async (configured: string, accountJid: string | undefined) => {
+    const configuredPath = resolveWhatsAppAuthPath(configured, binding.root)
+    const origin = !configured.trim() && await present(legacyDefault) ? legacyDefault : configuredPath
+    const candidate = relocateManagedStoragePath(origin, 'WhatsApp sign-in directory', binding.root)
+    if (!isWithin(binding.root, candidate) || candidate === binding.root) throw unavailable()
+    if (!configured.trim() && candidate !== configuredPath) throw unavailable()
+    const unboundDefault = origin === managedDefault && candidate === managedDefault && !accountJid
+    if (unboundDefault && !await present(candidate)) {
+      let ancestor = path.dirname(candidate)
+      while (!await present(ancestor)) ancestor = path.dirname(ancestor)
+      await assertUnlinkedDirectoryPath(ancestor)
+      return
+    }
+    await assertUnlinkedDirectoryPath(candidate)
+    const names = await fs.readdir(candidate)
+    if (unboundDefault && names.length === 0) return
+    if (!names.includes('creds.json')) throw unavailable()
+    if (candidate !== origin) {
+      const previous = (await readJournals(binding)).find(journal => journal.phase === 'completed' && journal.sources.some(item => !item.layout && !item.archive && isWithin(item.directory, origin)) &&
+        names.every(name => journal.entries.some(entry => path.join(binding.root, entry.destination) === path.join(candidate, name) &&
+          path.join(journal.sources[entry.source]!.directory, entry.relative) === path.join(origin, name) && entry.published && entry.cleaned)))
+      if (!previous || !names.some(name => /^(session|pre-key|app-state-sync-key|sender-key)-.+\.json$/.test(name))) throw unavailable()
+    }
+    for (const name of names) {
+      const stat = await fs.lstat(path.join(candidate, name))
+      if (!stat.isFile() || stat.nlink !== 1) throw unavailable()
+    }
+  }
+  try {
+    const savedPath = config.whatsappAuthDir || ''
+    const activePath = process.env.WHATSAPP_AUTH_DIR || savedPath
+    const activeAccount = process.env.WHATSAPP_ACCOUNT_JID || config.whatsappAccountJid
+    await verify(savedPath, config.whatsappAccountJid)
+    if (activePath !== savedPath || activeAccount !== config.whatsappAccountJid) await verify(activePath, activeAccount)
+  } catch { throw unavailable() }
+}
+
+export async function previewImAdoption(binding: StorageBinding, files: readonly string[]) {
+  assertImFileSelection(files)
+  const directory = path.dirname(files[0]!)
+  if (isWithin(directory, binding.root) || isWithin(binding.root, directory)) throw new Error('Choose IM files in a separate source directory')
+  let ancestor = binding.root
+  while (!await present(ancestor)) ancestor = path.dirname(ancestor)
+  await assertUnlinkedDirectoryPath(ancestor)
+  return await Promise.all(files.map(async file => {
+    const name = path.basename(file)
+    const identity = await inspectImFile(binding, file, name, directory)
+    const target = path.join(binding.root, name)
+    if (await present(target) && (await regularIdentity(target)).digest !== identity.digest) throw new Error(`Conflicting IM storage file (originals retained): ${name}`)
+    return { file, target, identity }
+  }))
+}
+
 function sameFile(a: FileIdentity, b: FileIdentity): boolean {
   return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.digest === b.digest && a.mode === b.mode
 }
@@ -472,7 +578,9 @@ type StorageApprovalReceipt = {
   version: 1
   id: string
   root: string
-  destination: string
+  destination?: string
+  approvalCategory?: 'im-adapters'
+  rootIdentity?: MigrationDirectoryIdentity
   state: 'pending' | 'cancelled'
   cohort?: string
   files: { source: string; relative: string; identity: FileIdentity }[]
@@ -481,7 +589,10 @@ type StorageApprovalReceipt = {
 function parseStorageApproval(value: unknown, binding: StorageBinding, id: string): StorageApprovalReceipt {
   const receipt = value as StorageApprovalReceipt
   if (!receipt || receipt.version !== 1 || receipt.id !== id || !approvalName.test(id) ||
-    receipt.root !== binding.root || !safeRelative(receipt.destination) || !['pending', 'cancelled'].includes(receipt.state) ||
+    receipt.root !== binding.root || !['pending', 'cancelled'].includes(receipt.state) ||
+    (receipt.approvalCategory === 'im-adapters'
+      ? receipt.destination !== undefined || !validDirectoryIdentity(receipt.rootIdentity) || receipt.rootIdentity.canonical !== binding.root
+      : receipt.approvalCategory !== undefined || !safeRelative(receipt.destination)) ||
     (receipt.cohort !== undefined && (typeof receipt.cohort !== 'string' || !receipt.cohort)) ||
     !Array.isArray(receipt.files) || !receipt.files.length ||
     !receipt.files.every(file => file && typeof file.source === 'string' && path.isAbsolute(file.source) && path.resolve(file.source) === file.source &&
@@ -497,20 +608,23 @@ async function readApproval(binding: StorageBinding, id: string): Promise<Storag
   const identity = await regularIdentity(file)
   const receipt = parseStorageApproval(JSON.parse(await fs.readFile(file, 'utf8')), binding, id)
   await checkFile(file, identity)
+  if (receipt.approvalCategory === 'im-adapters') await assertMigrationDirectory(binding.root, receipt.rootIdentity!)
   return receipt
 }
 async function approvalForSource(binding: StorageBinding, source: StorageMigrationSource): Promise<StorageApprovalReceipt> {
   const receipt = await readApproval(binding, source.approval!)
-  if (receipt.state !== 'pending' || receipt.destination !== source.destination ||
+  if (receipt.state !== 'pending' || receipt.destination !== source.destination || receipt.approvalCategory !== source.approvalCategory ||
     receipt.files.length !== source.approvedFiles!.length ||
     receipt.files.some((file, index) => file.source !== source.approvedFiles![index])) throw new Error('Approved storage source is not pending or does not match its approval')
   return receipt
 }
-type ApprovedFileSelection = { destination: string; files: readonly string[]; cohort?: string; expected?: readonly FileIdentity[] }
+type ApprovedFileSelection = { files: readonly string[]; cohort?: string; expected?: readonly FileIdentity[] } & (
+  { destination: string; approvalCategory?: undefined } | { approvalCategory: 'im-adapters'; destination?: undefined }
+)
 
 async function recordApprovedFileSource(binding: StorageBinding, id: string, options: ApprovedFileSelection): Promise<StorageMigrationSource> {
   if (!approvalName.test(id)) throw new Error('Invalid storage approval id')
-  if (!safeRelative(options.destination) || !options.files.length || (options.cohort !== undefined && (!options.cohort || typeof options.cohort !== 'string'))) throw new Error('Invalid approved storage source')
+  if (!options.files.length || (options.cohort !== undefined && (!options.cohort || typeof options.cohort !== 'string'))) throw new Error('Invalid approved storage source')
   const files = options.files.map(file => {
     if (typeof file !== 'string' || !path.isAbsolute(file) || path.resolve(file) !== file) throw new Error('Invalid approved storage file')
     return file
@@ -519,11 +633,13 @@ async function recordApprovedFileSource(binding: StorageBinding, id: string, opt
   if (new Set(files.map(file => path.dirname(file))).size !== 1) throw new Error('Approved files must share one directory')
   const directory = path.dirname(files[0]!)
   if (isWithin(directory, binding.root)) throw new Error('The approved source cannot contain the selected root')
-  const source: StorageMigrationSource = { directory, markerRoot: directory, layout: 'approved-external', approval: id, approvedFiles: files, destination: options.destination }
+  const source: StorageMigrationSource = { directory, markerRoot: directory, layout: 'approved-external', approval: id, approvedFiles: files, destination: options.destination, approvalCategory: options.approvalCategory }
   assertSourceScope(source, binding)
   const receipts = []
   for (const [index, file] of files.entries()) {
-    const identity = await regularIdentity(file)
+    const identity = options.approvalCategory === 'im-adapters'
+      ? await inspectImFile(binding, file, path.basename(file), directory)
+      : await regularIdentity(file)
     const expected = options.expected?.[index]
     if (options.expected && (!expected || !sameFile(identity, expected))) throw new Error('Approved storage file changed; choose it again')
     receipts.push({ source: file, relative: path.relative(directory, file), identity })
@@ -533,7 +649,11 @@ async function recordApprovedFileSource(binding: StorageBinding, id: string, opt
   await fs.mkdir(approvalHome(binding), { recursive: true, mode: 0o700 })
   await assertUnlinkedDirectoryPath(approvalHome(binding))
   await syncDirectory(binding.internalDir)
-  await durableJson(path.join(approvalHome(binding), `${id}.json`), { version: 1, id, root: binding.root, destination: options.destination, state: 'pending', ...(options.cohort === undefined ? {} : { cohort: options.cohort }), files: receipts } satisfies StorageApprovalReceipt)
+  await durableJson(path.join(approvalHome(binding), `${id}.json`), {
+    version: 1, id, root: binding.root, state: 'pending', destination: options.destination, cohort: options.cohort,
+    ...(options.approvalCategory ? { approvalCategory: options.approvalCategory, rootIdentity: await migrationDirectoryIdentity(binding.root) } : {}),
+    files: receipts,
+  } satisfies StorageApprovalReceipt)
   return source
 }
 
@@ -543,17 +663,27 @@ export async function recordColdStorageApproval(binding: StorageBinding, options
   try { return await recordApprovedFileSource(binding, randomUUID(), options) } finally { await release() }
 }
 
-export async function readApprovedFileSource(binding: StorageBinding, id: string, expected: { file: string; destination: string; proof: string }): Promise<StorageMigrationSource> {
+export function imStorageApprovalProof(files: readonly { file: string; identity: FileIdentity }[]): string {
+  return createHash('sha256').update(JSON.stringify(files.map(({ file, identity: { digest, dev, ino, size, mode } }) =>
+    [file, digest, dev, ino, size, mode]))).digest('hex')
+}
+
+export async function readApprovedFileSource(binding: StorageBinding, id: string, expected:
+  { file: string; destination: string; proof: string } | { approvalCategory: 'im-adapters'; proof: string },
+): Promise<StorageMigrationSource> {
   const receipt = await readApproval(binding, id)
   if (receipt.state !== 'pending') throw new Error('Storage approval is no longer pending')
   const [file] = receipt.files
-  if (receipt.destination !== expected.destination || receipt.files.length !== 1 || file?.source !== expected.file ||
-    `${file.identity.digest}:${file.identity.dev}:${file.identity.ino}:${file.identity.size}` !== expected.proof) {
+  const matches = 'approvalCategory' in expected
+    ? receipt.approvalCategory === expected.approvalCategory && imStorageApprovalProof(receipt.files.map(item => ({ file: item.source, identity: item.identity }))) === expected.proof
+    : receipt.approvalCategory === undefined && receipt.destination === expected.destination && receipt.files.length === 1 && file?.source === expected.file &&
+      `${file.identity.digest}:${file.identity.dev}:${file.identity.ino}:${file.identity.size}` === expected.proof
+  if (!matches) {
     throw new Error('Cold storage request does not match its approval')
   }
   const files = receipt.files.map(file => file.source)
   const directory = path.dirname(files[0]!)
-  const source: StorageMigrationSource = { directory, markerRoot: directory, layout: 'approved-external', approval: id, approvedFiles: files, destination: receipt.destination }
+  const source: StorageMigrationSource = { directory, markerRoot: directory, layout: 'approved-external', approval: id, approvedFiles: files, destination: receipt.destination, approvalCategory: receipt.approvalCategory }
   assertSourceScope(source, binding)
   return source
 }
@@ -1055,6 +1185,7 @@ async function readJournals(binding: StorageBinding): Promise<StorageJournal[]> 
         return !identity || !sameFile(entry.original, identity) || entry.destination !== destinationFor(source, entry.relative)
       })) throw new Error('Storage operations do not match their approval')
     }
+    assertImTransactionScope(journal.sources, journal)
     journals.push(journal)
   }
   return journals
@@ -1070,6 +1201,7 @@ async function assertNoFork(journal: StorageJournal): Promise<void> {
   for (let index = 0; index < journal.sources.length; index++) {
     const source = journal.sources[index]!
     if (source.layout === 'approved-external') {
+      if (source.approvalCategory === 'im-adapters' && !await present(source.directory)) continue
       await assertMigrationDirectory(source.directory, source.identity)
       for (const entry of journal.entries) {
         if (entry.source !== index) continue
@@ -1101,14 +1233,20 @@ function isFlatIndexName(name: string): boolean {
   return indexes.has(name.replace(/-(wal|shm|journal)$/, ''))
 }
 function assertSourceScope(source: StorageMigrationSource, binding: StorageBinding): void {
-  if (source.approval !== undefined || source.layout === 'approved-external') {
+  if (source.approval !== undefined || source.approvalCategory !== undefined || source.layout === 'approved-external') {
     if (source.layout !== 'approved-external' || typeof source.approval !== 'string' || !approvalName.test(source.approval) ||
       !Array.isArray(source.approvedFiles) || !source.approvedFiles.length ||
       !source.approvedFiles.every(file => typeof file === 'string' && path.isAbsolute(file) && path.resolve(file) === file) ||
       source.directory !== path.dirname(source.approvedFiles[0]!) ||
       source.approvedFiles.some(file => path.dirname(file) !== source.directory) ||
       source.directory !== source.markerRoot || source.ownership !== undefined || source.controls !== undefined || source.archive !== undefined ||
-      !safeRelative(source.destination) || isWithin(source.directory, binding.root) || isWithin(binding.root, source.directory)) throw new Error('Invalid approved external source scope')
+      isWithin(source.directory, binding.root) || isWithin(binding.root, source.directory)) throw new Error('Invalid approved external source scope')
+    if (source.approvalCategory === 'im-adapters') {
+      if (source.destination !== undefined) throw new Error('Invalid IM storage destination')
+      assertImFileSelection(source.approvedFiles)
+      return
+    }
+    if (source.approvalCategory !== undefined || !safeRelative(source.destination)) throw new Error('Invalid approved external destination')
     for (const file of source.approvedFiles) {
       const target = path.join(binding.root, source.destination, path.basename(file))
       if (!isWithin(binding.internalDir, target) ||
@@ -1339,7 +1477,9 @@ async function collectSource(source: StorageMigrationSource, binding: StorageBin
     const files: { relative: string; identity: FileIdentity }[] = []
     for (const file of receipt.files) {
       await assertUnlinkedDirectoryPath(path.dirname(file.source))
-      const identity = await regularIdentity(file.source)
+      const identity = source.approvalCategory === 'im-adapters'
+        ? await inspectImFile(binding, file.source, file.relative, source.directory)
+        : await regularIdentity(file.source)
       if (!sameFile(identity, file.identity)) throw new Error('Approved storage file changed; re-approve it')
       files.push({ relative: file.relative, identity })
     }
@@ -1623,6 +1763,7 @@ export async function cancelStorageHandoff(launch: StorageHandoffLaunch): Promis
 export async function prepareStorageMigration(input: Omit<StorageMigrationInput, 'hooks'>): Promise<StorageMigrationPlan> {
   const { binding, sources } = input
   for (const source of sources) assertSourceScope(source, binding)
+  assertImTransactionScope(sources)
   if (binding.internalDir !== path.join(binding.root, 'echoflow-code') || !path.isAbsolute(binding.root) || path.resolve(binding.root) !== binding.root) throw new Error('Invalid storage binding')
   await recoverIndexInspection(binding)
   let ancestor = binding.root
@@ -1670,6 +1811,7 @@ export async function executeStorageMigration(input: StorageMigrationInput): Pro
   let release: (() => Promise<void>) | undefined
   let journal: StorageJournal | undefined
   try {
+    assertImTransactionScope(input.sources)
     release = await lockStorageMigration(binding)
     const previous = await readJournals(binding)
     for (const existing of previous) {
@@ -1697,6 +1839,9 @@ export async function executeStorageMigration(input: StorageMigrationInput): Pro
         if (isWithin(transactionHome(binding), path.join(binding.root, destination)) || isWithin(approvalHome(binding), path.join(binding.root, destination))) throw new Error('Reserved active transaction destination')
         const target = path.join(binding.root, destination)
         const baseline = await present(target) ? await regularIdentity(target) : null
+        if (source.approvalCategory === 'im-adapters' && baseline && baseline.digest !== file.identity.digest) {
+          throw new Error(`Conflicting IM storage file (originals retained): ${destination}`)
+        }
         entries.push({ source: index, relative: file.relative, destination, original: file.identity, baseline })
       }
     }
@@ -2034,10 +2179,22 @@ async function ensurePublishedDirectory(binding: StorageBinding, journal: Storag
   await saveJournal(binding, journal)
 }
 
+function assertImTransactionScope(sources: readonly StorageMigrationSource[], journal?: StorageJournal): boolean {
+  if (!sources.some(source => source.approvalCategory === 'im-adapters')) return false
+  if (sources.length !== 1 || journal?.legacySelection || journal?.archiveFiles?.length ||
+    (journal && (journal.directories.length || journal.entries.some(entry =>
+      [entry.baseline, entry.published, entry.publicationIntent].some(receipt => receipt && receipt.digest !== entry.original.digest) ||
+      (entry.stagedDigest !== undefined && entry.stagedDigest !== entry.original.digest))))) {
+    throw new Error('Invalid IM adoption transaction scope')
+  }
+  return true
+}
+
 async function advanceTransaction(binding: StorageBinding, journal: StorageJournal, hooks: StorageMigrationHooks): Promise<StorageMigrationResult> {
   const transaction = transactionPath(binding, journal.id)
   const signal = hooks.signal ?? new AbortController().signal
   await assertBoundary(binding, journal, hooks)
+  const im = assertImTransactionScope(journal.sources, journal)
   if (journal.phase === 'copying') {
     // Each interrupted transform gets a new private attempt; verified source
     // backups are reused, never overwritten with partially transformed bytes.
@@ -2076,6 +2233,9 @@ async function advanceTransaction(binding: StorageBinding, journal: StorageJourn
     }
     for (const entry of journal.entries) {
       const staged = stagedFile(binding, journal, entry)
+      if (im && (await inspectImFile(binding, staged, entry.relative, journal.sources[0]!.directory)).digest !== entry.original.digest) {
+        throw new Error('Staged IM file changed')
+      }
       if (entry.relative === '.config.json' && entry.destination === journal.globalConfigDestination) {
         const value: unknown = JSON.parse(await fs.readFile(staged, 'utf8'))
         if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid legacy global configuration')
@@ -2119,6 +2279,21 @@ async function advanceTransaction(binding: StorageBinding, journal: StorageJourn
     await saveJournal(binding, journal)
   }
   if (journal.phase === 'publishing') {
+    if (im) {
+      for (const entry of journal.entries) {
+        await checkFile(path.join(journal.sources[0]!.directory, entry.relative), entry.original)
+        const target = path.join(binding.root, entry.destination)
+        const current = await fs.lstat(target, { bigint: true }).catch(error => {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        })
+        // publishFile verifies an interrupted hard-link publication after unlinking staging.
+        if (current && entry.publicationIntent && String(current.dev) === entry.publicationIntent.dev &&
+          String(current.ino) === entry.publicationIntent.ino) continue
+        const expected = entry.published ?? entry.baseline
+        if (expected) await checkFile(target, expected)
+        else if (current) throw new Error(`IM target appeared during publication: ${entry.destination}`)
+      }
+    }
     await assertSQLiteCohorts(binding, journal)
     for (const source of journal.sources) {
       for (const directory of source.directories) await ensurePublishedDirectory(binding, journal, destinationFor(source, directory.relative), path.join(source.directory, directory.relative), directory.mode)
@@ -2285,7 +2460,19 @@ export async function recoverStorageMigration(binding: StorageBinding, hooks: St
 
 /** Invoke after restricted startup validation, BEFORE admitting business writes.
  * Acceptance is durable before cleanup. There is deliberately no rollback API. */
-export async function completeStorageMigration(binding: StorageBinding, id: string, hooks: StorageMigrationHooks): Promise<StorageMigrationResult> {
+export async function completeStorageMigration(
+  binding: StorageBinding, id: string, hooks: StorageMigrationHooks,
+  validateStartup?: (binding: StorageBinding) => Promise<void>,
+): Promise<StorageMigrationResult> {
+  // Restricted full-profile startup may check writer admission itself.
+  let startupValidated = false
+  if (validateStartup) {
+    const journal = (await readJournals(binding)).find(entry => entry.id === id)
+    if (journal?.phase === 'validating' && !assertImTransactionScope(journal.sources, journal)) {
+      await validateStartup(binding)
+      startupValidated = true
+    }
+  }
   let release: (() => Promise<void>) | undefined
   try {
     release = await lockStorageMigration(binding)
@@ -2296,6 +2483,18 @@ export async function completeStorageMigration(binding: StorageBinding, id: stri
     await assertBoundary(binding, journal, hooks)
     if (journal.phase === 'validating') {
       await validatePublished(binding, journal, hooks)
+      if (assertImTransactionScope(journal.sources, journal)) {
+        const relocations = readStorageRelocations(binding.root)
+        for (const entry of journal.entries) {
+          const source = path.join(journal.sources[0]!.directory, entry.relative)
+          const published = await inspectImFile(binding, path.join(binding.root, entry.destination), entry.relative, path.dirname(source))
+          if (!sameFile(published, entry.published!) || !relocations.mappings?.some(mapping => mapping.from === source && mapping.to === entry.destination)) {
+            throw new Error('IM migration publication does not match its approval')
+          }
+        }
+      } else if (validateStartup && !startupValidated) {
+        throw new Error('Storage transaction changed before restricted startup validation')
+      }
       journal.phase = 'accepted'
       journal.state = 'cleanup-pending'
       await saveJournal(binding, journal)
@@ -2311,6 +2510,23 @@ async function cleanupTransaction(binding: StorageBinding, journal: StorageJourn
     for (const entry of [...journal.archiveFiles, ...journal.entries.filter(entry => archiveDestinations.includes(entry.destination))]) {
       if (!entry.published) throw new Error('Missing published session archive receipt')
       await checkFile(path.join(binding.root, entry.destination), entry.published)
+    }
+  }
+  const im = assertImTransactionScope(journal.sources, journal)
+  if (im) {
+    const source = journal.sources[0]!
+    if (!journal.entries.every(entry => entry.cleaned) || await present(source.directory)) {
+      await assertMigrationDirectory(source.directory, source.identity)
+    }
+    for (const entry of journal.entries) {
+      const original = path.join(source.directory, entry.relative)
+      const backup = path.join(transaction, 'sources', String(entry.source), entry.relative)
+      if (!entry.published || (await regularIdentity(backup)).digest !== entry.original.digest) throw new Error('Missing verified IM migration copy')
+      await checkFile(path.join(binding.root, entry.destination), entry.published)
+      if (await present(original)) {
+        if (entry.cleaned) throw new Error('A retired IM file was recreated')
+        await checkFile(original, entry.original)
+      }
     }
   }
   await publishStorageLocation(binding, journal)
@@ -2337,6 +2553,7 @@ async function cleanupTransaction(binding: StorageBinding, journal: StorageJourn
   const hasHandoff = journal.sources.some(source => source.handoff)
   for (const entry of journal.entries) {
     if (entry.relative !== journal.sources[entry.source]!.handoff?.relative) await cleanEntry(entry)
+    if (im && issues.length) break
   }
   // Keep the durable source barrier through data/resource cleanup, even if the cold PID dies.
   if (hasHandoff && !issues.length) {

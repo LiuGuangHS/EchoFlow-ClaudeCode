@@ -64,7 +64,10 @@ async function launch(mode: 'server' | 'adapters' | 'cli' | 'installed', options
     } else {
       mock.module(${JSON.stringify(path.join(repository, 'preload.ts'))}, () => ({}))
     }
-    mock.module(${JSON.stringify(path.join(repository, 'adapters/common/config.ts'))}, () => ({
+    const configModule = ${JSON.stringify(path.join(repository, 'adapters/common/config.ts'))}
+    const realConfig = await import(configModule)
+    mock.module(configModule, () => ({
+      ...realConfig,
       loadConfig() { assertLease(); return { feishu: {} } },
     }))
     if (${mode === 'installed'}) Object.defineProperty(process, 'execPath', { value: ${JSON.stringify(installed)} })

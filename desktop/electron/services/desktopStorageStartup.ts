@@ -9,7 +9,7 @@ import { determineStartupPortableDir, normalizedCustomDir, parseLegacyPortableSe
 import { cleanupLegacyDataMigrationRecovery, inspectLegacyDataMigrationRecovery, readLegacyDataMigrationReceipt, type LegacyDataMigrationRecoveryPlan } from './dataMigrationLegacyRecovery'
 import type { MigrationCredentialStore } from './migrationCredentials'
 import { assertNoPendingDesktopMove, desktopMoveLaunch, inspectDesktopMove, lockDesktopMoveSource, type DesktopMoveLaunch } from './desktopStorageMove'
-import { desktopOpenAiOauthLaunch, executeDesktopOpenAiOauth, type DesktopOpenAiOauthLaunch } from './desktopStorageAdoption'
+import { desktopStorageAdoptionLaunch, desktopStorageAdoptionSwitches, executeDesktopStorageAdoption, type DesktopStorageAdoptionLaunch } from './desktopStorageAdoption'
 
 const flatIndexFile = /^(?:index-v1|trace-index-v1|search-index-v1|scheduled-runs-v1)\.sqlite(?:-(?:wal|shm|journal))?$/
 const digest = (bytes: string): string => createHash('sha256').update(bytes).digest('hex')
@@ -30,7 +30,7 @@ export type DesktopStorageLaunch = {
   controls?: DesktopStorageControls
   locationFile?: string
   move?: DesktopMoveLaunch
-  adoption?: DesktopOpenAiOauthLaunch
+  adoption?: DesktopStorageAdoptionLaunch
   /** The worker must rediscover after recovery; callbacks cannot cross workerData. */
   discovery?: { profileDirectories: string[]; homeDir: string; defaultRoot?: string; executable?: string; platform?: NodeJS.Platform }
   recovery?: { protectedDirectories: string[]; archiveDirectories: string[]; controls: ControlSnapshot[] }
@@ -89,7 +89,7 @@ export function discoverDesktopStorage(
     mediaCache: app.commandLine.hasSwitch('media-cache-dir') ? app.commandLine.getSwitchValue('media-cache-dir') : undefined }
   const locationFile = storageLocationFile(homeDir)
   const move = desktopMoveLaunch(app.commandLine)
-  const adoption = desktopOpenAiOauthLaunch(app.commandLine)
+  const adoption = desktopStorageAdoptionLaunch(app.commandLine)
   if (move && adoption) throw new Error('Conflicting cold storage launch requests')
   if (move) {
     if (!app.commandLine.hasSwitch('user-data-dir') || !roots[0]) throw new Error('Desktop move requires its explicit target root')
@@ -350,7 +350,7 @@ export async function initializeDesktopStorage(
   if (initial.adoption) {
     assertDesktopStorageControls(initial.binding, initial.controls)
     const hooks = typeof createHooks === 'function' ? createHooks(initial.binding) : createHooks
-    const result = await executeDesktopOpenAiOauth(initial.binding, initial.adoption, hooks, validateRestrictedStartup)
+    const result = await executeDesktopStorageAdoption(initial.binding, initial.adoption, hooks, validateRestrictedStartup)
     if (result.state !== 'ready') throw new Error(result.issues.join('; ') || `Storage migration is ${result.state}`)
     const { acquireStorageWriter } = await import('../../../src/services/storageMigration')
     return { binding: initial.binding, ...await acquireStorageWriter(initial.binding) }
@@ -385,8 +385,7 @@ export async function initializeDesktopStorage(
   }
   let result = await recoverStorageMigration(launch.binding, hooks)
   if (result.state === 'validation-required') {
-    await validateRestrictedStartup(launch.binding)
-    result = await completeStorageMigration(launch.binding, result.id!, hooks)
+    result = await completeStorageMigration(launch.binding, result.id!, hooks, validateRestrictedStartup)
   }
   if (result.state === 'ready') {
     for (const plan of plans) await cleanupLegacyDataMigrationRecovery(plan, roots => hooks.assertQuiescent(roots), { ...options, platform: options.platform ?? hooks.platform })
@@ -401,8 +400,7 @@ export async function initializeDesktopStorage(
     }
   }
   if (result.state === 'validation-required') {
-    await validateRestrictedStartup(launch.binding)
-    result = await completeStorageMigration(launch.binding, result.id!, hooks)
+    result = await completeStorageMigration(launch.binding, result.id!, hooks, validateRestrictedStartup)
   }
   if (result.state !== 'ready') throw new Error(result.issues.join('; ') || `Storage migration is ${result.state}`)
   return await admit()
@@ -410,7 +408,7 @@ export async function initializeDesktopStorage(
 
 export function desktopStorageRelaunchArgs(argv: readonly string[], launch: Pick<DesktopStorageLaunch, 'move' | 'adoption'>): string[] {
   const consumed = launch.move ? ['user-data-dir', 'echoflow-move-source', 'echoflow-move-request', 'echoflow-move-proof'] :
-    launch.adoption ? ['echoflow-openai-oauth-source', 'echoflow-openai-oauth-id', 'echoflow-openai-oauth-proof'] : []
+    launch.adoption ? desktopStorageAdoptionSwitches(launch.adoption) : []
   const args: string[] = []
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!

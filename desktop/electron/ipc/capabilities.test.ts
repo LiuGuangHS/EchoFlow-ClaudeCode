@@ -55,12 +55,14 @@ describe('Electron IPC capabilities', () => {
     }
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.migrationStatus, undefined)).toBe(true)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.migrationStatus, {})).toBe(false)
-    const oauth = ELECTRON_IPC_CHANNELS.migrationOpenAiOauth
-    expect(validateElectronIpcPayload(oauth, undefined)).toBe(true)
-    for (const payload of [{}, { file: '/tmp/openai-oauth.json' }, { approved: true }]) {
-      expect(validateElectronIpcPayload(oauth, payload)).toBe(false)
+    const adoptionChannels = [ELECTRON_IPC_CHANNELS.migrationOpenAiOauth, ELECTRON_IPC_CHANNELS.migrationImAdoption]
+    for (const channel of adoptionChannels) {
+      expect(validateElectronIpcPayload(channel, undefined)).toBe(true)
+      for (const payload of [{}, { file: '/tmp/untrusted.json' }, { approved: true }]) {
+        expect(validateElectronIpcPayload(channel, payload)).toBe(false)
+      }
     }
-    for (const channel of [ELECTRON_IPC_CHANNELS.migrationPrepare, oauth, ELECTRON_IPC_CHANNELS.migrationStart, ELECTRON_IPC_CHANNELS.migrationStatus, ELECTRON_IPC_CHANNELS.migrationCancel]) {
+    for (const channel of [ELECTRON_IPC_CHANNELS.migrationPrepare, ...adoptionChannels, ELECTRON_IPC_CHANNELS.migrationStart, ELECTRON_IPC_CHANNELS.migrationStatus, ELECTRON_IPC_CHANNELS.migrationCancel]) {
       expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
     }
   })

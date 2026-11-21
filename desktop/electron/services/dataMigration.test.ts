@@ -19,7 +19,7 @@ import { recordDesktopStorageLaunch } from './desktopStorageProvenance'
 import { discoverDesktopStorage, initializeDesktopStorage } from './desktopStorageStartup'
 import { createStorageMigrationCredentialHooks } from './migrationCredentials'
 import type { DesktopMoveLaunch } from './desktopStorageMove'
-import { desktopOpenAiOauthRelaunchArgs } from './desktopStorageAdoption'
+import { desktopStorageAdoptionRelaunchArgs } from './desktopStorageAdoption'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -96,8 +96,8 @@ describe('desktop OpenAI sign-in migration', () => {
     await fs.writeFile(file, bytes)
     await fs.writeFile(path.join(path.dirname(file), 'unrelated.json'), 'keep')
     const target = path.join(f.source, 'echoflow-code', 'openai-oauth.json')
-    const restart = vi.fn<NonNullable<DataMigrationHooks['restartForOpenAiOauth']>>()
-    f.hooks.restartForOpenAiOauth = restart
+    const restart = vi.fn<NonNullable<DataMigrationHooks['restartForStorageAdoption']>>()
+    f.hooks.restartForStorageAdoption = restart
     return { ...f, file, bytes, tokens, target, restart, choose: async () => file }
   }
 
@@ -127,7 +127,7 @@ describe('desktop OpenAI sign-in migration', () => {
 
     const [relaunchRoot, request] = f.restart.mock.calls[0]!
     expect(relaunchRoot).toBe(root)
-    const args = desktopOpenAiOauthRelaunchArgs(['main.cjs', '--', 'positional'], request)
+    const args = desktopStorageAdoptionRelaunchArgs(['main.cjs', '--', 'positional'], request)
     expect(args.slice(-2)).toEqual(['--', 'positional'])
     const switches = new Map(args.slice(1, -2).map(arg => [arg.slice(2, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)]))
     const app = { ...appPaths, commandLine: { hasSwitch: (name: string) => switches.has(name), getSwitchValue: (name: string) => switches.get(name) ?? '' } }

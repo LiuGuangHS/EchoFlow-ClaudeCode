@@ -667,6 +667,7 @@ export type DesktopHost = {
     migration: {
       prepare(targetDir: string): Promise<MigrationPreview>
       prepareOpenAiOauth(): Promise<void>
+      prepareImAdoption(): Promise<void>
       start(id: string): Promise<void>
       status(): Promise<MigrationStatus | null>
       cancel(id: string): Promise<void>

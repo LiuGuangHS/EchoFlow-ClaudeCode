@@ -89,8 +89,7 @@ export async function prepareHeadlessStorage(options?: StorageStartupOptions): P
       ? await recoverStorageMigration(binding, options.hooks)
       : { state: 'ready', issues: [] }
     if (result.state === 'validation-required') {
-      await options.validateRestrictedStartup(binding)
-      result = await completeStorageMigration(binding, result.id!, options.hooks)
+      result = await completeStorageMigration(binding, result.id!, options.hooks, options.validateRestrictedStartup)
     }
     // Recovery can retire old sources or expose another candidate before writer admission.
     if (result.state === 'ready') sources = await discoverHeadlessStorageSources(binding)
@@ -99,8 +98,7 @@ export async function prepareHeadlessStorage(options?: StorageStartupOptions): P
       result = await executeStorageMigration({ binding, sources, hooks: options.hooks })
     }
     if (result.state === 'validation-required') {
-      await options.validateRestrictedStartup(binding)
-      result = await completeStorageMigration(binding, result.id!, options.hooks)
+      result = await completeStorageMigration(binding, result.id!, options.hooks, options.validateRestrictedStartup)
     }
     if (result.state !== 'ready') throw new Error(result.issues.join('; ') || `Storage migration is ${result.state}`)
   }
