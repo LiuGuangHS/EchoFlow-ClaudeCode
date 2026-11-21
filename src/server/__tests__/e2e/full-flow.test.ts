@@ -9,7 +9,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { fileURLToPath } from 'node:url'
-import { createSandboxedTestEnvironment, removeTestSandbox } from '../../../../scripts/pr/test-environment.js'
+import { createSandboxedTestEnvironment } from '../../../../scripts/pr/test-environment.js'
 import { ensureEchoFlowConfigRoot } from '../../../utils/echoFlowConfigRoot.js'
 
 let server: ReturnType<typeof Bun.serve>
@@ -44,7 +44,14 @@ async function stopTestServer() {
   } finally {
     for (const key of Object.keys(process.env)) delete process.env[key]
     Object.assign(process.env, originalEnv)
-    removeTestSandbox(sandboxHome)
+    if (sandboxHome) {
+      await fs.rm(sandboxHome, {
+        recursive: true,
+        force: true,
+        maxRetries: process.platform === 'win32' ? 5 : 0,
+        retryDelay: 100,
+      })
+    }
   }
 }
 
