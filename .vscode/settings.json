@@ -1,0 +1,4 @@
+{
+  "npm.packageManager": "bun",
+  "npm.scriptRunner": "bun"
+}
