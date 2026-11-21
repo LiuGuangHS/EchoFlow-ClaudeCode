@@ -36,7 +36,7 @@ export function getMacOsKeychainStorageServiceName(
   // Only add suffix for non-default directories to maintain backwards compatibility
   const dirHash = isDefaultDir
     ? ''
-    : `-${createHash('sha256').update(configDir).digest('hex').substring(0, 8)}`
+    : `-${createHash('sha256').update(configDir.normalize('NFC')).digest('hex').substring(0, 8)}`
   return `Claude Code${getOauthConfig().OAUTH_FILE_SUFFIX}${serviceSuffix}${dirHash}`
 }
 
