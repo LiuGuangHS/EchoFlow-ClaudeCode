@@ -33,7 +33,7 @@ test('desktop host dispatches independent sessions, exchanges messages, exposes 
   try {
     const workDir = join(home, 'project')
     await mkdir(workDir)
-    const runtime = await import('../../index.js')
+    const runtime = await import('../../serverRuntime.js')
     shutdown = runtime.stopServerRuntimeForShutdown
     server = runtime.startServer(0, '127.0.0.1')
     const base = `http://127.0.0.1:${server.port}`

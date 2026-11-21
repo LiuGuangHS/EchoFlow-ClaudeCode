@@ -9,85 +9,43 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { fileURLToPath } from 'node:url'
+import { createSandboxedTestEnvironment, removeTestSandbox } from '../../../../scripts/pr/test-environment.js'
 import { ensureEchoFlowConfigRoot } from '../../../utils/echoFlowConfigRoot.js'
 
 let server: ReturnType<typeof Bun.serve>
 let baseUrl: string
+let sandboxHome: string
 let tmpDir: string
-const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-const originalCliPath = process.env.CLAUDE_CLI_PATH
-const originalDisableTerminalShellEnv = process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+const originalEnv = { ...process.env }
 const mockSdkCliPath = fileURLToPath(new URL('../fixtures/mock-sdk-cli.ts', import.meta.url))
 
-// The models API derives its model list from these env vars (see
-// src/server/api/models.ts getEnvConfiguredAnthropicModels). A developer who
-// exports them for a custom provider would otherwise leak them into the
-// no-provider fixture and break the default-model assertions. Isolate them.
-const MODEL_ENV_KEYS = [
-  'ANTHROPIC_MODEL',
-  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
-  'ANTHROPIC_DEFAULT_SONNET_MODEL',
-  'ANTHROPIC_DEFAULT_OPUS_MODEL',
-] as const
-const originalModelEnv = Object.fromEntries(
-  MODEL_ENV_KEYS.map((key) => [key, process.env[key]]),
-) as Record<(typeof MODEL_ENV_KEYS)[number], string | undefined>
-
-function restoreEnv() {
-  for (const key of MODEL_ENV_KEYS) {
-    if (originalModelEnv[key] !== undefined) process.env[key] = originalModelEnv[key]
-    else delete process.env[key]
-  }
-  if (originalConfigDir !== undefined) {
-    process.env.CLAUDE_CONFIG_DIR = originalConfigDir
-  } else {
-    delete process.env.CLAUDE_CONFIG_DIR
-  }
-  if (originalCliPath !== undefined) {
-    process.env.CLAUDE_CLI_PATH = originalCliPath
-  } else {
-    delete process.env.CLAUDE_CLI_PATH
-  }
-  if (originalDisableTerminalShellEnv !== undefined) {
-    process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = originalDisableTerminalShellEnv
-  } else {
-    delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
-  }
-}
-
-afterAll(() => {
-  restoreEnv()
-})
-
-// Use dynamic import to avoid bundling issues
 async function startTestServer() {
-  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-e2e-'))
-  process.env.CLAUDE_CONFIG_DIR = tmpDir
-  process.env.CLAUDE_CLI_PATH = mockSdkCliPath
-  process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
-  for (const key of MODEL_ENV_KEYS) delete process.env[key]
+  sandboxHome = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-e2e-'))
+  const env = createSandboxedTestEnvironment(sandboxHome, { CLAUDE_CLI_PATH: mockSdkCliPath })
+  tmpDir = env.CLAUDE_CONFIG_DIR!
+  for (const key of Object.keys(process.env)) delete process.env[key]
+  Object.assign(process.env, env)
 
   // Establish fixture ownership before prepopulating the admitted root.
   await ensureEchoFlowConfigRoot(tmpDir)
   await fs.mkdir(path.join(tmpDir, 'projects'), { recursive: true })
 
-  const { startServer } = await import('../../index.js')
+  // The public entry's storage admission runs in storage-library-startup.test.ts with a fresh process HOME.
+  const { startServer } = await import('../../serverRuntime.js')
   server = startServer(0, '127.0.0.1')
   baseUrl = `http://127.0.0.1:${server.port}`
 }
 
 async function stopTestServer() {
-  server?.stop(true)
-  const { stopServerRuntimeForShutdown } = await import('../../index.js')
-  await stopServerRuntimeForShutdown()
-  const { releaseProcessStorage } = await import('../../../services/storageStartup.js')
-  await releaseProcessStorage()
-  await fs.rm(tmpDir, {
-    recursive: true,
-    force: true,
-    maxRetries: process.platform === 'win32' ? 5 : 0,
-    retryDelay: 100,
-  })
+  try {
+    await server?.stop(true)
+    const { stopServerRuntimeForShutdown } = await import('../../serverRuntime.js')
+    await stopServerRuntimeForShutdown()
+  } finally {
+    for (const key of Object.keys(process.env)) delete process.env[key]
+    Object.assign(process.env, originalEnv)
+    removeTestSandbox(sandboxHome)
+  }
 }
 
 async function api(method: string, path: string, body?: unknown): Promise<{ status: number; data: any }> {
