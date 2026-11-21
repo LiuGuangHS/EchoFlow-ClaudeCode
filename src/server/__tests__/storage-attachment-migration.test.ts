@@ -34,9 +34,9 @@ test('an IM-produced attachment survives real startup migration and both file-se
       const { AttachmentStore } = await import('./adapters/common/attachment/attachment-store.ts')
       await ensureEchoFlowConfigRoot(oldRoot)
       const store = new AttachmentStore()
-      const original = store.resolvePath('feishu', 'old-session', 'café.png')
+      const original = store.resolvePath('feishu', 'old-session', 'café fixture.png')
       assert.equal(await store.write(original, PNG), original)
-      const transcript = JSON.stringify({ type: 'user', attachment: { path: original }, unknown: { retain: true } }) + '\\n'
+      const transcript = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '@"' + original + '"' }] }, unknown: { retain: true } }) + '\\n'
       await fs.mkdir(path.join(oldRoot, 'projects', 'fixture'), { recursive: true })
       await fs.writeFile(path.join(oldRoot, 'projects', 'fixture', 'session.jsonl'), transcript)
       await fs.writeFile(path.join(home, 'expected-transcript'), transcript)
@@ -57,7 +57,8 @@ test('an IM-produced attachment survives real startup migration and both file-se
         const raw = await fs.readFile(path.join(home, 'expected-transcript'))
         assert.deepEqual(await fs.readFile(path.join(root, 'projects', 'fixture', 'session.jsonl')), raw)
         await assert.rejects(fs.lstat(oldRoot), { code: 'ENOENT' })
-        const original = JSON.parse(raw.toString('utf8')).attachment.path
+        const mention = JSON.parse(raw.toString('utf8')).message.content[0].text
+        const original = mention.slice(2, -1)
         const { handleFilesystemRoute } = await import('./src/server/api/filesystem.ts')
         const { handleLocalFile } = await import('./src/server/api/localFile.ts')
         const image = new URL('http://fixture.invalid/api/filesystem/file')
@@ -68,6 +69,27 @@ test('an IM-produced attachment survives real startup migration and both file-se
           assert.equal(response.headers.get('Content-Type'), 'image/png')
           assert.deepEqual(Buffer.from(await response.arrayBuffer()), PNG)
         }
+        const { getEmptyToolPermissionContext } = await import('./src/Tool.ts')
+        const { getAttachmentsForTesting } = await import('./src/utils/attachments.ts')
+        const { isUserProvidedImage } = await import('./src/utils/userProvidedImages.ts')
+        const permissionContext = getEmptyToolPermissionContext()
+        const context = {
+          readFileState: new Map(),
+          abortController: new AbortController(),
+          getAppState: () => ({ toolPermissionContext: permissionContext }),
+        }
+        const relocated = path.join(root, path.relative(oldRoot, original))
+        const imagePath = await fs.realpath(relocated)
+        for (const dir of [oldRoot, root]) {
+          const denied = path.relative(home, path.join(dir, 'im-downloads')).split(path.sep).join('/')
+          permissionContext.alwaysDenyRules.session = ['Read(~/' + denied + '/**)']
+          assert.deepEqual(await getAttachmentsForTesting.atMentionedFiles(mention, context), [])
+          assert.equal(isUserProvidedImage(imagePath), false)
+        }
+        delete permissionContext.alwaysDenyRules.session
+        const [attachment] = await getAttachmentsForTesting.atMentionedFiles(mention, context)
+        assert.equal(attachment?.content.type, 'image')
+        assert.equal(isUserProvidedImage(imagePath), true)
         const { AttachmentStore } = await import('./adapters/common/attachment/attachment-store.ts')
         const current = new AttachmentStore().resolvePath('feishu', 'current-session', 'next.png')
         assert.equal(current, path.join(root, 'im-downloads', 'feishu', 'current-session', 'next.png'))
