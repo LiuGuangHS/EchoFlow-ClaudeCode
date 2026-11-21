@@ -148,7 +148,7 @@ for (const platform of ['telegram', 'feishu', 'dingtalk', 'wechat', 'whatsapp', 
     `
     const child = Bun.spawn([process.execPath, '--no-env-file', '--eval', script], {
       env: createSandboxedTestEnvironment(directory, { CLAUDE_CONFIG_DIR: root }),
-      stdout: 'pipe', stderr: 'pipe',
+      stdout: 'pipe', stderr: 'pipe', timeout: 20_000,
     })
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
@@ -163,5 +163,5 @@ for (const platform of ['telegram', 'feishu', 'dingtalk', 'wechat', 'whatsapp', 
       expect(await readdir(root)).toEqual(['fixture.txt'])
       expect(await readFile(join(root, 'fixture.txt'), 'utf8')).toBe('keep')
     }
-  })
+  }, 25_000)
 }

@@ -1,16 +1,19 @@
 import { afterEach, expect, test } from 'bun:test'
 import { link, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
-import { useMultiFileAuthState } from '@whiskeysockets/baileys/lib/Utils/use-multi-file-auth-state.js'
-import { runStorageAdoptionCommand } from '../../src/services/storageAdoption.js'
+import { runStorageAdoptionCommand } from './storageAdoption.js'
 import {
-  armWhatsAppStorageApproval, completeStorageMigration, executeStorageMigration, previewWhatsAppAdoption,
-  readApprovedWhatsAppSources, recoverStorageMigration,
-} from '../../src/services/storageMigration.js'
-import { resolveStorageBinding } from '../../src/utils/echoFlowConfigRoot.js'
+  armWhatsAppStorageApproval, cancelColdStorageApproval, completeStorageMigration, executeStorageMigration,
+  previewWhatsAppAdoption, readApprovedStorageTransaction, readApprovedWhatsAppSources, recoverStorageMigration,
+} from './storageMigration.js'
+import { buildEchoFlowOwnershipMarker, resolveStorageBinding } from '../utils/echoFlowConfigRoot.js'
 import { createSandboxedTestEnvironment } from '../../scripts/pr/test-environment.js'
+
+const requireAdapter = createRequire(new URL('../../adapters/package.json', import.meta.url))
+const { useMultiFileAuthState } = await import(requireAdapter.resolve('@whiskeysockets/baileys/lib/Utils/use-multi-file-auth-state.js'))
 
 const accountJid = '15550100001@s.whatsapp.net'
 const appKey = 'fixture-key'
@@ -96,7 +99,6 @@ test.each([false, true])('CLI migrates the whole account and preserves the saved
 test('an existing config can bind a custom legacy directory without replacing the config', async () => {
   const f = await fixture(true)
   const activeConfig = path.join(f.binding.root, 'adapters.json')
-  const { buildEchoFlowOwnershipMarker } = await import('../../src/utils/echoFlowConfigRoot.js')
   await mkdir(f.binding.root)
   await writeFile(path.join(f.binding.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
   await writeFile(activeConfig, f.configBytes)
@@ -131,14 +133,23 @@ test('CLI failure keeps the account identifier in rejected filenames private', a
   } finally { process.exitCode = previousExitCode ?? 0 }
 })
 
-test('a missing app-state key blocks publication and keeps all original account files', async () => {
+test.each(['missing', 'empty'] as const)('rejects an app-state key that is %s before taking ownership of the cold approval', async key => {
   const f = await fixture(false, true)
+  await mkdir(f.binding.root)
+  await writeFile(path.join(f.binding.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+  if (key === 'empty') await writeFile(path.join(f.directory, `app-state-sync-key-${appKey}.json`), '{}')
+  const snapshot = async () => Promise.all((await readdir(f.directory)).sort().map(async name => [name, await readFile(path.join(f.directory, name))]))
+  const before = await snapshot()
   const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)
-  const sources = await readApprovedWhatsAppSources(f.binding, await armWhatsAppStorageApproval(f.binding, preview))
+  const launch = await armWhatsAppStorageApproval(f.binding, preview, true)
+  const sources = await readApprovedWhatsAppSources(f.binding, launch)
   const result = await executeStorageMigration({ binding: f.binding, sources, hooks: f.hooks })
   expect(result.state).toBe('blocked')
   expect(result.issues.join()).toContain('WhatsApp authentication directory could not be validated')
-  expect((await readdir(f.directory)).sort()).toEqual(['creds.json', 'creds.json.bak'])
+  expect(await readApprovedStorageTransaction(f.binding, launch.id)).toBeUndefined()
+  await cancelColdStorageApproval(f.binding, launch.id)
+  expect((await recoverStorageMigration(f.binding, f.hooks)).state).toBe('ready')
+  expect(await snapshot()).toEqual(before)
   await expect(readdir(path.join(f.binding.root, preview.account.destination))).rejects.toMatchObject({ code: 'ENOENT' })
   expect(await readFile(f.config, 'utf8')).toBe(f.configBytes)
 })

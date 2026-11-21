@@ -14,7 +14,7 @@ const checks: Check[] = [
   },
   {
     title: 'Exact IM config and complete WhatsApp sign-in adoption',
-    command: ['bun', '--no-env-file', 'test', './src/services/storageAdoption.test.ts', './adapters/whatsapp/storageAdoption.test.ts', './adapters/whatsapp/storageMigration.test.ts'],
+    command: ['bun', '--no-env-file', 'test', './src/services/storageAdoption.test.ts', './adapters/whatsapp/storageAdoption.test.ts', './src/services/storageMigration.whatsapp.test.ts'],
   },
   {
     title: 'Private product scratch containment and cleanup',

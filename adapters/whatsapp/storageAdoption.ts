@@ -67,7 +67,9 @@ async function validateSnapshot(path: string, expectedAccountJid: string): Promi
     if (id === undefined) return true
     if (typeof id !== 'string' || !id) return false
     const name = `app-state-sync-key-${id.replaceAll('/', '__').replaceAll(':', '-')}.json`
-    return files.has(name) && Boolean((await state.keys.get('app-state-sync-key', [id]))[id])
+    if (!files.has(name)) return false
+    const keyData = (await state.keys.get('app-state-sync-key', [id]))[id]?.keyData
+    return keyData instanceof Uint8Array && keyData.length > 0
   }
 
   if (!await matchesAccount(state.creds)) return false
