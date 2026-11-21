@@ -1611,14 +1611,22 @@ describe('local index coordinator', () => {
     }
   })
 
-  it('narrates the activity backfill only during the startup sweep', async () => {
+  it('runs a real activity backfill without invalidating session reads or narrating later sweeps', async () => {
     const root = await createTempDir('coordinator-activity-narration')
     const configDir = join(root, 'config')
     const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     await createRealTranscript(configDir, '-repo', 'activity-narration', 'Initial')
+    const subagent = join(configDir, 'projects', '-repo', 'activity-narration', 'subagents', 'agent-activity.jsonl')
+    await mkdir(dirname(subagent), { recursive: true })
+    await writeFile(subagent, `${JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: 'Subagent activity' },
+      timestamp: '2026-01-01T00:00:01.000Z',
+    })}\n`)
     rememberEnvironment()
     process.env.CLAUDE_CONFIG_DIR = configDir
     const lines: string[] = []
+    let revisionBeforeBackfill: string | null | undefined
     let watcherOptions!: ReconciliationWatcherOptions
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
@@ -1628,20 +1636,26 @@ describe('local index coordinator', () => {
         watcherOptions = options
         return idleWatcher()
       },
-      log: line => lines.push(line),
+      log: line => {
+        lines.push(line)
+        if (line.startsWith('activity backfill start')) revisionBeforeBackfill = coordinator.getSessionReadRevision?.()
+      },
     })
 
     try {
       await coordinator.start()
-      await waitFor(() => lines.some(line => line.startsWith('activity backfill complete')))
+      await waitFor(() => coordinator.isActivityScopeReady())
       expect(lines).toContainEqual(expect.stringMatching(/^activity backfill start \(\d+ known sources\)$/))
       expect(lines).toContainEqual(expect.stringMatching(
-        /^activity backfill complete: 1\/1 indexed, 0 degraded in \d+ ms$/,
+        /^activity backfill complete: 2\/2 indexed, 0 degraded in \d+ ms$/,
       ))
+      expect(revisionBeforeBackfill).toEqual(expect.any(String))
+      expect(coordinator.getSessionReadRevision?.()).toBe(revisionBeforeBackfill)
 
       lines.length = 0
       await watcherOptions.onBatch({ paths: [], fullSweep: true })
       expect(lines).toEqual([])
+      expect(coordinator.getSessionReadRevision?.()).toBe(revisionBeforeBackfill)
     } finally {
       await coordinator.stop()
     }
