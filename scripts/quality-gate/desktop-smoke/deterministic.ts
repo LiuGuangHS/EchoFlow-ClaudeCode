@@ -2,6 +2,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileS
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { getEchoFlowInternalDir } from '../../../src/utils/echoFlowConfigRoot'
 import { runDesktopUiTeamPlanSmoke, TEAM_SMOKE_MODEL, TEAM_SMOKE_PROVIDER } from './team-plan'
 import { buildMockToolPrompt } from '../agent-flow/scenarios'
 import { applyUserStateGuard, createQualityGateSandbox } from '../sandbox'
@@ -88,9 +89,9 @@ export function buildDesktopUiSmokePrompt(projectDir: string) {
 }
 
 export function seedDesktopUiSmokeProvider(configDir: string) {
-  const ccHahaDir = join(configDir, 'cc-haha')
-  mkdirSync(ccHahaDir, { recursive: true })
-  writeFileSync(join(ccHahaDir, 'providers.json'), JSON.stringify({
+  const internalDir = getEchoFlowInternalDir(configDir)
+  mkdirSync(internalDir, { recursive: true })
+  writeFileSync(join(internalDir, 'providers.json'), JSON.stringify({
     activeId: SMOKE_PROVIDER_ID,
     providers: [{
       id: SMOKE_PROVIDER_ID,

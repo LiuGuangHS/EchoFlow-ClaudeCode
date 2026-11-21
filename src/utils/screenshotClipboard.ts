@@ -1,5 +1,5 @@
-import { mkdir, unlink, writeFile } from 'fs/promises'
-import { tmpdir } from 'os'
+import { rm, writeFile } from 'fs/promises'
+import { createPrivateStorageTempDirectory } from './cachePaths.js'
 import { join } from 'path'
 import { type AnsiToPngOptions, ansiToPng } from './ansiToPng.js'
 import { execFileNoThrowWithCwd } from './execFileNoThrow.js'
@@ -18,22 +18,19 @@ export async function copyAnsiToClipboard(
   options?: AnsiToPngOptions,
 ): Promise<{ success: boolean; message: string }> {
   try {
-    const tempDir = join(tmpdir(), 'claude-code-screenshots')
-    await mkdir(tempDir, { recursive: true })
-
-    const pngPath = join(tempDir, `screenshot-${Date.now()}.png`)
-    const pngBuffer = ansiToPng(ansiText, options)
-    await writeFile(pngPath, pngBuffer)
-
-    const result = await copyPngToClipboard(pngPath)
-
+    const tempDir = await createPrivateStorageTempDirectory('screenshot-')
     try {
-      await unlink(pngPath)
-    } catch {
-      // Ignore cleanup errors
+      const pngPath = join(tempDir, `screenshot-${Date.now()}.png`)
+      const pngBuffer = ansiToPng(ansiText, options)
+      await writeFile(pngPath, pngBuffer)
+      return await copyPngToClipboard(pngPath)
+    } finally {
+      try {
+        await rm(tempDir, { recursive: true, force: true })
+      } catch {
+        // Ignore cleanup errors
+      }
     }
-
-    return result
   } catch (error) {
     logError(error)
     return {

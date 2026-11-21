@@ -17,6 +17,7 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { areStorageWritesFrozen } from './storageMaintenance'
+import { getEchoFlowInternalDir, resolveStorageBinding } from '../../../src/utils/echoFlowConfigRoot'
 
 export const PET_WINDOW_WIDTH = 384
 export const PET_WINDOW_HEIGHT = 400
@@ -136,24 +137,11 @@ function petWindowAnchor(state: PetWindowState): Point {
   }
 }
 
-function resolveHomePath(input: string, homeDir: string): string {
-  if (input === '~') return homeDir
-  if (input.startsWith(`~${path.sep}`) || input.startsWith('~/') || input.startsWith('~\\')) {
-    return path.join(homeDir, input.slice(2))
-  }
-  return input
-}
-
 export function petWindowStatePath(
   env: NodeJS.ProcessEnv = process.env,
   homeDir: string = os.homedir(),
 ): string {
-  const normalizedHome = path.resolve(homeDir)
-  const configuredRoot = env.CLAUDE_CONFIG_DIR?.trim()
-  const configRoot = configuredRoot
-    ? path.resolve(resolveHomePath(configuredRoot, normalizedHome))
-    : path.join(normalizedHome, '.claude')
-  return path.join(configRoot, 'cc-haha', PET_WINDOW_STATE_FILE)
+  return path.join(getEchoFlowInternalDir(resolveStorageBinding({ env, homeDir }).root), PET_WINDOW_STATE_FILE)
 }
 
 export function readPetWindowPosition(

@@ -1,5 +1,5 @@
 import { forwardRef, useState, useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from 'react'
-import { AppWindow, Brain, ChevronDown, FolderInput, RotateCw } from 'lucide-react'
+import { Brain, ChevronDown, FolderOpen, RotateCw } from 'lucide-react'
 import {
   useSettingsStore,
   UI_ZOOM_DEFAULT,
@@ -32,7 +32,7 @@ import { SelectField } from '@/components/ui/SelectField'
 import { PermissionModeSelector } from '../../components/controls/PermissionModeSelector'
 import { ReasoningEffortPopover } from '../../components/controls/ReasoningEffortPopover'
 import { isDarkThemeMode, isLightThemeMode, isMaxConcurrentSubagents } from '../../types/settings'
-import type { ThemeMode, NetworkProxyMode, WebSearchMode, AppMode, ChatSendBehavior, OutputStyleSource, ReasoningEffortLevel } from '../../types/settings'
+import type { ThemeMode, NetworkProxyMode, WebSearchMode, ChatSendBehavior, OutputStyleSource, ReasoningEffortLevel } from '../../types/settings'
 import type { Locale } from '../../i18n'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -45,7 +45,6 @@ import { isTouchH5Document } from '../../lib/touchH5'
 import { MODEL_REASONING_EFFORTS } from '../../../../src/shared/modelReasoning'
 import { AUTO_QUESTION_TIMEOUT_OPTIONS } from '../../../../src/shared/autoQuestionSettings'
 import { ChatAppearanceSettings } from './ChatAppearanceSettings'
-import { DataMigrationSettings } from './DataMigrationSettings'
 import { TabBehaviorSettings } from './TabBehaviorSettings'
 import { LeanModeSettings } from './LeanModeSettings'
 import { PreventSleepSettings } from './PreventSleepSettings'
@@ -134,7 +133,6 @@ export function GeneralSettings() {
     appMode,
     appModeRequiresRestart,
     fetchAppMode,
-    setAppMode: setAppModeAction,
     uiZoom,
     setUiZoom,
     proxyManagedSettingsWarning,
@@ -167,13 +165,7 @@ export function GeneralSettings() {
   const [subagentLimitInput, setSubagentLimitInput] = useState(String(maxConcurrentSubagents ?? ''))
   const [subagentLimitSaving, setSubagentLimitSaving] = useState(false)
   const [subagentLimitError, setSubagentLimitError] = useState<string | null>(null)
-  const [modeSwitchConfirmOpen, setModeSwitchConfirmOpen] = useState(false)
-  const [pendingMode, setPendingMode] = useState<AppMode | null>(null)
-  const [pendingPortableDir, setPendingPortableDir] = useState<string | null>(null)
-  const [portableDirDraft, setPortableDirDraft] = useState('')
-  const [migrationRunning, setMigrationRunning] = useState(false)
-  const [modeActionRunning, setModeActionRunning] = useState(false)
-  const [modeError, setModeError] = useState<string | null>(null)
+  const [storageOpenError, setStorageOpenError] = useState<string | null>(null)
   const [uiZoomDraft, setUiZoomDraft] = useState(uiZoom)
   const [retentionInput, setRetentionInput] = useState(String(cleanupPeriodDays ?? DEFAULT_CLEANUP_PERIOD_DAYS))
   const [retentionConfirmOpen, setRetentionConfirmOpen] = useState(false)
@@ -281,10 +273,6 @@ export function GeneralSettings() {
     if (!isDesktopRuntime()) return
     void fetchAppMode()
   }, [fetchAppMode])
-
-  useEffect(() => {
-    setPortableDirDraft(appMode.portableDir ?? '')
-  }, [appMode.portableDir])
 
   const LANGUAGES: Array<{ value: Locale; label: string }> = [
     { value: 'en', label: 'English' },
@@ -692,72 +680,13 @@ export function GeneralSettings() {
     }
   }
 
-  const openPortableDirPicker = async () => {
-    setModeError(null)
-    const host = getDesktopHost()
-    if (!host.capabilities.dialogs) {
-      setModeError(t('settings.general.storagePickerError'))
-      return
-    }
+  const openDataDirectory = async () => {
+    if (!activeConfigDir) return
+    setStorageOpenError(null)
     try {
-      const selected = await host.dialogs.open({
-        directory: true,
-        multiple: false,
-        title: t('settings.general.storageChooseDirTitle'),
-      })
-      if (typeof selected === 'string') {
-        setPortableDirDraft(selected)
-      }
-    } catch {
-      setModeError(t('settings.general.storagePickerError'))
-    }
-  }
-
-  const openModeSwitchConfirm = (mode: AppMode) => {
-    if (isEnvironmentConfigDir) {
-      setModeError(t('settings.general.storageEnvironmentSwitchBlocked'))
-      return
-    }
-
-    const portableDir = portableDirDraft.trim()
-    if (mode === 'portable' && !portableDir) {
-      setModeError(t('settings.general.storageNoDirError'))
-      return
-    }
-
-    setModeError(null)
-    setPendingMode(mode)
-    setPendingPortableDir(mode === 'portable' ? portableDir : null)
-    setModeSwitchConfirmOpen(true)
-  }
-
-  const closeModeSwitchConfirm = () => {
-    if (modeActionRunning) return
-    setModeSwitchConfirmOpen(false)
-    setPendingMode(null)
-    setPendingPortableDir(null)
-  }
-
-  const confirmModeSwitch = async () => {
-    if (!pendingMode) return
-
-    setModeActionRunning(true)
-    setModeError(null)
-    try {
-      await setAppModeAction(pendingMode, pendingPortableDir)
-      const host = getDesktopHost()
-      await host.appMode.prepareRestart()
-      await host.appMode.restart()
+      await getDesktopHost().shell.openPath(activeConfigDir)
     } catch (error) {
-      setModeError(
-        error instanceof Error
-          ? error.message
-          : t('settings.general.storageRestartError'),
-      )
-      setModeSwitchConfirmOpen(false)
-      setPendingMode(null)
-      setPendingPortableDir(null)
-      setModeActionRunning(false)
+      setStorageOpenError(error instanceof Error ? error.message : t('settings.general.storageOpenError'))
     }
   }
 
@@ -1619,107 +1548,28 @@ export function GeneralSettings() {
       )}
 
       {isDesktopRuntime() && (
-        <SettingsSection title={t('settings.general.storageTitle')} description={t('settings.general.storageDescription')}>
+        <SettingsSection title={t('settings.general.storageTitle')}>
           <SettingsGroup>
-            <button
-              type="button"
-              disabled={migrationRunning}
-              onClick={() => {
-                if (isEnvironmentConfigDir) {
-                  setModeError(t('settings.general.storageEnvironmentSwitchBlocked'))
-                  return
-                }
-                if (appMode.mode !== 'default') {
-                  openModeSwitchConfirm('default')
-                }
-              }}
-              aria-pressed={appMode.mode === 'default' && !isEnvironmentConfigDir}
-              className="group flex w-full items-start gap-3 px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)]"
-            >
-              <StorageOptionText
-                selected={appMode.mode === 'default' && !isEnvironmentConfigDir}
-                icon={<AppWindow size={16} strokeWidth={1.75} aria-hidden="true" />}
-                title={t('settings.general.storageSystemTitle')}
-                description={t('settings.general.storageSystemDescription')}
-              />
-            </button>
-
-            <div className="px-4 py-3">
-              <div className="flex items-start gap-3">
-                <StorageOptionText
-                  selected={appMode.mode === 'portable' && !isEnvironmentConfigDir}
-                  icon={<FolderInput size={16} strokeWidth={1.75} aria-hidden="true" />}
-                  title={t('settings.general.storagePortableTitle')}
-                  description={t('settings.general.storagePortableDescription')}
-                />
-              </div>
-              <div className="mt-3 flex items-end gap-2 pl-7">
-                <Input
-                  id="portable-data-dir"
-                  label={t('settings.general.storagePortableDirLabel')}
-                  size="md"
-                  containerClassName="min-w-0 flex-1"
-                  value={portableDirDraft}
-                  placeholder={t('settings.general.storagePortableDirPlaceholder')}
-                  onChange={(event) => {
-                    setPortableDirDraft(event.target.value)
-                    setModeError(null)
-                  }}
-                  className="font-mono text-xs"
-                  disabled={migrationRunning}
-                />
-                <Button
-                  type="button"
-                  size="base"
-                  variant="secondary"
-                  className="shrink-0 whitespace-nowrap"
-                  onClick={() => void openPortableDirPicker()}
-                  disabled={migrationRunning}
-                >
-                  {t('settings.general.storageChooseDir')}
-                </Button>
-              </div>
-              <div className="mt-3 flex justify-end">
-                <Button
-                  type="button"
-                  size="base"
-                  variant="secondary"
-                  disabled={modeActionRunning || migrationRunning || (appMode.mode === 'portable' && portableDirDraft.trim() === (appMode.portableDir ?? ''))}
-                  onClick={() => openModeSwitchConfirm('portable')}
-                >
-                  {t('settings.general.storageApplyPortable')}
-                </Button>
-              </div>
-            </div>
-
-            <SettingsBlock className="space-y-3">
-              {activeConfigDir && (
-                <div>
-                  <div className="text-xs text-[var(--color-text-tertiary)]">{t('settings.general.storageActiveDir')}</div>
-                  <div className="mt-1 break-all rounded-[var(--radius-sm)] bg-[var(--color-surface-container)] px-2 py-1 font-mono text-xs text-[var(--color-text-secondary)]">
-                    {activeConfigDir}
-                  </div>
+            <SettingsRow
+              title={t('settings.general.storageActiveDir')}
+              description={activeConfigDir && <span className="break-all font-mono">{activeConfigDir}</span>}
+              footer={(isEnvironmentConfigDir || appModeRequiresRestart || storageOpenError) ? (
+                <div className="space-y-2">
+                  {isEnvironmentConfigDir && <StorageNotice>{t('settings.general.storageEnvironmentHint')}</StorageNotice>}
+                  {appModeRequiresRestart && <StorageNotice>{t('settings.general.storageRestartHint')}</StorageNotice>}
+                  {storageOpenError && <p role="alert" className="text-xs text-[var(--color-error)]">{storageOpenError}</p>}
                 </div>
+              ) : undefined}
+            >
+              {activeConfigDir && getDesktopHost().capabilities.shell && (
+                <Button size="base" variant="secondary" icon={<FolderOpen size={14} strokeWidth={1.75} aria-hidden="true" />} onClick={() => void openDataDirectory()}>
+                  {t('settings.general.storageOpenDir')}
+                </Button>
               )}
-              {isEnvironmentConfigDir && (
-                <StorageNotice>{t('settings.general.storageEnvironmentHint')}</StorageNotice>
-              )}
-              {appModeRequiresRestart && (
-                <StorageNotice>{t('settings.general.storageRestartHint')}</StorageNotice>
-              )}
-              <p className="text-xs leading-[1.5] text-[var(--color-text-tertiary)]">
-                {t('settings.general.storageMoveHint')}
-              </p>
-              {modeError && (
-                <p className="text-xs text-[var(--color-error)]">{modeError}</p>
-              )}
-            </SettingsBlock>
-
-            <DataMigrationSettings
-              environmentControlled={isEnvironmentConfigDir}
-              disabled={modeActionRunning || appModeRequiresRestart}
-              onBusyChange={setMigrationRunning}
-            />
+              <Button size="base" variant="link" onClick={() => useUIStore.getState().setPendingSettingsTab('data')}>
+                {t('settings.general.storageOpenSettings')}
+              </Button>
+            </SettingsRow>
           </SettingsGroup>
         </SettingsSection>
       )}
@@ -1733,32 +1583,6 @@ export function GeneralSettings() {
         }}
       />
 
-      {/* Confirm dialog for mode switch */}
-      <ConfirmDialog
-        open={modeSwitchConfirmOpen}
-        onClose={closeModeSwitchConfirm}
-        onConfirm={() => void confirmModeSwitch()}
-        title={t('settings.general.modeSwitchTitle')}
-        body={(
-          <div className="space-y-3 text-[13px] leading-6 text-[var(--color-text-secondary)]">
-            <p>
-              {pendingMode === 'portable'
-                ? t('settings.general.storageSwitchPortableBody')
-                : t('settings.general.storageSwitchDefaultBody')}
-            </p>
-            {pendingMode === 'portable' && pendingPortableDir && (
-              <div className="break-all rounded-[var(--radius-md)] bg-[var(--color-surface-container)] px-3 py-2 font-mono text-xs text-[var(--color-text-secondary)]">
-                {pendingPortableDir}
-              </div>
-            )}
-            <p>{t('settings.general.storageSwitchRestartBody')}</p>
-          </div>
-        )}
-        confirmLabel={t('settings.general.modeSwitchConfirm')}
-        cancelLabel={t('common.cancel')}
-        confirmVariant="primary"
-        loading={modeActionRunning}
-      />
       <ConfirmDialog
         open={promptSuggestionsConfirmOpen}
         onClose={() => {
@@ -1912,37 +1736,6 @@ function ThemeCard({ theme, label, selected, onSelect }: {
         {label}
       </span>
     </button>
-  )
-}
-
-/** Radio mark + icon + title/description for one data-storage choice. */
-function StorageOptionText({ selected, icon, title, description }: {
-  selected: boolean
-  icon: ReactNode
-  title: string
-  description: string
-}) {
-  return (
-    <>
-      <span
-        aria-hidden="true"
-        className={cx(
-          'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border',
-          selected
-            ? 'border-[1.5px] border-[var(--color-brand)]'
-            : 'border-[var(--color-border-strong)] group-hover:border-[var(--color-text-secondary)]',
-        )}
-      >
-        {selected && <span className="h-2 w-2 rounded-full bg-[var(--color-brand)]" />}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5 text-[13px] font-medium leading-5 text-[var(--color-text-primary)]">
-          <span className="text-[var(--color-text-tertiary)]">{icon}</span>
-          {title}
-        </span>
-        <span className="mt-0.5 block text-xs leading-[1.5] text-[var(--color-text-tertiary)]">{description}</span>
-      </span>
-    </>
   )
 }
 

@@ -294,6 +294,7 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
       restart: () => invoke(ELECTRON_IPC_CHANNELS.appModeRestart),
       migration: {
         prepare: targetDir => invoke(ELECTRON_IPC_CHANNELS.migrationPrepare, { targetDir }),
+        prepareOpenAiOauth: () => invoke(ELECTRON_IPC_CHANNELS.migrationOpenAiOauth),
         start: id => invoke(ELECTRON_IPC_CHANNELS.migrationStart, { id }),
         status: () => invoke(ELECTRON_IPC_CHANNELS.migrationStatus),
         cancel: id => invoke(ELECTRON_IPC_CHANNELS.migrationCancel, { id }),

@@ -46,7 +46,7 @@ describe('Markdown subagent to OpenAI request integration', () => {
     tempRoot = await mkdtemp(join(tmpdir(), 'subagent-openai-request-'))
     configDir = join(tempRoot, 'claude-config')
     projectDir = join(tempRoot, 'project')
-    tokenFile = join(tempRoot, 'openai-oauth.json')
+    tokenFile = join(configDir, 'openai-oauth.json')
 
     await mkdir(join(configDir, 'agents'), { recursive: true })
     await mkdir(join(projectDir, '.git'), { recursive: true })

@@ -2,7 +2,7 @@
  * Personal voice vocabulary: terms the correction model should know, terms it
  * keeps fixing (suggestions), and terms the user said no to.
  *
- * Stored in `<cc-haha>/voice-vocabulary.json`:
+ * Stored in `<storage-root>/echoflow-code/voice-vocabulary.json`:
  *   { version: 1, terms, suggestions, dismissed: string[] (lowercased), history }
  * Writes are serialized per file and atomic (tmp + rename). Unknown top-level
  * and per-entry fields survive every write. An unparsable file reads as empty

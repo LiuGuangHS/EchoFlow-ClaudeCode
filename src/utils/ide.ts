@@ -13,6 +13,7 @@ import type {
   ConnectedMCPServer,
   MCPServerConnection,
 } from '../services/mcp/types.js'
+import { createPrivateStorageTempDirectory } from './cachePaths.js'
 import { getGlobalConfig, saveGlobalConfig } from './config.js'
 import { env } from './env.js'
 import { getClaudeConfigHomeDir, isEnvTruthy } from './envUtils.js'
@@ -1437,10 +1438,8 @@ async function installFromArtifactory(command: string): Promise<string> {
 
     // Download the .vsix file from artifactory
     const vsixUrl = `https://artifactory.infra.ant.dev/artifactory/armorcode-claude-code-internal/claude-vscode-releases/${version}/claude-code.vsix`
-    const tempVsixPath = join(
-      os.tmpdir(),
-      `claude-code-${version}-${Date.now()}.vsix`,
-    )
+    const tempDirectory = await createPrivateStorageTempDirectory('ide-extension-')
+    const tempVsixPath = join(tempDirectory, 'claude-code.vsix')
 
     try {
       const vsixResponse = await axios.get(vsixUrl, {
@@ -1476,9 +1475,9 @@ async function installFromArtifactory(command: string): Promise<string> {
 
       return version
     } finally {
-      // Clean up the temporary file
+      // Clean up the disposable download directory
       try {
-        await fs.unlink(tempVsixPath)
+        await fs.rm(tempDirectory, { recursive: true, force: true })
       } catch {
         // Ignore cleanup errors
       }

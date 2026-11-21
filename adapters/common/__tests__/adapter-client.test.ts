@@ -156,7 +156,7 @@ describe('createAdapterClient', () => {
 describe('IM adapter entrypoint wiring', () => {
   for (const platform of PLATFORMS) {
     it(`${platform} builds its client through createAdapterClient`, () => {
-      const source = fs.readFileSync(path.join(ADAPTERS_DIR, platform, 'index.ts'), 'utf-8')
+      const source = fs.readFileSync(path.join(ADAPTERS_DIR, platform, 'runtime.ts'), 'utf-8')
         // Strip comments so a mention in prose cannot satisfy the assertions.
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/(^|[^:])\/\/.*$/gm, '$1')

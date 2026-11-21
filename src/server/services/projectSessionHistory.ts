@@ -93,8 +93,10 @@ export class ProjectSessionHistory {
     // position but not a rendered row, so sparse pages still make progress.
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const mutation = this.source.mutation()
+      const archives = this.source.archiveSnapshot()
+      const legacyRevision = archives.migrationComplete ? null : this.source.revision()
       const catalog = await this.loadCatalog()
-      const archiveStates = classifySessionArchives(this.source.archiveSnapshot(), catalog)
+      const archiveStates = classifySessionArchives(archives, catalog)
       const sessions: SessionListItem[] = []
       let nextOffset = offset
       while (nextOffset < snapshot.rows.length && sessions.length < limit && nextOffset - offset < limit * 2) {
@@ -103,7 +105,7 @@ export class ProjectSessionHistory {
         const session = await this.source.hydrate(row, snapshot.archived)
         if (session) sessions.push(session)
       }
-      if (mutation !== this.source.mutation()) continue
+      if (mutation !== this.source.mutation() || (legacyRevision !== null && legacyRevision !== this.source.revision())) continue
       if (scope !== this.source.scope()) throw this.expired()
       snapshot.expiresAt = this.source.now() + SNAPSHOT_TTL_MS
       this.snapshots.delete(snapshotId)
@@ -129,9 +131,11 @@ export class ProjectSessionHistory {
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const mutation = this.source.mutation()
+      const archives = this.source.archiveSnapshot()
+      const legacyRevision = archives.migrationComplete ? null : this.source.revision()
       const catalog = await this.loadCatalog()
       if (scope !== this.source.scope()) throw this.expired()
-      const archiveStates = classifySessionArchives(this.source.archiveSnapshot(), catalog)
+      const archiveStates = classifySessionArchives(archives, catalog)
 
       const grouped = new Map<string, { total: number; archivedTotal: number; rows: ProjectHistoryRow[]; seen: Set<string> }>()
       for (const row of catalog) {
@@ -166,7 +170,7 @@ export class ProjectSessionHistory {
           if (hydrated >= limit) break
         }
       }
-      if (mutation !== this.source.mutation()) continue
+      if (mutation !== this.source.mutation() || (legacyRevision !== null && legacyRevision !== this.source.revision())) continue
       if (scope !== this.source.scope()) throw this.expired()
 
       sessions.sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt) || a.id.localeCompare(b.id))

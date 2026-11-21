@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import {
   startBackgroundIndexesInPriorityOrder,
   stopServerRuntimeForShutdown,
-} from '../index.js'
+} from '../serverRuntime.js'
 import { conversationService } from '../services/conversationService.js'
 import { cronScheduler } from '../services/cronScheduler.js'
 import { teamWatcher } from '../services/teamWatcher.js'

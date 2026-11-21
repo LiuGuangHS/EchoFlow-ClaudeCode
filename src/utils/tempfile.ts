@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'crypto'
-import { tmpdir } from 'os'
 import { join } from 'path'
+import { ensurePrivateStorageTempRoot } from './cachePaths.js'
 
 /**
  * Generate a temporary file path.
@@ -21,11 +21,12 @@ export function generateTempFilePath(
   extension: string = '.md',
   options?: { contentHash?: string },
 ): string {
+  if (!/^[a-zA-Z0-9_-]+$/.test(prefix) || !/^(?:\.[a-zA-Z0-9]+)?$/.test(extension)) throw new Error('Invalid storage temporary filename')
   const id = options?.contentHash
     ? createHash('sha256')
         .update(options.contentHash)
         .digest('hex')
         .slice(0, 16)
     : randomUUID()
-  return join(tmpdir(), `${prefix}-${id}${extension}`)
+  return join(ensurePrivateStorageTempRoot(), `${prefix}-${id}${extension}`)
 }

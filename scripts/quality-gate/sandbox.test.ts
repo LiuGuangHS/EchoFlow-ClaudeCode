@@ -2,7 +2,9 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { buildEchoFlowOwnershipMarker, resolveStorageBinding } from '../../src/utils/echoFlowConfigRoot.js'
 import {
+  realUserConfigDir,
   applyUserStateGuard,
   buildSandboxLaneEnv,
   createQualityGateSandbox,
@@ -32,6 +34,13 @@ afterEach(() => {
 })
 
 describe('sandbox lane environment', () => {
+  test('uses the shared platform root resolver without falling back to shared Claude state', () => {
+    const home = scratch('root-resolution')
+    const source = { HOME: home, USERPROFILE: home, XDG_DATA_HOME: join(home, 'data') }
+    expect(realUserConfigDir(source)).toBe(resolveStorageBinding({ env: source, homeDir: home }).root)
+    expect(realUserConfigDir({ ...source, CLAUDE_CONFIG_DIR: join(home, 'chosen') })).toBe(join(home, 'chosen'))
+  })
+
   test('redirects config, home, and temp away from the developer machine', () => {
     const home = scratch('env-home')
     const env = buildSandboxLaneEnv(home, {}, {
@@ -84,21 +93,21 @@ describe('provider state seeding', () => {
   test('copies provider identity and credentials but not regenerable local state', () => {
     const source = scratch('seed-source')
     const target = scratch('seed-target')
-    writeJson(join(source, 'cc-haha', 'providers.json'), { activeId: 'p1', providers: [{ id: 'p1', name: 'Gateway' }] })
-    writeJson(join(source, 'cc-haha', 'settings.json'), { env: { ANTHROPIC_BASE_URL: 'https://gateway.example' } })
-    writeJson(join(source, 'cc-haha', 'oauth.json'), { token: 'secret' })
-    mkdirSync(join(source, 'cc-haha', 'db'), { recursive: true })
-    writeFileSync(join(source, 'cc-haha', 'db', 'index-v1.sqlite'), 'binary')
-    mkdirSync(join(source, 'cc-haha', 'diagnostics'), { recursive: true })
-    writeFileSync(join(source, 'cc-haha', 'diagnostics', 'run.log'), 'noise')
+    writeJson(join(source, 'echoflow-code', 'providers.json'), { activeId: 'p1', providers: [{ id: 'p1', name: 'Gateway' }] })
+    writeJson(join(source, 'echoflow-code', 'settings.json'), { env: { ANTHROPIC_BASE_URL: 'https://gateway.example' } })
+    writeJson(join(source, 'echoflow-code', 'oauth.json'), { token: 'secret' })
+    mkdirSync(join(source, 'echoflow-code', 'db'), { recursive: true })
+    writeFileSync(join(source, 'echoflow-code', 'db', 'index-v1.sqlite'), 'binary')
+    mkdirSync(join(source, 'echoflow-code', 'diagnostics'), { recursive: true })
+    writeFileSync(join(source, 'echoflow-code', 'diagnostics', 'run.log'), 'noise')
     writeJson(join(source, 'settings.json'), { permissionMode: 'plan' })
 
     const copied = seedProviderState(source, target)
 
     expect(copied).toEqual(['providers.json', 'settings.json', 'oauth.json'])
-    expect(JSON.parse(readFileSync(join(target, 'cc-haha', 'providers.json'), 'utf8')).activeId).toBe('p1')
-    expect(existsSync(join(target, 'cc-haha', 'db'))).toBe(false)
-    expect(existsSync(join(target, 'cc-haha', 'diagnostics'))).toBe(false)
+    expect(JSON.parse(readFileSync(join(target, 'echoflow-code', 'providers.json'), 'utf8')).activeId).toBe('p1')
+    expect(existsSync(join(target, 'echoflow-code', 'db'))).toBe(false)
+    expect(existsSync(join(target, 'echoflow-code', 'diagnostics'))).toBe(false)
     // The user-level settings.json is never seeded: a lane must not inherit the
     // developer's permission mode, and must not be able to write it back.
     expect(existsSync(join(target, 'settings.json'))).toBe(false)
@@ -112,6 +121,21 @@ describe('provider state seeding', () => {
 })
 
 describe('user state guard', () => {
+  test('guards canonical credentials and the ownership marker while retaining legacy guards', () => {
+    const config = scratch('guard-canonical')
+    writeJson(join(config, 'app.json'), buildEchoFlowOwnershipMarker())
+    writeJson(join(config, 'echoflow-code', 'oauth.json'), { token: 'fixture' })
+    const before = fingerprintUserState(config)
+    rmSync(join(config, 'app.json'))
+    rmSync(join(config, 'echoflow-code', 'oauth.json'))
+    writeJson(join(config, 'cc-haha', 'oauth.json'), { token: 'legacy-fixture' })
+    expect(describeUserStateMutations(before, fingerprintUserState(config))).toEqual([
+      'created: cc-haha/oauth.json',
+      'deleted: app.json',
+      'deleted: echoflow-code/oauth.json',
+    ])
+  })
+
   test('reports created, modified, and deleted guarded files', () => {
     const config = scratch('guard-diff')
     writeJson(join(config, 'settings.json'), { permissionMode: 'default' })
@@ -203,9 +227,25 @@ describe('user state guard', () => {
 })
 
 describe('sandbox lifecycle', () => {
+  test('rejects external and relative config overrides before creating an ownership marker', () => {
+    const source = scratch('external-config')
+    writeJson(join(source, 'settings.json'), { future: 'keep' })
+    const before = readFileSync(join(source, 'settings.json'), 'utf8')
+    for (const configDir of [source, 'relative-config']) {
+      expect(() => createQualityGateSandbox({
+        label: 'external-config',
+        sourceConfigDir: source,
+        source: {},
+        envOverrides: { CLAUDE_CONFIG_DIR: configDir },
+      })).toThrow('config directory must remain inside its private HOME')
+    }
+    expect(existsSync(join(source, 'app.json'))).toBe(false)
+    expect(readFileSync(join(source, 'settings.json'), 'utf8')).toBe(before)
+  })
+
   test('creates an isolated config dir seeded from the given source and cleans up', () => {
     const source = scratch('lifecycle-source')
-    writeJson(join(source, 'cc-haha', 'providers.json'), { activeId: 'p1', providers: [{ id: 'p1', name: 'Gateway' }] })
+    writeJson(join(source, 'echoflow-code', 'providers.json'), { activeId: 'p1', providers: [{ id: 'p1', name: 'Gateway' }] })
     writeJson(join(source, 'settings.json'), { permissionMode: 'plan' })
 
     const sandbox = createQualityGateSandbox({
@@ -216,7 +256,8 @@ describe('sandbox lifecycle', () => {
     })
 
     expect(sandbox.configDir.startsWith(sandbox.home)).toBe(true)
-    expect(existsSync(join(sandbox.configDir, 'cc-haha', 'providers.json'))).toBe(true)
+    expect(JSON.parse(readFileSync(join(sandbox.configDir, 'app.json'), 'utf8'))).toEqual(buildEchoFlowOwnershipMarker())
+    expect(existsSync(join(sandbox.configDir, 'echoflow-code', 'providers.json'))).toBe(true)
     expect(existsSync(join(sandbox.configDir, 'settings.json'))).toBe(false)
     expect(sandbox.detectUserStateMutations()).toEqual([])
 

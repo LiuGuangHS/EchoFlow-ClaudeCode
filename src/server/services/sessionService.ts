@@ -3814,8 +3814,10 @@ export class SessionService {
     const indexed = this.getUsableIndexMode() === 'on'
     const status = indexed ? this.localIndexGateway.getPublicStatus() : null
     const degradedPlan = indexed ? null : this.getDegradedListPlan()
+    const indexRevision = indexed || degradedPlan ? this.localIndexGateway.getSessionReadRevision?.() : null
     return JSON.stringify([scope, this.sessionListCacheGeneration,
       readSessionArchiveSnapshot(scope).revision,
+      indexRevision,
       indexed && (status?.state === 'ready' || status?.state === 'building')
         ? status.lastUpdatedAt
         : degradedPlan

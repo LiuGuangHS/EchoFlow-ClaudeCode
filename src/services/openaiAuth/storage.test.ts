@@ -264,7 +264,7 @@ describe('OpenAI OAuth desktop token file storage', () => {
   })
 
   test('prefers env-pinned file authority when OPENAI_CODEX_OAUTH_FILE matches the secure-storage sentinel', async () => {
-    const sentinelPath = '__secure-storage__'
+    const sentinelPath = path.join(tmpDir, '__secure-storage__')
     seedSecureStorage({
       accessToken: 'secure-access',
       refreshToken: 'secure-refresh',
@@ -274,7 +274,7 @@ describe('OpenAI OAuth desktop token file storage', () => {
     process.chdir(tmpDir)
     process.env.OPENAI_CODEX_OAUTH_FILE = sentinelPath
     await fsp.writeFile(
-      path.join(tmpDir, sentinelPath),
+      sentinelPath,
       JSON.stringify({
         accessToken: 'file-access',
         refreshToken: 'file-refresh',
@@ -294,6 +294,30 @@ describe('OpenAI OAuth desktop token file storage', () => {
       refreshToken: 'file-refresh',
       expiresAt: 4_100_000_000_123,
     })
+  })
+
+  test('rejects external file authority without reading, changing, or deleting its tokens', async () => {
+    const outside = await fsp.mkdtemp(path.join(os.tmpdir(), 'openai-oauth-external-'))
+    const externalFile = path.join(outside, 'tokens.json')
+    const contents = JSON.stringify({ accessToken: 'outside', refreshToken: 'outside-refresh', expiresAt: 4_100_000_000_000 })
+    try {
+      await fsp.writeFile(externalFile, contents)
+      process.env.OPENAI_CODEX_OAUTH_FILE = externalFile
+      expect(() => getOpenAIOAuthTokens()).toThrow('outside the selected storage root')
+      await expect(getOpenAIOAuthTokensAsync()).rejects.toThrow('outside the selected storage root')
+      expect(saveOpenAIOAuthTokens({ accessToken: 'replacement', refreshToken: 'replacement', expiresAt: 1 }).success).toBe(false)
+      expect(deleteOpenAIOAuthTokens()).toBe(false)
+      expect(await fsp.readFile(externalFile, 'utf8')).toBe(contents)
+      expect(await fsp.readdir(outside)).toEqual(['tokens.json'])
+    } finally {
+      await fsp.rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  test('rejects a relative token override rather than resolving it against cwd', async () => {
+    process.env.OPENAI_CODEX_OAUTH_FILE = 'openai-oauth.json'
+    expect(() => getOpenAIOAuthTokens()).toThrow('absolute path')
+    await expect(getOpenAIOAuthTokensAsync()).rejects.toThrow('absolute path')
   })
 
   test('cleans up tmp file if desktop token rename fails', async () => {

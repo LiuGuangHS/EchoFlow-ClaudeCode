@@ -22,7 +22,7 @@ beforeEach(async () => {
 
   await fs.mkdir(path.join(configDir, 'projects', 'demo-project'), { recursive: true })
   await fs.mkdir(path.join(configDir, 'skills', 'alpha-skill'), { recursive: true })
-  await fs.mkdir(path.join(configDir, 'cc-haha'), { recursive: true })
+  await fs.mkdir(path.join(configDir, 'echoflow-code'), { recursive: true })
   await fs.mkdir(path.join(projectRoot, '.claude', 'skills', 'beta-skill'), { recursive: true })
 
   await fs.writeFile(path.join(configDir, 'settings.json'), '{"defaultMode":', 'utf-8')
@@ -33,7 +33,7 @@ beforeEach(async () => {
     'utf-8',
   )
   await fs.writeFile(
-    path.join(configDir, 'cc-haha', 'providers.json'),
+    path.join(configDir, 'echoflow-code', 'providers.json'),
     JSON.stringify({ activeId: null, providers: [{ id: 'provider-1' }] }),
     'utf-8',
   )
@@ -72,6 +72,17 @@ function makeRequest(
 }
 
 describe('DoctorService', () => {
+  test('labels a selected non-default root without claiming it is ~/.claude', async () => {
+    const selectedRoot = path.join(tmpDir, 'chosen-storage')
+    await fs.mkdir(path.join(selectedRoot, 'echoflow-code'), { recursive: true })
+    await fs.writeFile(path.join(selectedRoot, 'echoflow-code', 'settings.json'), '{}')
+    const report = await new DoctorService({ configDir: selectedRoot, homeDir }).getReport()
+    const settings = report.items.find(item => item.id === 'cc-haha-settings')
+    expect(settings?.path).toBe('<storage-root>/echoflow-code/settings.json')
+    expect(JSON.stringify(report)).not.toContain(selectedRoot)
+    expect(JSON.stringify(report)).not.toContain('~/.claude')
+  })
+
   test('treats absent optional user features on a fresh install as not configured', async () => {
     const freshHomeDir = path.join(tmpDir, 'fresh-home')
     const freshConfigDir = path.join(freshHomeDir, '.claude')
@@ -114,9 +125,8 @@ describe('DoctorService', () => {
     const report = await service.getReport()
     const byId = (id: string) => report.items.find((item) => item.id === id)?.path
 
-    // Reported paths are abbreviated, and configDir renders as `~/.claude`, so
-    // an `.agents` root built from the config dir would show up nested under it.
-    expect(byId('user-skills')).toBe(path.join('~', '.claude', 'skills'))
+    // Shared .agents stays home-relative while product skills follow the selected root.
+    expect(byId('user-skills')).toBe('<storage-root>/skills')
     expect(byId('user-agent-skills')).toBe(path.join('~', '.agents', 'skills'))
   })
 
@@ -151,9 +161,9 @@ describe('DoctorService', () => {
 
   test('reports schema-invalid managed providers without exposing parsed contents', async () => {
     const schemaConfigDir = path.join(homeDir, '.schema-test-claude')
-    await fs.mkdir(path.join(schemaConfigDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(path.join(schemaConfigDir, 'echoflow-code'), { recursive: true })
     await fs.writeFile(
-      path.join(schemaConfigDir, 'cc-haha', 'providers.json'),
+      path.join(schemaConfigDir, 'echoflow-code', 'providers.json'),
       JSON.stringify({ activeId: null, providers: [{ id: 'provider-1' }] }),
       'utf-8',
     )
@@ -178,7 +188,7 @@ describe('DoctorService', () => {
     expect(serialized).not.toContain(tmpDir)
     expect(serialized).not.toContain(projectRoot)
 
-    const userSettings = report.items.find((item) => item.path === '~/.claude/settings.json')
+    const userSettings = report.items.find((item) => item.path === '<storage-root>/settings.json')
     expect(userSettings).toBeDefined()
     expect(userSettings?.protected).toBe(true)
     expect(userSettings?.status).toBe('invalid_json')
@@ -191,7 +201,7 @@ describe('DoctorService', () => {
     expect(projectSettings?.status).toBe('invalid_json')
 
     const sessionJsonl = report.items.find(
-      (item) => item.path === '~/.claude/projects/demo-project/session-1.jsonl',
+      (item) => item.path === '<storage-root>/projects/demo-project/session-1.jsonl',
     )
     expect(sessionJsonl).toBeDefined()
     expect(sessionJsonl?.protected).toBe(true)
@@ -201,10 +211,10 @@ describe('DoctorService', () => {
 
     expect(report.protectedSkips).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ path: '~/.claude/settings.json', reason: 'protected' }),
+        expect.objectContaining({ path: '<storage-root>/settings.json', reason: 'protected' }),
         expect.objectContaining({ path: '<project>/.claude/settings.json', reason: 'protected' }),
         expect.objectContaining({
-          path: '~/.claude/projects/demo-project/session-1.jsonl',
+          path: '<storage-root>/projects/demo-project/session-1.jsonl',
           reason: 'protected',
         }),
       ]),
@@ -224,7 +234,7 @@ describe('DoctorService', () => {
     expect(result.operations).toEqual([])
     expect(result.skips).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ path: '~/.claude/settings.json', reason: 'protected' }),
+        expect.objectContaining({ path: '<storage-root>/settings.json', reason: 'protected' }),
         expect.objectContaining({ path: '<project>/.claude/settings.json', reason: 'protected' }),
       ]),
     )
@@ -268,7 +278,7 @@ describe('doctor API', () => {
     expect(body.report.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          path: '~/.claude/settings.json',
+          path: '<storage-root>/settings.json',
           status: 'invalid_json',
         }),
       ]),

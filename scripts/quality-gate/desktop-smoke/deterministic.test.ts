@@ -1,8 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { seedDesktopUiTeamPlan } from './team-plan'
+import { createSandboxedTestEnvironment } from '../../pr/test-environment'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { getEchoFlowInternalDir } from '../../../src/utils/echoFlowConfigRoot'
+import { loadCassette } from '../replay/cassette'
+import { DESKTOP_REPLAY_SCENARIO_ID } from '../replay/scenarios'
+import { seedDesktopUiReplayProvider } from './replay'
 import {
   DESKTOP_UI_SMOKE_ALLOW_SELECTOR,
   DESKTOP_UI_SMOKE_ATTENTION_PROBE,
@@ -70,7 +75,7 @@ describe('deterministic desktop UI smoke setup', () => {
     const configDir = mkdtempSync(join(tmpdir(), 'cc-haha-ui-smoke-provider-'))
     try {
       seedDesktopUiSmokeProvider(configDir)
-      const index = JSON.parse(readFileSync(join(configDir, 'cc-haha', 'providers.json'), 'utf8'))
+      const index = JSON.parse(readFileSync(join(getEchoFlowInternalDir(configDir), 'providers.json'), 'utf8'))
       expect(index.activeId).toBe('desktop-ui-smoke-provider')
       expect(index.providers).toHaveLength(2)
       expect(index.providers[0]).toMatchObject({
@@ -79,6 +84,52 @@ describe('deterministic desktop UI smoke setup', () => {
       })
     } finally {
       rmSync(configDir, { recursive: true, force: true })
+    }
+  })
+
+  test('the current provider consumer can read the smoke fixture without a legacy migration', () => {
+    const home = mkdtempSync(join(tmpdir(), 'desktop-smoke-provider-consumer-'))
+    const env = createSandboxedTestEnvironment(home)
+    try {
+      seedDesktopUiSmokeProvider(env.CLAUDE_CONFIG_DIR!)
+      const child = Bun.spawnSync([process.execPath, '--no-env-file', '-e', `
+        import { ProviderService } from ${JSON.stringify(new URL('../../../src/server/services/providerService.ts', import.meta.url).href)}
+        console.log(JSON.stringify(await new ProviderService().listProviders()))
+      `], { env, stdout: 'pipe', stderr: 'pipe' })
+      expect(child.exitCode, child.stderr.toString()).toBe(0)
+      const index = JSON.parse(child.stdout.toString())
+      expect(index.activeId).toBe('desktop-ui-smoke-provider')
+      expect(index.providers).toHaveLength(2)
+      expect(index.providers[0]).toMatchObject({ apiKey: 'desktop-ui-smoke-fake-key', baseUrl: 'http://127.0.0.1:1' })
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test('the current provider consumer can read the replay cassette settings without a legacy migration', () => {
+    const home = mkdtempSync(join(tmpdir(), 'desktop-replay-provider-consumer-'))
+    const env = createSandboxedTestEnvironment(home)
+    try {
+      const cassette = loadCassette(DESKTOP_REPLAY_SCENARIO_ID)!
+      const baseUrl = 'http://127.0.0.1:1'
+      seedDesktopUiReplayProvider(env.CLAUDE_CONFIG_DIR!, cassette.providerConfig, baseUrl)
+      const child = Bun.spawnSync([process.execPath, '--no-env-file', '-e', `
+        import { ProviderService } from ${JSON.stringify(new URL('../../../src/server/services/providerService.ts', import.meta.url).href)}
+        console.log(JSON.stringify(await new ProviderService().listProviders()))
+      `], { env, stdout: 'pipe', stderr: 'pipe' })
+      expect(child.exitCode, child.stderr.toString()).toBe(0)
+      const index = JSON.parse(child.stdout.toString())
+      expect(index.activeId).toBe('desktop-replay-provider')
+      expect(index.providers).toHaveLength(1)
+      expect(index.providers[0]).toMatchObject({
+        ...cassette.providerConfig,
+        id: 'desktop-replay-provider',
+        name: 'Replay (isolated)',
+        apiKey: 'replay-fake-key',
+        baseUrl,
+      })
+    } finally {
+      rmSync(home, { recursive: true, force: true })
     }
   })
 

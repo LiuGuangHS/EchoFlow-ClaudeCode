@@ -1,7 +1,32 @@
 import type { DesktopUpdateDownloadEvent } from '../../src/lib/desktopHost/types'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import type { StdioOptions } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { NsisUpdater } from 'electron-updater'
+import type { InstallOptions } from 'electron-updater/out/BaseUpdater'
 import { clearAppManagedPortableEnv } from './appMode'
 import { isVerifiedDifferentialDownloadFeed, type UpdateFeedConfig } from './updateFeed'
+
+export class DesktopNsisUpdater extends NsisUpdater {
+  private readonly installEnvironment = new AsyncLocalStorage<NodeJS.ProcessEnv>()
+
+  protected override doInstall(options: InstallOptions): boolean {
+    // The elevation retry runs after the host has restored its own environment.
+    return this.installEnvironment.run({ ...process.env }, () => super.doInstall(options))
+  }
+
+  protected override async spawnLog(command: string, args?: string[], env?: NodeJS.ProcessEnv, stdio?: StdioOptions): Promise<boolean> {
+    try {
+      return await super.spawnLog(command, args, env ?? this.installEnvironment.getStore(), stdio)
+    } catch (error) {
+      // The upstream shell fallback drops the installer arguments and environment.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error(`Cannot start the update installer: ${(error as Error).message}`, { cause: error })
+      }
+      throw error
+    }
+  }
+}
 
 export type ElectronUpdateFileInfo = {
   url: string

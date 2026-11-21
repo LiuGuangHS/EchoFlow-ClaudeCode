@@ -12,7 +12,6 @@ import { SDKPromptSuggestionActivityMessageSchema } from '../../entrypoints/sdk/
  */
 
 import * as fs from 'node:fs'
-import * as os from 'node:os'
 import * as path from 'node:path'
 import { ProviderService } from './providerService.js'
 import { SettingsService } from './settingsService.js'
@@ -3229,7 +3228,7 @@ export class ConversationService {
     }
 
     const uploadDir = path.join(
-      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
+      getEchoFlowConfigDir(),
       'uploads',
       sessionId,
     )

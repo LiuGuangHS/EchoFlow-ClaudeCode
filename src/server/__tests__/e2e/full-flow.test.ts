@@ -9,6 +9,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { fileURLToPath } from 'node:url'
+import { ensureEchoFlowConfigRoot } from '../../../utils/echoFlowConfigRoot.js'
 
 let server: ReturnType<typeof Bun.serve>
 let baseUrl: string
@@ -66,7 +67,8 @@ async function startTestServer() {
   process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
   for (const key of MODEL_ENV_KEYS) delete process.env[key]
 
-  // Create required directories
+  // Establish fixture ownership before prepopulating the admitted root.
+  await ensureEchoFlowConfigRoot(tmpDir)
   await fs.mkdir(path.join(tmpDir, 'projects'), { recursive: true })
 
   const { startServer } = await import('../../index.js')
@@ -78,6 +80,8 @@ async function stopTestServer() {
   server?.stop(true)
   const { stopServerRuntimeForShutdown } = await import('../../index.js')
   await stopServerRuntimeForShutdown()
+  const { releaseProcessStorage } = await import('../../../services/storageStartup.js')
+  await releaseProcessStorage()
   await fs.rm(tmpDir, {
     recursive: true,
     force: true,

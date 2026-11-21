@@ -30,7 +30,7 @@ describe('search content database', () => {
     process.env.CLAUDE_CONFIG_DIR = join(root, 'config')
 
     expect(getSearchContentDatabasePath()).toBe(
-      join(root, 'config', 'cc-haha', 'db', 'search-index-v1.sqlite'),
+      join(root, 'config', 'echoflow-code', 'db', 'search-index-v1.sqlite'),
     )
     const database = openSearchContentDatabase()
     try {

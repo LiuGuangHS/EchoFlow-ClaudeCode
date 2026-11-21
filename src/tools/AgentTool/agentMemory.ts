@@ -8,6 +8,7 @@ import { getMemoryBaseDir } from '../../memdir/paths.js'
 import { getCwd } from '../../utils/cwd.js'
 import { findCanonicalGitRoot } from '../../utils/git.js'
 import { sanitizePath } from '../../utils/path.js'
+import { resolveManagedStoragePath } from '../../utils/managedStoragePath.js'
 
 // Persistent agent memory scope: 'user' (~/.claude/agent-memory/), 'project' (.claude/agent-memory/), or 'local' (.claude/agent-memory-local/)
 export type AgentMemoryScope = 'user' | 'project' | 'local'
@@ -29,15 +30,15 @@ function sanitizeAgentTypeForPath(agentType: string): string {
 function getLocalAgentMemoryDir(dirName: string): string {
   if (process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR) {
     return (
-      join(
-        process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR,
+      resolveManagedStoragePath(join(
+        getMemoryBaseDir(),
         'projects',
         sanitizePath(
           findCanonicalGitRoot(getProjectRoot()) ?? getProjectRoot(),
         ),
         'agent-memory-local',
         dirName,
-      ) + sep
+      ), 'local agent memory directory') + sep
     )
   }
   return join(getCwd(), '.claude', 'agent-memory-local', dirName) + sep
@@ -60,7 +61,7 @@ export function getAgentMemoryDir(
     case 'local':
       return getLocalAgentMemoryDir(dirName)
     case 'user':
-      return join(getMemoryBaseDir(), 'agent-memory', dirName) + sep
+      return resolveManagedStoragePath(join(getMemoryBaseDir(), 'agent-memory', dirName), 'user agent memory directory') + sep
   }
 }
 
@@ -70,9 +71,19 @@ export function isAgentMemoryPath(absolutePath: string): boolean {
   const normalizedPath = normalize(absolutePath)
   const memoryBase = getMemoryBaseDir()
 
-  // User scope: check memory base (may be custom dir or config home)
-  if (normalizedPath.startsWith(join(memoryBase, 'agent-memory') + sep)) {
-    return true
+  // Product memory needs physical containment, including appended descendants.
+  if (
+    normalizedPath.startsWith(join(memoryBase, 'agent-memory') + sep) ||
+    (process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR &&
+      normalizedPath.includes(sep + 'agent-memory-local' + sep) &&
+      normalizedPath.startsWith(join(memoryBase, 'projects') + sep))
+  ) {
+    try {
+      resolveManagedStoragePath(normalizedPath, 'agent memory path')
+      return true
+    } catch {
+      return false
+    }
   }
 
   // Project scope: always cwd-based (not redirected)
@@ -82,17 +93,9 @@ export function isAgentMemoryPath(absolutePath: string): boolean {
     return true
   }
 
-  // Local scope: persisted to mount when CLAUDE_CODE_REMOTE_MEMORY_DIR is set, otherwise cwd-based
-  if (process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR) {
-    if (
-      normalizedPath.includes(sep + 'agent-memory-local' + sep) &&
-      normalizedPath.startsWith(
-        join(process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR, 'projects') + sep,
-      )
-    ) {
-      return true
-    }
-  } else if (
+  // Non-remote local memory remains workspace-owned.
+  if (
+    !process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR &&
     normalizedPath.startsWith(
       join(getCwd(), '.claude', 'agent-memory-local') + sep,
     )

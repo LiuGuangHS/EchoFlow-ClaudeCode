@@ -5,6 +5,7 @@ import * as path from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { constants as fsConstants, type Dirent } from 'node:fs'
 import { PRODUCT_NAME, PRODUCT_SLUG } from '../../utils/productIdentity.generated.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import { localIndexCoordinator } from './localIndex/coordinator.js'
 import type { LocalIndexStatus } from './localIndex/types.js'
 import { isSensitiveDiagnosticKey, redactDiagnosticText } from './diagnosticRedaction.js'
@@ -118,7 +119,7 @@ export class DiagnosticsService {
   }
 
   getLogDir(): string {
-    return path.join(this.getConfigDir(), 'cc-haha', 'diagnostics')
+    return path.join(getEchoFlowInternalDir(), 'diagnostics')
   }
 
   getDiagnosticsPath(): string {
@@ -163,7 +164,7 @@ export class DiagnosticsService {
 
   async recordEvent(input: DiagnosticEventInput): Promise<DiagnosticWriteResult> {
     // Test isolation: never let a test run write into the user's real
-    // ~/.claude/cc-haha/diagnostics. Tests that genuinely exercise diagnostics
+    // <storage-root>/echoflow-code/diagnostics. Tests that genuinely exercise diagnostics
     // set CLAUDE_CONFIG_DIR to a tmp dir; anything else under NODE_ENV=test is
     // a leak (e.g. a fire-and-forget recordEvent resolving after a test's
     // afterEach restored CLAUDE_CONFIG_DIR) and must be dropped.
@@ -657,7 +658,7 @@ export class DiagnosticsService {
   }
 
   private getConfigDir(): string {
-    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    return getEchoFlowConfigDir()
   }
 
   private formatConsoleArgs(args: unknown[]): string {
@@ -813,7 +814,7 @@ export class DiagnosticsService {
   }
 
   private async buildProvidersSummary(): Promise<Record<string, unknown>> {
-    const providerPath = path.join(this.getConfigDir(), 'cc-haha', 'providers.json')
+    const providerPath = path.join(getEchoFlowInternalDir(), 'providers.json')
     try {
       const raw = await fs.readFile(providerPath, 'utf-8')
       const parsed = JSON.parse(raw) as {

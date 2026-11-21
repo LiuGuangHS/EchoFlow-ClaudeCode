@@ -235,11 +235,9 @@ export class UnsupportedLocalIndexSchemaError extends Error {
 }
 
 function getUserVersion(database: Database): number {
-  const statement = database.prepare<{ user_version: number }, []>(
-    'PRAGMA user_version',
-  )
+  const statement = database.prepare('PRAGMA user_version')
   try {
-    return statement.get()?.user_version ?? 0
+    return (statement.get() as { user_version: number } | null)?.user_version ?? 0
   } finally {
     statement.finalize()
   }

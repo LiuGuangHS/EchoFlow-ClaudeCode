@@ -429,6 +429,7 @@ export const browserHost: DesktopHost = {
     },
     migration: {
       async prepare() { return unsupported('Data migration') },
+      async prepareOpenAiOauth() { unsupported('Data migration') },
       async start() { unsupported('Data migration') },
       async status() { return null },
       async cancel() { unsupported('Data migration') },

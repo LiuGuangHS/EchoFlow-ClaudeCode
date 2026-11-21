@@ -13,15 +13,20 @@ import {
 
 let directory: string
 let previousOverride: string | undefined
+let previousRoot: string | undefined
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'consolidation-lock-'))
   previousOverride = process.env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE
+  previousRoot = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = directory
   process.env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE = directory
   getAutoMemPath.cache.clear?.()
 })
 afterEach(async () => {
   if (previousOverride === undefined) delete process.env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE
   else process.env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE = previousOverride
+  if (previousRoot === undefined) delete process.env.CLAUDE_CONFIG_DIR
+  else process.env.CLAUDE_CONFIG_DIR = previousRoot
   getAutoMemPath.cache.clear?.()
   await rm(directory, { recursive: true, force: true })
 })

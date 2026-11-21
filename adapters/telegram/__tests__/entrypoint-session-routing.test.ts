@@ -8,15 +8,15 @@ import { WsBridge } from '../../common/ws-bridge.js'
 import { AttachmentStore } from '../../common/attachment/attachment-store.js'
 import { adapterMigrationLifecycle } from '../../common/migration-lifecycle.js'
 
-// Import the actual entrypoint with isolated configuration. Telegram API calls
-// terminate in grammY's documented transformer; HTTP and WS use loopback only.
+// Exercise the registered runtime without binding this shared test process.
+// Telegram API calls terminate in grammY's transformer; HTTP and WS use loopback only.
 describe('Telegram entrypoint session routing', () => {
   const envKeys = ['CLAUDE_CONFIG_DIR', 'TELEGRAM_BOT_TOKEN', 'ADAPTER_SERVER_URL', 'ADAPTER_ALLOWED_PROJECT_ROOTS', 'ADAPTER_DEFAULT_PROJECT_DIR', 'CLAUDE_ADAPTER_DEFAULT_WORK_DIR', 'CC_HAHA_LOCAL_ACCESS_TOKEN']
   const previousEnv = new Map<string, string | undefined>()
   let directory: string
   let project: string
   let worktree: string
-  let entry: typeof import('../index.js')
+  let entry: typeof import('../runtime.js')
   let server: ReturnType<typeof Bun.serve<{ sessionId: string }>>
   let store: SessionStore
   let nextId = 100
@@ -143,7 +143,7 @@ describe('Telegram entrypoint session routing', () => {
     process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'fixture-local-token'
     writeFileSync(join(directory, 'adapters.json'), JSON.stringify({ telegram: { allowedUsers: [7], defaultWorkDir: project, allowedProjectRoots: [directory] } }))
     store = new SessionStore(join(directory, 'adapter-sessions.json'))
-    entry = await import('../index.js')
+    entry = await import('../runtime.js')
     entry.bot.botInfo = { id: 12345, is_bot: true, first_name: 'Fixture', username: 'fixture_bot', can_join_groups: false, can_read_all_group_messages: false, supports_inline_queries: false, can_manage_bots: false, can_connect_to_business: false, has_main_web_app: false, has_topics_enabled: false, allows_users_to_create_topics: false }
     entry.bot.api.config.use(async (_previous, method, payload) => {
       apiCalls.push({ method, payload })

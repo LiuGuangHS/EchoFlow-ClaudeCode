@@ -4,6 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { handleProxyRequest } from '../proxy/handler.js'
 import { ProviderService } from '../services/providerService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 import { clearTraceCaptureStateForTests, drainTraceCaptureForTests, type TraceCallRecord } from '../../services/api/traceCapture.js'
 
@@ -350,7 +351,7 @@ describe('proxy anthropic-compatible path', () => {
       expect(captured[0]?.get('anthropic-relay-credential')).toBe('opaque-value-43')
 
       await drainTraceCaptureForTests()
-      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(getEchoFlowInternalDir(tmpDir), 'traces', `${sessionId}.jsonl`)
       const traceRaw = await fs.readFile(tracePath, 'utf-8')
       expect(traceRaw).toContain('x-relay-credential')
       expect(traceRaw).toContain('anthropic-relay-credential')
@@ -773,7 +774,7 @@ describe('proxy anthropic-compatible path', () => {
       // decompressed for storage instead of being UTF-8-decoded as garbage.
       // (The body is JSON-stringified inside the trace record, so the marker
       // appears unescaped only in decompressed plain text.)
-      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(getEchoFlowInternalDir(tmpDir), 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -860,7 +861,7 @@ describe('proxy anthropic-compatible path', () => {
       const forwarded = new Uint8Array(await res.arrayBuffer())
       expect(forwarded).toEqual(new Uint8Array(gzipBody))
 
-      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(getEchoFlowInternalDir(tmpDir), 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -950,7 +951,7 @@ describe('proxy anthropic-compatible path', () => {
       const forwarded = new Uint8Array(await res.arrayBuffer())
       expect(forwarded).toEqual(new Uint8Array(gzipBody))
 
-      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(getEchoFlowInternalDir(tmpDir), 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -1083,7 +1084,7 @@ describe('proxy anthropic-compatible path', () => {
       }
       expect(upstreamBody?.locked).toBe(false)
 
-      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(getEchoFlowInternalDir(tmpDir), 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       let lastSize = 0
       for (let attempt = 0; attempt < 200; attempt++) {
@@ -1175,7 +1176,7 @@ describe('proxy anthropic-compatible path', () => {
       const forwarded = new Uint8Array(await res.arrayBuffer())
       expect(forwarded).toEqual(new Uint8Array(doubleEncoded))
 
-      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(getEchoFlowInternalDir(tmpDir), 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -1261,7 +1262,7 @@ describe('proxy anthropic-compatible path', () => {
       const res = await handleProxyRequest(req, new URL(req.url))
       expect(res.status).toBe(200)
 
-      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(getEchoFlowInternalDir(tmpDir), 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -1336,7 +1337,7 @@ describe('proxy anthropic-compatible path', () => {
       const forwarded = new Uint8Array(await res.arrayBuffer())
       expect(forwarded).toEqual(corruptGzip)
 
-      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(getEchoFlowInternalDir(tmpDir), 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -1412,7 +1413,7 @@ describe('proxy anthropic-compatible path', () => {
       const forwarded = new Uint8Array(await res.arrayBuffer())
       expect(forwarded).toEqual(corruptGzip)
 
-      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(getEchoFlowInternalDir(tmpDir), 'traces', `${sessionId}.jsonl`)
       let traceRaw = ''
       for (let attempt = 0; attempt < 200; attempt++) {
         try {
@@ -1602,7 +1603,7 @@ describe('proxy anthropic-compatible path', () => {
       // Wait for the background trace write to land, then read the raw jsonl:
       // the call opened as `pending` must be closed with the same id as an
       // error, and no second call with a different id may appear.
-      const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
+      const tracePath = path.join(getEchoFlowInternalDir(tmpDir), 'traces', `${sessionId}.jsonl`)
       let lines: string[] = []
       let lastSize = -1
       let stableReads = 0
@@ -1672,7 +1673,7 @@ describe('proxy anthropic-compatible path', () => {
       expect(upstreamFetch).toHaveBeenCalledTimes(1)
 
       await drainTraceCaptureForTests()
-      const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`), 'utf8')
+      const raw = await fs.readFile(path.join(getEchoFlowInternalDir(tmpDir), 'traces', `${sessionId}.jsonl`), 'utf8')
       const calls = raw.trim().split('\n')
         .map(line => JSON.parse(line) as { type: string; record: TraceCallRecord })
         .filter(entry => entry.type === 'call')
@@ -1727,7 +1728,7 @@ describe('proxy anthropic-compatible path', () => {
       expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array(compressedBody))
 
       await drainTraceCaptureForTests()
-      const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`), 'utf8')
+      const raw = await fs.readFile(path.join(getEchoFlowInternalDir(tmpDir), 'traces', `${sessionId}.jsonl`), 'utf8')
       const calls = raw.trim().split('\n')
         .map(line => JSON.parse(line) as { type: string; record: TraceCallRecord })
         .filter(entry => entry.type === 'call')

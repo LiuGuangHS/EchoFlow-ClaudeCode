@@ -1,7 +1,7 @@
-import { mkdtemp, open, rm, type FileHandle } from 'node:fs/promises'
+import { open, rm, type FileHandle } from 'node:fs/promises'
 import { Database } from 'bun:sqlite'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createPrivateStorageTempDirectory } from '../../../utils/cachePaths.js'
 import { commitSearchContentSpool, withSearchProjectionBudget } from './searchContentCommitWorker.js'
 import {
   getCommandMetadataDisplayText,
@@ -399,10 +399,10 @@ export function createSearchContentProjector(
           if (!snapshotMatchesFingerprint(before, readSnapshot)) {
             return { kind: 'retry', reason: 'changed-during-read' }
           }
-          spoolDirectory = await mkdtemp(join(tmpdir(), 'claude-search-spool-'))
+          spoolDirectory = await createPrivateStorageTempDirectory('claude-search-spool-')
           const spoolPath = join(spoolDirectory, 'documents.sqlite')
           spool = new Database(spoolPath)
-          spool.exec('PRAGMA journal_mode=OFF; PRAGMA cache_size=-512; PRAGMA temp_store=FILE; CREATE TABLE documents (seq INTEGER PRIMARY KEY, jsonlLine INTEGER, byteStart INTEGER, byteLength INTEGER, segmentIndex INTEGER, role TEXT, messageId TEXT, timestamp TEXT, body TEXT, normalizedBody TEXT)')
+          spool.exec('PRAGMA journal_mode=OFF; PRAGMA cache_size=-512; PRAGMA temp_store=MEMORY; CREATE TABLE documents (seq INTEGER PRIMARY KEY, jsonlLine INTEGER, byteStart INTEGER, byteLength INTEGER, segmentIndex INTEGER, role TEXT, messageId TEXT, timestamp TEXT, body TEXT, normalizedBody TEXT)')
           const insert = spool.query('INSERT INTO documents (jsonlLine, byteStart, byteLength, segmentIndex, role, messageId, timestamp, body, normalizedBody) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
           const activeSpool = spool
           const reduced = await readCompleteLines({

@@ -23,7 +23,7 @@ async function fixture(run: (filePath: string) => Promise<void>) {
   process.env.CC_HAHA_LOCAL_INDEX = 'on'
   clearTraceCaptureStateForTests()
   try {
-    const dir = join(scope, 'cc-haha', 'traces')
+    const dir = join(scope, 'echoflow-code', 'traces')
     await fs.mkdir(dir, { recursive: true })
     await run(join(dir, 'fixture.jsonl'))
   } finally {
@@ -350,7 +350,7 @@ test('in-process appends across the byte limit produce the same window as a cold
   expect(incremental.length).toBeGreaterThan(1)
 
   clearTraceCaptureStateForTests()
-  await fs.rm(join(process.env.CLAUDE_CONFIG_DIR!, 'cc-haha', 'db'), { recursive: true, force: true })
+  await fs.rm(join(process.env.CLAUDE_CONFIG_DIR!, 'echoflow-code', 'db'), { recursive: true, force: true })
   expect(await describeWindows()).toEqual(incremental)
 }), 30_000)
 
@@ -378,7 +378,7 @@ test('appends across the record limit produce the same window as a cold rebuild'
   expect(incremental[0]?.state).toBe('limited')
 
   clearTraceCaptureStateForTests()
-  await fs.rm(join(process.env.CLAUDE_CONFIG_DIR!, 'cc-haha', 'db'), { recursive: true, force: true })
+  await fs.rm(join(process.env.CLAUDE_CONFIG_DIR!, 'echoflow-code', 'db'), { recursive: true, force: true })
   expect(await describeTraceWindows()).toEqual(incremental)
 }), 30_000)
 

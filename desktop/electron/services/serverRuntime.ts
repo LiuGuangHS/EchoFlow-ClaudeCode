@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
-import { homedir } from 'node:os'
+import { resolveStorageBinding } from '../../../src/utils/echoFlowConfigRoot'
 import { countExternalMigrationProcesses } from '../../../src/server/migrationInventory'
 import {
   appendHostDiagnostic,
@@ -273,7 +273,7 @@ export class ElectronServerRuntime {
     if (this.migrationQuiescence) return this.migrationQuiescence
     if (!this.server || this.startingServer || this.startPromise) return Promise.reject(new Error('Server startup must finish before migration'))
     this.migrationActive = true
-    this.migrationSourceDir = (this.baseEnv.CLAUDE_CONFIG_DIR ?? path.join(homedir(), '.claude')).normalize('NFC')
+    this.migrationSourceDir = resolveStorageBinding({ env: this.baseEnv }).root
     this.migrationQuiescence = this.quiesceForMigrationOnce()
     return this.migrationQuiescence
   }

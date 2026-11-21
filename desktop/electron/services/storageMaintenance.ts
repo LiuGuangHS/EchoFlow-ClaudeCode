@@ -1,5 +1,5 @@
-// Host writers share this barrier with the migration coordinator. Keep it
-// process-local: the startup pointer and migration journal live in userData.
+// UI-side writer freeze. Cross-process exclusion is owned by the shared
+// transaction and the host-lifetime lease acquired before Chromium startup.
 let frozen = false
 
 export function setStorageWritesFrozen(value: boolean): void {

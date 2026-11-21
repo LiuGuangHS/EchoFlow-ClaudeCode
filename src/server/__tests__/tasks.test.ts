@@ -138,14 +138,14 @@ describe('Tasks API', () => {
     process.env.CLAUDE_CONFIG_DIR = tmpDir
     await fs.mkdir(path.join(tmpDir, 'projects'), { recursive: true })
 
-    const { startServer } = await import('../../server/index.js')
+    const { startServer } = await import('../../server/serverRuntime.js')
     server = startServer(0, '127.0.0.1')
     baseUrl = `http://127.0.0.1:${server.port}`
   })
 
   afterEach(async () => {
     server?.stop(true)
-    const { stopServerRuntimeForShutdown } = await import('../../server/index.js')
+    const { stopServerRuntimeForShutdown } = await import('../../server/serverRuntime.js')
     await stopServerRuntimeForShutdown()
     await rmWithRetry(tmpDir)
     delete process.env.CLAUDE_CONFIG_DIR

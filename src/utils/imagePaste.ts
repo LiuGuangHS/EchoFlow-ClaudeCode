@@ -1,6 +1,7 @@
 import { feature } from 'bun:bundle'
 import { randomBytes } from 'crypto'
 import { execa } from 'execa'
+import { rm } from 'fs/promises'
 import { basename, extname, isAbsolute, join } from 'path'
 import {
   IMAGE_MAX_HEIGHT,
@@ -9,6 +10,8 @@ import {
 } from '../constants/apiLimits.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
 import { getImageProcessor } from '../tools/FileReadTool/imageProcessor.js'
+import { quote } from './bash/shellQuote.js'
+import { createPrivateStorageTempDirectory } from './cachePaths.js'
 import { logForDebugging } from './debug.js'
 import { execFileNoThrowWithCwd } from './execFileNoThrow.js'
 import { getFsImplementation } from './fsOperations.js'
@@ -28,22 +31,11 @@ type SupportedPlatform = 'darwin' | 'linux' | 'win32'
 
 // Threshold in characters for when to consider text a "large paste"
 export const PASTE_THRESHOLD = 800
-function getClipboardCommands() {
+function getClipboardCommands(screenshotPath = '') {
   const platform = process.platform as SupportedPlatform
-
-  // Platform-specific temporary file paths
-  // Use CLAUDE_CODE_TMPDIR if set, otherwise fall back to platform defaults
-  const baseTmpDir =
-    process.env.CLAUDE_CODE_TMPDIR ||
-    (platform === 'win32' ? process.env.TEMP || 'C:\\Temp' : '/tmp')
-  const screenshotFilename = 'claude_cli_latest_screenshot.png'
-  const tempPaths: Record<SupportedPlatform, string> = {
-    darwin: join(baseTmpDir, screenshotFilename),
-    linux: join(baseTmpDir, screenshotFilename),
-    win32: join(baseTmpDir, screenshotFilename),
-  }
-
-  const screenshotPath = tempPaths[platform] || tempPaths.linux
+  const quotedScreenshotPath = quote([screenshotPath])
+  const saveAppleScript = `set fp to open for access POSIX file ${JSON.stringify(screenshotPath)} with write permission`
+  const savePowerShell = `$img = Get-Clipboard -Format Image; if ($img) { $img.Save('${screenshotPath.replace(/['‘-‛]/g, '$&$&')}', [System.Drawing.Imaging.ImageFormat]::Png) }`
 
   // Platform-specific clipboard commands
   const commands: Record<
@@ -52,36 +44,29 @@ function getClipboardCommands() {
       checkImage: string
       saveImage: string
       getPath: string
-      deleteFile: string
     }
   > = {
     darwin: {
       checkImage: `osascript -e 'the clipboard as «class PNGf»'`,
-      saveImage: `osascript -e 'set png_data to (the clipboard as «class PNGf»)' -e 'set fp to open for access POSIX file "${screenshotPath}" with write permission' -e 'write png_data to fp' -e 'close access fp'`,
+      saveImage: `osascript -e 'set png_data to (the clipboard as «class PNGf»)' -e ${quote([saveAppleScript])} -e 'write png_data to fp' -e 'close access fp'`,
       getPath: `osascript -e 'get POSIX path of (the clipboard as «class furl»)'`,
-      deleteFile: `rm -f "${screenshotPath}"`,
     },
     linux: {
       checkImage:
         'xclip -selection clipboard -t TARGETS -o 2>/dev/null | grep -E "image/(png|jpeg|jpg|gif|webp|bmp)" || wl-paste -l 2>/dev/null | grep -E "image/(png|jpeg|jpg|gif|webp|bmp)"',
-      saveImage: `xclip -selection clipboard -t image/png -o > "${screenshotPath}" 2>/dev/null || wl-paste --type image/png > "${screenshotPath}" 2>/dev/null || xclip -selection clipboard -t image/bmp -o > "${screenshotPath}" 2>/dev/null || wl-paste --type image/bmp > "${screenshotPath}"`,
+      saveImage: `xclip -selection clipboard -t image/png -o > ${quotedScreenshotPath} 2>/dev/null || wl-paste --type image/png > ${quotedScreenshotPath} 2>/dev/null || xclip -selection clipboard -t image/bmp -o > ${quotedScreenshotPath} 2>/dev/null || wl-paste --type image/bmp > ${quotedScreenshotPath}`,
       getPath:
         'xclip -selection clipboard -t text/plain -o 2>/dev/null || wl-paste 2>/dev/null',
-      deleteFile: `rm -f "${screenshotPath}"`,
     },
     win32: {
       checkImage:
         'powershell -NoProfile -Command "(Get-Clipboard -Format Image) -ne $null"',
-      saveImage: `powershell -NoProfile -Command "$img = Get-Clipboard -Format Image; if ($img) { $img.Save('${screenshotPath.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Png) }"`,
+      saveImage: `powershell -NoProfile -EncodedCommand ${Buffer.from(savePowerShell, 'utf16le').toString('base64')}`,
       getPath: 'powershell -NoProfile -Command "Get-Clipboard"',
-      deleteFile: `del /f "${screenshotPath}"`,
     },
   }
 
-  return {
-    commands: commands[platform] || commands.linux,
-    screenshotPath,
-  }
+  return commands[platform] || commands.linux
 }
 
 export type ImageWithDimensions = {
@@ -183,8 +168,11 @@ export async function getImageFromClipboard(): Promise<ImageWithDimensions | nul
     }
   }
 
-  const { commands, screenshotPath } = getClipboardCommands()
+  let tempDirectory: string | undefined
   try {
+    tempDirectory = await createPrivateStorageTempDirectory('clipboard-')
+    const screenshotPath = join(tempDirectory, 'clipboard.png')
+    const commands = getClipboardCommands(screenshotPath)
     // Check if clipboard has image
     const checkResult = await execa(commands.checkImage, {
       shell: true,
@@ -228,9 +216,6 @@ export async function getImageFromClipboard(): Promise<ImageWithDimensions | nul
     // Detect format from magic bytes
     const mediaType = detectImageFormatFromBase64(base64Image)
 
-    // Cleanup (fire-and-forget, don't await)
-    void execa(commands.deleteFile, { shell: true, reject: false })
-
     return {
       base64: base64Image,
       mediaType,
@@ -238,11 +223,15 @@ export async function getImageFromClipboard(): Promise<ImageWithDimensions | nul
     }
   } catch {
     return null
+  } finally {
+    if (tempDirectory) {
+      await rm(tempDirectory, { recursive: true, force: true }).catch(logError)
+    }
   }
 }
 
 export async function getImagePathFromClipboard(): Promise<string | null> {
-  const { commands } = getClipboardCommands()
+  const commands = getClipboardCommands()
 
   try {
     // Try to get text from clipboard

@@ -114,11 +114,11 @@ describe('adapter config defaults', () => {
     try {
       fs.writeFileSync(
         path.join(configDir, 'adapters.json'),
-        JSON.stringify({ whatsapp: { authDir: '~/custom-whatsapp-auth', accountJid: '15551234567@s.whatsapp.net' } }),
+        JSON.stringify({ whatsapp: { authDir: path.join(configDir, 'custom-whatsapp-auth'), accountJid: '15551234567@s.whatsapp.net' } }),
       )
       process.env.CLAUDE_CONFIG_DIR = configDir
       delete process.env.WHATSAPP_AUTH_DIR
-      expect(loadConfig().whatsapp.authDir).toBe(path.join(os.homedir(), 'custom-whatsapp-auth'))
+      expect(loadConfig().whatsapp.authDir).toBe(path.join(configDir, 'custom-whatsapp-auth'))
       expect(loadConfig().whatsapp.accountJid).toBe('15551234567@s.whatsapp.net')
 
       process.env.WHATSAPP_AUTH_DIR = path.join(configDir, 'wa-auth')

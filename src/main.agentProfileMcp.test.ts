@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { buildSandboxLaneEnv } from '../scripts/quality-gate/sandbox.js'
 import { startMockLlmServer, type MockLlmServer } from '../scripts/quality-gate/mock-llm/server.js'
+import { ensureEchoFlowConfigRoot } from './utils/echoFlowConfigRoot.js'
 
 // Real CLI startup against a loopback model: a configured MCP server that never
 // answers must not be launched or awaited by lean, while standard still is.
@@ -15,7 +16,7 @@ let env: Record<string, string>
 let upstream: MockLlmServer
 let firstAgentRequestAt = 0
 
-beforeAll(() => {
+beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'cc-haha-lean-mcp-'))
   workDir = join(home, 'project')
   markers = join(home, 'launches')
@@ -30,7 +31,7 @@ beforeAll(() => {
     "process.stdin.on('end', () => process.exit(0)).resume()",
     'setTimeout(() => process.exit(0), 120000)',
   ].join('\n'))
-  mkdirSync(env.CLAUDE_CONFIG_DIR!, { recursive: true })
+  await ensureEchoFlowConfigRoot(env.CLAUDE_CONFIG_DIR!)
   writeFileSync(join(env.CLAUDE_CONFIG_DIR!, '.claude.json'), JSON.stringify({
     mcpServers: { silent: { type: 'stdio', command: process.execPath, args: [server] } },
   }))

@@ -1,21 +1,21 @@
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { createSandboxedTestEnvironment } from '../pr/test-environment'
+import { buildEchoFlowOwnershipMarker, getEchoFlowInternalDir, resolveStorageBinding } from '../../src/utils/echoFlowConfigRoot.js'
 
 /**
  * Quality-gate sandboxing for lanes that boot the real product server.
  *
  * Baseline cases, desktop smoke, and provider smoke all spawn `src/server/index.ts`.
- * Every one of those code paths resolves user state through
- * `process.env.CLAUDE_CONFIG_DIR || homedir()/.claude`, so inheriting the parent
- * environment makes a QA run read *and write* the developer's real transcripts,
+ * Those entrypoints resolve user state through the shared storage binding, so
+ * inheriting the parent environment makes a QA run read *and write* real transcripts,
  * session index, diagnostics, and `settings.json`. This module gives those lanes a
  * throwaway HOME while still letting them exercise a provider the user actually
  * configured: provider state is *copied in*, never written back.
  */
 
-/** Files under `<config>/cc-haha/` that carry provider identity and credentials. */
+/** Files under the canonical internal directory that carry provider identity and credentials. */
 export const SEEDABLE_PROVIDER_STATE_FILES = [
   'providers.json',
   'settings.json',
@@ -60,7 +60,7 @@ export type QualityGateSandbox = {
 }
 
 export function realUserConfigDir(source: NodeJS.ProcessEnv = process.env) {
-  return source.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
+  return resolveStorageBinding({ env: source, homeDir: source.HOME || source.USERPROFILE || homedir() }).root
 }
 
 /**
@@ -100,8 +100,8 @@ export function seedProviderState(
   sandboxConfigDir: string,
   files: readonly string[] = SEEDABLE_PROVIDER_STATE_FILES,
 ): string[] {
-  const sourceDir = join(sourceConfigDir, 'cc-haha')
-  const targetDir = join(sandboxConfigDir, 'cc-haha')
+  const sourceDir = getEchoFlowInternalDir(sourceConfigDir)
+  const targetDir = getEchoFlowInternalDir(sandboxConfigDir)
   if (!existsSync(sourceDir)) {
     return []
   }
@@ -129,6 +129,12 @@ export function seedProviderState(
  */
 export const GUARDED_USER_STATE_PATHS = [
   'settings.json',
+  'app.json',
+  'echoflow-code/providers.json',
+  'echoflow-code/settings.json',
+  'echoflow-code/oauth.json',
+  'echoflow-code/openai-oauth.json',
+  'echoflow-code/grok-oauth.json',
   'cc-haha/providers.json',
   'cc-haha/settings.json',
   'cc-haha/oauth.json',
@@ -257,7 +263,13 @@ export function createQualityGateSandbox(options: {
   const home = mkdtempSync(join(tmpdir(), `cc-haha-qa-${options.label}-`))
   const env = buildSandboxLaneEnv(home, options.envOverrides ?? {}, source)
   const configDir = env.CLAUDE_CONFIG_DIR
+  const configSuffix = relative(home, configDir)
+  if (!isAbsolute(configDir) || configSuffix === '..' || configSuffix.startsWith(`..${sep}`) || isAbsolute(configSuffix)) {
+    rmSync(home, { recursive: true, force: true })
+    throw new Error('Sandbox config directory must remain inside its private HOME')
+  }
   mkdirSync(configDir, { recursive: true })
+  writeFileSync(join(configDir, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()) + '\n', { flag: 'wx', mode: 0o600 })
 
   if (options.seedProviders) {
     seedProviderState(sourceConfigDir, configDir)

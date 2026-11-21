@@ -70,6 +70,15 @@ await compileExecutable({
   bunTarget,
 })
 
+if (bunTarget.startsWith('bun-windows-')) {
+  await compileExecutable({
+    entrypoint: path.join(desktopRoot, 'sidecars/installerStorageRecovery.ts'),
+    outfileBase: path.join(binariesDir, `installer-storage-recovery-${targetTriple}`),
+    productName: 'EchoFlow Code Installer Storage Recovery',
+    bunTarget,
+  })
+}
+
 console.log(`[build-sidecars] Built desktop sidecar for ${targetTriple} (${bunTarget})`)
 
 // macOS-only: build + bundle the native `cu-helper` Computer Use binary.

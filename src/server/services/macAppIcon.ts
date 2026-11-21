@@ -1,5 +1,5 @@
-import { readdir, rm, mkdtemp, readFile, access } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readdir, rm, readFile, access } from 'node:fs/promises'
+import { createPrivateStorageTempDirectory } from '../../utils/cachePaths.js'
 import path from 'node:path'
 import { LRUCache } from 'lru-cache'
 
@@ -89,7 +89,7 @@ async function defaultListResourceFiles(resourcesPath: string): Promise<string[]
 }
 
 async function defaultConvertToPng(iconPath: string, size: number): Promise<Uint8Array> {
-  const tmpRoot = await mkdtemp(path.join(tmpdir(), 'cc-haha-cu-app-icon-'))
+  const tmpRoot = await createPrivateStorageTempDirectory('app-icon-')
   const outputPath = path.join(tmpRoot, 'icon.png')
   try {
     const proc = Bun.spawn(

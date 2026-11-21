@@ -1,7 +1,7 @@
 import { c as _c } from "react/compiler-runtime";
-import { mkdir, writeFile } from 'fs/promises';
+import { writeFile } from 'fs/promises';
 import { marked, type Tokens } from 'marked';
-import { tmpdir } from 'os';
+import { ensurePrivateStorageTempRoot } from '../../utils/cachePaths.js';
 import { join } from 'path';
 import React, { useRef } from 'react';
 import type { CommandResultDisplay } from '../../commands.js';
@@ -20,7 +20,6 @@ import type { AssistantMessage, Message } from '../../types/message.js';
 import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js';
 import { extractTextContent, stripPromptXMLTags } from '../../utils/messages.js';
 import { countCharInString } from '../../utils/stringUtils.js';
-const COPY_DIR = join(tmpdir(), 'claude');
 const RESPONSE_FILENAME = 'response.md';
 const MAX_LOOKBACK = 20;
 type CodeBlock = {
@@ -71,10 +70,7 @@ export function fileExtension(lang: string | undefined): string {
   return '.txt';
 }
 async function writeToFile(text: string, filename: string): Promise<string> {
-  const filePath = join(COPY_DIR, filename);
-  await mkdir(COPY_DIR, {
-    recursive: true
-  });
+  const filePath = join(ensurePrivateStorageTempRoot(), filename);
   await writeFile(filePath, text, 'utf-8');
   return filePath;
 }

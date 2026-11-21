@@ -10,7 +10,7 @@
  */
 
 import * as fs from 'fs/promises'
-import * as os from 'os'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import * as path from 'path'
 import { logTokenRefreshFailure } from './oauthRefreshLog.js'
 import {
@@ -32,9 +32,10 @@ import type {
   OAuthTokenExchangeResponse,
   SubscriptionType,
 } from '../../services/oauth/types.js'
-import { CLAUDE_AI_PROFILE_SCOPE } from '../../constants/oauth.js'
+import { CLAUDE_AI_PROFILE_SCOPE, getOauthConfig } from '../../constants/oauth.js'
 import { getOauthProfileFromOauthToken } from '../../services/oauth/getOauthProfile.js'
-import { getNetworkProxyUrl, loadNetworkSettings } from './networkSettings.js'
+import { getNoProxy, shouldBypassProxy } from '../../utils/proxy.js'
+import { getNetworkProxyUrl, loadNetworkSettings, mergeLoopbackNoProxy } from './networkSettings.js'
 
 export type StoredOAuthTokens = {
   accessToken: string
@@ -120,9 +121,7 @@ export class HahaOAuthService {
   }
 
   private getOAuthFilePath(): string {
-    const configDir =
-      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-    return path.join(configDir, 'cc-haha', 'oauth.json')
+    return path.join(getEchoFlowInternalDir(), 'oauth.json')
   }
 
   async loadTokens(): Promise<StoredOAuthTokens | null> {
@@ -249,8 +248,10 @@ export class HahaOAuthService {
   ): Promise<OAuthTokenExchangeResponse> {
     const networkSettings = await loadNetworkSettings()
     try {
+      const configuredProxy = getNetworkProxyUrl(networkSettings)
+      const bypass = shouldBypassProxy(getOauthConfig().TOKEN_URL, mergeLoopbackNoProxy(getNoProxy()))
       return await this.exchangeFn(code, state, verifier, port, false, undefined, {
-        proxyUrl: getNetworkProxyUrl(networkSettings),
+        proxyUrl: bypass ? null : configuredProxy,
       })
     } catch (err) {
       // axios only reports "Request failed with status code N"; the token

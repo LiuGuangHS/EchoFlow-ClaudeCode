@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'crypto'
 import * as fs from 'fs/promises'
-import * as os from 'os'
+import { getEchoFlowInternalDir as getCcHahaDir } from '../../utils/echoFlowConfigRoot.js'
 import * as path from 'path'
 import { AuthCodeListener } from '../../services/oauth/auth-code-listener.js'
 import { generateCodeChallenge } from '../../services/oauth/crypto.js'
@@ -66,11 +66,6 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
-}
-
-function getCcHahaDir(): string {
-  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-  return path.join(configDir, 'cc-haha')
 }
 
 export function getHahaDeepSeekOAuthFilePath(): string {

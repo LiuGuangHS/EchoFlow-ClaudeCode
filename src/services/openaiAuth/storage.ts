@@ -1,10 +1,12 @@
 import * as fs from 'fs'
-import * as os from 'os'
+import { getEchoFlowInternalDir as getCcHahaDir } from '../../utils/echoFlowConfigRoot.js'
 import * as path from 'path'
 import memoize from 'lodash-es/memoize.js'
 import { getSecureStorage } from '../../utils/secureStorage/index.js'
 import { errorMessage } from '../../utils/errors.js'
+import { resolveManagedStoragePath } from '../../utils/managedStoragePath.js'
 import { logError } from '../../utils/log.js'
+import { normalizeTokenFile } from './tokenFile.js'
 import type { OpenAIOAuthTokens } from './types.js'
 
 const STORAGE_KEY = 'openaiCodexOauth'
@@ -20,13 +22,7 @@ const FILE_BACKED_STORAGE_MARKER_FILE = 'openai-oauth-file-backed'
 
 function getDesktopTokenFilePath(): string | null {
   const filePath = process.env[OPENAI_CODEX_OAUTH_FILE_ENV_KEY]?.trim()
-  return filePath ? filePath : null
-}
-
-function getCcHahaDir(): string {
-  const configDir =
-    process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-  return path.join(configDir, 'cc-haha')
+  return filePath ? resolveManagedStoragePath(filePath, OPENAI_CODEX_OAUTH_FILE_ENV_KEY) : null
 }
 
 function getFileBackedStorageMarkerPath(): string {
@@ -54,31 +50,6 @@ function clearFileBackedStorageMarker(): void {
 
 function isSecureStorageFallbackDisabled(): boolean {
   return fs.existsSync(getFileBackedStorageMarkerPath())
-}
-
-function normalizeTokenFile(value: unknown): OpenAIOAuthTokens | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-
-  const record = value as Record<string, unknown>
-  if (
-    typeof record.accessToken !== 'string' ||
-    typeof record.refreshToken !== 'string' ||
-    typeof record.expiresAt !== 'number'
-  ) {
-    return null
-  }
-
-  return {
-    accessToken: record.accessToken,
-    refreshToken: record.refreshToken,
-    expiresAt: record.expiresAt,
-    ...(typeof record.idToken === 'string' && { idToken: record.idToken }),
-    ...(typeof record.accountId === 'string' && {
-      accountId: record.accountId,
-    }),
-    ...(typeof record.email === 'string' && { email: record.email }),
-    ...(typeof record.clientId === 'string' && { clientId: record.clientId }),
-  }
 }
 
 function readDesktopTokenFileSync(filePath = getDesktopTokenFilePath()): OpenAIOAuthTokens | null {

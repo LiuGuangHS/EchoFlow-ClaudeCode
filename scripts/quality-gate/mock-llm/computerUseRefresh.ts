@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { createQualityGateSandbox } from '../sandbox'
+import { getEchoFlowInternalDir } from '../../../src/utils/echoFlowConfigRoot'
 import { startMockLlmServer } from './server'
 import type { MockReply, MockRequest } from './scriptedModel'
 
@@ -24,10 +25,10 @@ export async function runComputerUseRefreshScenario(rootDir: string, artifactDir
     source: { PATH: process.env.PATH, SHELL: process.env.SHELL, SYSTEMROOT: process.env.SYSTEMROOT },
   })
   const workDir = join(sandbox.home, 'project')
-  const configPath = join(sandbox.configDir, 'cc-haha', 'computer-use-config.json')
+  const configPath = join(getEchoFlowInternalDir(sandbox.configDir), 'computer-use-config.json')
   const fixtureLog = join(sandbox.configDir, 'computer-use-native-fixture.ndjson')
   mkdirSync(workDir, { recursive: true })
-  mkdirSync(join(sandbox.configDir, 'cc-haha'), { recursive: true })
+  mkdirSync(getEchoFlowInternalDir(sandbox.configDir), { recursive: true })
   const setEnabled = (enabled: boolean) => writeFileSync(configPath, JSON.stringify({
     enabled,
     grantFlags: { clipboardRead: true, clipboardWrite: true, systemKeyCombos: true },

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSandboxedTestEnvironment } from '../../scripts/pr/test-environment.js'
 import { sanitizePath } from '../utils/sessionStoragePortable.js'
+import { ensureEchoFlowConfigRoot } from '../utils/echoFlowConfigRoot.js'
 
 const CLI = join(import.meta.dir, '..', '..', 'bin', 'claude-haha')
 
@@ -38,6 +39,7 @@ async function resumeAfterEnterWorktree(options: { worktreeExists: boolean }) {
     ANTHROPIC_MODEL: 'claude-sonnet-4-5',
   })
   try {
+    await ensureEchoFlowConfigRoot(env.CLAUDE_CONFIG_DIR!)
     const sessionId = crypto.randomUUID()
     const projectsDir = join(env.CLAUDE_CONFIG_DIR!, 'projects')
     const transcript = join(projectsDir, sanitizePath(repo), `${sessionId}.jsonl`)

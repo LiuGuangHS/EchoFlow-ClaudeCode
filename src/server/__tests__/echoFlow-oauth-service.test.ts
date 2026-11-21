@@ -10,6 +10,7 @@ import {
   EchoFlowOAuthService,
   type StoredOAuthTokens,
 } from '../services/echoFlowOAuthService.js'
+import { getOauthConfig } from '../../constants/oauth.js'
 import { SYSTEM_PROXY_URL_ENV } from '../services/networkSettings.js'
 import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
@@ -139,28 +140,29 @@ describe('EchoFlowOAuthService — session management', () => {
     expect((await service.loadTokens())?.subscriptionType).toBe('team')
   })
 
-  test('routes the Claude token exchange through the dynamic system proxy bridge', async () => {
+  test.each([false, true])('honors NO_PROXY during the Claude token exchange (bypass: %s)', async bypass => {
     const bridgeUrl = 'http://127.0.0.1:17890'
+    const original = process.env.no_proxy
+    process.env.no_proxy = bypass ? new URL(getOauthConfig().TOKEN_URL).hostname : 'fixture.invalid'
     process.env[SYSTEM_PROXY_URL_ENV] = bridgeUrl
-    let requestProxy: string | undefined
-    globalThis.fetch = (async (_input, init) => {
-      requestProxy = (init as RequestInit & { proxy?: string } | undefined)?.proxy
-      return Response.json({
+    let requestProxy: string | null | undefined
+    service.setExchangeFn(async (_code, _state, _verifier, _port, _manual, _ttl, options) => {
+      requestProxy = options?.proxyUrl
+      return {
         access_token: 'access',
         refresh_token: 'refresh',
         expires_in: 3600,
         scope: 'user:inference',
-      })
-    }) as typeof fetch
+      }
+    })
 
-    await (service as any).exchangeWithCustomCallback(
-      'authorization-code',
-      'state',
-      'verifier',
-      54321,
-    )
-
-    expect(requestProxy).toBe(bridgeUrl)
+    try {
+      await (service as any).exchangeWithCustomCallback('authorization-code', 'state', 'verifier', 54321)
+      expect(requestProxy).toBe(bypass ? null : bridgeUrl)
+    } finally {
+      if (original === undefined) delete process.env.no_proxy
+      else process.env.no_proxy = original
+    }
   })
 })
 

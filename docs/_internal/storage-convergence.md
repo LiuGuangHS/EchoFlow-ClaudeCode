@@ -159,8 +159,13 @@ order: 0
 | --- | --- | --- |
 | shell 子任务 permissions/providers/imagePaste 五文件 | **passed：34 tests，1 Windows native skipped**，子任务证据 | shell/project scratch 统一为 `I/tmp/shell`；不把 R、I 或整个 `I/tmp` 加入 sandbox allowWrite。24 个剪贴板 fixture 覆盖三种模拟平台、成功与失败清理及包含引号/Unicode 的路径；没有真实剪贴板或 native sandbox 执行 |
 | shell 子任务 shellStorage、diskOutput 两文件及单独 background-task-output-route | **passed：15 tests** 及 **6 tests**，子任务证据 | 真实 bundled-skill extraction、nonce/read allowlist、provider cwd/env、task output 与 loopback route。旧绝对 `/tmp` task-output 引用仍可能 403；未读取共享临时目录、改写 transcript 或新增业务 fallback，历史输出收养尚未完成 |
+| 历史精确 task-output 收养 | **blocked / 未完成** | transcript 只保留生产者路径，缺少写入时归属、最终字节身份、完成标记和停写证据；不扩大通用读取白名单，不扫描或认领旧临时根 |
 | 主会话 shell scratch、clipboard、providers、filesystem、diskOutput、background-task-output-route 七文件联跑 | **passed：51 tests / 71 assertions，1 Windows native skipped** | 验证新持久化 lane 的实际组合；与上面子任务用例重叠，不累加。保留原权限/身份/路径和 route 断言，没有真实剪贴板或 native sandbox 执行 |
 | 主会话 `storage-public-access-restart.test.ts` | **passed：1 test / 2 subprocess assertions** | 真实 server 的 browser 配对和会话创建后完全退出；第二进程执行 startup 迁移，旧根消失，在原固定端口凭原 cookie 读取历史。devices 未知字段、原 transcript bytes 和 writer drain 保留，未授权请求仍为 401。首轮仅因 inventory mock 缺 export 失败，补齐 fixture 后通过，未称产品 RED。只有 OS inventory 使用私有范围 fixture；不是浏览器 cookie jar/localStorage、真实公网 tunnel 或 native Electron 验收 |
+
+#### 历史 task-output 的已知缺口
+
+transcript 中保留的绝对路径只是生产者的路径证据，不是 EchoFlow 归属、最终字节身份、完成标记或停写证明。EchoFlow 不扫描、打开、迁移、删除或放宽读取旧的 OS tmp 根；范围外的精确路径继续返回 `FORBIDDEN`/403，原字节保持原位。历史 task-output 收养仍属单根归并的未完成缺口，只有在取得可验证的写入时归属证据后才能处理，不能通过扩大通用读取白名单补做。
 
 ### 配置引用、冷迁移与安装 bridge 的集成证据
 
@@ -308,6 +313,10 @@ RED 日志：`/tmp/echoflow-review-memory-red.log`、`/tmp/echoflow-review-perf-
 - remote memory base 与单个项目 memory 子树不是同一范围；不能只按 `MEMORY.md` 名称判归属。
 - WhatsApp 使用 multifile auth/key cohort，不能只迁移 `creds.json`，也不能凭该文件存在就认领所有同目录文件。
 
-因此没有将 override 字符串直接变成自动迁移授权，也没有添加新 marker 冒充历史所有权。完成这部分需要现有可验证 provenance，或对精确材料的显式、可审查收养决定；随后以类别限定的 selective source、持久化身份/选择、窄 mapping、接受后清理与分叉检测接入共享事务。当前为**实现与所有权契约缺口**，不是一项已经完成但缺实机证据的功能。
+共享事务已支持显式批准的同目录精确文件清单：回执冻结目的地和文件身份，恢复核对完整操作集，只发布逐文件映射，接受后才清理原文件，不认领共享父目录。更换已归属的完整根时，旧批准回执作为迁移历史保存，不变成新根的活动授权。
+
+CLI 提供 `storage adopt openai-oauth --file /absolute/path/openai-oauth.json`，经交互确认后只收养指定文件。桌面在「设置 → 数据」提供对应入口，由宿主选择文件并确认，在停写和重启后执行迁移。两个入口都在确认前检查文件格式。迁移后的文件由桌面管理的 OpenAI provider 使用，独立 CLI 可通过 `OPENAI_CODEX_OAUTH_FILE` 显式选择新根内的该文件。未指定 override 时，独立 CLI 仍按原有安全存储规则选择凭据。OAuth override 本身不构成迁移授权。Trace、plugin、memory 和 WhatsApp 仍缺类别限定的批准、停写证明和入口接线。
+
+迁移锁和 writer 回执的空文件、半写文件都缺少可验证的进程身份，继续阻断自动恢复。进程若恰好在创建文件后、写入完成前退出，需要人工核实停写及事务归属。
 
 WSL 本地不默认重复全量验证；完整 PR/全量门禁由对应候选的 Actions 证据证明。本次尚未运行的检查不能记作通过，Linux fixture 也不替代 Windows/macOS 安装、句柄和系统凭据库实机证据。

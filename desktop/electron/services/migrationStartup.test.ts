@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 // Run the actual startup registration with isolated host/runtime dependencies.
 // No Electron process, user configuration, providers or credentials are loaded.
 function startupFixture(
-  failure?: 'recover' | 'validate' | 'rollback' | 'shutdown',
+  failure?: 'start',
   options: { restore?: Promise<void>, createWindow?: Promise<void>, tray?: boolean } = {},
 ) {
   const desktopDir = path.basename(process.cwd()) === 'desktop' ? process.cwd() : path.join(process.cwd(), 'desktop')
@@ -18,27 +18,16 @@ function startupFixture(
   const calls: string[] = []
   const step = (name: string) => { calls.push(name) }
   const env: NodeJS.ProcessEnv = {}
-  const migration = {
-    async recover() { step('recover'); if (failure === 'recover') throw new Error('Missing target disk'); return 'validate' },
-    async completeValidation() { step('complete') },
-    async failValidation() { step('rollback'); if (failure === 'rollback') throw new Error('Original directory is unavailable') },
-  }
   const runtime = {
-    async startServer() { step('start'); expect(env.CC_HAHA_MIGRATION_VALIDATION === '1' || calls.includes('rollback')).toBe(true) },
-    async validateMigrationStartup() { step('validate'); if (failure && failure !== 'recover') throw new Error('Invalid copied configuration') },
-    async activateAfterMigrationValidation() { step('activate'); expect(calls).toContain('complete') },
-    async stopAllAndWait() { step('stop'); if (failure === 'shutdown') throw new Error('Runtime process did not exit') },
+    async startServer() { step('start'); if (failure === 'start') throw new Error('Runtime could not start') },
   }
   const context = {
-    startupProfileError: null,
     nativeMenuNavigation: { navigate: vi.fn() },
     trayServiceStatus: 'unavailable',
     readLocalePreference: () => 'en',
     app: { whenReady: () => Promise.resolve(), on: vi.fn() },
     process: { env, platform: 'win32' },
-    applyWindowsAppUserModelId: () => {}, clearAppManagedPortableEnv: () => step('clearEnv'),
-    applyStartupPortableMode: () => step('applyRoot'), getDataMigration: () => migration,
-    setStorageWritesFrozen: vi.fn(), dialog: { showErrorBox: vi.fn() },
+    applyWindowsAppUserModelId: () => {},
     createMainWindow: vi.fn(async () => { step('window'); await options.createWindow }), installSystemAppearanceWatch: () => {},
     powerMonitor: { on: vi.fn<(event: string, listener: () => void) => void>() },
     idlePowerService: { stop: vi.fn(), start: vi.fn(), getState: vi.fn(() => ({ countdown: { id: 'fixture' } })), cancel: vi.fn() },
@@ -55,32 +44,29 @@ function startupFixture(
   return { calls, context, env, startup }
 }
 
-describe('migration startup admission boundary', () => {
-  it('persists validation before admitting tasks or restoring public access', async () => {
+describe('cold migration startup admission boundary', () => {
+  it('runs the cold bootstrap before ordinary Electron imports and never recovers a profile after ready', () => {
+    const desktopDir = path.basename(process.cwd()) === 'desktop' ? process.cwd() : path.join(process.cwd(), 'desktop')
+    const source = readFileSync(path.join(desktopDir, 'electron/main.ts'), 'utf8')
+    expect(source.startsWith("import './storageBootstrap'")).toBe(true)
+    const ready = source.slice(source.indexOf('app.whenReady().then'))
+    expect(ready).not.toContain('getDataMigration().recover()')
+    expect(ready).not.toContain('completeValidation()')
+    expect(ready).not.toContain('failValidation()')
+  })
+
+  it('starts the ordinary runtime once after the cold barrier has admitted the profile', async () => {
     const f = startupFixture()
     await f.startup
-    expect(f.calls).toEqual(['clearEnv', 'recover', 'applyRoot', 'start', 'validate', 'complete', 'activate', 'window', 'publicAccess'])
-    expect(f.env.CC_HAHA_MIGRATION_VALIDATION).toBeUndefined()
-    expect(f.context.setStorageWritesFrozen).not.toHaveBeenCalled()
-  })
-
-  it('stops the validating runtime before rolling back and restarting the old root', async () => {
-    const f = startupFixture('validate')
-    await f.startup
-    expect(f.calls).toEqual(['clearEnv', 'recover', 'applyRoot', 'start', 'validate', 'stop', 'rollback', 'clearEnv', 'applyRoot', 'start', 'window', 'publicAccess'])
-    expect(f.calls).not.toContain('activate')
+    expect(f.calls).toEqual(['start', 'window', 'publicAccess'])
     expect(f.env.CC_HAHA_MIGRATION_VALIDATION).toBeUndefined()
   })
 
-  it.each(['recover', 'rollback', 'shutdown'] as const)('fails closed when %s cannot complete safely', async failure => {
-    const f = startupFixture(failure)
+  it('reports a runtime startup failure without replaying profile migration or restarting an old root', async () => {
+    const f = startupFixture('start')
     await f.startup
-    expect(f.context.setStorageWritesFrozen).toHaveBeenCalledWith(true)
-    expect(f.context.dialog.showErrorBox).toHaveBeenCalledOnce()
-    expect(f.calls.filter(call => call === 'start')).toHaveLength(failure === 'recover' ? 0 : 1)
-    expect(f.calls).not.toContain('activate')
-    expect(f.calls).not.toContain('publicAccess')
-    expect(f.calls.at(-1)).toBe('window')
+    expect(f.calls.filter(call => call === 'start')).toHaveLength(1)
+    expect(f.context.console.error).toHaveBeenCalledWith('[desktop] failed to start Electron server sidecar', expect.any(Error))
   })
 })
 

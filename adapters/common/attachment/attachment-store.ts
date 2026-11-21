@@ -2,7 +2,7 @@
  * Local staging directory for IM-downloaded resources.
  *
  * Layout: {root}/{platform}/{sessionId}/{safeName}
- * Default root: ~/.claude/im-downloads
+ * Default root: <selected root>/im-downloads
  *
  * Responsibilities:
  *  - Generate unique, safe paths from (platform, sessionId, originalName)
@@ -15,7 +15,7 @@ import { adapterMigrationLifecycle } from '../migration-lifecycle.js'
 import * as fsSync from 'node:fs'
 import type { Dirent } from 'node:fs'
 import * as path from 'node:path'
-import * as os from 'node:os'
+import { getEchoFlowConfigDir } from '../../../src/utils/echoFlowConfigRoot.js'
 import type { ImPlatform } from './attachment-types.js'
 
 export interface AttachmentStoreConfig {
@@ -30,7 +30,7 @@ const DEFAULT_RETENTION_MS = 24 * 60 * 60 * 1000
 const DEFAULT_ORPHAN_GRACE_MS = 10 * 60 * 1000
 
 function defaultRoot(): string {
-  return path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'im-downloads')
+  return path.join(getEchoFlowConfigDir(), 'im-downloads')
 }
 
 /** Strip path separators / .. / control chars from a filename. */

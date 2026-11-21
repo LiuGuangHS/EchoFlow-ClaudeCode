@@ -27,6 +27,8 @@ import { updateSessionSlashCommands } from '../ws/handler.js'
 import { reduceTranscript } from '../services/localIndex/transcriptReducer.js'
 import { openLocalIndexDatabase } from '../services/localIndex/database.js'
 import { readSessionEntriesByLocator } from '../services/localIndex/sessionEntries.js'
+import { ECHOFLOW_INTERNAL_DIR } from '../../utils/echoFlowConfigRoot.js'
+import { ensureSessionArchivesMigrated } from '../../utils/sessionArchiveStore.js'
 import {
   createSessionIndex,
   type LocalIndexGateway,
@@ -1254,6 +1256,7 @@ describe('SessionService', () => {
         [makeUserEntry(`Bounded cache ${index}`)],
       )
     }
+    await ensureSessionArchivesMigrated(tmpDir)
     const boundedService = new SessionService(undefined, {
       now: () => now,
       sessionListCacheMaxEntries: 2,
@@ -1371,8 +1374,8 @@ describe('SessionService', () => {
         [firstConfigDir, '24300000-bbbb-cccc-dddd-eeeeeeeeeeee'],
         [secondConfigDir, '24300001-bbbb-cccc-dddd-eeeeeeeeeeee'],
       ] as const) {
-        await fs.mkdir(path.join(configDir, 'cc-haha'), { recursive: true })
-        await fs.writeFile(path.join(configDir, 'cc-haha', 'session-archives.json'), JSON.stringify({
+        await fs.mkdir(path.join(configDir, ECHOFLOW_INTERNAL_DIR), { recursive: true })
+        await fs.writeFile(path.join(configDir, ECHOFLOW_INTERNAL_DIR, 'session-archives.json'), JSON.stringify({
           schemaVersion: 1, sessions: { [id]: { archived: true } },
         }))
       }

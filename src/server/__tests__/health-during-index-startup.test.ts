@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { startServer, stopServerRuntimeForShutdown } from '../index.js'
+import { startServer, stopServerRuntimeForShutdown } from '../serverRuntime.js'
 import { localIndexCoordinator } from '../services/localIndex/coordinator.js'
 
 let configDir = ''

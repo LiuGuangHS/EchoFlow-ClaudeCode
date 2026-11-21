@@ -163,7 +163,11 @@ async function unlinkIfOld(
   if (stats.mtime < cutoffDate) {
     if (dryRun) return true
     const remove = async () => {
-      if (archiveSessionId && readSessionArchives(getClaudeConfigHomeDir()).ids.has(archiveSessionId)) return false
+      if (archiveSessionId) {
+        if (readSessionArchives(getClaudeConfigHomeDir()).ids.has(archiveSessionId)) return false
+        // Clear can refresh the transcript while this sweep waits for the archive lock.
+        if ((await fsImpl.stat(filePath)).mtime >= cutoffDate) return false
+      }
       await fsImpl.unlink(filePath)
       return true
     }

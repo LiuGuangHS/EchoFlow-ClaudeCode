@@ -178,7 +178,7 @@ describe('Electron pet window service', () => {
     })
   })
 
-  it('persists position only in the app-owned cc-haha config root', () => {
+  it('persists position only in the selected complete root internal directory', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'cc-haha-pet-position-'))
     const configDir = path.join(root, 'portable')
     const env = {
@@ -188,7 +188,7 @@ describe('Electron pet window service', () => {
     try {
       expect(petWindowStatePath(env, root)).toBe(path.join(
         configDir,
-        'cc-haha',
+        'echoflow-code',
         'pet-window.json',
       ))
       writePetWindowPosition({ x: -420.4, y: 85.7 }, env, root)

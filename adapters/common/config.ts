@@ -1,12 +1,14 @@
 /**
  * Adapter 配置加载
  *
- * 优先级：环境变量 > ~/.claude/adapters.json > 默认值
+ * 优先级：环境变量 > <selected root>/adapters.json > 默认值
  */
 
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { getEchoFlowConfigDir } from '../../src/utils/echoFlowConfigRoot.js'
+import { resolveManagedStoragePath } from '../../src/utils/managedStoragePath.js'
 
 export type PairedUser = {
   userId: string | number
@@ -130,7 +132,7 @@ export type AdapterPlatformConfig =
   | SlackConfig
 
 function getConfigPath(): string {
-  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+  const configDir = getEchoFlowConfigDir()
   return path.join(configDir, 'adapters.json')
 }
 
@@ -157,9 +159,7 @@ export function loadConfig(): AdapterConfig {
   const slack = file.slack ?? {}
   const pairing = file.pairing ?? {}
   const fallbackWorkDir = resolveUserDefaultWorkDir()
-  const whatsappAuthDir = resolveConfiguredPath(
-    process.env.WHATSAPP_AUTH_DIR || wa.authDir || defaultWhatsAppAuthDir(),
-  )
+  const whatsappAuthDir = process.env.WHATSAPP_AUTH_DIR || wa.authDir || defaultWhatsAppAuthDir()
 
   return {
     serverUrl: process.env.ADAPTER_SERVER_URL || file.serverUrl || 'ws://127.0.0.1:3456',
@@ -213,7 +213,9 @@ export function loadConfig(): AdapterConfig {
     },
     whatsapp: {
       accountJid: process.env.WHATSAPP_ACCOUNT_JID || wa.accountJid || '',
-      authDir: whatsappAuthDir,
+      get authDir() {
+        return resolveManagedStoragePath(resolveConfiguredPath(whatsappAuthDir), 'WHATSAPP_AUTH_DIR / whatsapp.authDir')
+      },
       allowedUsers: wa.allowedUsers ?? [],
       pairedUsers: wa.pairedUsers ?? [],
       defaultWorkDir: wa.defaultWorkDir || fallbackWorkDir,
@@ -436,7 +438,7 @@ function resolveExistingDirectory(value: string | undefined): string | null {
 }
 
 function defaultWhatsAppAuthDir(): string {
-  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+  const configDir = getEchoFlowConfigDir()
   return path.join(configDir, 'whatsapp-auth', 'default')
 }
 

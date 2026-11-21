@@ -3,6 +3,7 @@ import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, relative, resolve } from 'node:path'
 import type { LocalIndexCorpusOptions } from './local-index-corpus.js'
+import { getEchoFlowInternalDir } from '../../src/utils/echoFlowConfigRoot.js'
 
 type CorpusManifest = {
   corpusVersion: number
@@ -279,6 +280,7 @@ async function runBenchmarkProcess(args: string[]): Promise<{
 
 describe('local index file benchmark', () => {
   it('enforces real warmup and measured sample deadlines with cleanup', async () => {
+    await import('../../src/server/services/sessionService.js')
     const benchmark = await import('./local-index-benchmark.js') as {
       parseBenchmarkArgs?: (args: string[]) => unknown
       runBenchmark?: (
@@ -512,7 +514,7 @@ describe('local index file benchmark', () => {
   }
 
   it('enforces the real loopback product deadline and still cleans isolated state', async () => {
-    await import('../../src/server/index.js')
+    await import('../../src/server/serverRuntime.js')
     await import('../../src/server/services/localIndex/coordinator.js')
     const benchmark = await import('./local-index-benchmark.js') as {
       parseBenchmarkArgs?: (args: string[]) => unknown
@@ -913,8 +915,7 @@ describe('local index file benchmark', () => {
       const manifest = await loadManifest(report.fixture.manifestPath)
       const firstSource = join(report.fixture.configDir, manifest.sources[0]!.path)
       const databasePath = join(
-        report.fixture.configDir,
-        'cc-haha',
+        getEchoFlowInternalDir(report.fixture.configDir),
         'db',
         'index-v1.sqlite',
       )

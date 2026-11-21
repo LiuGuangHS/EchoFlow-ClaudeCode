@@ -11,7 +11,7 @@ const originalEnv = { ...process.env }
 const sandboxHome = mkdtempSync(join(tmpdir(), 'memdir-prompt-'))
 for (const key of Object.keys(process.env)) delete process.env[key]
 Object.assign(process.env, createSandboxedTestEnvironment(sandboxHome, {
-  CLAUDE_COWORK_MEMORY_PATH_OVERRIDE: join(sandboxHome, 'memory'),
+  CLAUDE_COWORK_MEMORY_PATH_OVERRIDE: join(sandboxHome, '.claude', 'memory'),
 }, originalEnv))
 const {
   buildCompactMemoryLines, buildMemoryLines, loadMemoryPrompt,
@@ -19,7 +19,9 @@ const {
 } = await import('./memdir.js')
 const { MEMORY_FRONTMATTER_EXAMPLE, MEMORY_TYPES } = await import('./memoryTypes.js')
 const { getAutoMemPath } = await import('./paths.js')
+getAutoMemPath.cache.clear?.()
 afterAll(() => {
+  getAutoMemPath.cache.clear?.()
   for (const key of Object.keys(process.env)) delete process.env[key]
   Object.assign(process.env, originalEnv)
   rmSync(sandboxHome, { recursive: true, force: true })
@@ -85,7 +87,7 @@ describe('compact auto-memory prompt (lean profile)', () => {
 
   test('loadMemoryPrompt renders the compact variant only when asked', async () => {
     const memoryDir = getAutoMemPath()
-    expect(memoryDir.startsWith(join(sandboxHome, 'memory'))).toBe(true)
+    expect(memoryDir.startsWith(join(sandboxHome, '.claude', 'memory'))).toBe(true)
     expect(await loadMemoryPrompt()).toBe(buildMemoryLines('auto memory', memoryDir).join('\n'))
     expect(await loadMemoryPrompt({ compact: true })).toBe(buildCompactMemoryLines(memoryDir).join('\n'))
     expect(existsSync(memoryDir)).toBe(true)

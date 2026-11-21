@@ -33,6 +33,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { areStorageWritesFrozen } from './storageMaintenance'
+import { resolveStorageBinding } from '../../../src/utils/echoFlowConfigRoot'
 import type { App, BrowserWindow } from 'electron'
 
 export const APPEARANCE_STATE_FILE = 'appearance-state.json'
@@ -60,14 +61,14 @@ type StoredAppearance = AppliedAppearance
 
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/
 
-// Matches windows.ts / petWindow.ts, the other two writers into ~/.claude: on a
+// Matches windows.ts / petWindow.ts, the other two root-bound writers: on a
 // read-only or full disk this is written on every theme change, and an
 // undeduplicated error would repeat forever.
 const failedAppearanceWritePaths = new Set<string>()
 
 export function appearanceStatePath(app: App, env: NodeJS.ProcessEnv = process.env): string {
   return path.join(
-    env.CLAUDE_CONFIG_DIR || path.join(app.getPath('home'), '.claude'),
+    resolveStorageBinding({ env, homeDir: app.getPath('home') }).root,
     APPEARANCE_STATE_FILE,
   )
 }

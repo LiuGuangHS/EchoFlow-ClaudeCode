@@ -49,7 +49,8 @@ import type {
 // 13: a reply's usage is the per-field maximum over its content-block lines, not its first line;
 //     rebuild the persisted per-model tokens and dollars that under-counted zero-first replies.
 // 14: validated nullable legacy archive knowledge, including malformed and pending input.
-export const SESSION_SUMMARY_PARSER_VERSION = 14
+export const LEGACY_ARCHIVE_PARSER_VERSION = 14
+export const SESSION_SUMMARY_PARSER_VERSION = LEGACY_ARCHIVE_PARSER_VERSION
 
 export type SessionSourceCandidate = {
   path: string
@@ -894,7 +895,7 @@ export function createSessionProjector(options: SessionProjectorOptions): Sessio
       summary.isTeamWorker ? 1 : 0,
       summary.openAIFastMode === undefined ? null : Number(summary.openAIFastMode),
       summary.agentProfile ?? 'standard',
-      parserVersion < 14 || summary.legacyArchived == null ? null : Number(summary.legacyArchived))
+      parserVersion < LEGACY_ARCHIVE_PARSER_VERSION || summary.legacyArchived == null ? null : Number(summary.legacyArchived))
 
       writeBackfillState(
         writer,

@@ -16,6 +16,7 @@ import * as teamRuntime from '../services/teamPlanRuntime.js'
 import { cleanupOldFileHistoryBackups, cleanupOldSessionEnvDirs, cleanupOldSessionFiles } from '../../utils/cleanup.js'
 import { getFsImplementation } from '../../utils/fsOperations.js'
 import { sanitizePath } from '../../utils/sessionStoragePortable.js'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 
 let configDir: string
 let projectRoot: string
@@ -75,8 +76,8 @@ describe('reversible session archive', () => {
     await fs.appendFile(files[2]!, tail)
     await fs.appendFile(files[3]!, '{malformed but explicitly restored}\n')
     await fs.appendFile(files[4]!, '{"type":"assistant"')
-    const archivePath = path.join(path.join(configDir, 'cc-haha'), 'session-archives.json')
-    const marker = path.join(path.join(configDir, 'cc-haha'), 'session-archives.legacy-jsonl-migration.json')
+    const archivePath = path.join(getEchoFlowInternalDir(configDir), 'session-archives.json')
+    const marker = path.join(getEchoFlowInternalDir(configDir), 'session-archives.legacy-jsonl-migration.json')
     await fs.mkdir(path.dirname(archivePath), { recursive: true })
     const explicit = JSON.stringify({ schemaVersion: 1, futureRoot: 'keep', sessions: {
       [idFor(3)]: { archived: false, futureRecord: ['keep'] },
@@ -173,7 +174,7 @@ describe('reversible session archive', () => {
       } finally { permission.mockRestore() }
       expect(stop).not.toHaveBeenCalled()
       expect((await (await request()).json()).total).toBe(1)
-      await expect(fs.access(path.join(path.join(configDir, 'cc-haha'), 'session-archives.json'))).rejects.toThrow()
+      await expect(fs.access(path.join(getEchoFlowInternalDir(configDir), 'session-archives.json'))).rejects.toThrow()
     } finally { stop.mockRestore() }
   })
 
@@ -372,7 +373,7 @@ describe('reversible session archive', () => {
 
   it('preserves unsupported or corrupt archive files instead of overwriting them', async () => {
     await seed(0)
-    const archivePath = path.join(path.join(configDir, 'cc-haha'), 'session-archives.json')
+    const archivePath = path.join(getEchoFlowInternalDir(configDir), 'session-archives.json')
     await fs.mkdir(path.dirname(archivePath))
     const unsupported = JSON.stringify({ schemaVersion: 2, sessions: { [idFor(0)]: { archived: true } }, future: 'keep' })
     for (const fixture of [unsupported, '{broken']) {
@@ -390,7 +391,7 @@ describe('reversible session archive', () => {
     const old = new Date('2000-01-01T00:00:00.000Z')
     await fs.utimes(archivedFile, old, old)
     await fs.utimes(ordinaryFile, old, old)
-    const archivePath = path.join(path.join(configDir, 'cc-haha'), 'session-archives.json')
+    const archivePath = path.join(getEchoFlowInternalDir(configDir), 'session-archives.json')
     await expect(fs.access(archivePath)).rejects.toThrow()
 
     // Cleanup is deliberately the first product entry point, before any list,
@@ -434,7 +435,7 @@ describe('reversible session archive', () => {
       { type: metadataLast ? 'session-meta' : 'session-archive', archived: explicit ? !archived : archived },
     ]
     await fs.appendFile(file, records.map(entry => JSON.stringify(entry)).join('\n') + '\n')
-    const internalDir = path.join(configDir, 'cc-haha')
+    const internalDir = getEchoFlowInternalDir(configDir)
     const archivePath = path.join(internalDir, 'session-archives.json')
     await expect(fs.access(archivePath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(fs.access(path.join(internalDir, 'session-archives.legacy-jsonl-migration.json'))).rejects.toMatchObject({ code: 'ENOENT' })
@@ -515,7 +516,7 @@ describe('reversible session archive', () => {
   it('migrates unversioned archive metadata, preserving unknown fields and old transcript fixtures', async () => {
     const transcript = await seed(0)
     const original = await fs.readFile(transcript, 'utf8')
-    const archivePath = path.join(path.join(configDir, 'cc-haha'), 'session-archives.json')
+    const archivePath = path.join(getEchoFlowInternalDir(configDir), 'session-archives.json')
     await fs.mkdir(path.dirname(archivePath))
     await fs.writeFile(archivePath, JSON.stringify({ future: { keep: true }, sessions: { [idFor(0)]: { archived: true, futureRecord: 'keep' } } }))
     expect((await (await request()).json()).total).toBe(0)

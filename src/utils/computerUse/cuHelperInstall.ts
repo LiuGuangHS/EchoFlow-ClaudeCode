@@ -13,7 +13,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import os from 'node:os'
+import { ensurePrivateStorageTempRoot } from '../cachePaths.js'
 import path from 'node:path'
 import { logForDebugging } from '../debug.js'
 import { getClaudeConfigHomeDir } from '../envUtils.js'
@@ -244,7 +244,7 @@ function codesignOutput(args: string[]): { ok: boolean; output: string } {
 }
 
 function leafCertificateFingerprint(target: string): string | undefined {
-  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'cc-haha-cu-signature-'))
+  const tempRoot = mkdtempSync(path.join(ensurePrivateStorageTempRoot(), 'cu-signature-'))
   try {
     const prefix = path.join(tempRoot, 'cert-')
     const extracted = codesignOutput([

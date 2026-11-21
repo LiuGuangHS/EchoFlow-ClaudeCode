@@ -1,5 +1,5 @@
 import * as fs from 'node:fs/promises'
-import * as os from 'node:os'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import * as path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { PRODUCT_NAME, PRODUCT_REPO_URL } from '../../utils/productIdentity.generated.js'
@@ -378,16 +378,12 @@ function errnoCode(error: unknown): string | undefined {
 export class DesktopUiPreferencesService {
   private static writeLocks = new Map<string, Promise<void>>()
 
-  private getConfigDir(): string {
-    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-  }
-
   private getPreferencesPath(): string {
-    return path.join(this.getConfigDir(), 'cc-haha', 'desktop-ui.json')
+    return path.join(getEchoFlowInternalDir(), 'desktop-ui.json')
   }
 
   private getProfileDir(): string {
-    return path.join(this.getConfigDir(), 'cc-haha', 'profile')
+    return path.join(getEchoFlowInternalDir(), 'profile')
   }
 
   private getProfileAvatarPath(avatarFile: string): string {
@@ -395,7 +391,7 @@ export class DesktopUiPreferencesService {
     if (!normalized) {
       throw ApiError.badRequest('Invalid avatar file path')
     }
-    return path.join(this.getConfigDir(), 'cc-haha', normalized)
+    return path.join(getEchoFlowInternalDir(), normalized)
   }
 
   private async fileExists(filePath: string): Promise<boolean> {

@@ -3,6 +3,7 @@ import * as crypto from 'node:crypto'
 import type { Stats } from 'node:fs'
 import { join } from 'node:path'
 import { getClaudeConfigHomeDir } from '../../../utils/envUtils.js'
+import { getEchoFlowInternalDir } from '../../../utils/echoFlowConfigRoot.js'
 import {
   openScheduledRunIndex,
   type ScheduledRunIndex,
@@ -74,7 +75,7 @@ export function captureScheduledRunReadModelTarget(
   return {
     scope,
     sourcePath,
-    databasePath: join(scope, 'cc-haha', 'db', 'scheduled-runs-v1.sqlite'),
+    databasePath: join(getEchoFlowInternalDir(scope), 'db', 'scheduled-runs-v1.sqlite'),
   }
 }
 

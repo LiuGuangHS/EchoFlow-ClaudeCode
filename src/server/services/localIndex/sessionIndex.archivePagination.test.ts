@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { getEchoFlowInternalDir } from '../../../utils/echoFlowConfigRoot.js'
 import { openLocalIndexDatabase, type LocalIndexBinding, type LocalIndexDatabase } from './database.js'
 import { createSessionIndex, type SessionIndex } from './sessionIndex.js'
 
@@ -13,7 +14,7 @@ let materialized: number
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'archive-index-page-'))
-  database = openLocalIndexDatabase({ scope: directory, path: join(join(directory, 'cc-haha'), 'db', 'index-v1.sqlite') })
+  database = openLocalIndexDatabase({ scope: directory, path: join(getEchoFlowInternalDir(directory), 'db', 'index-v1.sqlite') })
   queries = []
   materialized = 0
   index = createSessionIndex({

@@ -8,6 +8,8 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
+import { ensureEchoFlowConfigRoot } from '../../src/utils/echoFlowConfigRoot.js'
+import { ensureSessionArchivesMigrated } from '../../src/utils/sessionArchiveStore.js'
 
 export type LocalIndexCorpusOptions = {
   rootDir: string
@@ -277,6 +279,9 @@ export async function createLocalIndexCorpus(
   const projectsDir = join(configDir, 'projects')
   const manifestPath = join(rootDir, 'local-index-corpus-manifest.json')
   const largeTranscriptBytes = options.largeTranscriptBytes ?? 0
+  await ensureEchoFlowConfigRoot(configDir)
+  // Current synthetic transcripts include malformed lines, not legacy archive state.
+  await ensureSessionArchivesMigrated(configDir)
   await mkdir(projectsDir, { recursive: true })
 
   const transcriptPaths: string[] = []

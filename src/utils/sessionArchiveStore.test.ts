@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createSandboxedTestEnvironment } from '../../scripts/pr/test-environment.js'
+import { getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { classifySessionArchives, ensureSessionArchivesMigrated, readSessionArchives, readSessionArchiveSnapshot, resolveSessionArchive, withSessionArchiveLock, writeSessionArchive } from './sessionArchiveStore.js'
 
 let root: string
@@ -14,8 +15,8 @@ const migrationModule = new URL('./sessionArchiveStore.ts', import.meta.url).hre
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'archive-migration-'))
-  archivePath = join(join(root, 'cc-haha'), 'session-archives.json')
-  markerPath = join(join(root, 'cc-haha'), 'session-archives.legacy-jsonl-migration.json')
+  archivePath = join(getEchoFlowInternalDir(root), 'session-archives.json')
+  markerPath = join(getEchoFlowInternalDir(root), 'session-archives.legacy-jsonl-migration.json')
 })
 afterEach(async () => {
   await rm(root, { recursive: true, force: true })

@@ -4,6 +4,7 @@ import * as fs from 'node:fs/promises'
 import { access, appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import { ensureSessionArchivesMigrated } from '../../utils/sessionArchiveStore.js'
 import * as archiveStore from '../../utils/sessionArchiveStore.js'
 import { sanitizePath } from '../../utils/sessionStoragePortable.js'
@@ -47,7 +48,7 @@ test.each([false, true])('reads one bounded index page and hydrates only the req
     modified: n,
     archived: n % 3 === 0,
   }))
-  database = openLocalIndexDatabase({ scope: root, path: join(join(root, 'cc-haha'), 'db', 'index-v1.sqlite') })
+  database = openLocalIndexDatabase({ scope: root, path: join(getEchoFlowInternalDir(root), 'db', 'index-v1.sqlite') })
   database.transaction(operation => {
     for (const row of rows) {
       const file = join(projectDir, `${row.id}.jsonl`)
@@ -56,7 +57,7 @@ test.each([false, true])('reads one bounded index page and hydrates only the req
         VALUES (?,?,?,?,?,?,?,?,?)`, file, row.id, project, row.id, '2026-01-01', new Date(row.modified).toISOString(), row.modified, 1, workDir)
     }
   })
-  await writeFile(join(join(root, 'cc-haha'), 'session-archives.json'), JSON.stringify({
+  await writeFile(join(getEchoFlowInternalDir(root), 'session-archives.json'), JSON.stringify({
     schemaVersion: 1,
     sessions: Object.fromEntries(rows.filter(row => row.archived).map(row => [row.id, { archived: true }])),
   }))
@@ -107,7 +108,7 @@ async function firstUseIndex(rows: Array<{ n: number; tail?: string }>, mode: 'o
   const projectDir = join(root, 'projects', project)
   await mkdir(workDir)
   await mkdir(projectDir, { recursive: true })
-  database = openLocalIndexDatabase({ scope: root, path: join(join(root, 'cc-haha'), 'db', 'index-v1.sqlite') })
+  database = openLocalIndexDatabase({ scope: root, path: join(getEchoFlowInternalDir(root), 'db', 'index-v1.sqlite') })
   const index = createSessionIndex(database)
   const projector = createSessionProjector({ database, index, scope: root })
   const candidates = new Map<number, SessionSourceCandidate>()
@@ -147,8 +148,8 @@ test.each(['ordinary', 'archived', 'previews', 'history', 'archived-history', 's
       { n: 6, tail: jsonl({ type: 'session-meta', archived: false }) },
       { n: 7, tail: jsonl({ type: 'session-archive', archived: true }) },
     ])
-    const archivePath = join(join(root, 'cc-haha'), 'session-archives.json')
-    const marker = join(join(root, 'cc-haha'), 'session-archives.legacy-jsonl-migration.json')
+    const archivePath = join(getEchoFlowInternalDir(root), 'session-archives.json')
+    const marker = join(getEchoFlowInternalDir(root), 'session-archives.legacy-jsonl-migration.json')
     const explicit = JSON.stringify({ schemaVersion: 1, futureRoot: ['keep'], sessions: {
       [firstUseId(6)]: { archived: true, futureRecord: 'keep' },
       [firstUseId(7)]: { archived: false, futureRecord: 'keep' },
@@ -202,7 +203,7 @@ test.each(['off', 'shadow'] as const)('file-backed %s browsing excludes unresolv
   ], mode)
   expect(await service.listSessions()).toMatchObject({ total: 1, sessions: [{ id: firstUseId(0) }] })
   expect(await service.listSessions({ archived: true })).toMatchObject({ total: 1, sessions: [{ id: firstUseId(1), archived: true }] })
-  await expect(access(join(join(root, 'cc-haha'), 'session-archives.legacy-jsonl-migration.json'))).rejects.toThrow()
+  await expect(access(join(getEchoFlowInternalDir(root), 'session-archives.legacy-jsonl-migration.json'))).rejects.toThrow()
 })
 
 test('ready first page never enters the exhaustive importer when its completion marker is absent', async () => {
@@ -257,7 +258,7 @@ test.each(['on', 'off', 'shadow'] as const)('conflicting copies stay unclassifie
   await service.setSessionArchived(firstUseId(1), false)
   expect((await service.listSessions()).total).toBe(3)
   expect(await service.getSessionSummary(firstUseId(1))).not.toHaveProperty('archived')
-  await expect(access(join(join(root, 'cc-haha'), 'session-archives.legacy-jsonl-migration.json'))).rejects.toThrow()
+  await expect(access(join(getEchoFlowInternalDir(root), 'session-archives.legacy-jsonl-migration.json'))).rejects.toThrow()
 })
 
 test('file-backed project pagination does not touch unrelated history after archive migration', async () => {
@@ -294,7 +295,7 @@ test('completion publication invalidates file-list and project catalogs without 
   expect((await service.listSessions({ archived: true })).total).toBe(1)
   expect((await service.listProjectPreviews()).projects).toEqual([{ projectRoot: workDir, total: 1, archivedTotal: 1 }])
   expect(service.listArchivedSessionIds()).toEqual([firstUseId(1)])
-  const internal = join(root, 'cc-haha')
+  const internal = getEchoFlowInternalDir(root)
   await writeFile(join(internal, 'session-archives.legacy-jsonl-migration.json'), JSON.stringify({ schemaVersion: 1, archiveStateRequired: false }))
 
   expect((await service.listSessions()).total).toBe(3)
@@ -329,7 +330,7 @@ test('a degraded overlay reclassifies a repaired source without scanning unrelat
     expect(service.listArchivedSessionIds()).toEqual([firstUseId(1)])
     expect(index.getSession(firstUseId(1))?.legacyArchived).toBeNull()
     expect(discover).not.toHaveBeenCalled()
-    await expect(access(join(join(root, 'cc-haha'), 'session-archives.legacy-jsonl-migration.json'))).rejects.toThrow()
+    await expect(access(join(getEchoFlowInternalDir(root), 'session-archives.legacy-jsonl-migration.json'))).rejects.toThrow()
   } finally { discover.mockRestore() }
 })
 
@@ -356,7 +357,41 @@ test.each([false, true])('history cursors recheck classification before and duri
     expect(changed).toBe(true)
     expect(second.sessions.map(row => row.id)).toEqual([firstUseId(1)])
     expect(second.nextCursor).toBeNull()
-    await expect(access(join(join(root, 'cc-haha'), 'session-archives.legacy-jsonl-migration.json'))).rejects.toThrow()
+    await expect(access(join(getEchoFlowInternalDir(root), 'session-archives.legacy-jsonl-migration.json'))).rejects.toThrow()
+  } finally { hydrate.mockRestore() }
+})
+
+test.each(['history', 'previews'])('%s rechecks legacy classification committed before the watcher batch completes', async view => {
+  const { service, index, candidates, workDir } = await firstUseIndex([0, 1, 2].map(n => ({
+    n, tail: jsonl({ type: 'session-archive', archived: false }),
+  })))
+  const first = await service.listProjectHistory({ projectRoot: workDir, limit: 1 })
+  expect(first.sessions.map(row => row.id)).toEqual([firstUseId(2)])
+  expect(first.nextCursor).not.toBeNull()
+  const projector = createSessionProjector({ database: database!, index, scope: root })
+  const changed = candidates.get(1)!
+  const internals = service as unknown as { hydrateIndexedSession: (...args: unknown[]) => Promise<unknown> }
+  const originalHydrate = internals.hydrateIndexedSession.bind(internals)
+  let updated = false
+  const hydrate = spyOn(internals, 'hydrateIndexedSession').mockImplementation(async (...args) => {
+    if (!updated) {
+      updated = true
+      await appendFile(changed.path, jsonl({ type: 'session-archive', archived: true }))
+      expect(await projector.projectSource(changed)).toMatchObject({ kind: 'indexed', projection: { summary: { legacyArchived: true } } })
+    }
+    return originalHydrate(...args)
+  })
+  try {
+    if (view === 'history') {
+      const next = await service.listProjectHistory({ projectRoot: workDir, cursor: first.nextCursor!, limit: 1 })
+      expect(next.sessions.map(row => row.id)).toEqual([firstUseId(0)])
+      expect(next.nextCursor).toBeNull()
+    } else {
+      const previews = await service.listProjectPreviews()
+      expect(previews.sessions.map(row => row.id)).toEqual([2, 0].map(firstUseId))
+      expect(previews.projects).toEqual([{ projectRoot: workDir, total: 2, archivedTotal: 1 }])
+    }
+    expect(updated).toBe(true)
   } finally { hydrate.mockRestore() }
 })
 
@@ -382,5 +417,5 @@ test('a normal concurrent append retries only its source while known sessions re
   await appendFile(changing.path, ',"message":{"role":"assistant","content":"finished"}}\n')
   expect(await projector.projectSource(changing)).toMatchObject({ kind: 'indexed', projection: { summary: { legacyArchived: false } } })
   expect((await new SessionService(gateway).listSessions()).total).toBe(2)
-  await expect(access(join(join(root, 'cc-haha'), 'session-archives.legacy-jsonl-migration.json'))).rejects.toThrow()
+  await expect(access(join(getEchoFlowInternalDir(root), 'session-archives.legacy-jsonl-migration.json'))).rejects.toThrow()
 })

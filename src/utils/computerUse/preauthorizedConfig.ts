@@ -9,7 +9,7 @@ import type {
   AppGrant,
   CuGrantFlags,
 } from '../../vendor/computer-use-mcp/types.js'
-import { getClaudeConfigHomeDir } from '../envUtils.js'
+import { getEchoFlowInternalDir } from '../echoFlowConfigRoot.js'
 
 export type StoredAuthorizedApp = {
   bundleId: string
@@ -44,8 +44,7 @@ const FAIL_CLOSED_GRANT_FLAGS: CuGrantFlags = {
 
 export function getComputerUseConfigPath(): string {
   return join(
-    getClaudeConfigHomeDir(),
-    'cc-haha',
+    getEchoFlowInternalDir(),
     'computer-use-config.json',
   )
 }

@@ -4,6 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 import { getSessionId } from '../../bootstrap/state.js'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import {
   clearUserProvidedImages,
   registerUserProvidedImage,
@@ -74,9 +75,9 @@ describe('ImageGen backend', () => {
       const originalRoot = join(outputDir, 'absent-original')
       const uploadDir = join(outputDir, 'uploads', getSessionId())
       await mkdir(uploadDir, { recursive: true })
-      await mkdir(join(outputDir, 'cc-haha'))
+      await mkdir(getEchoFlowInternalDir(outputDir))
       await writeFile(join(uploadDir, 'source.png'), PNG_BYTES)
-      await writeFile(join(outputDir, 'cc-haha/storage-relocations.json'), JSON.stringify({ version: 1, previousRoots: [originalRoot] }))
+      await writeFile(join(getEchoFlowInternalDir(outputDir), 'storage-relocations.json'), JSON.stringify({ version: 1, previousRoots: [originalRoot] }))
       const result = await generateImages({ prompt: 'edit my image', count: 1, referenced_image_paths: [join(originalRoot, 'uploads', getSessionId(), 'source.png')] }, customConfig, {
         outputDir,
         fetchImpl: async () => Response.json({ data: [{ b64_json: PNG_BYTES.toString('base64') }] }),
@@ -300,6 +301,8 @@ describe('ImageGen backend', () => {
     outputDir = await mkdtemp(join(tmpdir(), 'imagegen-openai-oauth-'))
     const tokenPath = join(outputDir, 'openai-oauth.json')
     const previousTokenPath = process.env[OPENAI_CODEX_OAUTH_FILE_ENV_KEY]
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR
+    process.env.CLAUDE_CONFIG_DIR = outputDir
     await writeFile(tokenPath, JSON.stringify({
       accessToken: 'test-openai-access-token',
       refreshToken: 'test-openai-refresh-token',
@@ -341,6 +344,8 @@ describe('ImageGen backend', () => {
         model: 'gpt-image-2',
       })
     } finally {
+      if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
+      else process.env.CLAUDE_CONFIG_DIR = previousConfigDir
       if (previousTokenPath === undefined) {
         delete process.env[OPENAI_CODEX_OAUTH_FILE_ENV_KEY]
       } else {

@@ -8,7 +8,7 @@ import {
   setCwdState,
   setOriginalCwd,
 } from '../../bootstrap/state.js'
-import { startServer, stopServerRuntimeForShutdown } from '../index.js'
+import { startServer, stopServerRuntimeForShutdown } from '../serverRuntime.js'
 import {
   clearFilesystemAccessRootsForTests,
   registerFilesystemAccessRoot,

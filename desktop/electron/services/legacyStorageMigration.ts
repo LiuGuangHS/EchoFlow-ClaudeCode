@@ -1,12 +1,24 @@
-import { mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { ECHOFLOW_PRODUCT_NAME } from '../../src/constants/brand'
 import { PRODUCT_IDENTITY } from '../../src/lib/productIdentity.generated'
 import { getDefaultEchoFlowConfigDir } from '../../../src/utils/echoFlowConfigRoot'
 
-export const ECHOFLOW_APP_NAME = ECHOFLOW_PRODUCT_NAME
-export const ECHOFLOW_DEFAULT_CONFIG_ENV = 'ECHOFLOW_CODE_DEFAULT_CONFIG_DIR'
+// Discover and select retained storage without moving data; default roots stay in the shared resolver.
+
+export function resolveWindowStateReadPath(primaryPath: string, app: { getPath(name: 'userData'): string }, allowLegacy: boolean): string {
+  if (!existsSync(primaryPath) && allowLegacy) {
+    const legacyPath = path.join(app.getPath('userData'), 'window-state.json')
+    if (existsSync(legacyPath)) return legacyPath
+  }
+  return primaryPath
+}
+
+export function terminalConfigReadCandidates(primaryPath: string, app: { getPath(name: 'userData'): string } | undefined, allowLegacy: boolean): string[] {
+  return app && allowLegacy
+    ? [primaryPath, path.join(app.getPath('userData'), 'terminal-config.json')]
+    : [primaryPath]
+}
 
 export function defaultEchoFlowDataRoot(
   env: NodeJS.ProcessEnv = process.env,
@@ -14,10 +26,6 @@ export function defaultEchoFlowDataRoot(
   homeDir: string = os.homedir(),
 ): string {
   return getDefaultEchoFlowConfigDir({ env, platform, homeDir })
-}
-
-export function applyDefaultEchoFlowDataRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return defaultEchoFlowDataRoot(env)
 }
 
 // Unknown entries are user state; only known disposable Electron caches can be ignored.

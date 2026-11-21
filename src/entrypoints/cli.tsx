@@ -48,6 +48,14 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Handle explicit storage adoption before loading any module that can initialize a writer.
+  const { runStorageAdoptionCommand } = await import('../services/storageAdoption.js');
+  if (await runStorageAdoptionCommand(args)) return;
+
+  // Bind and lease storage before loading any module that can initialize a writer.
+  const { initializeProcessStorage } = await import('../services/storageStartup.js');
+  await initializeProcessStorage();
+
   // For all other paths, load the startup profiler
   const {
     profileCheckpoint

@@ -3,6 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import type { AppModeConfig, AppModeSetInput } from '../../src/lib/desktopHost/types'
+import { getDefaultEchoFlowConfigDir, resolveStorageBinding } from '../../../src/utils/echoFlowConfigRoot'
+import { hasExternalDesktopStorageControls } from './desktopStorageProvenance'
 
 const APP_MODE_FILE = 'app-mode.json'
 
@@ -15,20 +17,20 @@ type PersistedAppModeConfig = {
   portable_dir?: string | null
 }
 
-export function systemClaudeConfigDir(app: AppModeAppLike): string {
-  return path.join(app.getPath('home'), '.claude')
+export function systemClaudeConfigDir(app: AppModeAppLike, env: NodeJS.ProcessEnv = process.env): string {
+  return getDefaultEchoFlowConfigDir({ env, homeDir: app.getPath('home') })
 }
 
-function readAppModeConfig(configDir: string): PersistedAppModeConfig | null {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(configDir, APP_MODE_FILE), 'utf8')) as PersistedAppModeConfig
-    return {
-      mode: typeof parsed.mode === 'string' ? parsed.mode.toLowerCase() : 'default',
-      portable_dir: typeof parsed.portable_dir === 'string' ? parsed.portable_dir.trim() : null,
-    }
-  } catch {
-    return null
+export function parseLegacyPortableSelection(app: AppModeAppLike, bytes: string): string | null {
+  const parsed: unknown = JSON.parse(bytes)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !('mode' in parsed) || typeof parsed.mode !== 'string') {
+    throw new Error('Invalid legacy portable storage selection')
   }
+  const mode = parsed.mode.toLowerCase()
+  if (mode === 'default') return null
+  const directory = 'portable_dir' in parsed && typeof parsed.portable_dir === 'string' ? parsed.portable_dir.trim() : ''
+  if (mode !== 'portable' || !path.isAbsolute(directory)) throw new Error('Invalid legacy portable storage selection')
+  return normalizedCustomDir(app, directory)
 }
 
 function writeAppModeConfig(configDir: string, config: PersistedAppModeConfig): void {
@@ -51,20 +53,6 @@ function writeAppModeConfig(configDir: string, config: PersistedAppModeConfig): 
     fs.renameSync(temporary, target)
   } finally {
     fs.rmSync(temporary, { force: true })
-  }
-}
-
-function assertWritableDataDir(configDir: string): void {
-  try {
-    fs.mkdirSync(configDir, { recursive: true })
-    const probeDir = fs.mkdtempSync(path.join(configDir, '.cc-haha-write-test-'))
-    try {
-      fs.writeFileSync(path.join(probeDir, 'probe'), '')
-    } finally {
-      fs.rmSync(probeDir, { recursive: true, force: true })
-    }
-  } catch {
-    throw new Error(`Data storage directory is not writable: ${configDir}`)
   }
 }
 
@@ -94,6 +82,8 @@ export function normalizedCustomDir(app: AppModeAppLike, value: string | null | 
   if (!path.isAbsolute(selectedDir)) throw new Error('Custom data storage must use an absolute path')
 
   const normalized = path.resolve(selectedDir)
+  const shared = path.join(app.getPath('home'), '.claude')
+  if (isPathAtOrBelow(shared, normalized) || isPathAtOrBelow(normalized, shared)) throw new Error('Protected shared storage cannot be the complete product root')
   if (isPathAtOrBelow(path.dirname(app.getPath('exe')), normalized)) {
     throw new Error('Custom data storage must stay outside the application install directory')
   }
@@ -101,20 +91,14 @@ export function normalizedCustomDir(app: AppModeAppLike, value: string | null | 
 }
 
 function externallyControlled(env: NodeJS.ProcessEnv): boolean {
-  return Boolean(env.CLAUDE_CONFIG_DIR && env.CC_HAHA_APP_PORTABLE_DIR !== '1' && env.ECHOFLOW_APP_PORTABLE_DIR !== '1')
+  return hasExternalDesktopStorageControls(env, resolveStorageBinding({ env }).root)
 }
 
-// The app-managed portable selection is process-local derived state; the
-// persisted app-mode.json stays the source of truth. Strip it before this
-// environment reaches another process (app.relaunch(), the NSIS installer
-// spawned by quitAndInstall()), otherwise the child would trust a snapshot
-// that may no longer match the persisted mode (#1160).
+// Retire old mode flags, but keep the complete root through relaunch/updater.
+// An old profile is no longer a hidden locator for custom storage.
 export function clearAppManagedPortableEnv(env: NodeJS.ProcessEnv = process.env): void {
-  if (env.CC_HAHA_APP_PORTABLE_DIR !== '1' && env.ECHOFLOW_APP_PORTABLE_DIR !== '1') return
-  delete env.CLAUDE_CONFIG_DIR
   delete env.CC_HAHA_APP_PORTABLE_DIR
   delete env.ECHOFLOW_APP_PORTABLE_DIR
-  delete env.WEBVIEW2_USER_DATA_FOLDER
 }
 
 export function determineStartupPortableDir(
@@ -123,61 +107,39 @@ export function determineStartupPortableDir(
 ): string | null {
   if (env.CLAUDE_CONFIG_DIR) return null
 
-  const config = readAppModeConfig(app.getPath('userData'))
-  if (config?.mode !== 'portable' || !config.portable_dir || !path.isAbsolute(config.portable_dir)) return null
-
-  try {
-    return normalizedCustomDir(app, config.portable_dir)
-  } catch {
-    return null
+  let bytes: string
+  try { bytes = fs.readFileSync(path.join(app.getPath('userData'), APP_MODE_FILE), 'utf8') }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
   }
+  return parseLegacyPortableSelection(app, bytes)
 }
 
 export function applyStartupPortableMode(
   app: AppModeAppLike,
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  // app.relaunch() inherits process.env. Discard the previous app-managed
-  // selection so the persisted two-mode record remains authoritative.
-  clearAppManagedPortableEnv(env)
-  if (env.CLAUDE_CONFIG_DIR) {
-    env.CLAUDE_CONFIG_DIR = normalizedCustomDir(app, env.CLAUDE_CONFIG_DIR)
-    return null
+  const binding = resolveStorageBinding({ env, homeDir: app.getPath('home') })
+  if (resolveWithExistingAncestor(binding.root) !== resolveWithExistingAncestor(app.getPath('userData'))) {
+    throw new Error('The complete desktop root must be selected before Chromium startup')
   }
-  const customDir = determineStartupPortableDir(app, env)
-  if (!customDir) return null
-
-  const webViewDataDir = path.join(customDir, 'EBWebView')
-  fs.mkdirSync(webViewDataDir, { recursive: true })
-  env.CLAUDE_CONFIG_DIR = customDir
-  env.CC_HAHA_APP_PORTABLE_DIR = '1'
-  env.WEBVIEW2_USER_DATA_FOLDER = webViewDataDir
-  return customDir
+  env.CLAUDE_CONFIG_DIR = binding.root
+  clearAppManagedPortableEnv(env)
+  return binding.root === systemClaudeConfigDir(app, env) ? null : binding.root
 }
 
 export function getAppMode(
   app: AppModeAppLike,
   env: NodeJS.ProcessEnv = process.env,
 ): AppModeConfig {
-  const envConfigDir = env.CLAUDE_CONFIG_DIR
-    ? normalizedCustomDir(app, env.CLAUDE_CONFIG_DIR)
-    : null
-  const persistedCustomDir = envConfigDir ? null : determineStartupPortableDir(app, env)
-  const customDir = envConfigDir || persistedCustomDir
-  if (customDir) {
-    return {
-      mode: 'portable',
-      portableDir: customDir,
-      activeConfigDir: customDir,
-      configDirSource: externallyControlled(env) ? 'environment' : 'portable',
-    }
-  }
-
+  const root = resolveStorageBinding({ env, homeDir: app.getPath('home') }).root
+  const isDefault = resolveWithExistingAncestor(root) === resolveWithExistingAncestor(systemClaudeConfigDir(app, env))
   return {
-    mode: 'default',
-    portableDir: null,
-    activeConfigDir: systemClaudeConfigDir(app),
-    configDirSource: 'system',
+    mode: isDefault ? 'default' : 'portable',
+    portableDir: isDefault ? null : root,
+    activeConfigDir: root,
+    configDirSource: isDefault ? 'system' : externallyControlled(env) ? 'environment' : 'portable',
   }
 }
 
@@ -186,23 +148,14 @@ export function setAppMode(
   input: AppModeSetInput,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
-  if (externallyControlled(env)) {
-    throw new Error('CLAUDE_CONFIG_DIR is controlled by the launch environment')
+  if (input.mode !== 'default' && input.mode !== 'portable') throw new Error(`Unsupported app mode: ${String(input.mode)}`)
+  const selectedDir = input.mode === 'default' ? systemClaudeConfigDir(app, env) : normalizedCustomDir(app, input.portableDir)
+  const active = getAppMode(app, env).activeConfigDir!
+  if (resolveWithExistingAncestor(selectedDir) !== resolveWithExistingAncestor(active) ||
+      resolveWithExistingAncestor(active) !== resolveWithExistingAncestor(app.getPath('userData'))) {
+    throw new Error(externallyControlled(env)
+      ? 'CLAUDE_CONFIG_DIR is controlled by the launch environment; migrate the complete root in a cold launch'
+      : 'Changing the complete data root requires cold profile migration, not an app-mode pointer')
   }
-
-  if (input.mode === 'default') {
-    writeAppModeConfig(app.getPath('userData'), { mode: 'default', portable_dir: null })
-    return
-  }
-  if (input.mode !== 'portable') throw new Error(`Unsupported app mode: ${String(input.mode)}`)
-
-  const selectedDir = normalizedCustomDir(app, input.portableDir)
-  if (fs.existsSync(selectedDir) && !fs.statSync(selectedDir).isDirectory()) {
-    throw new Error(`Custom data storage path is not a directory: ${selectedDir}`)
-  }
-  assertWritableDataDir(selectedDir)
-  writeAppModeConfig(app.getPath('userData'), {
-    mode: 'portable',
-    portable_dir: selectedDir,
-  })
+  writeAppModeConfig(active, { mode: input.mode, portable_dir: input.mode === 'portable' ? active : null })
 }

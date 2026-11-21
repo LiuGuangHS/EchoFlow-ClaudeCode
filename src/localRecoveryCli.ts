@@ -130,6 +130,11 @@ export async function run(
   argv = process.argv.slice(2),
   input: RecoveryInput = process.stdin,
 ): Promise<void> {
+  if (argv[0] === 'storage' && argv[1] === 'adopt') {
+    const { runStorageAdoptionCommand } = await import('./services/storageAdoption.js')
+    await runStorageAdoptionCommand(argv, { input, output: process.stdout })
+    return
+  }
   const parsed = parseArgs(argv)
 
   if (parsed.command === 'help') {
@@ -300,7 +305,15 @@ async function runInteractive(parsed: {
 }
 
 if (import.meta.main) {
-  void run().catch(error => {
+  const argv = process.argv.slice(2)
+  if (!(argv[0] === 'storage' && argv[1] === 'adopt')) {
+    const parsed = parseArgs(argv)
+    if (parsed.command === 'run') {
+      const { initializeProcessStorage } = await import('./services/storageStartup.js')
+      await initializeProcessStorage()
+    }
+  }
+  void run(argv).catch(error => {
     const message = error instanceof Error ? error.stack || error.message : String(error)
     process.stderr.write(`${message}\n`)
     process.exitCode = 1

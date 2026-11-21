@@ -40,13 +40,14 @@ import {
   stat,
   writeFile,
 } from 'fs/promises'
-import { tmpdir } from 'os'
+import { createPrivateStorageTempDirectory } from '../cachePaths.js'
 import { basename, dirname, join } from 'path'
 import { logForDebugging } from '../debug.js'
 import { parseZipModes, unzipFile } from '../dxt/zip.js'
 import { isEnvTruthy } from '../envUtils.js'
 import { getFsImplementation } from '../fsOperations.js'
 import { expandTilde } from '../permissions/pathValidation.js'
+import { resolveManagedStoragePath } from '../managedStoragePath.js'
 import type { MarketplaceSource } from './schemas.js'
 
 /**
@@ -66,7 +67,7 @@ export function getPluginZipCachePath(): string | undefined {
     return undefined
   }
   const dir = process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR
-  return dir ? expandTilde(dir) : undefined
+  return dir ? resolveManagedStoragePath(expandTilde(dir), 'CLAUDE_CODE_PLUGIN_CACHE_DIR') : undefined
 }
 
 /**
@@ -128,9 +129,7 @@ export async function getSessionPluginCachePath(): Promise<string> {
   }
   if (!sessionPluginCachePromise) {
     sessionPluginCachePromise = (async () => {
-      const suffix = randomBytes(8).toString('hex')
-      const dir = join(tmpdir(), `claude-plugin-session-${suffix}`)
-      await getFsImplementation().mkdir(dir)
+      const dir = await createPrivateStorageTempDirectory('plugin-session-')
       sessionPluginCachePath = dir
       logForDebugging(`Created session plugin cache at ${dir}`)
       return dir

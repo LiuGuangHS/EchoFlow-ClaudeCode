@@ -1,0 +1,941 @@
+import { configureScheduledTaskHost } from './services/scheduledTaskHost.js'
+import { configureSessionCollaborationHost, getSessionCollaborationService } from './services/sessionCollaborationHost.js'
+import { authenticateCollaborationCaller, collaborationToolAction } from './sessionCollaborationAuth.js'
+import { handleSessionCollaborationApi } from './api/sessionCollaboration.js'
+import { handleScheduledTaskToolsApi } from './api/scheduledTaskTools.js'
+/**
+ * Claude Code Desktop App — HTTP + WebSocket Server
+ *
+ * 为桌面端 UI 提供 REST API 和 WebSocket 实时通信。
+ * 读写与 CLI 完全相同的文件系统，确保 CLI/UI 数据互通。
+ */
+
+import { handleApiRequest } from './router.js'
+import { handleWebSocket, revokeSessionAdmissionsForMigration, drainSessionWritesForMigration, type WebSocketData } from './ws/handler.js'
+import { createResumableSocketHandler, parseResumeRequest } from './ws/resumableStreams.js'
+import { P2PBroker, p2pStateDiagnostic } from './p2p/broker.js'
+import type { ServerWebSocket } from 'bun'
+import { migrationMaintenance, migrationUnavailableResponse } from './migrationMaintenance.js'
+import { countExternalMigrationProcesses } from './migrationInventory.js'
+import { handleMigrationRuntimeRequest, isMigrationRuntimePath } from './migrationRuntimeApi.js'
+import { quiesceTeamPlanRuntimesForMigration } from './services/teamPlanRuntime.js'
+import { ManagedSettingsService } from './services/managedSettingsService.js'
+import { resolveCors, withCors, type CorsResolution } from './middleware/cors.js'
+import { requireAuth, requireH5Token, validateRequestAuth, validateH5RequestAuth } from './middleware/auth.js'
+import { teamWatcher } from './services/teamWatcher.js'
+import { cronScheduler } from './services/cronScheduler.js'
+import { handleProxyRequest } from './proxy/handler.js'
+import { ProviderService } from './services/providerService.js'
+import { handleHahaOAuthCallback } from './api/haha-oauth.js'
+import { handleHahaOpenAIOAuthCallback } from './api/haha-openai-oauth.js'
+import { handleEchoFlowOAuthCallback } from './api/echoflow-oauth.js'
+import { handleEchoFlowOpenAIOAuthCallback } from './api/echoflow-openai-oauth.js'
+import { echoFlowOAuthService } from './services/echoFlowOAuthService.js'
+import { echoFlowOpenAIOAuthService } from './services/echoFlowOpenAIOAuthService.js'
+import { hahaOAuthService } from './services/hahaOAuthService.js'
+import { hahaOpenAIOAuthService } from './services/hahaOpenAIOAuthService.js'
+import { handlePreviewFs } from './api/previewFs.js'
+import { handleLocalFile } from './api/localFile.js'
+import { sessionService } from './services/sessionService.js'
+import { localIndexCoordinator } from './services/localIndex/coordinator.js'
+import { searchContentCoordinator } from './services/localIndex/searchContentCoordinator.js'
+import { conversationService } from './services/conversationService.js'
+import { OPENAI_CODEX_REDIRECT_PATH } from '../services/openaiAuth/client.js'
+import { ensureDesktopCliLauncherInstalled } from './services/desktopCliLauncherService.js'
+import { enableConfigs } from '../utils/config.js'
+import { diagnosticsService } from './services/diagnosticsService.js'
+import { apiPerformanceMonitor } from './services/apiPerformanceMonitor.js'
+import { ensurePersistentStorageUpgraded } from './services/persistentStorageMigrations.js'
+import { handleStaticH5Request } from './staticH5.js'
+import {
+  classifyH5Request,
+  resolveTrustedRendererOrigin,
+  isH5AccessControlPath,
+  isLocalCredentialOnlyPath,
+  requiresLocalAccessCredential,
+  shouldBlockDisabledH5Access,
+  shouldRequireH5Token,
+  type H5RequestContext,
+} from './h5AccessPolicy.js'
+import { H5AccessService } from './services/h5AccessService.js'
+import { refreshDisconnectGraceMs } from './ws/disconnectGraceConfig.js'
+import {
+  hasConfiguredLocalAccessToken,
+  hasConfiguredPetAccessToken,
+  isLocalAccessAuthorized,
+  isP2PEndpointAuthorized,
+  isPetAccessAuthorized,
+} from './localAccessAuth.js'
+import {
+  getPetScopedSessionId,
+  isPetHttpRequestAllowed,
+  isPetSessionInProjection,
+  PET_SESSION_LIMIT,
+} from './petAccessPolicy.js'
+import { PublicAccessServer, isPublicAccessControlPath } from './publicAccess.js'
+import { resolveRemoteAccessProxy, verifyRemoteAccessGateway } from './services/remoteAccessConnectivity.js'
+import { getMobilePushService, stopMobilePushServices } from './services/mobilePushRuntime.js'
+import { settleResponseOnRequestAbort } from './requestLifecycle.js'
+
+function readArgValue(flag: string): string | undefined {
+  const args = process.argv.slice(2)
+  const index = args.indexOf(flag)
+  if (index === -1) return undefined
+  return args[index + 1]
+}
+
+function hasArgFlag(flag: string): boolean {
+  return process.argv.slice(2).includes(flag)
+}
+
+function resolveServerOptions() {
+  const portArg = readArgValue('--port')
+  const port = Number.parseInt(portArg || process.env.SERVER_PORT || '3456', 10)
+  const host = readArgValue('--host') || process.env.SERVER_HOST || '127.0.0.1'
+  const cliPath = readArgValue('--cli-path')
+  const authRequired = hasArgFlag('--auth-required')
+
+  if (cliPath) {
+    process.env.CLAUDE_CLI_PATH = cliPath
+  }
+
+  return { port, host, authRequired }
+}
+
+const SERVER_OPTIONS = resolveServerOptions()
+const PORT = SERVER_OPTIONS.port
+const HOST = SERVER_OPTIONS.host
+const SEARCH_INDEX_PRIMARY_WAIT_MS = 30_000
+const SEARCH_INDEX_PRIMARY_POLL_MS = 50
+export const HTTP_CONNECTION_IDLE_TIMEOUT_SECONDS = 0
+
+type BackgroundIndexStartupOptions = {
+  startPrimary?: () => Promise<void>
+  getPrimaryState?: () => string
+  startSearch?: () => Promise<void>
+  wait?: () => Promise<void>
+  now?: () => number
+  maxPrimaryWaitMs?: number
+  signal?: AbortSignal
+}
+
+/** Give the session-list projection first access to cold-start I/O. */
+export async function startBackgroundIndexesInPriorityOrder(
+  options: BackgroundIndexStartupOptions = {},
+): Promise<void> {
+  const startPrimary = options.startPrimary ?? (() => localIndexCoordinator.start())
+  const getPrimaryState = options.getPrimaryState ?? (
+    () => localIndexCoordinator.getPublicStatus().state
+  )
+  const startSearch = options.startSearch ?? (() => searchContentCoordinator.start())
+  const wait = options.wait ?? (
+    () => new Promise<void>(resolve => setTimeout(resolve, SEARCH_INDEX_PRIMARY_POLL_MS))
+  )
+  const now = options.now ?? Date.now
+  const deadline = now() + Math.max(
+    0,
+    options.maxPrimaryWaitMs ?? SEARCH_INDEX_PRIMARY_WAIT_MS,
+  )
+
+  await startPrimary()
+  while (
+    !options.signal?.aborted &&
+    getPrimaryState() === 'building' &&
+    now() < deadline
+  ) await wait()
+  if (!options.signal?.aborted) await startSearch()
+}
+
+const publicAccessServers = new Set<PublicAccessServer>()
+const h5ShutdownHandlers = new Set<() => void>()
+
+let backgroundIndexStartupController: AbortController | undefined
+let backgroundIndexStartup: Promise<void> | undefined
+
+function beginBackgroundIndexStartup(): void {
+  backgroundIndexStartupController?.abort()
+  const controller = new AbortController()
+  backgroundIndexStartupController = controller
+  const operation = startBackgroundIndexesInPriorityOrder({
+    signal: controller.signal,
+  }).catch(() => undefined)
+  backgroundIndexStartup = operation
+  void operation.finally(() => {
+    if (backgroundIndexStartup === operation) backgroundIndexStartup = undefined
+  })
+}
+
+function corsRejectedResponse(cors: CorsResolution): Response {
+  return Response.json(
+    { error: 'CORS origin not allowed' },
+    { status: 403, headers: cors.headers },
+  )
+}
+
+function h5AccessControlRejectedResponse(): Response {
+  return Response.json(
+    {
+      error: 'Forbidden',
+      message: 'H5 access settings can only be changed from the local desktop app.',
+    },
+    { status: 403 },
+  )
+}
+
+function localCredentialRejectedResponse(): Response {
+  return Response.json(
+    {
+      error: 'Forbidden',
+      message: 'This action can only be performed from the local desktop app.',
+    },
+    { status: 403 },
+  )
+}
+
+function h5AccessDisabledResponse(): Response {
+  return Response.json(
+    {
+      error: 'Forbidden',
+      message: 'H5 access is disabled. Enable H5 access from the local desktop app first.',
+    },
+    { status: 403 },
+  )
+}
+
+function isH5AccessControlRequest(
+  req: Request,
+  url: URL,
+  context: H5RequestContext,
+): boolean {
+  if (
+    !isH5AccessControlPath(url.pathname) &&
+    !isLocalCredentialOnlyPath(url.pathname)
+  ) {
+    return false
+  }
+
+  // Chromium omits Authorization from preflight. Let only the configured dev
+  // renderer's local H5 control-plane preflight reach CORS; the real request
+  // still passes the process-credential check below. Other credential-only
+  // endpoints keep their existing policy.
+  if (
+    isH5AccessControlPath(url.pathname) &&
+    req.method === 'OPTIONS' &&
+    context.trustedRendererOrigin &&
+    req.headers.get('Origin') === context.trustedRendererOrigin &&
+    req.headers.has('Access-Control-Request-Method') &&
+    classifyH5Request(req, url, context) === 'local-trusted'
+  ) {
+    return false
+  }
+
+  if (requiresLocalAccessCredential(url.pathname, context)) {
+    return true
+  }
+
+  return classifyH5Request(req, url, context) !== 'local-trusted'
+}
+
+function originFromUrl(value: string | null): string | null {
+  if (!value) {
+    return null
+  }
+
+  try {
+    return new URL(value).origin
+  } catch {
+    return null
+  }
+}
+
+export function startServer(port = PORT, host = HOST) {
+  // Everything before this point is module loading. When a host reports that
+  // the sidecar "never started listening", this line splits that time from
+  // the work below that still runs before Bun.serve binds (#1746).
+  console.log(`[Server] modules loaded ${Math.round(performance.now())} ms after process start; binding ${host}:${port}`)
+  if (process.env.CC_HAHA_MIGRATION_VALIDATION === '1') migrationMaintenance.beginValidation()
+  if (!migrationMaintenance.isActive) enableConfigs()
+  const trustedRendererOrigin = resolveTrustedRendererOrigin(process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN)
+  // Warm the synchronous disconnect-grace cache from managed settings so the
+  // first client disconnect honors the configured value (issue #764).
+  if (!migrationMaintenance.isActive) void refreshDisconnectGraceMs()
+  // Don't hijack the global console / process handlers under `bun test`:
+  // a test that boots the server would otherwise route every test-side
+  // console.error/warn into the user's real diagnostics file.
+  if (process.env.NODE_ENV !== 'test' && !migrationMaintenance.isActive) {
+    diagnosticsService.installConsoleCapture()
+    diagnosticsService.installProcessCapture()
+  }
+  let serverPort = port
+  const localConnectHost =
+    host === '0.0.0.0' || host === '127.0.0.1' || host === 'localhost'
+      ? '127.0.0.1'
+      : host
+
+  // Chromium can keep HTTP/1.1 sockets pooled longer than Bun's request idle
+  // timeout. On Windows, reusing a socket after Bun timed it out can leave the
+  // request waiting for response headers until the renderer's 120s deadline.
+  // Let the client own the lifetime of these local pooled connections instead.
+  /**
+   * Explicit deployment auth remains a stronger override than H5-scoped
+   * request gating.
+   */
+  const forceAuth =
+    SERVER_OPTIONS.authRequired ||
+    process.env.SERVER_AUTH_REQUIRED === '1'
+  const h5AccessService = new H5AccessService()
+
+  // One stream registry for both listeners: a client reattaches on whichever
+  // path it can reach, and the gateway can end a revoked device's streams.
+  const sessionSockets = createResumableSocketHandler(handleWebSocket)
+  // Phone ↔ desktop direct connections, signaled through the gateway and
+  // carried by the desktop's WebRTC endpoint (see p2p/broker.ts).
+  let p2pBroker: P2PBroker | undefined
+  const publicAccess = new PublicAccessServer({
+    resolveProxy: resolveRemoteAccessProxy,
+    verifyGateway: verifyRemoteAccessGateway,
+    handleApiRequest: (request, url, context) => migrationMaintenance.isActive
+      ? Promise.resolve(migrationUnavailableResponse())
+      : migrationMaintenance.track(handleApiRequest(request, url, context)),
+    handleStatic: handleStaticH5Request,
+    websocket: sessionSockets,
+    terminateDeviceStreams: deviceId => {
+      sessionSockets.terminateIdentity(deviceId)
+      p2pBroker?.closeDevice(deviceId)
+    },
+    p2p: () => p2pBroker,
+    serverPort: () => serverPort,
+  })
+  p2pBroker = new P2PBroker({
+    gateway: () => publicAccess.tunnel(),
+    onState: event => { void diagnosticsService.recordEvent(p2pStateDiagnostic(event)) },
+  })
+  const broker = p2pBroker
+  // The main port carries session sockets and, from the desktop itself, the
+  // WebRTC endpoint's relay link. Nothing else ever sees the `p2p` channel.
+  const activeMainSockets = new Set<ServerWebSocket<WebSocketData>>()
+  const revokeH5Connections = (identity: string) => {
+    sessionSockets.terminateH5Identity(identity)
+    for (const socket of activeMainSockets) {
+      if (socket.data.h5Authorization !== identity) continue
+      socket.data.terminal = true
+      socket.close(1008, 'H5 access revoked')
+    }
+  }
+  const h5Revocations = h5AccessService.watchRevocations(revokeH5Connections)
+  const disposeH5Connections = () => {
+    h5ShutdownHandlers.delete(disposeH5Connections)
+    h5Revocations.dispose()
+    revokeH5Connections(h5Revocations.identity)
+  }
+  h5ShutdownHandlers.add(disposeH5Connections)
+  const isRevokedH5Socket = (socket: ServerWebSocket<WebSocketData>) =>
+    socket.data.h5Authorization !== undefined && !h5Revocations.isCurrent(socket.data.h5Authorization)
+  const mainSockets = {
+    ...sessionSockets,
+    open(ws: ServerWebSocket<WebSocketData>) {
+      if (isRevokedH5Socket(ws)) { ws.close(1008, 'H5 access revoked'); return }
+      activeMainSockets.add(ws)
+      if (ws.data.channel === 'p2p') broker.attachEndpoint(ws)
+      else sessionSockets.open(ws)
+    },
+    message(ws: ServerWebSocket<WebSocketData>, message: string | Buffer) {
+      if (isRevokedH5Socket(ws)) { ws.close(1008, 'H5 access revoked'); return }
+      if (ws.data.channel === 'p2p') broker.receive(ws, String(message))
+      else sessionSockets.message(ws, message)
+    },
+    close(ws: ServerWebSocket<WebSocketData>, code: number, reason: string) {
+      if (!activeMainSockets.delete(ws)) return
+      if (ws.data.channel === 'p2p') broker.detachEndpoint(ws)
+      else sessionSockets.close(ws, code, reason)
+    },
+    drain(ws: ServerWebSocket<WebSocketData>) {
+      if (!isRevokedH5Socket(ws) && ws.data.channel !== 'p2p') sessionSockets.drain(ws)
+    },
+  }
+  publicAccessServers.add(publicAccess)
+  if (!migrationMaintenance.isActive) getMobilePushService().start(
+    id => [...publicAccessServers].some(remote => remote.isDeviceActive(id)),
+    id => [...publicAccessServers].some(remote => remote.isDevicePaired(id)),
+  )
+  let server: ReturnType<typeof Bun.serve<WebSocketData>>
+
+  // Index startup runs after `Bun.serve` (see below), never before it. Opening
+  // SQLite and scanning `source_files` happen before the first `await` inside
+  // `localIndexCoordinator.start()`, so doing that here kept the port unbound
+  // for the whole synchronous pass — every host probe then looked like a dead
+  // sidecar (issue #1746). Requests that need the index still await it in the
+  // `fetch` handler.
+  try {
+    server = Bun.serve<WebSocketData>({
+      port,
+      hostname: host,
+      idleTimeout: HTTP_CONNECTION_IDLE_TIMEOUT_SECONDS,
+
+      async fetch(req, server) {
+        const pathname = new URL(req.url).pathname
+        if (isMigrationRuntimePath(pathname)) {
+          return handleMigrationRuntimeRequest(req, server.requestIP(req)?.address ?? null, {
+            preview: migrationRuntimePreview,
+            quiesce: quiesceServerRuntimeForMigration,
+            recover: quiesceServerRuntimeForRecovery,
+            activate: async () => {
+              migrationMaintenance.activateValidation()
+              delete process.env.CC_HAHA_MIGRATION_VALIDATION
+              enableConfigs()
+              void refreshDisconnectGraceMs()
+              if (process.env.NODE_ENV !== 'test') {
+                diagnosticsService.installConsoleCapture()
+                diagnosticsService.installProcessCapture()
+              }
+              beginBackgroundIndexStartup()
+              teamWatcher.start()
+              cronScheduler.start()
+            },
+          })
+        }
+        if (migrationMaintenance.isActive && pathname !== '/health' &&
+          (migrationMaintenance.isValidation || !pathname.startsWith('/sdk/'))) return migrationUnavailableResponse()
+        return migrationMaintenance.track((async () => {
+        const url = new URL(req.url)
+        if (url.pathname === '/api/public-access/p2p/endpoint') {
+          // The desktop's own WebRTC endpoint (a hidden Electron window): loopback
+          // and its own per-launch token only. The public gateway never serves it.
+          const address = server.requestIP(req)?.address ?? ''
+          if (!isP2PEndpointAuthorized(url.searchParams.get('endpointToken'), address)) return new Response('Forbidden', { status: 403 })
+          if (server.upgrade(req, { data: { sessionId: 'p2p', connectedAt: Date.now(), channel: 'p2p', sdkToken: null, serverPort, serverHost: localConnectHost } })) return undefined
+          return new Response('WebSocket upgrade failed', { status: 400 })
+        }
+        if (isPublicAccessControlPath(url.pathname)) return publicAccess.control(req)
+
+        // Startup probes must not wait on migrations, config reads, or auth.
+        // Electron deliberately uses this endpoint to decide when the sidecar
+        // is ready, so keep it independent of every other runtime subsystem.
+        if (url.pathname === '/health') {
+          return Response.json(
+            { status: 'ok', timestamp: new Date().toISOString() },
+            {
+              headers: {
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'no-store',
+              },
+            },
+          )
+        }
+
+        if (!migrationMaintenance.isActive) {
+          await localIndexCoordinator.start().catch(() => undefined)
+          await ensurePersistentStorageUpgraded()
+        }
+        if (url.pathname === '/api/scheduled-task-tools') {
+          const caller = authenticateCollaborationCaller(req, (id, token) => conversationService.authorizeSdkConnection(id, token))
+          if (!caller) return Response.json({ error: 'Invalid session credential' }, { status: 401 })
+          return handleScheduledTaskToolsApi(req, caller)
+        }
+        const collaborationAction = collaborationToolAction(url.pathname)
+        if (collaborationAction) {
+          const caller = authenticateCollaborationCaller(req, (id, token) => conversationService.authorizeSdkConnection(id, token))
+          if (!caller) return Response.json({ error: 'Invalid session credential' }, { status: 401 })
+          return handleSessionCollaborationApi(req, collaborationAction, caller, await getSessionCollaborationService())
+        }
+        const origin = req.headers.get('Origin')
+        const clientAddress = server.requestIP(req)?.address ?? null
+        const localTokenOverride = url.searchParams.get('localToken') ?? url.searchParams.get('token')
+        // Browser WebSockets cannot set Authorization headers. Keep the pet
+        // query-token exception scoped to /ws; REST pet access remains bearer-only.
+        const petTokenOverride = url.pathname.startsWith('/ws/')
+          ? url.searchParams.get('token')
+          : null
+        const petAccessAuthorized = isPetAccessAuthorized(req, petTokenOverride)
+        if (petAccessAuthorized && !isPetHttpRequestAllowed(req, url)) {
+          return Response.json(
+            {
+              error: 'Forbidden',
+              message: 'The pet token cannot access this capability.',
+            },
+            { status: 403 },
+          )
+        }
+        const petScopedSessionId = petAccessAuthorized
+          ? getPetScopedSessionId(url.pathname)
+          : null
+        if (petScopedSessionId) {
+          const projection = await sessionService.listSessions({
+            limit: PET_SESSION_LIMIT,
+            offset: 0,
+          })
+          if (!isPetSessionInProjection(petScopedSessionId, projection.sessions)) {
+            return Response.json(
+              {
+                error: 'Forbidden',
+                message: 'The pet token cannot access this session.',
+              },
+              { status: 403 },
+            )
+          }
+        }
+        const sdkSessionId = url.pathname.startsWith('/sdk/')
+          ? url.pathname.split('/').pop() || ''
+          : ''
+        const sdkToken = url.searchParams.get('token')
+        const h5RequestContext = {
+          clientAddress,
+          trustedRendererOrigin,
+          localAccessTokenConfigured:
+            hasConfiguredLocalAccessToken() || hasConfiguredPetAccessToken(),
+          localAccessAuthorized:
+            isLocalAccessAuthorized(req, localTokenOverride) || petAccessAuthorized,
+          internalSdkAuthorized: Boolean(
+            sdkSessionId && sdkToken && conversationService.authorizeSdkConnection(sdkSessionId, sdkToken),
+          ),
+        }
+        const h5AuthorizationIdentity = h5Revocations.identity
+        const h5Settings = await h5AccessService.getSettings()
+        const h5PublicOrigin = originFromUrl(h5Settings.publicBaseUrl)
+        const cors = await resolveCors(origin, url.origin, {
+          h5Enabled: h5Settings.enabled,
+          isOriginAllowed: async (candidateOrigin) =>
+            candidateOrigin === h5PublicOrigin ||
+            await h5AccessService.isOriginAllowed(candidateOrigin),
+        })
+        const authRequired = shouldRequireH5Token({
+          request: req,
+          url,
+          h5Enabled: h5Settings.enabled,
+          context: h5RequestContext,
+        })
+        const h5AccessDisabledBlocked = shouldBlockDisabledH5Access({
+          request: req,
+          url,
+          h5Enabled: h5Settings.enabled,
+          explicitAuthRequired: forceAuth,
+          context: h5RequestContext,
+        })
+        const h5AccessControlBlocked = isH5AccessControlRequest(req, url, h5RequestContext)
+
+        // The configured dev renderer's preflight is classified as local-trusted.
+        // All other browser origins still pass through these capability gates.
+        if (h5AccessControlBlocked) {
+          return isLocalCredentialOnlyPath(url.pathname)
+            ? localCredentialRejectedResponse()
+            : h5AccessControlRejectedResponse()
+        }
+
+        if (h5AccessDisabledBlocked) {
+          return h5AccessDisabledResponse()
+        }
+
+        // Handle CORS preflight
+        if (req.method === 'OPTIONS') {
+          if (cors.rejected) {
+            return corsRejectedResponse(cors)
+          }
+          return new Response(null, { status: 204, headers: cors.headers })
+        }
+
+        // WebSocket upgrade
+        if (url.pathname.startsWith('/ws/')) {
+          if (cors.rejected) {
+            return corsRejectedResponse(cors)
+          }
+
+          let h5Authorization: string | undefined
+          if (!petAccessAuthorized && (authRequired || forceAuth)) {
+            const auth = await (authRequired ? validateH5RequestAuth : validateRequestAuth)(req, url.searchParams.get('token'))
+            if (!auth.valid) {
+              return withCors(Response.json({ error: 'Unauthorized', message: auth.error }, { status: 401 }), cors)
+            }
+            if (auth.source === 'h5') h5Authorization = h5AuthorizationIdentity
+          }
+          if (h5Authorization && !h5Revocations.isCurrent(h5Authorization)) {
+            return withCors(Response.json({ error: 'Unauthorized', message: 'H5 access revoked' }, { status: 401 }), cors)
+          }
+
+          // Validate session ID format
+          const sessionId = url.pathname.split('/').pop() || ''
+          if (!sessionId || !/^[0-9a-zA-Z_-]{1,64}$/.test(sessionId)) {
+            return new Response('Invalid session ID', { status: 400 })
+          }
+          const upgraded = server.upgrade(req, {
+            data: {
+              sessionId,
+              connectedAt: Date.now(),
+              channel: 'client',
+              clientKind: petAccessAuthorized ? 'pet' : 'full',
+              ...(h5Authorization ? { h5Authorization } : {}),
+              powerActivityLeaseAuthorized: !petAccessAuthorized && isLocalAccessAuthorized(req, localTokenOverride),
+              sdkToken: null,
+              serverPort,
+              serverHost: localConnectHost,
+              mediaRefs: url.searchParams.get('media') === 'ref',
+              promptSuggestions: !petAccessAuthorized && url.searchParams.get('suggestions') === '1',
+              ...(petAccessAuthorized ? {} : { resume: parseResumeRequest(url.searchParams) }),
+            },
+          })
+          if (upgraded) return undefined
+          return new Response('WebSocket upgrade failed', { status: 400 })
+        }
+
+        // Internal SDK WebSocket used by the spawned Claude CLI.
+        if (url.pathname.startsWith('/sdk/')) {
+          if (classifyH5Request(req, url, h5RequestContext) !== 'internal-sdk') {
+            return h5AccessControlRejectedResponse()
+          }
+
+          if (cors.rejected) {
+            return corsRejectedResponse(cors)
+          }
+
+          if (forceAuth) {
+            const authError = await requireAuth(req, url.searchParams.get('token'))
+            if (authError) {
+              return withCors(authError, cors)
+            }
+          }
+
+          const sessionId = url.pathname.split('/').pop() || ''
+          if (!sessionId || !/^[0-9a-zA-Z_-]{1,64}$/.test(sessionId)) {
+            return new Response('Invalid session ID', { status: 400 })
+          }
+          const upgraded = server.upgrade(req, {
+            data: {
+              sessionId,
+              connectedAt: Date.now(),
+              channel: 'sdk',
+              clientKind: 'full',
+              sdkToken: url.searchParams.get('token'),
+              serverPort,
+              serverHost: localConnectHost,
+            },
+          })
+          if (upgraded) return undefined
+          return new Response('WebSocket upgrade failed', { status: 400 })
+        }
+
+        if (url.pathname === '/callback') {
+          const state = url.searchParams.get('state')
+          if (state && echoFlowOAuthService.getSession(state)) {
+            return handleEchoFlowOAuthCallback(url)
+          }
+          if (state && !hahaOAuthService.getSession(state)) {
+            return new Response('OAuth session not found or expired', { status: 400 })
+          }
+          return handleHahaOAuthCallback(url)
+        }
+
+        if (
+          url.pathname === OPENAI_CODEX_REDIRECT_PATH ||
+          url.pathname === '/callback/openai'
+        ) {
+          const state = url.searchParams.get('state')
+          if (state && echoFlowOpenAIOAuthService.getSession(state)) {
+            return handleEchoFlowOpenAIOAuthCallback(url)
+          }
+          if (state && !hahaOpenAIOAuthService.getSession(state)) {
+            return new Response('OAuth session not found or expired', { status: 400 })
+          }
+          return handleHahaOpenAIOAuthCallback(url)
+        }
+
+        // Preview filesystem — serve sandboxed workspace files for a session.
+        if (url.pathname.startsWith('/preview-fs/')) {
+          if (cors.rejected) {
+            return corsRejectedResponse(cors)
+          }
+
+          if (authRequired) {
+            const authError = await requireH5Token(req)
+            if (authError) {
+              return withCors(authError, cors)
+            }
+          } else if (forceAuth) {
+            const authError = await requireAuth(req)
+            if (authError) {
+              return withCors(authError, cors)
+            }
+          }
+
+          const response = await handlePreviewFs(
+            url,
+            async (sessionId) =>
+              conversationService.getSessionWorkDir(sessionId) ||
+              (await sessionService.getSessionWorkDir(sessionId)) ||
+              null,
+            req.headers,
+          )
+          return withCors(response, cors)
+        }
+
+        // Local filesystem — serve an ABSOLUTE local file ($HOME/tmp/registered
+        // roots sandbox) so `file://` links / AI-emitted absolute paths open in
+        // the in-app browser. Gated identically to /preview-fs above.
+        if (url.pathname.startsWith('/local-file/')) {
+          if (cors.rejected) {
+            return corsRejectedResponse(cors)
+          }
+
+          if (authRequired) {
+            const authError = await requireH5Token(req)
+            if (authError) {
+              return withCors(authError, cors)
+            }
+          } else if (forceAuth) {
+            const authError = await requireAuth(req)
+            if (authError) {
+              return withCors(authError, cors)
+            }
+          }
+
+          const response = await handleLocalFile(url, req.headers)
+          return withCors(response, cors)
+        }
+
+        // REST API
+        if (url.pathname.startsWith('/api/')) {
+          if (cors.rejected) {
+            return corsRejectedResponse(cors)
+          }
+
+          // Enforce authentication when required
+          if (!petAccessAuthorized && authRequired) {
+            const authError = await requireH5Token(req)
+            if (authError) {
+              return withCors(authError, cors)
+            }
+          } else if (!petAccessAuthorized && forceAuth) {
+            const authError = await requireAuth(req)
+            if (authError) {
+              return withCors(authError, cors)
+            }
+          }
+
+          try {
+            const response = await settleResponseOnRequestAbort(
+              req,
+              handleApiRequest(req, url, { remoteBrowser: classifyH5Request(req, url, h5RequestContext) === 'h5-browser' }),
+            )
+            return withCors(response, cors)
+          } catch (error) {
+            void diagnosticsService.recordEvent({
+              type: 'api_request_failed',
+              severity: 'error',
+              summary: error instanceof Error ? error.message : String(error),
+              details: { path: url.pathname, method: req.method, error },
+            })
+            console.error('[Server] API error:', error)
+            return withCors(Response.json(
+              { error: 'Internal server error' },
+              { status: 500 },
+            ), cors)
+          }
+        }
+
+        // Proxy — protocol-translating reverse proxy for OpenAI-compatible APIs
+        if (url.pathname.startsWith('/proxy/')) {
+          if (cors.rejected) {
+            return corsRejectedResponse(cors)
+          }
+
+          if (authRequired) {
+            const authError = await requireH5Token(req)
+            if (authError) {
+              return withCors(authError, cors)
+            }
+          } else if (forceAuth) {
+            const authError = await requireAuth(req)
+            if (authError) {
+              return withCors(authError, cors)
+            }
+          }
+          try {
+            const response = await handleProxyRequest(req, url)
+            return withCors(response, cors)
+          } catch (error) {
+            void diagnosticsService.recordEvent({
+              type: 'proxy_request_failed',
+              severity: 'error',
+              summary: error instanceof Error ? error.message : String(error),
+              details: { path: url.pathname, method: req.method, error },
+            })
+            console.error('[Server] Proxy error:', error)
+            return withCors(Response.json(
+              { type: 'error', error: { type: 'api_error', message: 'Internal proxy error' } },
+              { status: 500 },
+            ), cors)
+          }
+        }
+
+        // Static H5 shell/assets are non-secret bootstrap content and must load
+        // before the browser can read the QR token; API/proxy/ws stay protected above.
+        const staticResponse = await handleStaticH5Request(req, url)
+        if (staticResponse) {
+          return staticResponse
+        }
+
+        return new Response('Not Found', { status: 404 })
+        })())
+      },
+
+      websocket: mainSockets,
+    })
+    const disposeCollaboration = configureSessionCollaborationHost(localConnectHost, server.port)
+    const disposeScheduledTaskHost = configureScheduledTaskHost(localConnectHost, server.port)
+    const stop = server.stop.bind(server)
+    server.stop = (closeActiveConnections?: boolean) => {
+      disposeH5Connections()
+      apiPerformanceMonitor.stop()
+      disposeCollaboration()
+      disposeScheduledTaskHost()
+      publicAccess.disable()
+      broker.closeAll()
+      publicAccessServers.delete(publicAccess)
+      return stop(closeActiveConnections)
+    }
+    serverPort = server.port
+    ProviderService.setServerPort(serverPort)
+    apiPerformanceMonitor.start()
+  } catch (error) {
+    disposeH5Connections()
+    publicAccess.disable()
+    publicAccessServers.delete(publicAccess)
+    const message = error instanceof Error && error.message
+      ? error.message
+      : `Failed to start server. Is port ${port} in use?`
+    throw new Error(message, { cause: error })
+  }
+
+  // Bun.serve is already accepting requests. Both projections remain
+  // background work; session-list metadata gets priority on a cold start so
+  // full-text backfill cannot make the sidebar slower on low-memory machines.
+  if (!migrationMaintenance.isActive) beginBackgroundIndexStartup()
+
+  // Start watching ~/.claude/teams/ for real-time WebSocket push
+  if (!migrationMaintenance.isActive) teamWatcher.start()
+
+  // Start the cron scheduler to execute scheduled tasks
+  if (!migrationMaintenance.isActive) cronScheduler.start()
+
+  if (!migrationMaintenance.isActive) void ensureDesktopCliLauncherInstalled().catch((error) => {
+    console.error(
+        '[desktop-cli-launcher] failed to install bundled launcher:',
+        error instanceof Error ? error.message : error,
+    )
+  })
+
+  console.log(`[Server] Claude Code API server running at http://${host}:${serverPort}`)
+  return server
+}
+
+// ─── Graceful shutdown: kill all CLI subprocesses on exit ────────────────────
+
+let shutdownInProgress: Promise<void> | null = null
+let migrationQuiescence: Promise<void> | undefined
+
+async function migrationRuntimePreview() {
+  const owned = [...conversationService.getProcessIds(), ...cronScheduler.getProcessIds()]
+  return { activeTasks: owned.length, externalProcesses: await countExternalMigrationProcesses(owned) }
+}
+
+export function quiesceServerRuntimeForMigration(ignoreExternalProcesses = false): Promise<void> {
+  if (migrationQuiescence) return migrationQuiescence
+  migrationMaintenance.begin()
+  revokeSessionAdmissionsForMigration()
+  const operation = (async () => {
+    const inventory = await migrationRuntimePreview()
+    if (!ignoreExternalProcesses && inventory.externalProcesses > 0) throw new Error('Close external CLI sessions before migrating data')
+    for (const remote of publicAccessServers) remote.disable()
+    await stopMobilePushServices()
+    await quiesceTeamPlanRuntimesForMigration()
+    await Promise.all([teamWatcher.stopAndWait(), cronScheduler.stopAndWait(), conversationService.stopForMigration()])
+    await migrationMaintenance.drain()
+    await drainSessionWritesForMigration()
+    backgroundIndexStartupController?.abort()
+    await Promise.all([localIndexCoordinator.stop(), searchContentCoordinator.stop(), backgroundIndexStartup])
+    await sessionService.drainForMigration()
+    await ManagedSettingsService.drainForMigration()
+    await diagnosticsService.drainForMigration()
+  })()
+  migrationQuiescence = operation
+  return operation
+}
+
+export async function quiesceServerRuntimeForRecovery(): Promise<void> {
+  if (migrationQuiescence) {
+    try {
+      await migrationQuiescence
+      return
+    } catch {
+      migrationQuiescence = undefined
+    }
+  }
+  // Recovery restarts the source runtime; it never authorizes copying while
+  // another process still owns that directory.
+  await quiesceServerRuntimeForMigration(true)
+}
+
+export async function stopServerRuntimeForShutdown(
+  options: { waitForCli?: boolean } = {},
+): Promise<void> {
+  for (const dispose of [...h5ShutdownHandlers]) dispose()
+  await stopMobilePushServices()
+  for (const remote of publicAccessServers) remote.disable()
+  publicAccessServers.clear()
+  teamWatcher.stop()
+  cronScheduler.stop()
+  backgroundIndexStartupController?.abort()
+  const pendingIndexStartup = backgroundIndexStartup
+  await Promise.all([
+    localIndexCoordinator.stop(),
+    searchContentCoordinator.stop(),
+    pendingIndexStartup,
+  ])
+
+  const active = conversationService.getActiveSessions()
+  if (active.length > 0) {
+    console.log(`[Server] Shutting down — killing ${active.length} CLI subprocess(es)`)
+    if (options.waitForCli === false) {
+      conversationService.stopAllSessions()
+    } else {
+      await conversationService.stopAllSessionsAndWait()
+    }
+  }
+}
+
+function cleanupAllSessions() {
+  void stopServerRuntimeForShutdown({ waitForCli: false })
+}
+
+async function cleanupAllSessionsAndWait() {
+  await stopServerRuntimeForShutdown({ waitForCli: true })
+}
+
+function shutdownAndExit(signal: 'SIGTERM' | 'SIGINT', exitCode: number) {
+  if (shutdownInProgress) return
+
+  shutdownInProgress = (async () => {
+    console.log(`[Server] Received ${signal}`)
+    await cleanupAllSessionsAndWait()
+    await quiesceServerRuntimeForMigration(true)
+    const { releaseProcessStorage } = await import('../services/storageStartup.js')
+    await releaseProcessStorage()
+    process.exit(exitCode)
+  })().catch((error) => {
+    console.error(
+      `[Server] ${signal} shutdown cleanup failed:`,
+      error instanceof Error ? error.message : error,
+    )
+    process.exit(1)
+  })
+}
+
+process.on('SIGTERM', () => {
+  shutdownAndExit('SIGTERM', 0)
+})
+
+process.on('SIGINT', () => {
+  shutdownAndExit('SIGINT', 0)
+})
+
+process.on('exit', () => {
+  cleanupAllSessions()
+})

@@ -3,8 +3,7 @@ param(
   [Parameter(Mandatory = $true)][string]$InstallDir,
   [Parameter(Mandatory = $true)][string]$ProcessName,
   [ValidateSet('Find', 'Kill', 'KillForce')][string]$Action = 'Find',
-  [int]$InstallerPid = 0,
-  [int]$InstallerParentPid = 0
+  [int]$InstallerPid = 0
 )
 
 Set-StrictMode -Version Latest
@@ -46,11 +45,7 @@ try {
   }
 
   foreach ($process in $matches) {
-    $path = if ([string]::IsNullOrWhiteSpace([string]$process.ExecutablePath)) {
-      '<path unavailable>'
-    } else {
-      [string]$process.ExecutablePath
-    }
+    $path = [string]$process.ExecutablePath
     [Console]::Out.WriteLine(
       "Matched protected install process: PID=$($process.ProcessId); Name=$($process.Name); Path=$path")
   }

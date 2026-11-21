@@ -94,14 +94,17 @@ describe('useTranslation', () => {
     }
   })
 
-  it('describes exactly the standard ~/.claude mode and an external custom mode', () => {
-    expect(translate('en', 'settings.general.storageSystemDescription')).toContain('~/.claude')
-    expect(translate('zh', 'settings.general.storageSystemDescription')).toContain('~/.claude')
-    expect(translate('zh-TW', 'settings.general.storageSystemDescription')).toContain('~/.claude')
-    expect(translate('jp', 'settings.general.storageSystemDescription')).toContain('~/.claude')
-    expect(translate('kr', 'settings.general.storageSystemDescription')).toContain('~/.claude')
-    expect(translate('en', 'settings.general.storagePortableTitle')).toContain('custom')
-    expect(translate('zh', 'settings.general.storagePortableTitle')).toContain('自定义')
+  it('localizes the current-directory and migration controls in all five locales', () => {
+    for (const [name, locale] of Object.entries(locales)) {
+      for (const key of [
+        'settings.general.storageActiveDir',
+        'settings.general.storageOpenSettings',
+        'settings.general.migration.confirm',
+        'settings.general.migration.cleanup',
+      ] as const) {
+        expect(locale[key], `${name} is missing ${key}`).toMatch(/\S/)
+      }
+    }
   })
 
   // The installed-skills overview was dropped in b64069a3, but the UI rollback

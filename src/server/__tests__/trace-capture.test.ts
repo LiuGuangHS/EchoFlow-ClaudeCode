@@ -25,6 +25,7 @@ import { createDumpPromptsFetch } from '../../services/api/dumpPrompts.js'
 import { buildOpenAICodexFetch } from '../../services/openaiAuth/fetch.js'
 import { clearOpenAIOAuthTokenCache } from '../../services/openaiAuth/storage.js'
 import { getTraceIndexDatabasePath } from '../services/localIndex/traceDatabase.js'
+import { ECHOFLOW_INTERNAL_DIR } from '../../utils/echoFlowConfigRoot.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -123,13 +124,13 @@ describe('trace capture service', () => {
 
     const canonicalA = path.join(
       scopeA,
-      'cc-haha',
+      ECHOFLOW_INTERNAL_DIR,
       'traces',
       'scope-frozen.jsonl',
     )
     const canonicalB = path.join(
       scopeB,
-      'cc-haha',
+      ECHOFLOW_INTERNAL_DIR,
       'traces',
       'scope-frozen.jsonl',
     )
@@ -137,13 +138,13 @@ describe('trace capture service', () => {
     await expect(fs.stat(canonicalB)).rejects.toMatchObject({ code: 'ENOENT' })
     expect((await fs.lstat(path.join(
       scopeA,
-      'cc-haha',
+      ECHOFLOW_INTERNAL_DIR,
       'db',
       'trace-index-v1.sqlite',
     ))).isFile()).toBe(true)
     await expect(fs.stat(path.join(
       scopeB,
-      'cc-haha',
+      ECHOFLOW_INTERNAL_DIR,
       'db',
       'trace-index-v1.sqlite',
     ))).rejects.toMatchObject({ code: 'ENOENT' })
@@ -193,7 +194,7 @@ describe('trace capture service', () => {
     ] as const) {
       const database = new Database(path.join(
         scope,
-        'cc-haha',
+        ECHOFLOW_INTERNAL_DIR,
         'db',
         'trace-index-v1.sqlite',
       ), { readonly: true })
@@ -240,7 +241,7 @@ describe('trace capture service', () => {
     await record('healthy-b-session')
     await fs.rm(path.join(
       scopeA,
-      'cc-haha',
+      ECHOFLOW_INTERNAL_DIR,
       'traces',
       'failing-a-session.jsonl',
     ))
@@ -250,7 +251,7 @@ describe('trace capture service', () => {
 
     const databaseB = new Database(path.join(
       scopeB,
-      'cc-haha',
+      ECHOFLOW_INTERNAL_DIR,
       'db',
       'trace-index-v1.sqlite',
     ), { readonly: true })
@@ -287,7 +288,7 @@ describe('trace capture service', () => {
     process.env.CLAUDE_CONFIG_DIR = scopeA
     process.env.CC_HAHA_LOCAL_INDEX = 'off'
 
-    const traceDirA = path.join(scopeA, 'cc-haha', 'traces')
+    const traceDirA = path.join(scopeA, ECHOFLOW_INTERNAL_DIR, 'traces')
     const originalReaddir = mutableFs.readdir.bind(mutableFs)
     let switched = false
     const readdirSpy = spyOn(mutableFs, 'readdir').mockImplementation(
@@ -644,7 +645,7 @@ describe('trace capture service', () => {
   })
 
   test('skips malformed trace jsonl entries when reading a session', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     await fs.mkdir(traceDir, { recursive: true })
     await fs.writeFile(path.join(traceDir, 'session-corrupt.jsonl'), [
       'not-json',
@@ -764,7 +765,7 @@ describe('trace capture service', () => {
       },
     })
     const trace = await traceCaptureService.getSessionTrace('session-trace-disabled')
-    const settingsFile = JSON.parse(await fs.readFile(path.join(tmpDir, 'cc-haha', 'settings.json'), 'utf-8')) as {
+    const settingsFile = JSON.parse(await fs.readFile(path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'settings.json'), 'utf-8')) as {
       traceCapture?: { enabled?: boolean }
     }
 
@@ -1348,7 +1349,7 @@ describe('session trace API', () => {
 
   test('streams original trace bytes, rejects oversized detail, and validates overview offsets', async () => {
     const sessionId = 'route-resource-bounds'
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     await fs.mkdir(traceDir, { recursive: true })
     const raw = Buffer.from(JSON.stringify({ type: 'call', record: {
       id: 'huge-call', sessionId, source: 'proxy', startedAt: '2026-01-01T00:00:00Z',
@@ -1462,7 +1463,7 @@ describe('session trace API', () => {
 
   test('serves the session trace overview for a cold giant file with a one-time index rebuild', async () => {
     const sessionId = 'session-cold-overview'
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     await fs.mkdir(traceDir, { recursive: true })
     const callLine = JSON.stringify({
       type: 'call',
@@ -1530,7 +1531,7 @@ describe('session trace API', () => {
       response: { status: 200, body: { ok: true } },
     })
     // An unindexed JSONL: present on disk, absent from the index.
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     const coldSessionId = 'session-list-cold'
     await fs.writeFile(
       path.join(traceDir, `${coldSessionId}.jsonl`),
@@ -1656,10 +1657,10 @@ describe('session trace API', () => {
     expect(body.traces[0].sessionId).toBe('session-list-trace')
     expect(body.traces[0].summary.apiCalls).toBe(1)
     expect(body.traces[0].fileSize).toBeGreaterThan(0)
-    expect(body.storageDir).toBe(path.join(tmpDir, 'cc-haha', 'traces'))
+    expect(body.storageDir).toBe(path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces'))
     expect(body.settings).toEqual({
       enabled: true,
-      storageDir: path.join(tmpDir, 'cc-haha', 'traces'),
+      storageDir: path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces'),
     })
   })
 
@@ -1764,7 +1765,7 @@ describe('session trace API', () => {
 
     expect(res.status).toBe(200)
     expect(body).toEqual({ sessionId: 'session-delete-trace', deleted: true })
-    await expect(fs.stat(path.join(tmpDir, 'cc-haha', 'traces', 'session-delete-trace.jsonl'))).rejects.toThrow()
+    await expect(fs.stat(path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces', 'session-delete-trace.jsonl'))).rejects.toThrow()
 
     const afterDelete = await traceCaptureService.getSessionTrace('session-delete-trace')
     expect(afterDelete.calls).toEqual([])
@@ -1889,7 +1890,7 @@ describe('trace read cache', () => {
   }
 
   test('invalidates cached entries after a same-size rewrite with restored mtime', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     const filePath = path.join(traceDir, 'session-cache-hit.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
 
@@ -1919,7 +1920,7 @@ describe('trace read cache', () => {
   })
 
   test('stores trimmed records in the list cache and keeps full records for detail reads', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     const filePath = path.join(traceDir, 'session-cache-list.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
     await fs.writeFile(filePath, buildTraceCallLine('call-list-cache', 'session-cache-list', 'x'.repeat(10_000)))
@@ -2053,7 +2054,7 @@ describe('trace read cache', () => {
 
   test('rebuilds cold trace summaries with bounded reads instead of hydrating the whole file', async () => {
     const sessionId = 'session-streamed-projection'
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     const filePath = path.join(traceDir, `${sessionId}.jsonl`)
     await fs.mkdir(traceDir, { recursive: true })
     // Each UTF-8 record crosses chunk boundaries; the final version of call-a
@@ -2103,7 +2104,7 @@ describe('trace read cache', () => {
   })
 
   test('projects an external append from the stored boundary without rereading the prefix', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     const filePath = path.join(traceDir, 'session-projection-external-append.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
     const prefix = buildTraceCallLine(
@@ -2148,7 +2149,7 @@ describe('trace read cache', () => {
   })
 
   test('does not commit an append parsed from a different source snapshot than its fingerprint', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     const filePath = path.join(traceDir, 'session-projection-append-race.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
     const prefix = buildTraceCallLine(
@@ -2226,7 +2227,7 @@ describe('trace read cache', () => {
 
   test.skipIf(process.platform === 'win32')('rebuilds when an append target is replaced after change detection with identical sampled windows', async () => {
     const sessionId = 'session-append-replaced-inode'
-    const dir = path.join(tmpDir, 'cc-haha', 'traces')
+    const dir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     const filePath = path.join(dir, `${sessionId}.jsonl`)
     await fs.mkdir(dir, { recursive: true })
     const middle = JSON.parse(buildTraceCallLine('middle', sessionId))
@@ -2262,7 +2263,7 @@ describe('trace read cache', () => {
   })
 
   test('invalidates a projection after a same-size rewrite with restored mtime', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     const filePath = path.join(traceDir, 'session-projection-same-size.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
     const lineA = buildTraceCallLine('call-aaa', 'session-projection-same-size')
@@ -2291,7 +2292,7 @@ describe('trace read cache', () => {
 
   test('invalidates a large projection after an unsampled middle rewrite with restored mtime', async () => {
     const sessionId = 'session-projection-middle-rewrite'
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     const filePath = path.join(traceDir, `${sessionId}.jsonl`)
     await fs.mkdir(traceDir, { recursive: true })
     const paddedLine = (id: string, model: string, padding: number): string => {
@@ -2332,7 +2333,7 @@ describe('trace read cache', () => {
 
   test('does not commit old full-trace bytes with a newer middle-rewrite fingerprint', async () => {
     const sessionId = 'session-projection-full-read-race'
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     const filePath = path.join(traceDir, `${sessionId}.jsonl`)
     await fs.mkdir(traceDir, { recursive: true })
     const paddedLine = (id: string, model: string, padding: number): string => {
@@ -2371,7 +2372,7 @@ describe('trace read cache', () => {
   })
 
   test('rebuilds after a same-size rewrite and after a truncated source', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     const filePath = path.join(traceDir, 'session-projection-rewrite.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
     const lineA = buildTraceCallLine('call-aaa', 'session-projection-rewrite')
@@ -2398,7 +2399,7 @@ describe('trace read cache', () => {
   })
 
   test('does not index a partial tail and picks up complete lines appended after it', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces')
     const filePath = path.join(traceDir, 'session-projection-tail.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
     const lineA = buildTraceCallLine('call-tail-a', 'session-projection-tail')
@@ -2435,7 +2436,7 @@ describe('trace read cache', () => {
       response: { status: 200, body: { ok: true } },
     })
     clearTraceCaptureStateForTests()
-    const databasePath = path.join(tmpDir, 'cc-haha', 'db', 'trace-index-v1.sqlite')
+    const databasePath = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'db', 'trace-index-v1.sqlite')
     await fs.writeFile(databasePath, 'not a sqlite database')
 
     const list = await traceCaptureService.listSessionTraces()
@@ -2547,7 +2548,7 @@ describe('trace read cache', () => {
     writer.exec('BEGIN IMMEDIATE')
     const traceFile = path.join(
       tmpDir,
-      'cc-haha',
+      ECHOFLOW_INTERNAL_DIR,
       'traces',
       'session-busy-operation.jsonl',
     )
@@ -2775,7 +2776,7 @@ describe('trace read cache', () => {
     expect(first.revisionToken).toBeString()
     const filePath = path.join(
       tmpDir,
-      'cc-haha',
+      ECHOFLOW_INTERNAL_DIR,
       'traces',
       'session-revision-incarnation.jsonl',
     )
@@ -2849,7 +2850,7 @@ describe('trace read cache', () => {
     await traceCaptureService.getSessionTraceRevision('session-bounded-detail')
     const sourceSize = (await fs.stat(path.join(
       tmpDir,
-      'cc-haha',
+      ECHOFLOW_INTERNAL_DIR,
       'traces',
       'session-bounded-detail.jsonl',
     ))).size
@@ -2915,7 +2916,7 @@ describe('trace read cache', () => {
     }
     const filePath = path.join(
       tmpDir,
-      'cc-haha',
+      ECHOFLOW_INTERNAL_DIR,
       'traces',
       'session-stale-locator.jsonl',
     )

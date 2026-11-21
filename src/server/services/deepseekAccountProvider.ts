@@ -13,6 +13,7 @@ import {
   isInferenceEligibleGrant,
 } from '../../services/deepseekAuth/storage.js'
 import { PROVIDER_PRESETS } from '../config/providerPresets.js'
+import { DEEPSEEK_ACCOUNT_FLASH_MODEL } from './deepseekAccountModelMigration.js'
 import {
   DEEPSEEK_ACCOUNT_PROVIDER_ID,
   type ModelMapping,
@@ -39,7 +40,7 @@ if (!deepseekPreset) {
   throw new Error('DeepSeek account provider requires the bundled deepseek preset')
 }
 
-export const DEEPSEEK_ACCOUNT_FLASH_MODEL = 'deepseek-flash'
+export { DEEPSEEK_ACCOUNT_FLASH_MODEL, migrateLegacyDeepSeekAccountModels } from './deepseekAccountModelMigration.js'
 const DEEPSEEK_ACCOUNT_DEFAULT_MODEL = `${DEEPSEEK_ACCOUNT_FLASH_MODEL}[1m]`
 
 export const DEEPSEEK_ACCOUNT_DEFAULT_MODELS: ModelMapping = {
@@ -65,27 +66,6 @@ export const DEEPSEEK_ACCOUNT_PROVIDER: SavedProvider = {
     ...Object.fromEntries(DEEPSEEK_ACCOUNT_MODEL_CATALOG.flatMap((model) =>
       model.contextWindow ? [[model.id, model.contextWindow]] : [])),
   },
-}
-
-const LEGACY_DEEPSEEK_ACCOUNT_FLASH_MODEL = 'deepseek-v4-flash'
-
-/**
- * Index files before PROVIDER_DEEPSEEK_ACCOUNT_MODEL_IDS_SCHEMA_VERSION saved
- * the account mapping with the API route's `deepseek-v4-flash`: the only flash
- * id the settings card offered then, not a choice of V4 over V4.1. The account
- * listing offers V4.1 Flash instead, so point those slots at it. Other values,
- * and unknown fields, are kept as they are.
- */
-export function migrateLegacyDeepSeekAccountModels<T extends Record<string, unknown>>(models: T): T {
-  let changed = false
-  const migrated: Record<string, unknown> = { ...models }
-  for (const [slot, value] of Object.entries(models)) {
-    if (typeof value === 'string' && value.trim() === LEGACY_DEEPSEEK_ACCOUNT_FLASH_MODEL) {
-      migrated[slot] = DEEPSEEK_ACCOUNT_FLASH_MODEL
-      changed = true
-    }
-  }
-  return changed ? migrated as T : models
 }
 
 /**

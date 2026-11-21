@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSandboxedTestEnvironment } from '../../../scripts/pr/test-environment.js'
 import { startMockLlmServer } from '../../../scripts/quality-gate/mock-llm/server.js'
+import { ensureEchoFlowConfigRoot } from '../echoFlowConfigRoot.js'
 
 const root = join(import.meta.dir, '..', '..', '..')
 const MARKER = 'LEAN_SKILL_AT_FILE_MARKER_91c2'
@@ -15,10 +16,11 @@ async function firstAgentRequest(profile: 'standard' | 'lean') {
   const workDir = join(home, 'project')
   const skillDir = join(workDir, '.claude', 'skills', 'fixture-skill')
   mkdirSync(skillDir, { recursive: true })
-  mkdirSync(join(home, '.claude'), { recursive: true })
+  const configDir = join(home, '.claude')
+  await ensureEchoFlowConfigRoot(configDir)
   // Pin optional search availability; this case exercises the legacy checklist
   // and skill attachment path, not a provider-dependent web capability.
-  writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ webSearch: { mode: 'disabled' } }))
+  writeFileSync(join(configDir, 'settings.json'), JSON.stringify({ webSearch: { mode: 'disabled' } }))
   writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: fixture-skill\ndescription: fixture\n---\nSKILL_BODY: review $ARGUMENTS')
   writeFileSync(join(workDir, 'README.md'), `# readme\n${MARKER}\n`)
   const requests: Array<{ tools?: Array<{ name?: string }>, messages?: unknown }> = []

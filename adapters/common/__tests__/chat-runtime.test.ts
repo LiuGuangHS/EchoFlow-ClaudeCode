@@ -780,7 +780,7 @@ describe('ImChatRuntime abandoning a live turn', () => {
 
 describe('ImChatRuntime attachment authorization', () => {
   // Downloading before the pairing gate lets a stranger make the adapter fetch
-  // bytes and write them under ~/.claude/im-downloads — and on Slack that
+  // bytes and write them under <data-root>/im-downloads — and on Slack that
   // fetch carries the bot token.
   it('does not download attachments for an unpaired sender', async () => {
     writeAdapterConfig({ wecom: { pairedUsers: [], allowedUsers: [] } })

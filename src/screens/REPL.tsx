@@ -6,7 +6,7 @@ import { snapshotOutputTokensForTurn, getCurrentTurnTokenBudget, getTurnOutputTo
 import { parseTokenBudget } from '../utils/tokenBudget.js';
 import { count } from '../utils/array.js';
 import { dirname, join } from 'path';
-import { tmpdir } from 'os';
+import { ensurePrivateStorageTempRoot } from '../utils/cachePaths.js';
 import figures from 'figures';
 // eslint-disable-next-line custom-rules/prefer-use-keybindings -- / n N Esc [ v are bare letters in transcript modal context, same class as g/G/j/k in ScrollKeybindingHandler
 import { useInput } from '../ink.js';
@@ -4325,7 +4325,7 @@ export function REPL({
           const w = Math.max(80, (process.stdout.columns ?? 80) - 6);
           const raw = await renderMessagesToPlainText(deferredMessages, tools, w);
           const text = raw.replace(/[ \t]+$/gm, '');
-          const path = join(tmpdir(), `cc-transcript-${Date.now()}.txt`);
+          const path = join(ensurePrivateStorageTempRoot(), `cc-transcript-${Date.now()}.txt`);
           await writeFile(path, text);
           const opened = openFileInExternalEditor(path);
           setStatus(opened ? `opening ${path}` : `wrote ${path} · no $VISUAL/$EDITOR set`);

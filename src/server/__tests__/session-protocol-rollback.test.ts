@@ -46,7 +46,7 @@ describe('session protocol rollback over WebSocket', () => {
     workDir = join(sandbox.home, 'workspace')
     await mkdir(workDir, { recursive: true })
     await mkdir(join(sandbox.configDir, 'projects'), { recursive: true })
-    const { startServer } = await import('../index.js')
+    const { startServer } = await import('../serverRuntime.js')
     server = startServer(0, '127.0.0.1')
     baseUrl = `http://127.0.0.1:${server.port}`
   })
@@ -60,7 +60,7 @@ describe('session protocol rollback over WebSocket', () => {
   afterAll(async () => {
     try {
       server?.stop(true)
-      const { stopServerRuntimeForShutdown } = await import('../index.js')
+      const { stopServerRuntimeForShutdown } = await import('../serverRuntime.js')
       await stopServerRuntimeForShutdown()
       expect(sandbox.detectUserStateMutations()).toEqual([])
     } finally {

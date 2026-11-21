@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { cleanupOldFileHistoryBackups, cleanupOldSessionEnvDirs, cleanupOldSessionFiles } from './cleanup.js'
 import { readSessionArchives, withSessionArchiveLock, writeSessionArchive } from './sessionArchiveStore.js'
 import { getFsImplementation } from './fsOperations.js'
+import { getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 
 let configDir: string
 let previousConfigDir: string | undefined
@@ -59,7 +60,7 @@ describe('archived session retention', () => {
   it('previews legacy archives before the first cleanup without creating archive storage', async () => {
     const archived = await legacyFixture(archivedId, [{ type: 'session-archive', archived: true }])
     const ordinary = await fixture(ordinaryId)
-    const internalDir = join(configDir, 'cc-haha')
+    const internalDir = getEchoFlowInternalDir(configDir)
 
     expect(await cleanupOldSessionFiles(cutoff, { dryRun: true })).toEqual({ messages: 4, errors: 0 })
     for (const file of [...archived.files, ...ordinary]) expect(await readFile(file, 'utf8')).toBe(file === archived.files[0] ? archived.transcript : fixtureBytes)
@@ -78,7 +79,7 @@ describe('archived session retention', () => {
     const metadataId = '00000002-aaaa-bbbb-cccc-dddddddddddd'
     const metadata = await legacyFixture(metadataId, [{ type: 'session-meta', archived: true }])
     const ordinary = await fixture(ordinaryId)
-    const archivePath = join(join(configDir, 'cc-haha'), 'session-archives.json')
+    const archivePath = join(getEchoFlowInternalDir(configDir), 'session-archives.json')
     await expect(access(archivePath)).rejects.toThrow()
 
     const result = first === 'file-history' ? await cleanupOldFileHistoryBackups()
@@ -127,7 +128,7 @@ describe('archived session retention', () => {
   it.each([false, true])('preserves explicit side-table archived=%s and extensions while recovering missing records', async archived => {
     const legacy = await legacyFixture(archivedId, [{ type: 'session-archive', archived: !archived }])
     const missing = await legacyFixture(ordinaryId, [{ type: 'session-meta', archived: true }])
-    const archivePath = join(join(configDir, 'cc-haha'), 'session-archives.json')
+    const archivePath = join(getEchoFlowInternalDir(configDir), 'session-archives.json')
     await mkdir(dirname(archivePath))
     const explicit = { archived, futureRecord: { keep: true } }
     const bytes = JSON.stringify({ schemaVersion: 1, futureRoot: ['keep'], sessions: { [archivedId]: explicit } })
@@ -160,7 +161,7 @@ describe('archived session retention', () => {
     await writeFile(legacy.files[0]!, damaged)
     await utimes(legacy.files[0]!, oldDate, oldDate)
     await expect(cleanupOldSessionFiles(cutoff, { dryRun: true })).rejects.toThrow()
-    await expect(access(join(configDir, 'cc-haha'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(getEchoFlowInternalDir(configDir))).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(cleanupOldSessionFiles(cutoff)).rejects.toThrow()
     await expect(cleanupOldFileHistoryBackups()).rejects.toThrow()
     await expect(cleanupOldSessionEnvDirs()).rejects.toThrow()
@@ -205,10 +206,31 @@ describe('archived session retention', () => {
     } finally { probe.mockRestore() }
   })
 
+  it('keeps a transcript refreshed under the archive lock after the retention scan', async () => {
+    const [transcript] = await fixture(ordinaryId)
+    const refreshed = JSON.stringify({ type: 'session-meta', workDir: configDir }) + '\n'
+    const fsImpl = getFsImplementation()
+    const stat = fsImpl.stat.bind(fsImpl)
+    let refreshedDuringScan = false
+    const probe = spyOn(fsImpl, 'stat').mockImplementation(async file => {
+      const result = await stat(file)
+      if (file === transcript && !refreshedDuringScan) {
+        refreshedDuringScan = true
+        await withSessionArchiveLock(configDir, () => writeFile(transcript!, refreshed))
+      }
+      return result
+    })
+    try {
+      expect(await cleanupOldSessionFiles(cutoff)).toEqual({ messages: 3, errors: 0 })
+      expect(refreshedDuringScan).toBe(true)
+      expect(await readFile(transcript!, 'utf8')).toBe(refreshed)
+    } finally { probe.mockRestore() }
+  })
+
   it('excludes old archived transcripts and backing files from preview and actual cleanup, then resumes cleanup after restore', async () => {
     const archived = await fixture(archivedId)
     const ordinary = await fixture(ordinaryId)
-    const archivePath = join(join(configDir, 'cc-haha'), 'session-archives.json')
+    const archivePath = join(getEchoFlowInternalDir(configDir), 'session-archives.json')
     await mkdir(dirname(archivePath))
     // Old unversioned metadata is also a retention promise.
     await writeFile(archivePath, JSON.stringify({ sessions: { [archivedId]: { archived: true, extension: 'keep' } }, rootExtension: true }))
@@ -230,7 +252,7 @@ describe('archived session retention', () => {
 
   it('stops destructive cleanup when archive metadata is unreadable', async () => {
     const archived = await fixture(archivedId)
-    const archivePath = join(join(configDir, 'cc-haha'), 'session-archives.json')
+    const archivePath = join(getEchoFlowInternalDir(configDir), 'session-archives.json')
     await mkdir(dirname(archivePath))
     await writeFile(archivePath, '{broken')
     await expect(cleanupOldSessionFiles(new Date())).rejects.toThrow()

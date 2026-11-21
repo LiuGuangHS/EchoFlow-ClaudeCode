@@ -1,5 +1,5 @@
 import * as fs from 'fs/promises'
-import * as os from 'os'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import * as path from 'path'
 import { AuthCodeListener } from '../../services/oauth/auth-code-listener.js'
 import {
@@ -68,8 +68,7 @@ function escapeHtml(value: string): string {
 }
 
 export function getEchoFlowGrokOAuthFilePath(): string {
-  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-  return path.join(configDir, 'echoflow-code', 'grok-oauth.json')
+  return path.join(getEchoFlowInternalDir(), 'grok-oauth.json')
 }
 
 export class EchoFlowGrokOAuthService {

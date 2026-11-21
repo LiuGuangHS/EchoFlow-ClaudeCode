@@ -1,5 +1,4 @@
-import os from 'node:os'
-import path from 'node:path'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import { getMobileSessionActivity } from './mobileSessionActivityRuntime.js'
 import { sessionService } from './sessionService.js'
 import { MobilePushService } from './mobilePushService.js'
@@ -7,7 +6,7 @@ import { MobilePushRouter } from './mobilePushTransport.js'
 
 const services = new Map<string, MobilePushService>()
 export function getMobilePushService() {
-  const directory = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'cc-haha')
+  const directory = getEchoFlowInternalDir()
   let service = services.get(directory)
   if (!service) {
     const transport = new MobilePushRouter()

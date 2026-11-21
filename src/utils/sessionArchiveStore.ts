@@ -1,18 +1,16 @@
-import { closeSync, createReadStream, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
-import { readdir, stat } from 'node:fs/promises'
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { dirname, join } from 'node:path'
-import { createInterface } from 'node:readline'
+import { basename, dirname, join } from 'node:path'
+import { getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { lock } from './lockfile.js'
+import { listLegacyArchiveTranscripts, migrateArchiveState, parseSessionArchiveMarker, readLegacyArchiveTranscript, sessionArchiveMarkerName, sessionArchiveStateName, type ArchiveRecord, type ArchiveState } from './sessionArchiveData.js'
 
-type ArchiveRecord = { archived: boolean; [key: string]: unknown }
-type ArchiveState = { schemaVersion: 1; sessions: Record<string, ArchiveRecord>; [key: string]: unknown }
 type Snapshot = { revision: string; state: ArchiveState; ids: ReadonlySet<string> }
 const cache = new Map<string, Snapshot>()
 const mutationQueues = new Map<string, Promise<void>>()
 
 function statePath(configDir: string): string {
-  return join(join(configDir, 'cc-haha'), 'session-archives.json')
+  return join(getEchoFlowInternalDir(configDir), sessionArchiveStateName)
 }
 
 /** Cleanup and archive mutations share this lock, including across CLI/server
@@ -30,23 +28,6 @@ export async function withSessionArchiveLock<T>(configDir: string, action: () =>
   try { return await operation } finally {
     if (mutationQueues.get(filePath) === queued) mutationQueues.delete(filePath)
   }
-}
-
-function migrateArchiveState(value: unknown): ArchiveState {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid session archive state; existing data was preserved')
-  const record = value as Record<string, unknown>
-  if (record.schemaVersion !== undefined && record.schemaVersion !== 0 && record.schemaVersion !== 1) {
-    throw new Error('Unsupported session archive state version; update the app before modifying archives')
-  }
-  if (!record.sessions || typeof record.sessions !== 'object' || Array.isArray(record.sessions)) throw new Error('Invalid session archive records')
-  for (const entry of Object.values(record.sessions)) {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof (entry as ArchiveRecord).archived !== 'boolean') {
-      throw new Error('Invalid session archive record; existing data was preserved')
-    }
-  }
-  // Unversioned metadata has the same records. Forward reads supply v1 and the
-  // next intentional mutation persists it without dropping extension fields.
-  return { ...record, schemaVersion: 1, sessions: record.sessions as Record<string, ArchiveRecord> }
 }
 
 export function readSessionArchives(configDir: string): Snapshot {
@@ -70,7 +51,7 @@ export function readSessionArchives(configDir: string): Snapshot {
 }
 
 function legacyMigrationPath(configDir: string): string {
-  return join(join(configDir, 'cc-haha'), 'session-archives.legacy-jsonl-migration.json')
+  return join(getEchoFlowInternalDir(configDir), sessionArchiveMarkerName)
 }
 
 function readLegacyMigrationMarker(configDir: string): { revision: string; archiveStateRequired: boolean } | null {
@@ -79,10 +60,7 @@ function readLegacyMigrationMarker(configDir: string): { revision: string; archi
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw error
   }
-  const marker = JSON.parse(raw)
-  if (!marker || marker.schemaVersion !== 1 || typeof marker.archiveStateRequired !== 'boolean') {
-    throw new Error('Invalid or unsupported legacy session archive migration marker')
-  }
+  const marker = parseSessionArchiveMarker(JSON.parse(raw))
   if (marker.archiveStateRequired && readSessionArchives(configDir).revision === 'missing') {
     throw new Error('Migrated session archive state is missing; cleanup was stopped')
   }
@@ -123,47 +101,12 @@ export function classifySessionArchives(snapshot: SessionArchiveSnapshot, rows: 
 
 async function scanLegacySessionArchives(configDir: string, state: ArchiveState): Promise<Map<string, boolean>> {
   const imported = new Map<string, boolean>()
-  const projectsDir = join(configDir, 'projects')
-  let projects
-  try { projects = await readdir(projectsDir, { withFileTypes: true }) } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    projects = []
-  }
-  for (const project of projects) {
-    if (project.isSymbolicLink()) throw new Error('Cannot migrate archives from a linked project')
-    if (!project.isDirectory()) continue
-    const projectDir = join(projectsDir, project.name)
-    for (const file of await readdir(projectDir, { withFileTypes: true })) {
-      if (!file.name.endsWith('.jsonl')) continue
-      if (!file.isFile()) throw new Error('Cannot migrate archives from a non-file transcript')
-      const sessionId = file.name.slice(0, -6)
-      const filePath = join(projectDir, file.name)
-      const before = await stat(filePath)
-      const stream = createReadStream(filePath, { encoding: 'utf8' })
-      const lines = createInterface({ input: stream, crlfDelay: Infinity })
-      let archived: boolean | undefined
-      try {
-        for await (const line of lines) {
-          if (!line.trim()) continue
-          const entry = JSON.parse(line)
-          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Invalid legacy transcript record')
-          if (entry.type !== 'session-archive' && entry.type !== 'session-meta') continue
-          if (entry.type === 'session-meta' && !Object.hasOwn(entry, 'archived')) continue
-          if (typeof entry.archived !== 'boolean') throw new Error('Invalid legacy session archive state')
-          archived = entry.archived
-        }
-      } finally {
-        lines.close()
-        stream.destroy()
-      }
-      const after = await stat(filePath)
-      if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) {
-        throw new Error('Transcript changed during archive migration; retry')
-      }
-      if (archived === undefined || Object.hasOwn(state.sessions, sessionId)) continue
-      if (imported.has(sessionId) && imported.get(sessionId) !== archived) throw new Error('Conflicting legacy session archive states')
-      imported.set(sessionId, archived)
-    }
+  for await (const file of listLegacyArchiveTranscripts(configDir)) {
+    const sessionId = basename(file, '.jsonl')
+    const archived = await readLegacyArchiveTranscript(file)
+    if (archived === undefined || Object.hasOwn(state.sessions, sessionId)) continue
+    if (imported.has(sessionId) && imported.get(sessionId) !== archived) throw new Error('Conflicting legacy session archive states')
+    imported.set(sessionId, archived)
   }
   return imported
 }

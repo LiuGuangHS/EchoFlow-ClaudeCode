@@ -1,14 +1,47 @@
-import envPaths from 'env-paths'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
+import { chmodSync, lstatSync, mkdirSync } from 'node:fs'
+import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'path'
 import { getFsImplementation } from './fsOperations.js'
 import { djb2Hash } from './hash.js'
+import { resolveManagedStoragePath } from './managedStoragePath.js'
 
-// When CLAUDE_CONFIG_DIR is set (portable mode), place cache under it
-// so the install is fully self-contained. Otherwise fall back to the
-// system default (%LOCALAPPDATA%\claude-cli-nodejs\Cache on Windows).
+/** Synchronous callers need stable filenames across subprocesses, not a new random directory. */
+export function ensurePrivateStorageTempRoot(): string {
+  const root = getEchoFlowConfigDir()
+  const internal = getEchoFlowInternalDir(root)
+  const temporary = join(internal, 'tmp')
+  // The selected root is the trust boundary; managed descendants cannot be links.
+  mkdirSync(root, { recursive: true, mode: 0o700 })
+  for (const path of [internal, temporary]) {
+    resolveManagedStoragePath(path, 'Storage temporary directory')
+    try { mkdirSync(path, { mode: 0o700 }) } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+    const snapshot = lstatSync(path)
+    if (!snapshot.isDirectory() || snapshot.isSymbolicLink()) throw new Error('Storage temporary directory contains a link or special entry')
+    resolveManagedStoragePath(path, 'Storage temporary directory')
+  }
+  chmodSync(temporary, 0o700)
+  return temporary
+}
+
+/** Product scratch data stays private inside the selected storage root. */
+export async function createPrivateStorageTempDirectory(prefix: string): Promise<string> {
+  if (!/^[a-zA-Z0-9_-]+$/.test(prefix)) throw new Error('Invalid storage temporary directory prefix')
+  const directory = await mkdtemp(join(ensurePrivateStorageTempRoot(), prefix))
+  try {
+    resolveManagedStoragePath(directory, 'Storage temporary directory')
+    await chmod(directory, 0o700)
+    return directory
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true })
+    throw error
+  }
+}
+
 function getCacheRoot() {
-  const claudeConfigDir = (process.env as Record<string, string | undefined>).CLAUDE_CONFIG_DIR
-  return claudeConfigDir ? join(claudeConfigDir, 'Cache') : envPaths('claude-cli').cache
+  return join(getEchoFlowConfigDir(), 'Cache')
 }
 
 // Local sanitizePath using djb2Hash — NOT the shared version from

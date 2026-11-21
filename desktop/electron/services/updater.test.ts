@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import childProcess from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { ElectronUpdaterService, normalizeUpdateInfo, updaterSessionProxyConfig, type ElectronUpdaterLike } from './updater'
+import { DesktopNsisUpdater, ElectronUpdaterService, normalizeUpdateInfo, updaterSessionProxyConfig, type ElectronUpdaterLike } from './updater'
 import { DIRECT_GITHUB_RELEASE_FEED_URL, resolveUpdateFeedConfig } from './updateFeed'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -43,6 +44,71 @@ function fakeUpdater(): ElectronUpdaterLike & {
 }
 
 const updater = fakeUpdater()
+
+it.each([
+  { originalRoot: undefined, errorCode: 'EACCES' },
+  { originalRoot: 'E:\\external-data', errorCode: 'EACCES' },
+  { originalRoot: 'E:\\external-data', errorCode: 'ENOENT' },
+])('handles $errorCode from the NSIS installer with original root $originalRoot', async ({ originalRoot, errorCode }) => {
+  class FixtureNsisUpdater extends DesktopNsisUpdater {
+    protected override get installerPath() { return 'fixture-update.exe' }
+    installFixture() {
+      return this.doInstall({ isSilent: false, isForceRunAfter: true, isAdminRightsRequired: false })
+    }
+  }
+  const resourcesPath = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+  Object.defineProperty(process, 'resourcesPath', { configurable: true, value: tmpdir() })
+  const updater = new FixtureNsisUpdater(null, {
+    version: '1.2.3', name: 'fixture', isPackaged: true,
+    appUpdateConfigPath: '', userDataPath: '', baseCachePath: '',
+    whenReady: async () => {}, relaunch() {}, quit() {}, onQuit() {},
+  })
+  updater.logger = null
+  const first = Object.assign(new EventEmitter(), { unref() {} })
+  const second = Object.assign(new EventEmitter(), { pid: 1234, unref() {} })
+  const spawn = vi.spyOn(childProcess, 'spawn')
+    .mockReturnValueOnce(first as unknown as childProcess.ChildProcess)
+    .mockReturnValueOnce(second as unknown as childProcess.ChildProcess)
+  const rootKey = 'CLAUDE_CONFIG_DIR'
+  const runtimeKey = 'ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG'
+  const previous = [process.env[rootKey], process.env[runtimeKey]]
+  const setEnv = (key: string, value: string | undefined) => {
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
+  try {
+    setEnv(rootKey, originalRoot)
+    setEnv(runtimeKey, undefined)
+    expect(updater.installFixture()).toBe(true)
+    setEnv(rootKey, 'E:\\injected')
+    setEnv(runtimeKey, 'E:\\injected\\runtime.json')
+    const failure = vi.fn()
+    updater.on('error', failure)
+    first.emit('error', Object.assign(new Error('fixture installer spawn failed'), { code: errorCode }))
+    await new Promise<void>(resolve => setImmediate(resolve))
+    if (errorCode === 'ENOENT') {
+      expect(spawn).toHaveBeenCalledTimes(1)
+      expect(failure).toHaveBeenCalledTimes(1)
+      expect(failure.mock.calls[0]?.[0]).toMatchObject({ message: expect.stringContaining('fixture installer spawn failed') })
+    } else {
+      expect(spawn).toHaveBeenCalledTimes(2)
+      expect(spawn.mock.calls[1]?.[0]).toBe(join(tmpdir(), 'elevate.exe'))
+      expect(failure).not.toHaveBeenCalled()
+    }
+    for (const call of spawn.mock.calls) {
+      const env = (call[2] as childProcess.SpawnOptions).env
+      expect(env).toBeDefined()
+      expect(env?.CLAUDE_CONFIG_DIR).toBe(originalRoot)
+      expect(env?.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG).toBeUndefined()
+    }
+  } finally {
+    spawn.mockRestore()
+    setEnv(rootKey, previous[0])
+    setEnv(runtimeKey, previous[1])
+    if (resourcesPath) Object.defineProperty(process, 'resourcesPath', resourcesPath)
+    else Reflect.deleteProperty(process, 'resourcesPath')
+  }
+})
 
 describe('Electron updater service', () => {
   it('normalizes update metadata from electron-updater', () => {
@@ -371,7 +437,7 @@ describe('Electron updater service', () => {
     expect(localUpdater.quitAndInstall).not.toHaveBeenCalled()
   })
 
-  it('hands the spawned installer an environment without the app-managed portable selection', async () => {
+  it('keeps the complete root while retiring old mode flags for the spawned installer', async () => {
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.4' } })
     updater.downloadUpdate.mockResolvedValue(undefined)
@@ -388,7 +454,11 @@ describe('Electron updater service', () => {
     service.quitAndInstallDownloadedUpdate(env)
 
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
-    expect(env).toEqual({ APPDATA: 'C:\\Users\\someone\\AppData\\Roaming' })
+    expect(env).toEqual({
+      CLAUDE_CONFIG_DIR: 'E:\\cc-haha-data',
+      WEBVIEW2_USER_DATA_FOLDER: 'E:\\cc-haha-data\\EBWebView',
+      APPDATA: 'C:\\Users\\someone\\AppData\\Roaming',
+    })
   })
 
   it('leaves an externally supplied CLAUDE_CONFIG_DIR untouched when installing', async () => {

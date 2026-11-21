@@ -110,6 +110,7 @@ export const ELECTRON_IPC_CHANNELS = {
   appModePrepareRestart: 'desktop:app-mode:prepare-restart',
   appModeRestart: 'desktop:app-mode:restart',
   migrationPrepare: 'desktop:app-mode:migration:prepare',
+  migrationOpenAiOauth: 'desktop:app-mode:migration:openai-oauth',
   migrationStart: 'desktop:app-mode:migration:start',
   migrationStatus: 'desktop:app-mode:migration:status',
   migrationCancel: 'desktop:app-mode:migration:cancel',

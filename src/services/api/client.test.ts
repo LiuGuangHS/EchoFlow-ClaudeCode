@@ -142,7 +142,7 @@ describe('getAnthropicClient', () => {
       ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
       [authStrategy === 'api_key' ? 'ANTHROPIC_API_KEY' : 'ANTHROPIC_AUTH_TOKEN']: key,
       CLAUDE_CODE_SIMPLE: '1',
-      OPENAI_CODEX_OAUTH_FILE: path.join(tempDir, 'missing-openai-oauth.json'),
+      OPENAI_CODEX_OAUTH_FILE: path.join(tempDir, '.claude', 'missing-openai-oauth.json'),
     })
     for (const name of Object.keys(process.env)) delete process.env[name]
     Object.assign(process.env, testEnv)
@@ -201,7 +201,7 @@ describe('getAnthropicClient', () => {
     const testEnv = createSandboxedTestEnvironment(tempDir, {
       ANTHROPIC_API_KEY: 'sk-test-provider',
       CLAUDE_CODE_SIMPLE: '1',
-      OPENAI_CODEX_OAUTH_FILE: path.join(tempDir, 'missing-openai-oauth.json'),
+      OPENAI_CODEX_OAUTH_FILE: path.join(tempDir, '.claude', 'missing-openai-oauth.json'),
     })
     for (const key of Object.keys(process.env)) delete process.env[key]
     Object.assign(process.env, testEnv)

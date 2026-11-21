@@ -7,7 +7,7 @@ param(
   [string]$LocalUserDataDir = '',
   [string]$DesktopPackageName = '',
   [string]$LegacyDesktopPackageName = '',
-  [string]$RecoveryRoot = '',
+  [string]$RecoveryBridge = '',
   [string]$ProcessName = 'EchoFlow Code.exe',
   [string]$ActiveConfigDir = $env:CLAUDE_CONFIG_DIR,
   [string]$ActiveConfigManaged = $env:CC_HAHA_APP_PORTABLE_DIR,
@@ -264,19 +264,12 @@ function Read-AppMode {
   }
 }
 
-function Test-LegacyPortableData {
+function Test-RetainedLegacyData {
   param([Parameter(Mandatory = $true)][string]$Dir)
 
-  if (-not (Test-Path -LiteralPath $Dir -PathType Container)) {
-    return $false
-  }
-  foreach ($file in @('settings.json', '.claude.json', '.mcp.json', 'window-state.json', 'terminal-config.json')) {
-    if (Test-Path -LiteralPath (Join-Path $Dir $file) -PathType Leaf) {
-      return $true
-    }
-  }
-  foreach ($childDir in @('Cache', 'EBWebView', 'projects', 'skills', 'plugins', 'cowork_plugins', 'cc-haha')) {
-    if (Test-Path -LiteralPath (Join-Path $Dir $childDir) -PathType Container) {
+  # A mode file alone is a pointer. Any other entry may be data or recovery evidence.
+  foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($Dir)) {
+    if (-not ([IO.Path]::GetFileName($entry)).Equals('app-mode.json', [StringComparison]::OrdinalIgnoreCase)) {
       return $true
     }
   }
@@ -303,18 +296,39 @@ function Get-LegacyActiveSource {
   )
 
   $legacyDir = Join-Path $InstallDir 'CLAUDE_CONFIG_DIR'
+  try { $attributes = [IO.File]::GetAttributes($legacyDir) }
+  catch [IO.FileNotFoundException] { $attributes = $null }
+  catch [IO.DirectoryNotFoundException] { $attributes = $null }
+  $hasRetainedData = $false
+  if ($null -ne $attributes) {
+    if (($attributes -band [IO.FileAttributes]::Directory) -eq 0) {
+      throw "Legacy data path is not a directory: $legacyDir"
+    }
+    Assert-NoReparsePointInPath -Path $legacyDir
+    # The fixed directory is under the uninstaller's deletion root. The bridge proves ownership separately.
+    $hasRetainedData = Test-RetainedLegacyData -Dir $legacyDir
+  }
   $legacyMode = Read-AppMode -ConfigDir $legacyDir
   $legacySource = $null
   if ($null -ne $legacyMode) {
     if ($legacyMode.Mode -eq 'portable') {
-      $legacySource = if ((Test-LegacyPortableData -Dir $legacyDir) -or
-          [string]::IsNullOrWhiteSpace([string]$legacyMode.PortableDir)) {
-        $legacyDir
+      if ($hasRetainedData) {
+        $legacySource = $legacyDir
+        if (-not [string]::IsNullOrWhiteSpace([string]$legacyMode.PortableDir)) {
+          $configured = Resolve-LegacyConfiguredPath -Value $legacyMode.PortableDir -Source (Join-Path $legacyDir 'app-mode.json')
+          if (-not (Test-SamePath -Left $configured -Right $legacyDir)) {
+            throw "Legacy portable selection conflicts with retained install data. Preserve both directories before upgrading: $configured; $legacyDir"
+          }
+        }
+      } elseif ([string]::IsNullOrWhiteSpace([string]$legacyMode.PortableDir)) {
+        $legacySource = $legacyDir
       } else {
-        Resolve-LegacyConfiguredPath -Value $legacyMode.PortableDir -Source (Join-Path $legacyDir 'app-mode.json')
+        $legacySource = Resolve-LegacyConfiguredPath -Value $legacyMode.PortableDir -Source (Join-Path $legacyDir 'app-mode.json')
       }
+    } elseif ($hasRetainedData) {
+      throw "Legacy default selection conflicts with retained install data. Preserve the directory before upgrading: $legacyDir"
     }
-  } elseif (Test-LegacyPortableData -Dir $legacyDir) {
+  } elseif ($hasRetainedData) {
     $legacySource = $legacyDir
   }
 
@@ -336,6 +350,9 @@ function Get-LegacyActiveSource {
   if ($null -ne $legacyMode) { return $legacySource }
   if ($null -ne $SystemMode) {
     if ($SystemMode.Mode -eq 'portable') { return $legacyDir }
+    if ($null -ne $legacySource) {
+      throw "Current default selection conflicts with retained legacy data. Preserve both directories before upgrading: $legacySource"
+    }
     return $null
   }
   return $legacySource
@@ -487,11 +504,12 @@ function Get-UnsafeLegacySource {
 
 function Assert-NoUndiscoveredLegacySources {
   param(
+    [Parameter(Mandatory = $true)][string[]]$ScanDirs,
     [Parameter(Mandatory = $true)][string[]]$InstallDirs,
     [AllowNull()][AllowEmptyString()][string]$ActiveSource
   )
 
-  foreach ($installDir in $InstallDirs) {
+  foreach ($installDir in $ScanDirs) {
     $pending = New-Object 'System.Collections.Generic.Stack[string]'
     $pending.Push($installDir)
     while ($pending.Count -gt 0) {
@@ -511,35 +529,28 @@ function Assert-NoUndiscoveredLegacySources {
 
         $modeDir = [IO.Path]::GetDirectoryName($entry)
         $mode = Read-AppMode -ConfigDir $modeDir
-        if ($null -eq $mode -or $mode.Mode -ne 'portable') {
-          continue
-        }
-        $candidate = if (Test-LegacyPortableData -Dir $modeDir) {
-          $modeDir
-        } elseif ([string]::IsNullOrWhiteSpace([string]$mode.PortableDir)) {
-          $modeDir
-        } else {
-          Resolve-LegacyConfiguredPath -Value $mode.PortableDir -Source $entry
-        }
-        if (-not (Test-Path -LiteralPath $candidate -PathType Container)) {
-          continue
-        }
+        if ($null -eq $mode) { continue }
 
-        $willBeRemoved = $false
-        foreach ($possiblyDeletedRoot in $InstallDirs) {
-          if (Test-PathMayBeDeleted -InstallDir $possiblyDeletedRoot -Candidate $candidate) {
-            $willBeRemoved = $true
-            break
+        $candidates = @()
+        if (Test-RetainedLegacyData -Dir $modeDir) { $candidates += $modeDir }
+        if ($mode.Mode -eq 'portable' -and -not [string]::IsNullOrWhiteSpace([string]$mode.PortableDir)) {
+          $configured = Resolve-LegacyConfiguredPath -Value $mode.PortableDir -Source $entry
+          if (-not (Test-SamePath -Left $modeDir -Right $configured)) { $candidates += $configured }
+        }
+        foreach ($candidate in $candidates) {
+          try { $null = [IO.File]::GetAttributes($candidate) }
+          catch [IO.FileNotFoundException] { continue }
+          catch [IO.DirectoryNotFoundException] { continue }
+          if (-not [string]::IsNullOrWhiteSpace($ActiveSource) -and
+              (Test-SamePath -Left $ActiveSource -Right $candidate)) {
+            continue
+          }
+          foreach ($possiblyDeletedRoot in $InstallDirs) {
+            if (Test-PathMayBeDeleted -InstallDir $possiblyDeletedRoot -Candidate $candidate) {
+              throw "Install-contained custom data was configured by another Windows user or an undiscovered legacy mode. Refusing to remove it: $candidate (metadata: $entry)"
+            }
           }
         }
-        if (-not $willBeRemoved) {
-          continue
-        }
-        if (-not [string]::IsNullOrWhiteSpace($ActiveSource) -and
-            (Test-SamePath -Left $ActiveSource -Right $candidate)) {
-          continue
-        }
-        throw "Install-contained custom data was configured by another Windows user or an undiscovered legacy mode. Refusing to remove it: $candidate (metadata: $entry)"
       }
     }
   }
@@ -649,70 +660,37 @@ function Assert-TreeManifestsEqual {
   }
 }
 
-function Copy-VerifiedTree {
-  param(
-    [Parameter(Mandatory = $true)][string]$Source,
-    [Parameter(Mandatory = $true)][string]$RecoveryRoot
-  )
+function Invoke-InstallerStorageRecovery {
+  param([string]$Bridge, [string]$Source, [string]$UserDataDir, [string[]]$InstallDirs)
 
-  New-Item -ItemType Directory -Path $RecoveryRoot -Force | Out-Null
-  $id = [Guid]::NewGuid().ToString('N')
-  $timestamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')
-  $staging = Join-Path $RecoveryRoot ".$id.partial"
-  $destination = Join-Path $RecoveryRoot "Recovered-$timestamp-$id"
-  New-Item -ItemType Directory -Path $staging | Out-Null
-
+  if ([string]::IsNullOrWhiteSpace($Bridge) -or -not (Test-Path -LiteralPath $Bridge -PathType Leaf)) {
+    throw 'Packaged installer storage recovery runtime is unavailable; the old version and source were retained.'
+  }
+  Assert-NoReparsePointInPath -Path $Bridge
+  $arguments = @('--source', $Source, '--profile', $UserDataDir)
+  foreach ($installDir in $InstallDirs) { $arguments += @('--install-dir', $installDir) }
+  $savedErrorAction = $ErrorActionPreference
   try {
-    $before = @(Get-TreeManifest -Root $Source)
-    & "$env:SystemRoot\System32\robocopy.exe" `
-      $Source $staging /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /XJ /NFL /NDL /NJH /NJS /NP | Out-Null
-    $robocopyExitCode = $LASTEXITCODE
-    if ($robocopyExitCode -ge 8) {
-      throw "robocopy failed with exit code $robocopyExitCode"
-    }
-
-    $after = @(Get-TreeManifest -Root $Source)
-    $copied = @(Get-TreeManifest -Root $staging)
-    Assert-TreeManifestsEqual -Expected $before -Actual $after -Message 'Legacy data changed while it was being copied; close every app using it and retry.'
-    Assert-TreeManifestsEqual -Expected $after -Actual $copied -Message 'The recovered copy does not exactly match the legacy data source.'
-
-    [IO.Directory]::Move($staging, $destination)
-    return $destination
+    # Windows PowerShell 5.1 can turn redirected native stderr into a terminating error under Stop.
+    $ErrorActionPreference = 'Continue'
+    $output = @(& $Bridge @arguments 2>&1)
+    $exitCode = $LASTEXITCODE
   } finally {
-    if (Test-Path -LiteralPath $staging) {
-      Remove-Item -LiteralPath $staging -Recurse -Force
+    $ErrorActionPreference = $savedErrorAction
+  }
+  if ($exitCode -ne 0) { throw "Shared installer storage recovery blocked (exit $exitCode): $($output -join ' ')" }
+  try { $receipt = ($output -join [Environment]::NewLine) | ConvertFrom-Json }
+  catch { throw 'Shared installer storage recovery returned an invalid receipt' }
+  if ($null -eq $receipt -or $receipt.version -ne 1 -or $receipt.state -cne 'ready' -or
+      -not (Test-JournalAbsoluteDirectory $receipt.root)) {
+    throw 'Shared installer storage recovery did not confirm a ready complete root'
+  }
+  foreach ($installDir in $InstallDirs) {
+    if (Test-PathMayBeDeleted -InstallDir $installDir -Candidate $receipt.root) {
+      throw 'Shared installer storage root is inside an application install directory'
     }
   }
-}
-
-function Write-AppModeAtomically {
-  param(
-    [Parameter(Mandatory = $true)][string]$UserDataDir,
-    [Parameter(Mandatory = $true)][string]$CustomDir
-  )
-
-  New-Item -ItemType Directory -Path $UserDataDir -Force | Out-Null
-  $target = Join-Path $UserDataDir 'app-mode.json'
-  $id = [Guid]::NewGuid().ToString('N')
-  $temporary = Join-Path $UserDataDir ".app-mode.$id.tmp"
-  $backup = Join-Path $UserDataDir "app-mode.pre-recovery.$id.bak"
-  $json = [ordered]@{
-    mode = 'portable'
-    portable_dir = $CustomDir
-  } | ConvertTo-Json
-
-  try {
-    [IO.File]::WriteAllText($temporary, $json, (New-Object Text.UTF8Encoding($false)))
-    if (Test-Path -LiteralPath $target -PathType Leaf) {
-      [IO.File]::Replace($temporary, $target, $backup, $true)
-    } else {
-      [IO.File]::Move($temporary, $target)
-    }
-  } finally {
-    if (Test-Path -LiteralPath $temporary) {
-      Remove-Item -LiteralPath $temporary -Force
-    }
-  }
+  return $receipt.root
 }
 
 function Resolve-UserDataDirectory {
@@ -906,7 +884,7 @@ function Invoke-LegacyRecovery {
     [Parameter(Mandatory = $true)][string]$UserDataDir,
     [AllowEmptyString()][string]$LocalUserDataDir = '',
     [string[]]$ProfileNames = @(),
-    [Parameter(Mandatory = $true)][string]$RecoveryRoot,
+    [AllowEmptyString()][string]$RecoveryBridge = '',
     [Parameter(Mandatory = $true)][string]$ProcessName,
     [AllowEmptyString()][string]$ActiveConfigDir,
     [AllowEmptyString()][string]$ActiveConfigManaged = '',
@@ -959,7 +937,7 @@ function Invoke-LegacyRecovery {
     $existingSharedInstallDirs = @(Get-ExistingInstallDirs -InstallDirs $potentialSharedInstallDirs)
   }
   if ($existingSharedInstallDirs.Count -gt 0) {
-    Assert-NoUndiscoveredLegacySources -InstallDirs $existingSharedInstallDirs -ActiveSource $source
+    Assert-NoUndiscoveredLegacySources -ScanDirs $existingSharedInstallDirs -InstallDirs $existingInstallDirs -ActiveSource $source
   }
   if ([string]::IsNullOrWhiteSpace([string]$source)) {
     return $null
@@ -975,22 +953,16 @@ function Invoke-LegacyRecovery {
     if (Test-PathMayBeDeleted -InstallDir $installDir -Candidate $UserDataDir) {
       throw "The mode metadata directory is inside an application install directory: $UserDataDir"
     }
-    if (Test-PathMayBeDeleted -InstallDir $installDir -Candidate $RecoveryRoot) {
-      throw "The recovery destination is inside an application install directory: $RecoveryRoot"
+    if (-not [string]::IsNullOrWhiteSpace($RecoveryBridge) -and
+        (Test-PathMayBeDeleted -InstallDir $installDir -Candidate $RecoveryBridge)) {
+      throw "The recovery runtime is inside an application install directory: $RecoveryBridge"
     }
   }
 
-  $destination = Copy-VerifiedTree -Source $source -RecoveryRoot $RecoveryRoot
-  $finalSource = @(Get-TreeManifest -Root $source)
-  $finalDestination = @(Get-TreeManifest -Root $destination)
-  Assert-TreeManifestsEqual `
-    -Expected $finalSource `
-    -Actual $finalDestination `
-    -Message 'Legacy data changed after the verified recovery copy was finalized; the installer stopped before removing the old version.'
+  $destination = Invoke-InstallerStorageRecovery -Bridge $RecoveryBridge -Source $source -UserDataDir $UserDataDir -InstallDirs $potentialInstallDirs
   if (-not $SkipProcessCheck) {
     Assert-NoRunningApplication -InstallDirs $existingInstallDirs -ProcessName $ProcessName
   }
-  Write-AppModeAtomically -UserDataDir $UserDataDir -CustomDir $destination
   return $destination
 }
 
@@ -1037,6 +1009,7 @@ function Assert-TestRecoveryRefused {
   param([string]$Root, [hashtable]$Arguments, [string]$Message, [string]$LockedFile = '')
 
   $before = @(Get-TreeManifest -Root $Root)
+  $callsBefore = $bridgeCalls.Count
   $failure = ''
   $lock = $null
   try {
@@ -1053,12 +1026,20 @@ function Assert-TestRecoveryRefused {
   }
   Assert-SelfTest -Condition ($failure.Contains($Message)) -Message "expected refusal '$Message', received '$failure' ($Root)"
   Assert-TreeManifestsEqual -Expected $before -Actual @(Get-TreeManifest -Root $Root) -Message "refusal modified journal, mode, source or staging ($Root)"
-  Assert-SelfTest -Condition (-not (Test-Path -LiteralPath $Arguments.RecoveryRoot)) -Message "refusal created a recovery copy ($Root)"
+  Assert-SelfTest -Condition ($bridgeCalls.Count -eq $callsBefore) -Message "refusal called the recovery bridge ($Root)"
 }
 
 function Run-SelfTest {
   $testRoot = Join-Path ([IO.Path]::GetTempPath()) "cc-haha-storage-recovery-$([Guid]::NewGuid().ToString('N'))"
   New-Item -ItemType Directory -Path $testRoot | Out-Null
+  # These fixtures exercise discovery/guards only; the shared transaction has separate TS tests.
+  $bridgeCalls = New-Object 'System.Collections.Generic.List[object]'
+  $testFinalRoot = Join-Path $testRoot 'final R'
+  function Invoke-InstallerStorageRecovery {
+    param([string]$Bridge, [string]$Source, [string]$UserDataDir, [string[]]$InstallDirs)
+    $bridgeCalls.Add([pscustomobject]@{ Source = $Source; UserDataDir = $UserDataDir; InstallDirs = $InstallDirs })
+    return $testFinalRoot
+  }
   $unicodeName = "$([char]0x6570)$([char]0x636E)"
   try {
     $canonicalTestRoot = Get-CanonicalPathIdentity $testRoot
@@ -1118,32 +1099,32 @@ function Run-SelfTest {
     $install = Join-Path $testRoot 'old install'
     $legacy = Join-Path $install 'CLAUDE_CONFIG_DIR'
     $userData = Join-Path $testRoot 'app data'
-    $recovery = Join-Path $testRoot 'recovery'
     New-Item -ItemType Directory -Path $legacy -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $legacy 'settings.json') -Value 'legacy-v1' -NoNewline
     Write-TestMode -Dir $legacy -Value @{ mode = 'portable'; portable_dir = $null }
     Write-TestMode -Dir $userData -Value @{ mode = 'default'; portable_dir = $null }
 
     $first = Invoke-LegacyRecovery `
-      -InstallDirs @($install) -UserDataDir $userData -RecoveryRoot $recovery `
+      -InstallDirs @($install) -UserDataDir $userData `
       -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck
-    Assert-SelfTest -Condition (Test-Path -LiteralPath (Join-Path $first 'settings.json') -PathType Leaf) -Message 'legacy default was not recovered'
-    Assert-SelfTest -Condition ((Get-Content -LiteralPath (Join-Path $first 'settings.json') -Raw) -eq 'legacy-v1') -Message 'recovered content differs'
+    Assert-SelfTest -Condition ($first -eq $testFinalRoot -and $bridgeCalls[$bridgeCalls.Count - 1].Source -eq $legacy) -Message 'legacy default was not handed to the shared bridge'
     Assert-SelfTest -Condition (Test-Path -LiteralPath (Join-Path $legacy 'settings.json') -PathType Leaf) -Message 'source was modified'
     $firstMode = Get-Content -LiteralPath (Join-Path $userData 'app-mode.json') -Raw | ConvertFrom-Json
-    Assert-SelfTest -Condition ($firstMode.mode -eq 'portable' -and $firstMode.portable_dir -eq $first) -Message 'recovery was not persisted as explicit custom mode'
+    Assert-SelfTest -Condition ($firstMode.mode -eq 'default') -Message 'guard mock wrote a recovered snapshot pointer'
+    # A later explicit selection still blocks retained legacy data; no mock publication is involved.
+    Write-TestMode -Dir $userData -Value @{ mode = 'portable'; portable_dir = $testFinalRoot }
 
     Set-Content -LiteralPath (Join-Path $legacy 'settings.json') -Value 'legacy-v2' -NoNewline
     $retryBefore = @(Get-TreeManifest -Root $testRoot)
     $retryRefused = $false
     try {
       Invoke-LegacyRecovery `
-        -InstallDirs @($install) -UserDataDir $userData -RecoveryRoot $recovery `
+        -InstallDirs @($install) -UserDataDir $userData `
         -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck | Out-Null
     } catch {
       $retryRefused = $_.Exception.Message.Contains('Current portable selection conflicts with retained legacy data')
     }
-    Assert-SelfTest -Condition $retryRefused -Message 'retry refused to override the current recovered selection'
+    Assert-SelfTest -Condition $retryRefused -Message 'retry refused to override the current root selection'
     Assert-TreeManifestsEqual -Expected $retryBefore -Actual @(Get-TreeManifest -Root $testRoot) -Message 'retry changed the current pointer, original data or recovered data'
 
     $pointerInstall = Join-Path $testRoot 'pointer install'
@@ -1154,9 +1135,9 @@ function Run-SelfTest {
     Set-Content -LiteralPath (Join-Path $pointerData '.claude.json') -Value 'pointer-data' -NoNewline
     Write-TestMode -Dir $pointerLegacy -Value @{ mode = 'portable'; portable_dir = $pointerData }
     $pointerRecovered = Invoke-LegacyRecovery `
-      -InstallDirs @($pointerInstall) -UserDataDir $pointerUserData -RecoveryRoot (Join-Path $testRoot 'pointer recovery') `
+      -InstallDirs @($pointerInstall) -UserDataDir $pointerUserData `
       -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck
-    Assert-SelfTest -Condition ((Get-Content -LiteralPath (Join-Path $pointerRecovered '.claude.json') -Raw) -eq 'pointer-data') -Message 'legacy custom pointer was not recovered'
+    Assert-SelfTest -Condition ($pointerRecovered -eq $testFinalRoot -and $bridgeCalls[$bridgeCalls.Count - 1].Source -eq $pointerData) -Message 'legacy custom pointer was not handed to the bridge'
 
     $managedInstall = Join-Path $testRoot 'managed env install'
     $managedLegacy = Join-Path $managedInstall 'CLAUDE_CONFIG_DIR'
@@ -1166,7 +1147,7 @@ function Run-SelfTest {
     try {
       Invoke-LegacyRecovery `
         -InstallDirs @($managedInstall) -UserDataDir (Join-Path $testRoot 'unmanaged app data') `
-        -RecoveryRoot (Join-Path $testRoot 'unmanaged recovery') -ProcessName $ProcessName `
+        -ProcessName $ProcessName `
         -ActiveConfigDir $managedLegacy -ActiveConfigManaged '' -SkipProcessCheck | Out-Null
     } catch {
       $unmanagedFailed = $_.Exception.Message.Contains('managed outside EchoFlow Code')
@@ -1175,15 +1156,15 @@ function Run-SelfTest {
 
     $managedRecovered = Invoke-LegacyRecovery `
       -InstallDirs @($managedInstall) -UserDataDir (Join-Path $testRoot 'managed app data') `
-      -RecoveryRoot (Join-Path $testRoot 'managed recovery') -ProcessName $ProcessName `
+      -ProcessName $ProcessName `
       -ActiveConfigDir $managedLegacy -ActiveConfigManaged '1' -SkipProcessCheck
-    Assert-SelfTest -Condition ((Get-Content -LiteralPath (Join-Path $managedRecovered 'settings.json') -Raw) -eq 'managed-env') -Message 'app-managed active environment was not recovered'
+    Assert-SelfTest -Condition ($managedRecovered -eq $testFinalRoot -and $bridgeCalls[$bridgeCalls.Count - 1].Source -eq $managedLegacy) -Message 'app-managed active environment was not handed to the bridge'
 
     $elevatedFailed = $false
     try {
       Invoke-LegacyRecovery `
         -InstallDirs @($managedInstall) -UserDataDir (Join-Path $testRoot 'elevated app data') `
-        -RecoveryRoot (Join-Path $testRoot 'elevated recovery') -ProcessName $ProcessName `
+        -ProcessName $ProcessName `
         -ActiveConfigDir $managedLegacy -ActiveConfigManaged '1' `
         -InstallerIdentitySafety 'untrusted-elevated' -SkipProcessCheck | Out-Null
     } catch {
@@ -1196,9 +1177,34 @@ function Run-SelfTest {
     $elevatedDefaultResult = Invoke-LegacyRecovery `
       -InstallDirs @($elevatedDefaultInstall) `
       -UserDataDir (Join-Path $testRoot 'elevated default app data') `
-      -RecoveryRoot (Join-Path $testRoot 'elevated default recovery') -ProcessName $ProcessName `
+      -ProcessName $ProcessName `
       -ActiveConfigDir '' -InstallerIdentitySafety 'untrusted-elevated' -SkipProcessCheck
     Assert-SelfTest -Condition ($null -eq $elevatedDefaultResult) -Message 'elevated default-mode reinstall was blocked without legacy data'
+
+    foreach ($entry in @('settings.json', 'adapter-sessions.json', 'Partitions')) {
+      $ambiguous = Join-Path $testRoot "mode-less install data $entry"
+      $ambiguousInstall = Join-Path $ambiguous 'install'
+      $ambiguousLegacy = Join-Path $ambiguousInstall 'CLAUDE_CONFIG_DIR'
+      $defaultProfile = Join-Path $ambiguous 'profile'
+      New-Item -ItemType Directory -Path $ambiguousLegacy -Force | Out-Null
+      if ($entry -eq 'Partitions') {
+        New-Item -ItemType Directory -Path (Join-Path $ambiguousLegacy $entry) | Out-Null
+      } else {
+        Set-Content -LiteralPath (Join-Path $ambiguousLegacy $entry) -Value 'retained legacy data' -NoNewline
+      }
+      Write-TestMode -Dir $defaultProfile -Value @{ mode = 'default'; portable_dir = $null }
+      Set-Content -LiteralPath (Join-Path $defaultProfile 'settings.json') -Value 'current profile data' -NoNewline
+      $arguments = @{
+        InstallDirs = @($ambiguousInstall); UserDataDir = $defaultProfile
+        ProcessName = $ProcessName; ActiveConfigDir = ''; SkipProcessCheck = $true
+      }
+      Assert-TestRecoveryRefused -Root $ambiguous -Arguments $arguments -Message 'Current default selection conflicts with retained legacy data'
+      Write-TestMode -Dir $ambiguousLegacy -Value @{ mode = 'default' }
+      Assert-TestRecoveryRefused -Root $ambiguous -Arguments $arguments -Message 'Legacy default selection conflicts with retained install data'
+      Remove-Item -LiteralPath (Join-Path $ambiguousLegacy $entry) -Force
+      $result = Invoke-LegacyRecovery @arguments
+      Assert-SelfTest -Condition ($null -eq $result) -Message 'default mode without retained data required recovery'
+    }
 
     $perUserInstall = Join-Path $testRoot 'per-user install'
     $perUserExternalTarget = Join-Path $testRoot 'per-user external target'
@@ -1209,7 +1215,7 @@ function Run-SelfTest {
     $perUserResult = Invoke-LegacyRecovery `
       -InstallDirs @('', $perUserInstall, '') -SharedInstallDirs @('') `
       -UserDataDir (Join-Path $testRoot 'per-user app data') `
-      -RecoveryRoot (Join-Path $testRoot 'per-user recovery') -ProcessName $ProcessName `
+      -ProcessName $ProcessName `
       -ActiveConfigDir '' -SkipProcessCheck
     Assert-SelfTest -Condition ($null -eq $perUserResult) -Message 'per-user default-mode reinstall scanned the packaged application tree'
 
@@ -1223,7 +1229,7 @@ function Run-SelfTest {
       Invoke-LegacyRecovery `
         -InstallDirs @($wrongIdentityInstall) -SharedInstallDirs @($wrongIdentityInstall) `
         -UserDataDir (Join-Path $testRoot 'wrong identity app data') `
-        -RecoveryRoot (Join-Path $testRoot 'wrong identity recovery') -ProcessName $ProcessName `
+        -ProcessName $ProcessName `
         -ActiveConfigDir '' -InstallerIdentitySafety 'untrusted-elevated' -SkipProcessCheck | Out-Null
     } catch {
       $wrongIdentityFailed = $_.Exception.Message.Contains('another Windows user')
@@ -1236,11 +1242,11 @@ function Run-SelfTest {
     try {
       Invoke-LegacyRecovery `
         -InstallDirs @($managedInstall, $futureInstall) `
-        -UserDataDir (Join-Path $testRoot 'future app data') -RecoveryRoot $futureRecovery `
+        -UserDataDir (Join-Path $testRoot 'future app data') -RecoveryBridge $futureRecovery `
         -ProcessName $ProcessName -ActiveConfigDir $managedLegacy -ActiveConfigManaged '1' `
         -SkipProcessCheck | Out-Null
     } catch {
-      $futureFailed = $_.Exception.Message.Contains('recovery destination is inside an application install directory')
+      $futureFailed = $_.Exception.Message.Contains('recovery runtime is inside an application install directory')
     }
     Assert-SelfTest -Condition $futureFailed -Message 'missing future install root did not protect its recovery subtree'
 
@@ -1255,7 +1261,7 @@ function Run-SelfTest {
       Invoke-LegacyRecovery `
         -InstallDirs @($sharedInstall) -SharedInstallDirs @($sharedInstall) `
         -UserDataDir (Join-Path $testRoot 'shared app data') `
-        -RecoveryRoot (Join-Path $testRoot 'shared recovery') -ProcessName $ProcessName `
+        -ProcessName $ProcessName `
         -ActiveConfigDir $activeExternal -ActiveConfigManaged '' -SkipProcessCheck | Out-Null
     } catch {
       $sharedFailed = $_.Exception.Message.Contains('another Windows user')
@@ -1274,12 +1280,50 @@ function Run-SelfTest {
       Invoke-LegacyRecovery `
         -InstallDirs @($otherUserInstall) -SharedInstallDirs @($otherUserInstall) `
         -UserDataDir $currentUserMode `
-        -RecoveryRoot (Join-Path $testRoot 'other user recovery') -ProcessName $ProcessName `
+        -ProcessName $ProcessName `
         -ActiveConfigDir '' -SkipProcessCheck | Out-Null
     } catch {
       $otherUserFailed = $_.Exception.Message.Contains('another Windows user')
     }
     Assert-SelfTest -Condition $otherUserFailed -Message 'another Windows user custom directory was not protected'
+
+    $customCase = Join-Path $testRoot 'custom shared data protection'
+    $customSharedInstall = Join-Path $customCase 'shared install'
+    $customUserInstall = Join-Path $customCase 'per-user install'
+    $customData = Join-Path $customSharedInstall 'custom data'
+    $customExternal = Join-Path $customCase 'external data'
+    New-Item -ItemType Directory -Path $customData, $customUserInstall, $customExternal -Force | Out-Null
+    $customArguments = @{
+      InstallDirs = @($customSharedInstall, $customUserInstall)
+      SharedInstallDirs = @($customSharedInstall)
+      UserDataDir = Join-Path $customCase 'profile'
+      ProcessName = $ProcessName
+      ActiveConfigDir = ''
+      SkipProcessCheck = $true
+    }
+    foreach ($mode in @('default', 'portable')) {
+      Write-TestMode -Dir $customData -Value @{ mode = $mode; portable_dir = $customExternal }
+      $result = Invoke-LegacyRecovery @customArguments
+      Assert-SelfTest -Condition ($null -eq $result) -Message 'control-only custom mode unexpectedly required recovery'
+      foreach ($entry in @('adapter-sessions.json', 'Partitions', 'data-migration-v1.json')) {
+        $retained = Join-Path $customData $entry
+        if ($entry -eq 'Partitions') {
+          New-Item -ItemType Directory -Path $retained | Out-Null
+        } else {
+          Set-Content -LiteralPath $retained -Value 'retained fixture data' -NoNewline
+        }
+        Assert-TestRecoveryRefused -Root $customCase -Arguments $customArguments -Message 'another Windows user or an undiscovered legacy mode'
+        Remove-Item -LiteralPath $retained -Force
+      }
+    }
+    Write-TestMode -Dir $customData -Value @{ mode = 'portable'; portable_dir = $customData }
+    $result = Invoke-LegacyRecovery @customArguments
+    Assert-SelfTest -Condition ($null -eq $result) -Message 'control-only self pointer unexpectedly required recovery'
+    $secondTarget = Join-Path $customUserInstall 'other portable target'
+    New-Item -ItemType Directory -Path $secondTarget | Out-Null
+    Set-Content -LiteralPath (Join-Path $secondTarget 'settings.json') -Value 'second install data' -NoNewline
+    Write-TestMode -Dir $customData -Value @{ mode = 'portable'; portable_dir = $secondTarget }
+    Assert-TestRecoveryRefused -Root $customCase -Arguments $customArguments -Message 'another Windows user or an undiscovered legacy mode'
 
     $managedExternalInstall = Join-Path $testRoot 'managed external install'
     $managedExternalData = Join-Path $testRoot 'managed external data'
@@ -1289,7 +1333,7 @@ function Run-SelfTest {
     Write-TestMode -Dir $managedExternalUserData -Value @{ mode = 'portable'; portable_dir = $managedExternalData }
     $managedExternalResult = Invoke-LegacyRecovery `
       -InstallDirs @($managedExternalInstall) -UserDataDir $managedExternalUserData `
-      -RecoveryRoot (Join-Path $testRoot 'managed external recovery') -ProcessName $ProcessName `
+      -ProcessName $ProcessName `
       -ActiveConfigDir $managedExternalData -ActiveConfigManaged '1' -SkipProcessCheck
     Assert-SelfTest -Condition ($null -eq $managedExternalResult) -Message 'matching app-managed external custom mode was not accepted'
 
@@ -1298,7 +1342,7 @@ function Run-SelfTest {
     try {
       Invoke-LegacyRecovery `
         -InstallDirs @($managedExternalInstall) -UserDataDir $managedExternalUserData `
-        -RecoveryRoot (Join-Path $testRoot 'managed external invalid recovery') -ProcessName $ProcessName `
+        -ProcessName $ProcessName `
         -ActiveConfigDir $managedExternalData -ActiveConfigManaged '1' -SkipProcessCheck | Out-Null
     } catch {
       $managedExternalInvalidFailed = $_.Exception.Message.Contains('cannot be read safely')
@@ -1313,7 +1357,7 @@ function Run-SelfTest {
     Write-TestMode -Dir $staleModeUserData -Value @{ mode = 'default'; portable_dir = $null }
     $staleModeResult = Invoke-LegacyRecovery `
       -InstallDirs @($staleModeInstall) -UserDataDir $staleModeUserData `
-      -RecoveryRoot (Join-Path $testRoot 'stale mode recovery') -ProcessName $ProcessName `
+      -ProcessName $ProcessName `
       -ActiveConfigDir $staleModeActive -ActiveConfigManaged '1' -SkipProcessCheck
     Assert-SelfTest -Condition ($null -eq $staleModeResult) -Message 'stale persisted mode blocked an upgrade whose active data directory is outside every install directory'
 
@@ -1327,7 +1371,7 @@ function Run-SelfTest {
     Write-TestMode -Dir $mismatchUserData -Value @{ mode = 'portable'; portable_dir = $mismatchPersisted }
     $mismatchResult = Invoke-LegacyRecovery `
       -InstallDirs @($mismatchInstall) -UserDataDir $mismatchUserData `
-      -RecoveryRoot (Join-Path $testRoot 'mismatch recovery') -ProcessName $ProcessName `
+      -ProcessName $ProcessName `
       -ActiveConfigDir $mismatchActive -ActiveConfigManaged '1' -SkipProcessCheck
     Assert-SelfTest -Condition ($null -eq $mismatchResult) -Message 'mismatched persisted custom mode blocked an upgrade whose active data directory is outside every install directory'
 
@@ -1341,7 +1385,7 @@ function Run-SelfTest {
     try {
       Invoke-LegacyRecovery `
         -InstallDirs @($missingModeInstall) -UserDataDir (Join-Path $testRoot 'missing mode app data') `
-        -RecoveryRoot (Join-Path $testRoot 'missing mode recovery') -ProcessName $ProcessName `
+        -ProcessName $ProcessName `
         -ActiveConfigDir $missingModeActive -ActiveConfigManaged '1' -SkipProcessCheck | Out-Null
     } catch {
       $missingModeFailed = $_.Exception.Message.Contains('install-contained legacy data still exists')
@@ -1359,7 +1403,7 @@ function Run-SelfTest {
     Write-TestMode -Dir $externalUserData -Value @{ mode = 'portable'; portable_dir = $externalDir }
     Assert-TestRecoveryRefused -Root $externalRoot -Arguments @{
       InstallDirs = @($externalInstall); UserDataDir = $externalUserData
-      RecoveryRoot = Join-Path $externalRoot 'recovery'; ProcessName = $ProcessName
+      ProcessName = $ProcessName
       ActiveConfigDir = ''; SkipProcessCheck = $true
     } -Message 'Current portable selection conflicts with retained legacy data'
 
@@ -1372,7 +1416,7 @@ function Run-SelfTest {
     try {
       Invoke-LegacyRecovery `
         -InstallDirs @($install, $secondInstall) -UserDataDir (Join-Path $testRoot 'multiple app data') `
-        -RecoveryRoot (Join-Path $testRoot 'multiple recovery') -ProcessName $ProcessName `
+        -ProcessName $ProcessName `
         -ActiveConfigDir $legacy -ActiveConfigManaged '1' -SkipProcessCheck | Out-Null
     } catch {
       $multipleFailed = $_.Exception.Message.Contains('Multiple distinct legacy data sources')
@@ -1388,7 +1432,7 @@ function Run-SelfTest {
     try {
       Invoke-LegacyRecovery `
         -InstallDirs @($invalidInstall) -UserDataDir $invalidUserData `
-        -RecoveryRoot (Join-Path $testRoot 'invalid recovery') -ProcessName $ProcessName `
+        -ProcessName $ProcessName `
         -ActiveConfigDir '' -SkipProcessCheck | Out-Null
     } catch {
       $invalidFailed = $_.Exception.Message.Contains('cannot be read safely')
@@ -1407,7 +1451,7 @@ function Run-SelfTest {
       Invoke-LegacyRecovery `
         -InstallDirs @($junctionInstall) -SharedInstallDirs @($junctionInstall) `
         -UserDataDir (Join-Path $testRoot 'junction app data') `
-        -RecoveryRoot (Join-Path $testRoot 'junction recovery') -ProcessName $ProcessName `
+        -ProcessName $ProcessName `
         -ActiveConfigDir '' -SkipProcessCheck | Out-Null
     } catch {
       $junctionFailed = $_.Exception.Message.Contains('reparse point')
@@ -1431,11 +1475,11 @@ function Run-SelfTest {
         $profileResult = Invoke-LegacyRecovery `
           -InstallDirs @($profileInstall) -SharedInstallDirs $sharedProfiles `
           -UserDataDir $profileRoaming -LocalUserDataDir $profileLocal `
-          -RecoveryRoot (Join-Path $profileRoot 'recovery') -ProcessName $ProcessName `
+          -ProcessName $ProcessName `
           -ActiveConfigDir '' -SkipProcessCheck
-        Assert-SelfTest -Condition ((Get-Content -LiteralPath (Join-Path $profileResult 'settings.json') -Raw) -eq 'profile sentinel') -Message 'Local/Roaming pointer was not recovered'
+        Assert-SelfTest -Condition ($profileResult -eq $testFinalRoot -and $bridgeCalls[$bridgeCalls.Count - 1].Source -eq $profileSource) -Message 'Local/Roaming candidate was not handed to the bridge'
         Assert-SelfTest -Condition ((Get-Content -LiteralPath (Join-Path $profileSource 'settings.json') -Raw) -eq 'profile sentinel') -Message 'Local pointer recovery did not preserve its source'
-        Assert-SelfTest -Condition ((Read-AppMode -ConfigDir $selectedProfile).PortableDir -eq $profileResult) -Message 'recovery wrote a pointer into the wrong profile'
+        Assert-SelfTest -Condition ($bridgeCalls[$bridgeCalls.Count - 1].UserDataDir -eq $selectedProfile -and (Read-AppMode -ConfigDir $selectedProfile).PortableDir -eq $profileSource) -Message 'guard selected the wrong profile or wrote a snapshot pointer'
       }
     }
 
@@ -1453,7 +1497,7 @@ function Run-SelfTest {
           $arguments = @{
             InstallDirs = @($caseInstall); UserDataDir = $caseRoaming; LocalUserDataDir = $caseLocal
             ProfileNames = @('echoflow-code', 'claude-code-desktop')
-            RecoveryRoot = Join-Path $caseRoot 'recovery'; ProcessName = $ProcessName
+            ProcessName = $ProcessName
             ActiveConfigDir = ''; SkipProcessCheck = $true
           }
           if ($scenario -eq 'portable') {
@@ -1462,8 +1506,7 @@ function Run-SelfTest {
             Write-TestMode -Dir $selected -Value @{ mode = 'portable'; portable_dir = $caseSource }
             $beforeSource = @(Get-TreeManifest -Root $caseSource)
             $result = Invoke-LegacyRecovery @arguments
-            Assert-SelfTest -Condition ((Read-AppMode -ConfigDir $selected).PortableDir -eq $result) -Message 'package profile pointer was not recovered'
-            Assert-TreeManifestsEqual -Expected $beforeSource -Actual @(Get-TreeManifest -Root $result) -Message 'package recovery copy differs'
+            Assert-SelfTest -Condition ($result -eq $testFinalRoot -and $bridgeCalls[$bridgeCalls.Count - 1].UserDataDir -eq $selected -and $bridgeCalls[$bridgeCalls.Count - 1].Source -eq $caseSource) -Message 'package profile candidate was not handed to the bridge'
             Assert-TreeManifestsEqual -Expected $beforeSource -Actual @(Get-TreeManifest -Root $caseSource) -Message 'package recovery changed its source'
           } elseif ($scenario -eq 'journal') {
             [IO.File]::WriteAllText((Join-Path $selected 'data-migration-v1.json'), '{broken')
@@ -1547,7 +1590,7 @@ function Run-SelfTest {
       $arguments = @{
         InstallDirs = @($caseInstall); UserDataDir = $caseRoaming; LocalUserDataDir = $caseLocal
         ProfileNames = @('echoflow-code', 'claude-code-desktop')
-        RecoveryRoot = Join-Path $caseRoot 'recovery'; ProcessName = $ProcessName
+        ProcessName = $ProcessName
         ActiveConfigDir = ''; SkipProcessCheck = $true
       }
       if ($expected) {
@@ -1576,7 +1619,7 @@ function Run-SelfTest {
       $before = @(Get-TreeManifest -Root $caseRoot)
       $result = Invoke-LegacyRecovery -InstallDirs @($caseInstall) `
         -UserDataDir $unusedUnc -LocalUserDataDir $caseLocal `
-        -RecoveryRoot (Join-Path $caseRoot 'recovery') -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck
+        -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck
       Assert-SelfTest -Condition ($null -eq $result) -Message 'unused UNC Roaming prevented Local profile selection'
       Assert-TreeManifestsEqual -Expected $before -Actual @(Get-TreeManifest -Root $caseRoot) -Message 'unused UNC selection changed Local data'
     }
@@ -1595,7 +1638,7 @@ function Run-SelfTest {
         Write-TestMode -Dir $selectedProfile -Value @{ mode = 'default'; portable_dir = $null }
         $arguments = @{
           InstallDirs = @($caseInstall); UserDataDir = $caseRoaming; LocalUserDataDir = $caseLocal
-          RecoveryRoot = Join-Path $caseRoot 'recovery'; ProcessName = $ProcessName
+          ProcessName = $ProcessName
           ActiveConfigDir = ''; SkipProcessCheck = $true
         }
         $before = @(Get-TreeManifest -Root $caseRoot)
@@ -1677,7 +1720,7 @@ function Run-SelfTest {
           if ($stage -eq 'completed' -and $selection -eq 'later-default-without-mode') {
             Assert-TestRecoveryRefused -Root $caseRoot -Arguments @{
               InstallDirs = @($caseInstall); UserDataDir = $caseRoaming; LocalUserDataDir = $caseLocal
-              RecoveryRoot = Join-Path $caseRoot 'recovery'; ProcessName = $ProcessName
+              ProcessName = $ProcessName
               ActiveConfigDir = ''; SkipProcessCheck = $true
             } -Message 'Migrated data startup configuration is unavailable'
             continue
@@ -1685,7 +1728,7 @@ function Run-SelfTest {
           $before = @(Get-TreeManifest -Root $caseRoot)
           $result = Invoke-LegacyRecovery -InstallDirs @($caseInstall) `
             -UserDataDir $caseRoaming -LocalUserDataDir $caseLocal `
-            -RecoveryRoot (Join-Path $caseRoot 'recovery') -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck
+            -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck
           Assert-SelfTest -Condition ($null -eq $result) -Message "terminal journal unnecessarily recovered external data ($caseRoot)"
           Assert-TreeManifestsEqual -Expected $before -Actual @(Get-TreeManifest -Root $caseRoot) -Message "terminal journal changed historical or current state ($caseRoot)"
         }
@@ -1718,7 +1761,7 @@ function Run-SelfTest {
           }
           Assert-TestRecoveryRefused -Root $caseRoot -Arguments @{
             InstallDirs = @($caseInstall); UserDataDir = $caseRoaming; LocalUserDataDir = $caseLocal
-            RecoveryRoot = Join-Path $caseRoot 'recovery'; ProcessName = $ProcessName
+            ProcessName = $ProcessName
             ActiveConfigDir = ''; SkipProcessCheck = $true
           } -Message $expected
         }
@@ -1741,14 +1784,13 @@ function Run-SelfTest {
         $modeHash = Get-FileSha256 -Path (Join-Path $selectedProfile 'app-mode.json')
         $result = Invoke-LegacyRecovery -InstallDirs @($caseInstall) `
           -UserDataDir $caseRoaming -LocalUserDataDir $caseLocal `
-          -RecoveryRoot (Join-Path $caseRoot 'recovery') -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck
+          -ProcessName $ProcessName -ActiveConfigDir '' -SkipProcessCheck
         Assert-SelfTest -Condition (-not [string]::IsNullOrWhiteSpace($result)) -Message 'terminal journal bypassed install-contained discovery'
-        Assert-TreeManifestsEqual -Expected $sourceBefore -Actual @(Get-TreeManifest -Root $result) -Message 'terminal recovery did not copy current source bytes'
+        Assert-SelfTest -Condition ($result -eq $testFinalRoot -and $bridgeCalls[$bridgeCalls.Count - 1].Source -eq $caseSource) -Message 'terminal discovery did not hand the current source to the bridge'
         Assert-TreeManifestsEqual -Expected $sourceBefore -Actual @(Get-TreeManifest -Root $caseSource) -Message 'terminal recovery changed its source'
         Assert-SelfTest -Condition ((Get-FileSha256 -Path $journalFile) -eq $journalHash) -Message 'terminal recovery rewrote its journal'
-        Assert-SelfTest -Condition ((Read-AppMode -ConfigDir $selectedProfile).PortableDir -eq $result) -Message 'terminal recovery wrote the wrong current selection'
-        $backups = @(Get-ChildItem -LiteralPath $selectedProfile -Filter 'app-mode.pre-recovery.*.bak')
-        Assert-SelfTest -Condition ($backups.Count -eq 1 -and (Get-FileSha256 -Path $backups[0].FullName) -eq $modeHash) -Message 'terminal recovery did not preserve the previous mode'
+        Assert-SelfTest -Condition ($bridgeCalls[$bridgeCalls.Count - 1].UserDataDir -eq $selectedProfile) -Message 'terminal discovery handed off the wrong current profile'
+        Assert-SelfTest -Condition ((Get-FileSha256 -Path (Join-Path $selectedProfile 'app-mode.json')) -eq $modeHash) -Message 'guard mock changed the previous mode'
 
         foreach ($guard in @('shared-install', 'external-active', 'dual-root', 'retained-source-current-selection', 'process-uncertainty')) {
           $caseRoot = Join-Path $testRoot "terminal-$guard-$profileKind-$stage"
@@ -1767,7 +1809,7 @@ function Run-SelfTest {
           $journal | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $selectedProfile 'data-migration-v1.json') -Encoding UTF8
           $arguments = @{
             InstallDirs = @($caseInstall); UserDataDir = $caseRoaming; LocalUserDataDir = $caseLocal
-            RecoveryRoot = Join-Path $caseRoot 'recovery'; ProcessName = $ProcessName
+            ProcessName = $ProcessName
             ActiveConfigDir = ''; SkipProcessCheck = $true
           }
           if ($guard -eq 'shared-install') {
@@ -1938,7 +1980,7 @@ function Run-SelfTest {
         else { [IO.File]::WriteAllText($journalFile, $journalText) }
         $arguments = @{
           InstallDirs = @($caseInstall); UserDataDir = $caseRoaming; LocalUserDataDir = $caseLocal
-          RecoveryRoot = Join-Path $caseRoot 'recovery'; ProcessName = $ProcessName
+          ProcessName = $ProcessName
           ActiveConfigDir = ''; SkipProcessCheck = $true
         }
         $lockedFile = if ($scenario -eq 'unreadable-journal') { $journalFile } else { '' }
@@ -1946,7 +1988,7 @@ function Run-SelfTest {
       }
     }
 
-    [Console]::Out.WriteLine('Legacy install data recovery self-test passed.')
+    [Console]::Out.WriteLine('Legacy install discovery and guard self-test passed (mock bridge; not shared transaction or native qualification).')
   } finally {
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
   }
@@ -1964,7 +2006,7 @@ try {
     -UserDataDir $UserDataDir `
     -LocalUserDataDir $LocalUserDataDir `
     -ProfileNames @($DesktopPackageName, $LegacyDesktopPackageName) `
-    -RecoveryRoot $RecoveryRoot `
+    -RecoveryBridge $RecoveryBridge `
     -ProcessName $ProcessName `
     -ActiveConfigDir $ActiveConfigDir `
     -ActiveConfigManaged $ActiveConfigManaged `

@@ -88,9 +88,9 @@ describe('scheduled run read model', () => {
       output: 'canonical output',
     }] }
     await fs.writeFile(sourcePath, JSON.stringify(canonical))
-    const dbPath = path.join(tmpDir, 'cc-haha', 'db', 'scheduled-runs-v1.sqlite')
+    const dbPath = path.join(tmpDir, 'echoflow-code', 'db', 'scheduled-runs-v1.sqlite')
     await fs.mkdir(dbPath, { recursive: true })
-    const unrelated = path.join(tmpDir, 'cc-haha', 'db', 'trace-index-v1.sqlite')
+    const unrelated = path.join(tmpDir, 'echoflow-code', 'db', 'trace-index-v1.sqlite')
     await fs.writeFile(unrelated, 'trace-owned-data')
 
     const scheduler = new CronScheduler()
@@ -246,13 +246,13 @@ describe('scheduled run read model', () => {
 
     const databaseAPath = path.join(
       scopeA,
-      'cc-haha',
+      'echoflow-code',
       'db',
       'scheduled-runs-v1.sqlite',
     )
     const databaseBPath = path.join(
       scopeB,
-      'cc-haha',
+      'echoflow-code',
       'db',
       'scheduled-runs-v1.sqlite',
     )
@@ -329,7 +329,7 @@ describe('scheduled run read model', () => {
     })])
     const diagnosticsPath = path.join(
       tmpDir,
-      'cc-haha',
+      'echoflow-code',
       'diagnostics',
       'diagnostics.jsonl',
     )

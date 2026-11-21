@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { HTTP_CONNECTION_IDLE_TIMEOUT_SECONDS } from '../index.js'
+import { HTTP_CONNECTION_IDLE_TIMEOUT_SECONDS } from '../serverRuntime.js'
 
 describe('server connection lifetime', () => {
   it('lets HTTP clients own pooled connection lifetime', () => {

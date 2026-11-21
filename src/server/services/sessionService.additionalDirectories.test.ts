@@ -140,8 +140,8 @@ test('a rejected metadata mutation does not block the next writer', async () => 
 })
 
 test('legacy project and session fixtures default to no auxiliary access and preserve unknown fields', async () => {
-  const prefsPath = join(process.env.CLAUDE_CONFIG_DIR!, 'cc-haha', 'desktop-ui.json')
-  await mkdir(join(process.env.CLAUDE_CONFIG_DIR!, 'cc-haha'), { recursive: true })
+  const prefsPath = join(process.env.CLAUDE_CONFIG_DIR!, 'echoflow-code', 'desktop-ui.json')
+  await mkdir(join(process.env.CLAUDE_CONFIG_DIR!, 'echoflow-code'), { recursive: true })
   await writeFile(prefsPath, JSON.stringify({ schemaVersion: 6, future: { keep: true }, sidebar: {} }))
   const service = new DesktopUiPreferencesService()
   expect((await service.readPreferences()).preferences.projectAdditionalDirectories).toEqual({})
@@ -209,7 +209,7 @@ test('rejects CLI expansion to a different physical directory without overwritin
   const sibling = join(directory, 'mapped')
   await mkdir(selected)
   await mkdir(sibling)
-  const prefsPath = join(process.env.CLAUDE_CONFIG_DIR!, 'cc-haha', 'desktop-ui.json')
+  const prefsPath = join(process.env.CLAUDE_CONFIG_DIR!, 'echoflow-code', 'desktop-ui.json')
   const before = await readFile(prefsPath, 'utf8')
   expect((await preferences('PUT', { workDir: main, additionalDirectories: [selected] })).status).toBe(400)
   expect(await readFile(prefsPath, 'utf8')).toBe(before)

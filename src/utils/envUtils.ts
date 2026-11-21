@@ -1,20 +1,16 @@
 import memoize from 'lodash-es/memoize.js'
-import { homedir } from 'os'
 import { join } from 'path'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot'
 
-// Memoized: 150+ callers, many on hot paths. Keyed off CLAUDE_CONFIG_DIR so
-// tests that change the env var get a fresh value without explicit cache.clear.
+// Keep the historical accessor (and cache API) for callers, not a second root.
+// Resolve before consulting the cache so a post-binding env change is rejected.
 export const getClaudeConfigHomeDir = memoize(
-  (): string => {
-    return (
-      process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
-    ).normalize('NFC')
-  },
-  () => process.env.CLAUDE_CONFIG_DIR,
+  (): string => getEchoFlowConfigDir(),
+  () => getEchoFlowConfigDir(),
 )
 
 export function getCcHahaDir(): string {
-  return join(getClaudeConfigHomeDir(), 'cc-haha')
+  return getEchoFlowInternalDir()
 }
 
 export function getTeamsDir(): string {

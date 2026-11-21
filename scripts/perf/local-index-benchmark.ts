@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, sep } from 'node:path'
 import { monitorEventLoopDelay } from 'node:perf_hooks'
 import { createLocalIndexCorpus } from './local-index-corpus.js'
+import { getEchoFlowInternalDir } from '../../src/utils/echoFlowConfigRoot.js'
 import type { LocalIndexCoordinator } from '../../src/server/services/localIndex/coordinator.js'
 import type {
   LocalIndexBinding,
@@ -643,7 +644,7 @@ export async function runSqliteProductBenchmark(
 
   try {
     dependencies.onProductGatesStart?.({ rootDir: context.rootDir })
-    const serverModule = await import('../../src/server/index.js')
+    const serverModule = await import('../../src/server/serverRuntime.js')
     const coordinatorModule = await import(
       '../../src/server/services/localIndex/coordinator.js'
     )
@@ -1240,7 +1241,7 @@ export async function runDeterministicAcceptance(
   const rootDir = await mkdtemp(join(tmpdir(), 'cc-haha-local-index-acceptance-'))
   const homeDir = join(rootDir, 'home')
   const configDir = join(homeDir, '.claude')
-  const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+  const databasePath = join(getEchoFlowInternalDir(configDir), 'db', 'index-v1.sqlite')
   const originalHome = process.env.HOME
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
   const originalLocalIndexMode = process.env.CC_HAHA_LOCAL_INDEX
@@ -1648,7 +1649,7 @@ export async function runBenchmark(
   const rootDir = await mkdtemp(join(tmpdir(), 'cc-haha-local-index-benchmark-'))
   const homeDir = join(rootDir, 'home')
   const configDir = join(homeDir, '.claude')
-  const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+  const databasePath = join(getEchoFlowInternalDir(configDir), 'db', 'index-v1.sqlite')
   const originalHome = process.env.HOME
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
   const originalLocalIndexMode = process.env.CC_HAHA_LOCAL_INDEX

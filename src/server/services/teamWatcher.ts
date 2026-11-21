@@ -14,7 +14,7 @@ import { readTeamPlan } from '../../utils/swarm/teamPlanStore.js'
 import { readMemberFailure } from '../../utils/swarm/turnFailure.js'
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
+import { getEchoFlowConfigDir } from '../../utils/echoFlowConfigRoot.js'
 import * as crypto from 'node:crypto'
 import { sendToSession, getActiveSessionIds } from '../ws/handler.js'
 import type { ServerMessage, TeamMemberStatus } from '../ws/events.js'
@@ -27,7 +27,7 @@ import {
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 function getTeamsDir(): string {
-  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+  const configDir = getEchoFlowConfigDir()
   return path.join(configDir, 'teams')
 }
 

@@ -9,15 +9,13 @@
  * so a heavy transitive import here defeats the prefetch. The execa →
  * human-signals → cross-spawn chain alone is ~58ms of synchronous init.
  *
- * The imports below (envUtils, oauth constants, crypto, os) are already
- * evaluated by startupProfiler.ts at main.tsx:5, so they add no module-init
- * cost when keychainPrefetch.ts pulls this file in.
+ * The root-suffix helper imports only crypto, keeping it safe for prefetch.
  */
 
-import { createHash } from 'crypto'
 import { userInfo } from 'os'
 import { getOauthConfig } from 'src/constants/oauth.js'
 import { getClaudeConfigHomeDir } from '../envUtils.js'
+import { macOsKeychainRootSuffix } from './macOsKeychainRootSuffix.js'
 import type { SecureStorageData } from './types.js'
 
 // Suffix distinguishing the OAuth credentials keychain entry from the legacy
@@ -32,11 +30,8 @@ export function getMacOsKeychainStorageServiceName(
   const configDir = getClaudeConfigHomeDir()
   const isDefaultDir = !process.env.CLAUDE_CONFIG_DIR
 
-  // Use a hash of the config dir path to create a unique but stable suffix
-  // Only add suffix for non-default directories to maintain backwards compatibility
-  const dirHash = isDefaultDir
-    ? ''
-    : `-${createHash('sha256').update(configDir.normalize('NFC')).digest('hex').substring(0, 8)}`
+  // Only add a suffix for non-default directories to preserve existing entries.
+  const dirHash = isDefaultDir ? '' : macOsKeychainRootSuffix(configDir)
   return `Claude Code${getOauthConfig().OAUTH_FILE_SUFFIX}${serviceSuffix}${dirHash}`
 }
 

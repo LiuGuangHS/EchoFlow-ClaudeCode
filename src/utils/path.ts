@@ -49,19 +49,20 @@ export function expandPath(path: string, baseDir?: string): string {
     throw new Error('Path contains null bytes')
   }
 
+  // Preserve Unicode spelling: NFC-equivalent names may be different physical files.
   // Handle empty or whitespace-only paths
   const trimmedPath = path.trim()
   if (!trimmedPath) {
-    return normalize(actualBaseDir).normalize('NFC')
+    return normalize(actualBaseDir)
   }
 
   // Handle home directory notation
   if (trimmedPath === '~') {
-    return homedir().normalize('NFC')
+    return homedir()
   }
 
   if (trimmedPath.startsWith('~/')) {
-    return join(homedir(), trimmedPath.slice(2)).normalize('NFC')
+    return join(homedir(), trimmedPath.slice(2))
   }
 
   // On Windows, convert POSIX-style paths (e.g., /c/Users/...) to Windows format
@@ -77,11 +78,11 @@ export function expandPath(path: string, baseDir?: string): string {
 
   // Handle absolute paths
   if (isAbsolute(processedPath)) {
-    return normalize(processedPath).normalize('NFC')
+    return normalize(processedPath)
   }
 
   // Handle relative paths
-  return resolve(actualBaseDir, processedPath).normalize('NFC')
+  return resolve(actualBaseDir, processedPath)
 }
 
 /**

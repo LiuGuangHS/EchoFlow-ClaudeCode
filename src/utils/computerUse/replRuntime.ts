@@ -1,8 +1,8 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { AsyncResource } from 'node:async_hooks'
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { realpath, rm } from 'node:fs/promises'
 import { rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { createPrivateStorageTempDirectory } from '../cachePaths.js'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { wrapCommandWithSandboxMacOS } from '@anthropic-ai/sandbox-runtime/dist/sandbox/macos-sandbox-utils.js'
@@ -101,7 +101,7 @@ export class ComputerUseRepl implements ComputerUseReplRuntime {
   private async start(signal: AbortSignal): Promise<Kernel> {
     if (this.kernel) return this.kernel
     if (process.platform !== 'darwin') throw new Error('Computer Use JavaScript is currently available on macOS only.')
-    const directory = await realpath(await mkdtemp(join(tmpdir(), 'cc-haha-cu-repl-')))
+    const directory = await realpath(await createPrivateStorageTempDirectory('cu-repl-'))
     try {
       const executable = await realpath(process.execPath)
       let args: string[]

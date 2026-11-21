@@ -38,10 +38,16 @@ export class AdapterMigrationLifecycle {
 
 export const adapterMigrationLifecycle = new AdapterMigrationLifecycle()
 
+export async function quiesceAdapterProcess(): Promise<void> {
+  await adapterMigrationLifecycle.quiesce()
+  const { releaseProcessStorage } = await import('../../src/services/storageStartup.js')
+  await releaseProcessStorage()
+}
+
 export function registerAdapterShutdown(cleanup: () => Promise<void> | void): void {
   adapterMigrationLifecycle.registerShutdown(cleanup)
   const stop = () => {
-    void adapterMigrationLifecycle.quiesce().then(() => process.exit(0), error => {
+    void quiesceAdapterProcess().then(() => process.exit(0), error => {
       console.error('[Adapter] Shutdown failed', error)
       process.exit(1)
     })

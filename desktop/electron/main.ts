@@ -1,3 +1,6 @@
+import './storageBootstrap'
+import { getEchoFlowInternalDir } from '../../src/utils/echoFlowConfigRoot'
+import { desktopRelaunchArgs } from './storageBootstrap'
 import { PublicAccessManager, readPublicAccessControlResponse } from './services/publicAccess'
 import {
   EchoFlowLoginSession,
@@ -40,8 +43,10 @@ import {
 import { DeepSeekHarnessRuntime } from './services/deepseekHarnessRuntime'
 import { discoverRuntimes, probeRuntimePath } from './services/runtimeDiscovery'
 import { DataMigration } from './services/dataMigration'
-import { configureEchoFlowUserData } from './services/echoFlowDataRoot'
-import { prepareProfileRecovery } from './services/profileConflictRecovery'
+import { desktopMoveRelaunchArgs } from './services/desktopStorageMove'
+import { desktopOpenAiOauthRelaunchArgs, openAiOauthDialogText } from './services/desktopStorageAdoption'
+import { formatBytes } from '../src/lib/formatBytes'
+import { clearDesktopStorageInjections, restoreDesktopLaunchEnvironment } from './services/desktopStorageProvenance'
 import { areStorageWritesFrozen, setStorageWritesFrozen } from './services/storageMaintenance'
 import { resolveRelocatedAttachmentPath } from '../../src/utils/storageRelocations'
 import { appendHostDiagnostic, electronHostDiagnosticsFile, sanitizeHostDiagnostic } from './services/sidecarManager'
@@ -59,7 +64,7 @@ import type { WorkspaceBrowserMenuOptions } from '../src/lib/desktopHost/types'
 import { DeepLinkHandler, extractDeepLinkFromArgs } from './services/deepLinkHandler'
 import { acquireSingleInstanceLock } from './services/singleInstance'
 import { installTray, shouldInstallTray, type TrayController } from './services/tray'
-import { ElectronUpdaterService, updaterSessionProxyConfig } from './services/updater'
+import { DesktopNsisUpdater, ElectronUpdaterService, updaterSessionProxyConfig } from './services/updater'
 import { wrapDifferentialHttpExecutor } from './services/differentialHttpExecutor'
 import { resolveDifferentialDownloadRequest, resolveDownloadFeedUrls, resolveUpdateFeedConfig } from './services/updateFeed'
 import { createUpdateSmokeUpdaterFromEnv } from './services/updateSmoke'
@@ -85,8 +90,6 @@ import {
   type PreviewLocalAccess,
 } from './services/previewSession'
 import {
-  applyStartupPortableMode,
-  clearAppManagedPortableEnv,
   getAppMode,
   setAppMode,
 } from './services/appMode'
@@ -148,21 +151,7 @@ import {
   MIN_WINDOW_WIDTH,
 } from './services/windows'
 
-// Resolve the profile before locks, migration journals, or any userData consumers.
-let startupProfileError: Error | null = null
-let cleanupProfileRecovery: (() => void) | undefined
-try {
-  configureEchoFlowUserData(app)
-} catch (error) {
-  startupProfileError = error instanceof Error ? error : new Error(String(error))
-  setStorageWritesFrozen(true)
-  try {
-    cleanupProfileRecovery = prepareProfileRecovery(app)
-  } catch {
-    // Chromium must not reach ready using an unresolved user profile.
-    process.exit(1)
-  }
-}
+// storageBootstrap completes the cold storage barrier before these imports execute.
 
 let mainWindow: BrowserWindow | null = null
 let serverRuntime: ElectronServerRuntime | null = null
@@ -680,18 +669,29 @@ function getServerRuntime() {
   return serverRuntime
 }
 
+function relaunchDesktop(args = desktopRelaunchArgs) {
+  const restore = restoreDesktopLaunchEnvironment(app.getPath('userData'))
+  try { app.relaunch({ args }) } finally { restore() }
+}
+
+function restartDesktop() {
+  relaunchDesktop()
+  isQuitting = true
+  app.quit()
+}
+
 function getDataMigration() {
   dataMigration ??= new DataMigration(app, {
     preview: () => getServerRuntime().getMigrationPreview(),
     async quiesce() {
-      await Promise.allSettled([...hostOperations])
       if (mainWindow && !mainWindow.isDestroyed()) saveWindowState(app, mainWindow)
+      setStorageWritesFrozen(true)
+      await Promise.allSettled([...hostOperations])
       petWindowController?.dispose()
       petWindowController = null
       await p2pTerminator?.dispose()
       await publicAccessManager?.dispose()
       publicAccessManager = null
-      setStorageWritesFrozen(true)
       await getServerRuntime().quiesceForMigration()
     },
     async resume() {
@@ -699,9 +699,27 @@ function getDataMigration() {
       await getServerRuntime().resumeAfterMigration()
       await getPublicAccessManager().restore().catch(() => {})
     },
-    restart() {
+    async assertQuiescent() {
+      throw new Error('Chromium is active; migration must run in the cold storage bootstrap')
+    },
+    restart(root, request) {
+      if (request) {
+        if (!root || request.source !== app.getPath('userData')) throw new Error('Cold move does not match the active complete root')
+        const restore = clearDesktopStorageInjections(request.source)
+        try {
+          app.relaunch({ args: desktopMoveRelaunchArgs(process.argv.slice(1), root, request) })
+          isQuitting = true
+          app.quit()
+        } catch (error) { restore(); isQuitting = false; throw error }
+        return
+      }
+      if (root && root !== app.getPath('userData')) throw new Error('A different complete root requires an explicit cold launch')
+      restartDesktop()
+    },
+    restartForOpenAiOauth(root, request) {
+      if (root !== app.getPath('userData')) throw new Error('OpenAI sign-in migration must keep the active data directory')
+      relaunchDesktop(desktopOpenAiOauthRelaunchArgs(desktopRelaunchArgs, request))
       isQuitting = true
-      app.relaunch()
       app.quit()
     },
     progress(status) {
@@ -744,7 +762,7 @@ function getPublicAccessManager() {
   publicAccessManager = new PublicAccessManager({
     desktopRoot: unpackedRoot(),
     onState: status => { void getP2PTerminator().update(p2pHostWanted(status)) },
-    directory: path.join(getAppMode(app).activeConfigDir ?? app.getPath('userData'), 'cc-haha', 'public-access'),
+    directory: path.join(getEchoFlowInternalDir(), 'public-access'),
     backend: {
       request<T>(route: string, method: string, body?: unknown): Promise<T> {
         const operation = queue.catch(() => {}).then(async () => {
@@ -785,12 +803,14 @@ function resolveMainRendererServerAccess(): PreviewLocalAccess | null {
 }
 
 function getUpdaterService() {
+  if (updaterService) return updaterService
   const smokeUpdater = createUpdateSmokeUpdaterFromEnv(process.env)
-  updaterService ??= new ElectronUpdaterService(smokeUpdater ?? autoUpdater, {
+  const updater = smokeUpdater ?? (process.platform === 'win32' ? new DesktopNsisUpdater() : autoUpdater)
+  updaterService = new ElectronUpdaterService(updater, {
     async apply(proxy) {
       // Update traffic runs on electron-updater's own session partition;
       // configuring app/defaultSession proxies never reaches it.
-      await autoUpdater.netSession.setProxy(updaterSessionProxyConfig(proxy))
+      if ('netSession' in updater) await updater.netSession.setProxy(updaterSessionProxyConfig(proxy))
     },
   }, {
     updateConfigPath: !smokeUpdater && app.isPackaged ? path.join(process.resourcesPath, 'app-update.yml') : undefined,
@@ -808,7 +828,7 @@ function getUpdaterService() {
             feedConfig.differentialDownloadFeedUrls[0],
           )
           const differentialDownload = differentialRequested
-            && wrapDifferentialHttpExecutor(autoUpdater as typeof autoUpdater & { httpExecutor?: unknown })
+            && wrapDifferentialHttpExecutor(updater as typeof updater & { httpExecutor?: unknown })
           return {
             metadataFeedUrl: feedConfig.metadataUrl,
             metadataFallbackUrls: feedConfig.metadataFallbackUrls,
@@ -1350,13 +1370,16 @@ function registerIpcHandlers() {
   })
   registerHandler(ELECTRON_IPC_CHANNELS.updateCancelInstall, () => getUpdaterService().cancelInstall())
   registerHandler(ELECTRON_IPC_CHANNELS.updateRelaunch, () => {
-    if (getUpdaterService().hasStagedUpdate()) {
-      isQuitting = true
-      getUpdaterService().quitAndInstallDownloadedUpdate()
+    const updater = getUpdaterService()
+    if (updater.hasStagedUpdate()) {
+      const restore = restoreDesktopLaunchEnvironment(app.getPath('userData'))
+      try {
+        updater.quitAndInstallDownloadedUpdate()
+        isQuitting = true
+      } finally { restore() }
       return
     }
-    app.relaunch()
-    app.quit()
+    restartDesktop()
   })
   registerHandler(ELECTRON_IPC_CHANNELS.notificationPermissionState, () => notificationPermissionState(Notification))
   registerHandler(ELECTRON_IPC_CHANNELS.notificationRequestPermission, () => requestNotificationPermission(Notification))
@@ -1470,16 +1493,30 @@ function registerIpcHandlers() {
     getWorkspaceBrowserService().close((payload as { tabId: string }).tabId))
   registerHandler(ELECTRON_IPC_CHANNELS.appModeGet, () => getAppMode(app))
   registerHandler(ELECTRON_IPC_CHANNELS.migrationPrepare, (_event, payload) => getDataMigration().prepare((payload as { targetDir: string }).targetDir))
+  registerHandler(ELECTRON_IPC_CHANNELS.migrationOpenAiOauth, event => {
+    const window = currentWindow(event)
+    if (isQuitting) throw new Error('Desktop is unavailable')
+    const locale = readLocalePreference(app) ?? resolveSupportedLocale(app.getPreferredSystemLanguages())
+    const text = openAiOauthDialogText[locale]
+    return getDataMigration().prepareOpenAiOauth(async () => {
+      const file = await openDialog(window, { title: text.choose, filters: [{ name: 'JSON', extensions: ['json'] }] })
+      return !isQuitting && !window.isDestroyed() && typeof file === 'string' ? file : null
+    }, async preview => {
+      if (isQuitting || window.isDestroyed()) return false
+      const { response } = await dialog.showMessageBox(window, {
+        type: 'warning', message: text.message,
+        detail: `${preview.sourceDir}\n→ ${preview.targetDir}\n${formatBytes(preview.bytes)}\n\n${text.detail}`,
+        buttons: [text.cancel, text.confirm], defaultId: 0, cancelId: 0, noLink: true,
+      })
+      return response === 1 && !isQuitting && !window.isDestroyed()
+    })
+  })
   registerHandler(ELECTRON_IPC_CHANNELS.migrationStart, (_event, payload) => getDataMigration().start((payload as { id: string }).id))
   registerHandler(ELECTRON_IPC_CHANNELS.migrationStatus, () => getDataMigration().status)
   registerHandler(ELECTRON_IPC_CHANNELS.migrationCancel, (_event, payload) => getDataMigration().cancel((payload as { id: string }).id))
   registerHandler(ELECTRON_IPC_CHANNELS.appModeSet, (_event, payload) => setAppMode(app, payload as Parameters<typeof setAppMode>[1]))
   registerHandler(ELECTRON_IPC_CHANNELS.appModePrepareRestart, () => getServerRuntime().stopAll(true))
-  registerHandler(ELECTRON_IPC_CHANNELS.appModeRestart, () => {
-    isQuitting = true
-    app.relaunch()
-    app.quit()
-  })
+  registerHandler(ELECTRON_IPC_CHANNELS.appModeRestart, restartDesktop)
   registerHandler(ELECTRON_IPC_CHANNELS.adaptersRestartSidecar, () => getServerRuntime().restartAdaptersSidecars())
   registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessGetStatus, event => {
     requireMainWindow(event)
@@ -1625,7 +1662,7 @@ async function createMainWindow() {
     },
     onRecoveryExhausted: detail => {
       console.error(`[desktop] Electron renderer recovery exhausted: ${detail}`)
-      void showRendererRecoveryFailure({ window, isQuitting: () => isQuitting, dialog, app, detail })
+      void showRendererRecoveryFailure({ window, isQuitting: () => isQuitting, dialog, app: { relaunch: () => relaunchDesktop(), quit: () => app.quit() }, detail })
         .catch(error => recordRendererDiagnostic(`[recovery-dialog-failed] ${String(error)}`))
     },
   })
@@ -1649,49 +1686,29 @@ async function createMainWindow() {
   writeWindowSmokeSnapshot(mainWindow, 'after-final-show')
 }
 
-if (!startupProfileError) {
-  if (!acquireSingleInstanceLock(app, () => mainWindow, url => deepLinkHandler.handle(url))) {
-    process.exit(0)
-  }
-
-  if (process.defaultApp) {
-    if (process.argv.length >= 2 && process.argv[1]) {
-      app.setAsDefaultProtocolClient('echoflowcode', process.execPath, [path.resolve(process.argv[1])])
-    }
-  } else {
-    app.setAsDefaultProtocolClient('echoflowcode')
-  }
-  app.on('open-url', (event, url) => {
-    event.preventDefault()
-    deepLinkHandler.handle(url)
-    showMainWindow(mainWindow, app)
-  })
-  const deepLinkUrl = extractDeepLinkFromArgs(process.argv)
-  if (deepLinkUrl) deepLinkHandler.handle(deepLinkUrl)
-
-  registerIpcHandlers()
+if (!acquireSingleInstanceLock(app, () => mainWindow, url => deepLinkHandler.handle(url))) {
+  process.exit(0)
 }
 
+if (process.defaultApp) {
+  if (process.argv.length >= 2 && process.argv[1]) {
+    app.setAsDefaultProtocolClient('echoflowcode', process.execPath, [path.resolve(process.argv[1])])
+  }
+} else {
+  app.setAsDefaultProtocolClient('echoflowcode')
+}
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  deepLinkHandler.handle(url)
+  showMainWindow(mainWindow, app)
+})
+const deepLinkUrl = extractDeepLinkFromArgs(process.argv)
+if (deepLinkUrl) deepLinkHandler.handle(deepLinkUrl)
+
+registerIpcHandlers()
+
 app.whenReady().then(async () => {
-  if (startupProfileError) {
-    dialog.showErrorBox('数据目录不可用 / Data directory unavailable', startupProfileError.message)
-    cleanupProfileRecovery?.()
-    app.exit(1)
-    return
-  }
   applyWindowsAppUserModelId(app)
-  clearAppManagedPortableEnv()
-  let validation = false
-  try {
-    validation = await getDataMigration().recover() === 'validate'
-    applyStartupPortableMode(app)
-  } catch (error) {
-    setStorageWritesFrozen(true)
-    dialog.showErrorBox('数据目录不可用 / Data directory unavailable', error instanceof Error ? error.message : 'Migration recovery failed')
-    await createMainWindow()
-    return
-  }
-  if (validation) process.env.CC_HAHA_MIGRATION_VALIDATION = '1'
   powerMonitor.on('suspend', () => idlePowerService?.stop())
   powerMonitor.on('resume', () => { if (!isQuitting) idlePowerService?.start() })
   powerMonitor.on('lock-screen', () => { if (idlePowerService?.getState().countdown) idlePowerService.cancel('user-activity') })
@@ -1720,30 +1737,8 @@ app.whenReady().then(async () => {
   }
   try {
     await getServerRuntime().startServer()
-    if (validation) {
-      await getServerRuntime().validateMigrationStartup()
-      await getDataMigration().completeValidation()
-      validation = false
-      await getServerRuntime().activateAfterMigrationValidation()
-      delete process.env.CC_HAHA_MIGRATION_VALIDATION
-    }
   } catch (error) {
-    if (validation) {
-      try {
-        await getServerRuntime().stopAllAndWait()
-        await getDataMigration().failValidation(error)
-        delete process.env.CC_HAHA_MIGRATION_VALIDATION
-        clearAppManagedPortableEnv()
-        applyStartupPortableMode(app)
-        serverRuntime = null
-        await getServerRuntime().startServer().catch(startError => console.error('[desktop] original directory restart failed', startError))
-      } catch (recoveryError) {
-        setStorageWritesFrozen(true)
-        dialog.showErrorBox('数据目录不可用 / Data directory unavailable', recoveryError instanceof Error ? recoveryError.message : 'Migration recovery failed')
-        await createMainWindow()
-        return
-      }
-    } else console.error('[desktop] failed to start Electron server sidecar', error)
+    console.error('[desktop] failed to start Electron server sidecar', error)
   }
   await installApplicationMenu(app, () => mainWindow, process.platform, nativeMenuNavigation.navigate)
   if (shouldInstallTray(process.platform)) {

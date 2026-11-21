@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { areStorageWritesFrozen } from './storageMaintenance'
+import { resolveStorageBinding } from '../../../src/utils/echoFlowConfigRoot'
 import type { App, BrowserWindow, BrowserWindowConstructorOptions, Display } from 'electron'
 
 export const WINDOW_STATE_FILE = 'window-state.json'
@@ -29,7 +30,7 @@ export type WindowChromeOptions = Pick<
 >
 
 export function windowStatePath(app: App, env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(env.CLAUDE_CONFIG_DIR || path.join(app.getPath('home'), '.claude'), WINDOW_STATE_FILE)
+  return path.join(resolveStorageBinding({ env, homeDir: app.getPath('home') }).root, WINDOW_STATE_FILE)
 }
 
 export function isPersistableWindowState(state: StoredWindowState): boolean {
@@ -94,11 +95,7 @@ export function readWindowState(
   env: NodeJS.ProcessEnv = process.env,
   platform = process.platform,
 ): StoredWindowState | null {
-  let statePath = windowStatePath(app, env)
-  if (!existsSync(statePath) && !env.CLAUDE_CONFIG_DIR) {
-    const legacyStatePath = path.join(app.getPath('userData'), WINDOW_STATE_FILE)
-    if (existsSync(legacyStatePath)) statePath = legacyStatePath
-  }
+  const statePath = windowStatePath(app, env)
   if (!existsSync(statePath)) return null
 
   try {

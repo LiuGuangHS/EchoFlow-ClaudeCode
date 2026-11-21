@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createQualityGateSandbox } from '../sandbox'
+import { getEchoFlowInternalDir } from '../../../src/utils/echoFlowConfigRoot'
 import { startMockLlmServer } from './server'
 import type { MockReply, MockRequest } from './scriptedModel'
 
@@ -37,8 +38,8 @@ export async function runComputerUseAgentDesktopScenario(rootDir: string, artifa
   const platform = process.platform === 'win32' ? 'win32' : 'linux'
   mkdirSync(workDir, { recursive: true })
   mkdirSync(binaries, { recursive: true })
-  mkdirSync(join(sandbox.configDir, 'cc-haha'), { recursive: true })
-  writeFileSync(join(sandbox.configDir, 'cc-haha', 'computer-use-config.json'), JSON.stringify({ enabled: true }))
+  mkdirSync(getEchoFlowInternalDir(sandbox.configDir), { recursive: true })
+  writeFileSync(join(getEchoFlowInternalDir(sandbox.configDir), 'computer-use-config.json'), JSON.stringify({ enabled: true }))
   const executable = join(binaries, platform === 'win32' ? 'agent-desktop.exe' : 'agent-desktop')
   try {
     const build = await Bun.build({

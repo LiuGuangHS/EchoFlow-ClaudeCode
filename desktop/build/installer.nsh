@@ -19,7 +19,6 @@ Function CcHahaUninstallerParent
   Exch $R0
   Push $R1
   Push $R2
-  Push $R3
 
   StrCpy $R2 0
 
@@ -59,7 +58,6 @@ Function CcHahaUninstallerParent
 
   cc_haha_uninstall_parent_done:
     StrCpy $R0 $R0 $R2
-    Pop $R3
     Pop $R2
     Pop $R1
     Exch $R0
@@ -383,6 +381,15 @@ Function CcHahaRecoverLegacy
 
   InitPluginsDir
   File /oname=$PLUGINSDIR\recover-legacy-install-data.ps1 "${BUILD_RESOURCES_DIR}\recover-legacy-install-data.ps1"
+  ; Extract from this package, never the old installation the uninstaller may delete.
+  !ifndef ECHOFLOW_INSTALLER_RECOVERY_BINARY
+    !if defined(APP_ARM64) && !defined(APP_64)
+      !define ECHOFLOW_INSTALLER_RECOVERY_BINARY "${BUILD_RESOURCES_DIR}\..\src-tauri\binaries\installer-storage-recovery-aarch64-pc-windows-msvc.exe"
+    !else
+      !define ECHOFLOW_INSTALLER_RECOVERY_BINARY "${BUILD_RESOURCES_DIR}\..\src-tauri\binaries\installer-storage-recovery-x86_64-pc-windows-msvc.exe"
+    !endif
+  !endif
+  File /oname=$PLUGINSDIR\installer-storage-recovery.exe "${ECHOFLOW_INSTALLER_RECOVERY_BINARY}"
 
   ReadEnvStr $2 APPDATA
   ReadEnvStr $R2 LOCALAPPDATA
@@ -406,7 +413,7 @@ Function CcHahaRecoverLegacy
   ${EndIf}
 
   DetailPrint "Checking registered installations for legacy ${ECHOFLOW_PRODUCT_NAME} data..."
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\recover-legacy-install-data.ps1" -PerUserInstallDir "$4" -PerMachineInstallDir "$5" -CandidateInstallDir "$9" -UserDataDir "$2\${ECHOFLOW_PRODUCT_NAME}" -LocalUserDataDir "$R2\${ECHOFLOW_PRODUCT_NAME}" -DesktopPackageName "${ECHOFLOW_PRODUCT_SLUG}" -LegacyDesktopPackageName "${ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME}" -RecoveryRoot "$3\${ECHOFLOW_PRODUCT_NAME} Data\Recovered" -ProcessName "${PRODUCT_FILENAME}.exe" -ActiveConfigDir "$6" -ActiveConfigManaged "$7" -InstallerIdentitySafety "$8"'
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\recover-legacy-install-data.ps1" -PerUserInstallDir "$4" -PerMachineInstallDir "$5" -CandidateInstallDir "$9" -UserDataDir "$2\${ECHOFLOW_PRODUCT_NAME}" -LocalUserDataDir "$R2\${ECHOFLOW_PRODUCT_NAME}" -DesktopPackageName "${ECHOFLOW_PRODUCT_SLUG}" -LegacyDesktopPackageName "${ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME}" -RecoveryBridge "$PLUGINSDIR\installer-storage-recovery.exe" -ProcessName "${PRODUCT_FILENAME}.exe" -ActiveConfigDir "$6" -ActiveConfigManaged "$7" -InstallerIdentitySafety "$8"'
   Pop $0
   Pop $1
 FunctionEnd
@@ -485,7 +492,7 @@ FunctionEnd
 
 !macro CcHahaFindInstallProcess _FILE _RETURN
   ${If} $IsPowerShellAvailable == 0
-    nsExec::ExecToStack '"$PowerShellPath" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\check-install-processes.ps1" -InstallDir "$INSTDIR" -ProcessName "${_FILE}" -Action Find -InstallerPid "$pid" -InstallerParentPid "$1"'
+    nsExec::ExecToStack '"$PowerShellPath" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\check-install-processes.ps1" -InstallDir "$INSTDIR" -ProcessName "${_FILE}" -Action Find -InstallerPid "$pid"'
     Pop ${_RETURN}
     Pop $ccHahaProcessDiagnostic
     ${If} $ccHahaProcessDiagnostic != ""
@@ -539,7 +546,7 @@ FunctionEnd
   ${EndIf}
 
   ${If} $IsPowerShellAvailable == 0
-    nsExec::ExecToStack '"$PowerShellPath" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\check-install-processes.ps1" -InstallDir "$INSTDIR" -ProcessName "${_FILE}" -Action "$0" -InstallerPid "$pid" -InstallerParentPid "$1"'
+    nsExec::ExecToStack '"$PowerShellPath" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\check-install-processes.ps1" -InstallDir "$INSTDIR" -ProcessName "${_FILE}" -Action "$0" -InstallerPid "$pid"'
     Pop $0
     Pop $ccHahaProcessDiagnostic
     ${If} $ccHahaProcessDiagnostic != ""

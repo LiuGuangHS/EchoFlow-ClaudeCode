@@ -96,7 +96,7 @@ export type InboundChatMessage = {
    *
    * Called only after dedup and the pairing gate have passed, and from inside
    * the per-chat queue. Downloading before that lets an unpaired stranger make
-   * the adapter fetch bytes and write them under `~/.claude/im-downloads/`, and
+   * the adapter fetch bytes and write them under `<data-root>/im-downloads/`, and
    * lets a slow attachment overtake a text message sent after it.
    */
   loadAttachments?: () => Promise<AttachmentRef[]>

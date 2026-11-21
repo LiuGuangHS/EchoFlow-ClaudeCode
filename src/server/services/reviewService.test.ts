@@ -428,6 +428,38 @@ describe('ReviewService write operations', () => {
     expect(staged.files.find((file) => file.path === 'untracked.txt')?.status).toBe('added')
   })
 
+  it.each([false, true])('keeps hunk scratch inside the selected root and cleans it after apply failure=%s', async fail => {
+    const repoDir = await createMixedRepo()
+    const root = await makeTempDir('review-storage-')
+    const previous = process.env.CLAUDE_CONFIG_DIR
+    process.env.CLAUDE_CONFIG_DIR = root
+    try {
+      const service = makeService(repoDir)
+      const diff = await service.getFileDiff(SESSION, { source: UNSTAGED, path: 'tracked.txt' })
+      const original = Reflect.get(service, 'runGit') as (cwd: string, args: string[]) => Promise<unknown>
+      let scratch = ''
+      Reflect.set(service, 'runGit', async (cwd: string, args: string[]) => {
+        if (args[0] === 'apply') {
+          scratch = path.dirname(args.at(-1)!)
+          expect(path.dirname(scratch)).toBe(path.join(root, 'echoflow-code', 'tmp'))
+          if (process.platform !== 'win32') expect((await fs.stat(scratch)).mode & 0o777).toBe(0o700)
+          expect(await fs.readFile(args.at(-1)!, 'utf8')).toContain('+L1')
+          if (fail) throw new Error('fixture apply failed')
+        }
+        return original.call(service, cwd, args)
+      })
+      const result = service.stageHunk(SESSION, { patch: takeFirstHunk(diff.diff ?? ''), snapshot: diff.snapshot })
+      if (fail) await expect(result).rejects.toThrow('fixture apply failed')
+      else expect((await result).state).toBe('ok')
+      expect(scratch).not.toBe('')
+      expect(await fs.stat(scratch).catch(() => null)).toBeNull()
+      expect(await fs.readdir(path.join(root, 'echoflow-code', 'tmp'))).toEqual([])
+    } finally {
+      if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+      else process.env.CLAUDE_CONFIG_DIR = previous
+    }
+  })
+
   it('applies only the hunk it is given', async () => {
     const repoDir = await createMixedRepo()
     const service = makeService(repoDir)

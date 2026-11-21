@@ -11,6 +11,7 @@ import { createLocalIndexCoordinator } from '../services/localIndex/coordinator.
 import { aggregateActivityStatsForMode } from '../api/activityStats.js'
 import type { LocalIndexGateway } from '../services/localIndex/sessionIndex.js'
 import { aggregateClaudeCodeStatsForRange } from '../../utils/stats.js'
+import { ECHOFLOW_INTERNAL_DIR } from '../../utils/echoFlowConfigRoot.js'
 import type {
   ReconciliationWatcher,
   ReconciliationWatcherOptions,
@@ -314,7 +315,7 @@ describe('local index activity parity', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => configDir,
-      resolveDatabasePath: () => join(configDir, 'cc-haha', 'db', 'index-v1.sqlite'),
+      resolveDatabasePath: () => join(configDir, ECHOFLOW_INTERNAL_DIR, 'db', 'index-v1.sqlite'),
       createWatcher: options => {
         watcherOptions = options
         return watcher

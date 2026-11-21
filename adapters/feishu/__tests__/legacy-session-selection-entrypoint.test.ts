@@ -16,12 +16,12 @@ import { currentInboundPowerLease } from '../../common/inbound-power-activity.js
 type Platform = 'feishu' | 'dingtalk' | 'wechat' | 'whatsapp'
 const platforms: Platform[] = ['feishu', 'dingtalk', 'wechat', 'whatsapp']
 const chatFor = (platform: Platform) => platform === 'dingtalk' ? 'dingtalk:dm:fixture-user' : `${platform}-chat`
-let feishu: typeof import('../index.js')
+let feishu: typeof import('../runtime.js')
 let feishuStartupWsClient: Lark.WSClient
-let dingtalk: typeof import('../../dingtalk/index.js')
+let dingtalk: typeof import('../../dingtalk/runtime.js')
 let dingtalkCardCallback: Parameters<DWClient['registerCallbackListener']>[1]
-let wechat: typeof import('../../wechat/index.js')
-let whatsapp: typeof import('../../whatsapp/index.js')
+let wechat: typeof import('../../wechat/runtime.js')
+let whatsapp: typeof import('../../whatsapp/runtime.js')
 let server: Bun.Server<{ sessionId: string }>
 let temporaryRoot: string
 let httpOrigin: string
@@ -142,7 +142,7 @@ beforeAll(async () => {
     FEISHU_APP_ID: 'fixture-app', FEISHU_APP_SECRET: 'fixture-secret',
     DINGTALK_CLIENT_ID: 'fixture-client', DINGTALK_CLIENT_SECRET: 'fixture-secret',
     WECHAT_ACCOUNT_ID: 'fixture-account', WECHAT_BOT_TOKEN: 'fixture-token', WECHAT_BASE_URL: httpOrigin,
-    WHATSAPP_AUTH_DIR: path.join(temporaryRoot, 'whatsapp-auth'), CC_HAHA_LOCAL_ACCESS_TOKEN: '',
+    WHATSAPP_AUTH_DIR: path.join(temporaryRoot, '.claude', 'whatsapp-auth'), CC_HAHA_LOCAL_ACCESS_TOKEN: '',
   }
   Object.assign(process.env, env)
   fs.mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true })
@@ -172,8 +172,8 @@ beforeAll(async () => {
     }
     throw new Error(`External network is forbidden in this fixture: ${url.origin}${url.pathname}`)
   }) as typeof fetch
-  // Exercise the sidecar's actual startup branch, with only the external SDK
-  // boundary replaced. The later test checks both clients' transport wiring.
+  // Start the real runtimes without binding this shared test process. Admission
+  // runs in child fixtures; the later test checks both clients' transport wiring.
   let started!: () => void
   const startup = new Promise<void>(resolve => { started = resolve })
   const botInfo = spyOn(Lark.Client.prototype, 'request').mockImplementation(async () => ({
@@ -183,15 +183,13 @@ beforeAll(async () => {
     feishuStartupWsClient = this
     started()
   })
-  const originalArgv = [...process.argv]
   const shutdownSignals = ['SIGINT', 'SIGTERM'] as const
   const signalListeners = new Map(shutdownSignals.map(signal => [signal, new Set(process.listeners(signal))]))
-  process.argv.push('--feishu')
   try {
-    feishu = await import('../index.js')
+    feishu = await import('../runtime.js')
+    feishu.startFeishuAdapter()
     await startup
   } finally {
-    process.argv.splice(0, process.argv.length, ...originalArgv)
     botInfo.mockRestore()
     wsStart.mockRestore()
     for (const signal of shutdownSignals) {
@@ -206,11 +204,10 @@ beforeAll(async () => {
   })
   const connect = spyOn(DWClient.prototype, 'connect').mockResolvedValue(undefined)
   spies.push(spyOn(DWClient.prototype, 'socketCallBackResponse').mockImplementation(() => {}))
-  process.argv.push('--dingtalk')
   try {
-    dingtalk = await import('../../dingtalk/index.js')
+    dingtalk = await import('../../dingtalk/runtime.js')
+    dingtalk.startDingTalkAdapter()
   } finally {
-    process.argv.splice(0, process.argv.length, ...originalArgv)
     registerCallback.mockRestore()
     connect.mockRestore()
     for (const signal of shutdownSignals) {
@@ -219,8 +216,8 @@ beforeAll(async () => {
       }
     }
   }
-  wechat = await import('../../wechat/index.js')
-  whatsapp = await import('../../whatsapp/index.js')
+  wechat = await import('../../wechat/runtime.js')
+  whatsapp = await import('../../whatsapp/runtime.js')
   spies.push(spyOn(feishu.larkClient.im.message, 'create').mockImplementation(async (request: any) => {
     notices.push(String(request.data.content))
     return { code: 0, data: { message_id: `fixture-${++sequence}` } }

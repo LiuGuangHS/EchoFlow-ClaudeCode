@@ -6,6 +6,8 @@ import { ProviderService } from '../services/providerService.js'
 import { SettingsService } from '../services/settingsService.js'
 import { readActiveProviderManagedEnv } from '../services/providerRuntimeEnv.js'
 import { getImageGenerationRuntimeConfig } from '../../services/imageGeneration/config.js'
+import { completeStorageMigration, recoverStorageMigration, type StorageMigrationResult } from '../../services/storageMigration'
+import { buildEchoFlowOwnershipMarker, resolveStorageBinding } from '../../utils/echoFlowConfigRoot'
 import {
   CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
   ensurePersistentStorageUpgraded,
@@ -13,6 +15,7 @@ import {
 } from '../services/persistentStorageMigrations.js'
 
 let tempDir: string
+let sandboxDir: string
 let originalHome: string | undefined
 let originalConfigDir: string | undefined
 let fixtureHome: string
@@ -27,10 +30,13 @@ async function listFiles(dir: string) {
 
 describe('persistent storage upgrade migrations', () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-persistence-'))
+    sandboxDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-persistence-'))
+    tempDir = path.join(sandboxDir, 'current')
+    await fs.mkdir(tempDir)
     originalHome = process.env.HOME
     originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-    fixtureHome = path.join(tempDir, 'home')
+    // Historical shared HOME is a migration input, not part of the selected root.
+    fixtureHome = path.join(sandboxDir, 'home')
     process.env.HOME = fixtureHome
     process.env.CLAUDE_CONFIG_DIR = tempDir
     resetPersistentStorageMigrationsForTests()
@@ -42,23 +48,31 @@ describe('persistent storage upgrade migrations', () => {
     else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
     if (originalHome === undefined) delete process.env.HOME
     else process.env.HOME = originalHome
-    await fs.rm(tempDir, { recursive: true, force: true })
+    await fs.rm(sandboxDir, { recursive: true, force: true })
   })
 
-  async function upgradeInFixtureHome() {
-    const proc = Bun.spawn(['bun', '--no-env-file', '-e', `
-      const { ensurePersistentStorageUpgraded } = await import(${JSON.stringify(path.resolve(import.meta.dir, '../services/persistentStorageMigrations.ts'))})
-      console.log(JSON.stringify(await ensurePersistentStorageUpgraded()))
+  async function migrateLegacyInFixtureHome(): Promise<StorageMigrationResult> {
+    await fs.writeFile(path.join(tempDir, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+    const proc = Bun.spawn([process.execPath, '--no-env-file', '-e', `
+      const { executeStorageMigration } = await import(${JSON.stringify(path.resolve(import.meta.dir, '../../services/storageMigration.ts'))})
+      const { resolveStorageBinding } = await import(${JSON.stringify(path.resolve(import.meta.dir, '../../utils/echoFlowConfigRoot.ts'))})
+      const { upgradePersistentStorageValue } = await import(${JSON.stringify(path.resolve(import.meta.dir, '../services/persistentStorageMigrations.ts'))})
+      console.log(JSON.stringify(await executeStorageMigration({
+        binding: resolveStorageBinding(),
+        sources: [{ directory: ${JSON.stringify(path.join(fixtureHome, '.claude', 'echoflow-code'))}, markerRoot: ${JSON.stringify(path.join(fixtureHome, '.claude'))}, destination: 'echoflow-code', ownership: 'legacy-internal' }],
+        hooks: { assertQuiescent: async () => {}, upgradeJson: upgradePersistentStorageValue, platform: 'linux' },
+      })))
     `], {
       env: { ...process.env, HOME: fixtureHome, CLAUDE_CONFIG_DIR: tempDir },
       stdout: 'pipe', stderr: 'pipe',
     })
     const output = await new Response(proc.stdout).text()
-    expect(await proc.exited).toBe(0)
-    return JSON.parse(output) as { failures: string[]; migratedEntries: string[] }
+    const errors = await new Response(proc.stderr).text()
+    expect(await proc.exited, errors).toBe(0)
+    return JSON.parse(output)
   }
 
-  test('copies only supported EchoFlow legacy files, preserves source sentinels and is idempotent', async () => {
+  test('imports a historical EchoFlow subtree through the shared transaction, preserving shared sentinels and original backups', async () => {
     const source = path.join(fixtureHome, '.claude', 'echoflow-code')
     await fs.mkdir(source, { recursive: true })
     const raw = JSON.stringify({ activeProviderId: 'old', futureRoot: 'keep', providers: [{
@@ -68,34 +82,45 @@ describe('persistent storage upgrade migrations', () => {
     await fs.writeFile(path.join(source, 'providers.json'), raw)
     await fs.writeFile(path.join(source, 'settings.json'), JSON.stringify({ future: true, env: { UNKNOWN_ENV: 'keep' } }))
     await fs.writeFile(path.join(source, 'sentinel'), 'untouched')
-    const report = await upgradeInFixtureHome()
-    expect(report.failures).toEqual([])
+    const shared = path.join(fixtureHome, '.claude', 'settings.json')
+    await fs.writeFile(shared, 'shared sentinel')
+    // Schema upgrades alone must never become a second legacy import owner.
+    expect((await ensurePersistentStorageUpgraded()).failures).toEqual([])
     const targetDir = path.join(tempDir, 'echoflow-code')
+    expect(await fs.exists(path.join(targetDir, 'providers.json'))).toBe(false)
+    const result = await migrateLegacyInFixtureHome()
+    expect(result.state, result.issues.join('\n')).toBe('validation-required')
     const migrated = JSON.parse(await fs.readFile(path.join(targetDir, 'providers.json'), 'utf8'))
     expect(migrated.activeId).toBe('old')
     expect(migrated.futureRoot).toBe('keep')
     expect(migrated.providers[0].futureProvider).toBe(true)
-    expect((await listFiles(targetDir)).some(name => name.startsWith('providers.json.bak-before-migration-'))).toBe(true)
     expect(await fs.readFile(path.join(source, 'providers.json'), 'utf8')).toBe(raw)
     expect(await fs.readFile(path.join(source, 'sentinel'), 'utf8')).toBe('untouched')
-    expect((await upgradeInFixtureHome()).migratedEntries).toEqual([])
-    expect(await fs.readFile(path.join(source, 'providers.json'), 'utf8')).toBe(raw)
+    expect(await fs.readFile(path.join(targetDir, 'migrations', result.id!, 'sources/0/providers.json'), 'utf8')).toBe(raw)
+    const binding = resolveStorageBinding()
+    expect((await completeStorageMigration(binding, result.id!, { assertQuiescent: async () => {} })).state).toBe('ready')
+    expect(await fs.exists(source)).toBe(false)
+    expect(await fs.readFile(path.join(targetDir, 'sentinel'), 'utf8')).toBe('untouched')
+    expect(await fs.readFile(shared, 'utf8')).toBe('shared sentinel')
+    resetPersistentStorageMigrationsForTests()
+    expect((await ensurePersistentStorageUpgraded()).migratedEntries).toEqual([])
+    expect((await recoverStorageMigration(binding, { assertQuiescent: async () => {} })).state).toBe('ready')
   })
 
-  test('backs up a malformed target before recovering from a valid EchoFlow source', async () => {
+  test('blocks a malformed target instead of silently replacing it from a historical source', async () => {
     const source = path.join(fixtureHome, '.claude', 'echoflow-code')
     const target = path.join(tempDir, 'echoflow-code')
     await fs.mkdir(source, { recursive: true })
     await fs.mkdir(target, { recursive: true })
     const raw = JSON.stringify({ future: 'keep', env: { SENTINEL: 'source' } })
+    await fs.writeFile(path.join(source, 'providers.json'), JSON.stringify({ activeId: null, providers: [] }))
     await fs.writeFile(path.join(source, 'settings.json'), raw)
     await fs.writeFile(path.join(target, 'settings.json'), '{broken-target')
-    expect((await upgradeInFixtureHome()).failures).toEqual([])
-    expect(JSON.parse(await fs.readFile(path.join(target, 'settings.json'), 'utf8'))).toEqual(JSON.parse(raw))
-    const backup = (await fs.readdir(target)).find(name => name.startsWith('settings.json.bak-before-migration-'))!
-    expect(await fs.readFile(path.join(target, backup), 'utf8')).toBe('{broken-target')
+    const result = await migrateLegacyInFixtureHome()
+    expect(result.state).toBe('blocked')
+    expect(await fs.readFile(path.join(target, 'settings.json'), 'utf8')).toBe('{broken-target')
     expect(await fs.readFile(path.join(source, 'settings.json'), 'utf8')).toBe(raw)
-    expect((await upgradeInFixtureHome()).migratedEntries).toEqual([])
+    expect(await fs.readFile(path.join(target, 'migrations', result.id!, 'sources/0/settings.json'), 'utf8')).toBe(raw)
   })
 
   test('retains valid targets and reports legacy conflicts and malformed source JSON', async () => {
@@ -107,11 +132,14 @@ describe('persistent storage upgrade migrations', () => {
     await fs.writeFile(path.join(source, 'settings.json'), JSON.stringify({ env: { SENTINEL: 'legacy' } }))
     const raw = JSON.stringify({ env: { SENTINEL: 'target' }, future: 'keep' })
     await fs.writeFile(path.join(target, 'settings.json'), raw)
-    const report = await upgradeInFixtureHome()
-    expect(report.failures.some(value => value.includes('providers.json'))).toBe(true)
-    expect(report.failures.some(value => value.includes('conflict'))).toBe(true)
-    expect(await fs.readFile(path.join(target, 'settings.json'), 'utf8')).toBe(raw)
+    expect((await migrateLegacyInFixtureHome()).state).toBe('blocked')
     expect(await fs.readFile(path.join(source, 'providers.json'), 'utf8')).toBe('{broken')
+    await fs.writeFile(path.join(source, 'providers.json'), JSON.stringify({ activeId: null, providers: [] }))
+    const conflict = await migrateLegacyInFixtureHome()
+    expect(conflict.state).toBe('blocked')
+    expect(conflict.issues.some(value => value.includes('Conflicting') && value.includes('settings.json'))).toBe(true)
+    expect(await fs.readFile(path.join(target, 'settings.json'), 'utf8')).toBe(raw)
+    expect(await fs.readFile(path.join(source, 'settings.json'), 'utf8')).toBe('{"env":{"SENTINEL":"legacy"}}')
   })
 
   test('upgrades v6 image settings to an explicit protocol and preserves unknown fields on later edits', async () => {

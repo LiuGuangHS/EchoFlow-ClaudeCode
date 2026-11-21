@@ -15,7 +15,7 @@
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createQualityGateSandbox } from '../sandbox.ts'
@@ -61,7 +61,7 @@ export function resolveLiveTarget(
     disableExperimentalBetas?: boolean
   } = {},
 ): ResolvedLiveTarget {
-  const configDir = options.configDir ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+  const configDir = options.configDir
   const index = loadProviderIndex(configDir)
   const indexPath = getProviderIndexPath(configDir)
 

@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { handleAdaptersApi, cleanupStaleWhatsAppLoginDirectories } from '../api/adapters.js'
+import * as whatsappProtocol from '../../../adapters/whatsapp/protocol.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -49,6 +50,14 @@ async function writeRawConfig(config: Record<string, unknown>) {
     JSON.stringify(config, null, 2),
     { mode: 0o600 },
   )
+}
+
+async function writeRelocation(retiredRoot: string) {
+  const internalDir = path.join(tmpDir, 'echoflow-code')
+  await fs.mkdir(internalDir)
+  await fs.writeFile(path.join(internalDir, 'storage-relocations.json'), JSON.stringify({
+    version: 2, previousRoots: [retiredRoot], mappings: [{ from: retiredRoot, to: '.' }],
+  }))
 }
 
 describe('Adapters API', () => {
@@ -198,6 +207,31 @@ describe('Adapters API', () => {
     await expect(fs.stat(path.join(authDir, 'creds.json'))).rejects.toThrow()
   })
 
+  it('clears migrated WhatsApp credentials when the binding still refers to the retired root', async () => {
+    const retiredRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'whatsapp-retired-'))
+    try {
+      const retiredAuthDir = path.join(retiredRoot, 'whatsapp-auth', 'paired')
+      const migratedAuthDir = path.join(tmpDir, 'whatsapp-auth', 'paired')
+      for (const directory of [retiredAuthDir, migratedAuthDir]) {
+        await fs.mkdir(directory, { recursive: true })
+        await fs.writeFile(path.join(directory, 'creds.json'), '{}')
+      }
+      await writeRelocation(retiredRoot)
+      await writeRawConfig({ whatsapp: { accountJid: 'fixture@s.whatsapp.net', authDir: retiredAuthDir } })
+
+      const unbind = makeRequest('POST', '/api/adapters/whatsapp/unbind')
+      const response = await handleAdaptersApi(unbind.req, unbind.url, unbind.segments)
+      expect(response.status).toBe(200)
+      const whatsapp = (await response.json() as any).whatsapp
+      expect(whatsapp.accountJid).toBeUndefined()
+      expect(whatsapp.authDir).toBe(path.join(tmpDir, 'whatsapp-auth', 'default'))
+      await expect(fs.stat(migratedAuthDir)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(await fs.readFile(path.join(retiredAuthDir, 'creds.json'), 'utf8')).toBe('{}')
+    } finally {
+      await fs.rm(retiredRoot, { recursive: true, force: true })
+    }
+  })
+
   it('rejects malformed and binding-owned config fields', async () => {
     for (const request of [
       makeRawRequest('PUT', '/api/adapters', 'null'),
@@ -260,6 +294,30 @@ describe('Adapters API', () => {
     }
   })
 
+  it('rejects login before starting the protocol for an external WhatsApp override', async () => {
+    const externalDir = await fs.mkdtemp(path.join(os.tmpdir(), 'whatsapp-login-sentinel-'))
+    const originalAuthDir = process.env.WHATSAPP_AUTH_DIR
+    const startLogin = spyOn(whatsappProtocol, 'startWhatsAppLoginWithQr').mockRejectedValue(new Error('Unexpected login'))
+    try {
+      const sentinel = path.join(externalDir, 'creds.json')
+      await fs.writeFile(sentinel, 'external fixture')
+      const managedDir = path.join(tmpDir, 'whatsapp-auth', 'default')
+      await writeRawConfig({ whatsapp: { authDir: managedDir } })
+      process.env.WHATSAPP_AUTH_DIR = externalDir
+
+      const { req, url, segments } = makeRequest('POST', '/api/adapters/whatsapp/login/start')
+      expect((await handleAdaptersApi(req, url, segments)).status).toBe(500)
+      expect(startLogin).not.toHaveBeenCalled()
+      expect(await fs.readFile(sentinel, 'utf8')).toBe('external fixture')
+      expect(await fs.readdir(tmpDir)).toEqual(['adapters.json'])
+    } finally {
+      startLogin.mockRestore()
+      if (originalAuthDir === undefined) delete process.env.WHATSAPP_AUTH_DIR
+      else process.env.WHATSAPP_AUTH_DIR = originalAuthDir
+      await fs.rm(externalDir, { recursive: true, force: true })
+    }
+  })
+
   it('never recursively deletes a legacy WhatsApp auth directory outside the managed root', async () => {
     const externalDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-whatsapp-sentinel-'))
     const sentinel = path.join(externalDir, 'keep.txt')
@@ -280,6 +338,71 @@ describe('Adapters API', () => {
       expect(await fs.readFile(sentinel, 'utf-8')).toBe('keep')
     } finally {
       await fs.rm(externalDir, { recursive: true, force: true })
+    }
+  })
+
+  it('unbinds without deleting an external WhatsApp environment override', async () => {
+    const externalDir = await fs.mkdtemp(path.join(os.tmpdir(), 'whatsapp-env-sentinel-'))
+    const originalAuthDir = process.env.WHATSAPP_AUTH_DIR
+    try {
+      await fs.writeFile(path.join(externalDir, 'creds.json'), 'external fixture')
+      const managedDir = path.join(tmpDir, 'whatsapp-auth', 'default')
+      await fs.mkdir(managedDir, { recursive: true })
+      await fs.writeFile(path.join(managedDir, 'creds.json'), 'managed fixture')
+      await writeRawConfig({ whatsapp: { accountJid: 'fixture@s.whatsapp.net', authDir: managedDir } })
+      process.env.WHATSAPP_AUTH_DIR = externalDir
+
+      const unbind = makeRequest('POST', '/api/adapters/whatsapp/unbind')
+      const response = await handleAdaptersApi(unbind.req, unbind.url, unbind.segments)
+      expect(response.status).toBe(200)
+      expect((await response.json() as any).whatsapp.accountJid).toBeUndefined()
+      expect(await fs.readFile(path.join(externalDir, 'creds.json'), 'utf8')).toBe('external fixture')
+      expect(await fs.readFile(path.join(managedDir, 'creds.json'), 'utf8')).toBe('managed fixture')
+    } finally {
+      if (originalAuthDir === undefined) delete process.env.WHATSAPP_AUTH_DIR
+      else process.env.WHATSAPP_AUTH_DIR = originalAuthDir
+      await fs.rm(externalDir, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['current', 'relocated'])('refuses a %s managed WhatsApp auth symlink before logout or config mutation', async (location) => {
+    const externalDir = await fs.mkdtemp(path.join(os.tmpdir(), 'whatsapp-link-sentinel-'))
+    try {
+      await fs.writeFile(path.join(externalDir, 'creds.json'), 'external fixture')
+      const managedDir = path.join(tmpDir, 'whatsapp-auth', 'default')
+      await fs.mkdir(path.dirname(managedDir), { recursive: true })
+      await fs.symlink(externalDir, managedDir, process.platform === 'win32' ? 'junction' : 'dir')
+      const retiredRoot = `${tmpDir}-retired`
+      if (location === 'relocated') await writeRelocation(retiredRoot)
+      const authDir = location === 'relocated' ? path.join(retiredRoot, 'whatsapp-auth', 'default') : managedDir
+      await writeRawConfig({ whatsapp: { accountJid: 'fixture@s.whatsapp.net', authDir } })
+      const before = await fs.readFile(path.join(tmpDir, 'adapters.json'), 'utf8')
+
+      const unbind = makeRequest('POST', '/api/adapters/whatsapp/unbind')
+      const response = await handleAdaptersApi(unbind.req, unbind.url, unbind.segments)
+      expect(response.status).toBe(500)
+      expect(await fs.readFile(path.join(externalDir, 'creds.json'), 'utf8')).toBe('external fixture')
+      expect(await fs.readFile(path.join(tmpDir, 'adapters.json'), 'utf8')).toBe(before)
+      expect((await fs.lstat(managedDir)).isSymbolicLink()).toBe(true)
+    } finally {
+      await fs.rm(externalDir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses to unbind when the WhatsApp namespace is a directory alias', async () => {
+    const unrelatedDir = path.join(tmpDir, 'unrelated')
+    await fs.mkdir(unrelatedDir)
+    await fs.symlink(unrelatedDir, path.join(tmpDir, 'whatsapp-auth'), process.platform === 'win32' ? 'junction' : 'dir')
+    await writeRawConfig({ whatsapp: { accountJid: 'fixture@s.whatsapp.net' } })
+    const before = await fs.readFile(path.join(tmpDir, 'adapters.json'), 'utf8')
+    const logout = spyOn(whatsappProtocol, 'logoutWhatsAppAuth').mockResolvedValue(undefined)
+    try {
+      const { req, url, segments } = makeRequest('POST', '/api/adapters/whatsapp/unbind')
+      expect((await handleAdaptersApi(req, url, segments)).status).toBe(500)
+      expect(logout).not.toHaveBeenCalled()
+      expect(await fs.readFile(path.join(tmpDir, 'adapters.json'), 'utf8')).toBe(before)
+    } finally {
+      logout.mockRestore()
     }
   })
 
@@ -340,6 +463,27 @@ describe('Adapters API', () => {
     } finally {
       writeFileSpy.mockRestore()
       consoleErrorSpy.mockRestore()
+    }
+  })
+
+  it('preserves staging data and refuses login when the WhatsApp namespace is a directory alias', async () => {
+    const unrelatedDir = path.join(tmpDir, 'unrelated')
+    const staleDir = path.join(unrelatedDir, '.login-stale')
+    await fs.mkdir(staleDir, { recursive: true })
+    const sentinel = path.join(staleDir, 'keep.txt')
+    await fs.writeFile(sentinel, 'keep')
+    const staleDate = new Date(Date.now() - 4 * 60_000)
+    await fs.utimes(staleDir, staleDate, staleDate)
+    await fs.symlink(unrelatedDir, path.join(tmpDir, 'whatsapp-auth'), process.platform === 'win32' ? 'junction' : 'dir')
+    const startLogin = spyOn(whatsappProtocol, 'startWhatsAppLoginWithQr').mockRejectedValue(new Error('Unexpected login'))
+    try {
+      await cleanupStaleWhatsAppLoginDirectories()
+      const { req, url, segments } = makeRequest('POST', '/api/adapters/whatsapp/login/start')
+      expect((await handleAdaptersApi(req, url, segments)).status).toBe(500)
+      expect(startLogin).not.toHaveBeenCalled()
+      expect(await fs.readFile(sentinel, 'utf8')).toBe('keep')
+    } finally {
+      startLogin.mockRestore()
     }
   })
 

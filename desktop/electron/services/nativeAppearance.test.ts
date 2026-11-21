@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
+import { getDefaultEchoFlowConfigDir } from '../../../src/utils/echoFlowConfigRoot'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { App, BrowserWindow } from 'electron'
 
@@ -68,9 +69,9 @@ afterEach(() => {
 })
 
 describe('appearance state persistence', () => {
-  it('stores the cache next to the other desktop state under ~/.claude', () => {
+  it('stores the cache next to the other desktop state in the platform product root', () => {
     const { app, home } = makeApp()
-    expect(appearanceStatePath(app, {})).toBe(path.join(home, '.claude', APPEARANCE_STATE_FILE))
+    expect(appearanceStatePath(app, {})).toBe(path.join(getDefaultEchoFlowConfigDir({ env: {}, homeDir: home }), APPEARANCE_STATE_FILE))
   })
 
   it('honours CLAUDE_CONFIG_DIR for portable installs', () => {

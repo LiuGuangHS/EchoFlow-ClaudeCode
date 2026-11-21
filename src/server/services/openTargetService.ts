@@ -1,6 +1,7 @@
 import { execFile as execFileCallback, spawn } from 'node:child_process'
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
+import { readFile, readdir, rm, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { createPrivateStorageTempDirectory } from '../../utils/cachePaths.js'
 import { dirname, extname, join, posix as posixPath, resolve, win32 as winPath } from 'node:path'
 import { promisify } from 'node:util'
 import { ApiError } from '../middleware/errorHandler.js'
@@ -550,7 +551,7 @@ async function defaultConvertIconToPng(iconPath: string, size: number): Promise<
     return await readFile(iconPath)
   }
 
-  const tmpDir = await mkdtemp(join(tmpdir(), 'cc-haha-open-target-icon-'))
+  const tmpDir = await createPrivateStorageTempDirectory('open-target-icon-')
   const outputPath = join(tmpDir, 'icon.png')
   try {
     if (process.platform === 'win32') {

@@ -17,7 +17,7 @@
 import * as fs from 'node:fs/promises'
 import { execFile as execFileCallback } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import * as os from 'node:os'
+import { createPrivateStorageTempDirectory } from '../../utils/cachePaths.js'
 import * as path from 'node:path'
 import { promisify } from 'node:util'
 import { getCcHahaDir } from '../../utils/envUtils.js'
@@ -1060,7 +1060,7 @@ export class ReviewService {
       }
     }
 
-    const patchDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-review-patch-'))
+    const patchDir = await createPrivateStorageTempDirectory('review-patch-')
     const patchFile = path.join(patchDir, 'hunk.patch')
     let results: ReviewPathResult[]
     try {
