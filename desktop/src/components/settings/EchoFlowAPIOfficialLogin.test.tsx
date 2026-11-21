@@ -585,6 +585,27 @@ describe('EchoFlowAPIOfficialLogin', () => {
     expect(screen.getByRole('button', { name: /main key.*sk-main…1234/ })).toBeInTheDocument()
   })
 
+  it('reconciles a pending sign-out when settings remount', async () => {
+    let finishSignOut!: () => void
+    hostMocks.signOut.mockImplementation(() => new Promise<void>(resolve => {
+      finishSignOut = () => {
+        mockAccounts(null, dedicatedAccount)
+        resolve()
+      }
+    }))
+    const first = render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    await screen.findByText(userIdSummary(mainAccount.userId))
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.unbind') }))
+    expect(hostMocks.signOut).toHaveBeenCalledExactlyOnceWith('main')
+    first.unmount()
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    await screen.findByText(userIdSummary(mainAccount.userId))
+    await act(async () => { finishSignOut() })
+    await waitFor(() => expect(screen.queryByText(userIdSummary(mainAccount.userId))).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: endpointTab('dedicated') }))
+    expect(screen.getByText(userIdSummary(dedicatedAccount.userId))).toBeVisible()
+  })
+
   it('disconnects only the selected endpoint account', async () => {
     hostMocks.signOut.mockResolvedValue(undefined)
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)

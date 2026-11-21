@@ -74,6 +74,7 @@ type LineFeedback = {
 
 const ENDPOINTS = ['main', 'dedicated'] as const
 const ACCOUNT_RECHECK_DELAYS = [0, 250, 750]
+const pendingDisconnects = new Map<EchoFlowEndpoint, Promise<unknown>>()
 
 function isLive(account: EchoFlowAccount | null | undefined): account is EchoFlowAccount {
   return Boolean(account && account.live !== false)
@@ -179,6 +180,17 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
     const host = getDesktopHost().echoFlow
     for (const endpoint of ENDPOINTS) {
       const version = accountVersions.current[endpoint]
+      const disconnect = pendingDisconnects.get(endpoint)
+      if (disconnect) {
+        setLineFeedback(endpoint, { busy: 'disconnect' })
+        void disconnect.catch(() => {}).then(async () => {
+          if (loadAccounts.current !== load || accountVersions.current[endpoint] !== version) return
+          await load([endpoint])
+          if (loadAccounts.current === load && accountVersions.current[endpoint] === version) {
+            setLineFeedback(endpoint, { busy: undefined })
+          }
+        })
+      }
       void host.whenAccountRestored(endpoint).then(async (changed) => {
         if (!changed) return
         // A previous mount's unknown result can leave the old account live until a delayed commit.
@@ -380,17 +392,16 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
   }
 
   const disconnectAccount = async () => {
-    if (isWriting || !account) return
     const endpoint = selectedEndpoint
+    if (isWriting || !account || pendingDisconnects.has(endpoint)) return
     const isCurrent = startOperation(endpoint, 'disconnect')
     try {
-      // In Electron only the host can drop the partition cookies; without that
-      // the next rehydrate would silently sign the user back in.
-      if (canSignIn) {
-        await getDesktopHost().echoFlow.signOut(endpoint)
-      } else {
-        await echoflowApi.disconnectAccount(endpoint)
-      }
+      // Only the Electron host can drop the partition cookies on sign-out.
+      const disconnect = canSignIn
+        ? getDesktopHost().echoFlow.signOut(endpoint)
+        : echoflowApi.disconnectAccount(endpoint)
+      pendingDisconnects.set(endpoint, disconnect)
+      await disconnect
       if (!isCurrent()) return
       storeAccount(endpoint, null)
       setCredentials(current => ({
@@ -400,6 +411,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
     } catch {
       if (isCurrent()) setLineFeedback(endpoint, { error: t('echoflowApiOfficialLogin.disconnectFailed') })
     } finally {
+      pendingDisconnects.delete(endpoint)
       if (isCurrent()) setLineFeedback(endpoint, { busy: undefined })
     }
   }
