@@ -254,10 +254,14 @@ describe('EchoFlowAPIOfficialLogin', () => {
     expect(echoflowApi.refreshAccount).not.toHaveBeenCalled()
   })
 
-  it('recovers an existing account after a failed bind supersedes its initial read', async () => {
+  it('releases a failed bind while rereading the existing account', async () => {
     mockAccounts(mainAccount, null)
-    let resolveInitial!: (value: Awaited<ReturnType<typeof echoflowApi.getAccounts>>) => void
-    vi.mocked(echoflowApi.getAccounts).mockReturnValueOnce(new Promise(resolve => { resolveInitial = resolve }))
+    type AccountSnapshot = Awaited<ReturnType<typeof echoflowApi.getAccounts>>
+    let resolveInitial!: (value: AccountSnapshot) => void
+    let resolveReread!: (value: AccountSnapshot) => void
+    vi.mocked(echoflowApi.getAccounts)
+      .mockReturnValueOnce(new Promise(resolve => { resolveInitial = resolve }))
+      .mockReturnValueOnce(new Promise(resolve => { resolveReread = resolve }))
     vi.mocked(echoflowApi.bindAccount).mockRejectedValue(new Error('invalid token'))
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 
@@ -265,8 +269,12 @@ describe('EchoFlowAPIOfficialLogin', () => {
     fireEvent.change(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.managementToken')), { target: { value: 'invalid-token' } })
     fireEvent.click(screen.getByRole('button', { name: bindLabel('main') }))
     expect(await screen.findByRole('alert')).toHaveTextContent(L('echoflowApiOfficialLogin.bindFailed'))
-    await act(async () => { resolveInitial({ account: mainAccount, accounts: { main: mainAccount, dedicated: null } }) })
-    expect(await screen.findByText(userIdSummary(mainAccount.userId))).toBeVisible()
+    expect(screen.getByRole('button', { name: bindLabel('main') })).toBeEnabled()
+    const snapshot = { account: mainAccount, accounts: { main: mainAccount, dedicated: null } }
+    await act(async () => { resolveInitial(snapshot) })
+    expect(screen.queryByText(userIdSummary(mainAccount.userId))).not.toBeInTheDocument()
+    await act(async () => { resolveReread(snapshot) })
+    expect(screen.getByText(userIdSummary(mainAccount.userId))).toBeVisible()
   })
 
   it('preserves a manually entered user ID during an unknown-result reread', async () => {

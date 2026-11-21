@@ -247,7 +247,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
     } catch {
       if (!isCurrent()) return
       setLineFeedback(endpoint, { error: t('echoflowApiOfficialLogin.bindFailed') })
-      await loadAccounts.current?.([endpoint], false)
+      void loadAccounts.current?.([endpoint], false)
     } finally {
       if (isCurrent()) setLineFeedback(endpoint, { busy: undefined })
     }
