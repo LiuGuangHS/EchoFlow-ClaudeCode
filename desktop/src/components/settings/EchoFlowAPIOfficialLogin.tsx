@@ -33,8 +33,13 @@ type LoginAttempt = {
   run: (bounds: PreviewBounds | null) => Promise<void>
 }
 
-const APP_OVERLAYS = '[aria-modal="true"],' + ['scrim', 'drawer', 'dialog', 'sheet', 'dropdown', 'popover', 'tooltip', 'toast']
-  .flatMap((layer) => [`[class*="z-[var(--z-${layer})]"]`, `[style*="var(--z-${layer})"]`]).join(',')
+const APP_OVERLAYS = [
+  '[aria-modal="true"]',
+  ...[
+    'var(--z-scrim)', 'var(--z-drawer)', 'var(--z-dialog)', 'var(--z-sheet)',
+    'var(--z-dropdown)', 'var(--z-popover)', 'var(--z-tooltip)', 'var(--z-toast)',
+  ].flatMap((layer) => [`[class*="z-[${layer}]"]`, `[style*="${layer}"]`]),
+].join(',')
 
 function readLoginBounds(placeholder: HTMLElement): PreviewBounds | null {
   const rect = placeholder.getBoundingClientRect()
