@@ -194,6 +194,19 @@ describe('PR quality workflow', () => {
     }
   })
 
+  test('installs frozen adapter dependencies before persistence checks', () => {
+    const jobs = workflowJobs(readFileSync('.github/workflows/pr-quality.yml', 'utf8'))
+    const steps = jobs['persistence-checks'].steps ?? []
+    const check = steps.findIndex(step => runsCommand(step, 'bun run check:persistence-upgrade'))
+    const install = steps.findIndex(step =>
+      step['working-directory'] === 'adapters' && step.run === 'bun install --frozen-lockfile',
+    )
+    expect(install).toBeGreaterThanOrEqual(0)
+    expect(install).toBeLessThan(check)
+    expect(steps[install].if).toBeUndefined()
+    expect(steps[install]['continue-on-error']).toBeUndefined()
+  })
+
   test('prepares the installed Electron distribution before offline native packaging only', () => {
     for (const file of ['pr-quality.yml', 'nightly-quality.yml']) {
       const jobs = workflowJobs(readFileSync(`.github/workflows/${file}`, 'utf8'))
