@@ -40,6 +40,30 @@ describe('titleService', () => {
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
+  describe.each(['anthropic', 'openai_chat'] as const)('redaction protection through the %s title entry point', (apiFormat) => {
+    test.each([
+      ['malformed JSON', '{ broken'],
+      ['invalid shape', '{"localRedaction":{"enabled":"yes"}}'],
+    ] as const)('does not send title context with %s settings', async (_label, settings) => {
+      const provider = await new ProviderService().addProvider({
+        presetId: 'custom', name: 'Title protection fixture', apiKey: 'fake-key',
+        baseUrl: 'https://title.fixture.invalid', apiFormat,
+        models: { main: 'fixture-model', haiku: 'fixture-model', sonnet: 'fixture-model', opus: 'fixture-model' },
+      })
+      await fs.writeFile(path.join(tmpDir, 'settings.json'), settings)
+      const calls: string[] = []
+      globalThis.fetch = (async (input) => {
+        calls.push(String(input))
+        return Response.json({ content: [{ type: 'text', text: '{"title":"Must not send"}' }] })
+      }) as typeof fetch
+
+      const title = await generateTitle('fixture-private-title-context', provider.id)
+
+      expect(calls).toEqual([])
+      expect(title).toBeNull()
+    })
+  })
+
   test('generates titles with a versioned Anthropic base URL (#1279)', async () => {
     const paths: string[] = []
     const server = Bun.serve({
