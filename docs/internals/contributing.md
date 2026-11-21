@@ -143,7 +143,7 @@ bun run check:desktop-ui-smoke # 真实桌面 UI + 真实权限对话框 + mock 
 
 `check:agent-flow` 覆盖新建 Session → 选运行时 → 首轮流式 → 工具调用 → 权限批准/拒绝 → 工具失败 → API 错误 → 中断 → 断线重连权限重放 → 会话恢复。`check:desktop-ui-smoke` 在真实浏览器里点真实的 Allow 按钮，需要 `agent-browser` 与已安装的 desktop 依赖，缺失时会打印原因并跳过。
 
-`agent-browser` 只属于这条已提交的 lane（在 Linux CI 上以 headless 方式运行）以及维护者手动执行的 `desktop/scripts/e2e-*-agent-browser.sh`。临时的浏览器操作（手动验证、截图、探索性 UI 检查）请走 `ego-browser` skill，不要因为仓库里出现 `agent-browser` 就把它当通用浏览器工具。
+临时 UI 验证（手动检查、截图、探索性测试）使用当前会话可用的浏览器工具或仓库已有的隔离桌面预览，记录实际操作和结果。`agent-browser` 仅用于这条已提交的 lane（在 Linux CI 上以 headless 方式运行）和维护者手动执行的 `desktop/scripts/e2e-*-agent-browser.sh`。
 
 所有会启动真实 server 的 quality-gate lane 都跑在沙箱配置目录里（`scripts/quality-gate/sandbox.ts`），并在结束时校验没有写过开发者真实的 `~/.claude`；写了就判定 lane 失败。
 

@@ -143,7 +143,7 @@ A hand-written mock cannot represent every upstream shape, so `check:agent-e2e` 
 
 `check:agent-flow` covers session creation, runtime selection, first-turn streaming, tool execution, permission allow/deny, tool failure, API error, interrupt, reconnect permission replay, and session recovery. `check:desktop-ui-smoke` clicks the real Allow button in a real browser; it needs `agent-browser` and installed desktop dependencies and skips with a printed reason when either is missing.
 
-`agent-browser` belongs to that committed lane (which runs headless on Linux CI) and to the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. For ad-hoc browser work (manual verification, screenshots, exploratory UI checks), use the `ego-browser` skill instead; do not treat `agent-browser` as a general-purpose browser tool just because it appears in the repository.
+For ad hoc UI verification (manual checks, screenshots, or exploratory testing), use a browser tool available in the current session or the repository's isolated desktop preview. Record the steps you performed and what you observed. Use `agent-browser` only in the committed lane (which runs headless on Linux CI) and in the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts.
 
 Every quality-gate lane that boots the real server runs against a sandbox config dir (`scripts/quality-gate/sandbox.ts`) and fails if it wrote to the developer's real `~/.claude`.
 
