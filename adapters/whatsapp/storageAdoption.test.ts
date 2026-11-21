@@ -130,6 +130,19 @@ describe('validateWhatsAppAuthDirectory', () => {
     await expect(validateWhatsAppAuthDirectory(directory, accountJid)).rejects.toThrow(invalidAuth)
   })
 
+  test('accepts a linked account whose sync key uses a JSON byte array', async () => {
+    await writeLinkedCredentials(deviceJid, appKeyId)
+    await writeFile(join(directory, appKeyFile), JSON.stringify({ keyData: Array(32).fill(42) }))
+    await expect(validateWhatsAppAuthDirectory(directory, accountJid)).resolves.toBeUndefined()
+    await expect(validateWhatsAppAuthDirectory(directory, accountJid, { readOnly: true })).resolves.toBeUndefined()
+  })
+
+  test.each(['{}', '{"keyData":[]}', '{"keyData":[-1,256]}'])('rejects unusable unreferenced sync key %s', async contents => {
+    await writeLinkedCredentials()
+    await writeFile(join(directory, appKeyFile), contents)
+    await expect(validateWhatsAppAuthDirectory(directory, accountJid)).rejects.toThrow(invalidAuth)
+  })
+
   test('rejects any companion the reader cannot parse, including unreferenced keys', async () => {
     await writeLinkedCredentials()
     for (const contents of ['{fake secret', 'null']) {

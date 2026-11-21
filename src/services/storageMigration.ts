@@ -563,6 +563,17 @@ function checkWhatsAppAdoptionConfig(binding: StorageBinding, account: WhatsAppA
   }
 }
 
+async function assertWhatsAppTarget(target: string, files: readonly ApprovedStorageFile[]): Promise<void> {
+  if (!await present(target)) return
+  await assertUnlinkedDirectoryPath(target)
+  const names = new Set(await fs.readdir(target))
+  if (names.size === 0) return
+  if (names.size !== files.length || files.some(file => !names.has(file.relative)) ||
+    !(await Promise.all(files.map(async file => (await regularIdentity(path.join(target, file.relative))).digest === file.identity.digest))).every(Boolean)) {
+    throw new Error('Conflicting WhatsApp sign-in directories; originals retained')
+  }
+}
+
 export async function previewWhatsAppAdoption(binding: StorageBinding, directory: string, sourceConfig?: string) {
   if (!path.isAbsolute(directory) || directory.includes('\0') || path.resolve(directory) !== directory ||
     isWithin(directory, binding.root) || isWithin(binding.root, directory)) throw new Error('Choose an absolute legacy WhatsApp directory outside the selected root')
@@ -593,15 +604,7 @@ export async function previewWhatsAppAdoption(binding: StorageBinding, directory
     if (!stat.isFile() || stat.size > maxImFileBytes) throw new Error('Invalid WhatsApp sign-in file; originals retained')
     files.push({ source, relative, identity: await regularIdentity(source) })
   }
-  const target = path.join(binding.root, account.destination)
-  if (await present(target)) {
-    await assertUnlinkedDirectoryPath(target)
-    const targetNames = (await fs.readdir(target)).sort()
-    if (targetNames.length > 0 && (JSON.stringify(targetNames) !== JSON.stringify(names) ||
-      !(await Promise.all(files.map(async file => (await regularIdentity(path.join(target, file.relative))).digest === file.identity.digest))).every(Boolean))) {
-      throw new Error('Conflicting WhatsApp sign-in directories; originals retained')
-    }
-  }
+  await assertWhatsAppTarget(path.join(binding.root, account.destination), files)
   const activeConfig = path.join(binding.root, 'adapters.json')
   if (sourceConfig) {
     if (await present(activeConfig) && (await regularIdentity(activeConfig)).digest !== account.configIdentity.digest) {
@@ -2058,6 +2061,7 @@ export async function executeStorageMigration(input: StorageMigrationInput): Pro
       const config = await readWhatsAppAdoptionConfig(account.config, account.configIdentity)
       const { validateWhatsAppAuthDirectory } = await import('../../adapters/whatsapp/storageAdoption.js')
       await validateWhatsAppAuthDirectory(account.directory, config.jid, { readOnly: true })
+      await assertWhatsAppTarget(path.join(binding.root, account.destination), whatsapp.files.filter(file => path.dirname(file.source) === account.directory))
       await assertWhatsAppSource(whatsapp, whatsapp.files)
     }
     hooks.signal?.throwIfAborted()

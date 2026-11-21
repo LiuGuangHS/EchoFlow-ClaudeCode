@@ -193,6 +193,23 @@ test('a late account file prevents acceptance and recovery finishes the same unc
   expect((await recoverStorageMigration(f.binding, f.hooks)).state).toBe('ready')
 })
 
+test('a target file added after approval prevents the transaction from starting', async () => {
+  const f = await fixture()
+  const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)
+  const launch = await armWhatsAppStorageApproval(f.binding, preview)
+  const sources = await readApprovedWhatsAppSources(f.binding, launch)
+  const target = path.join(f.binding.root, preview.account.destination)
+  await mkdir(target, { recursive: true })
+  await writeFile(path.join(target, 'session-other.json'), '{}')
+  const result = await executeStorageMigration({ binding: f.binding, sources, hooks: f.hooks })
+  expect(result.state).toBe('blocked')
+  expect(result.issues.join()).toContain('Conflicting WhatsApp sign-in directories')
+  expect(await readApprovedStorageTransaction(f.binding, launch.id)).toBeUndefined()
+  expect(await readdir(target)).toEqual(['session-other.json'])
+  expect(await Bun.file(path.join(f.directory, 'creds.json')).exists()).toBe(true)
+  expect(await readFile(f.config, 'utf8')).toBe(f.configBytes)
+})
+
 test('a file added to the target after publication prevents acceptance', async () => {
   const f = await fixture()
   const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)

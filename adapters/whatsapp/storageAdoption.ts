@@ -40,6 +40,12 @@ function hasKeyPair(pair: AuthenticationCreds['noiseKey'] | undefined): boolean 
     pair.private instanceof Uint8Array && pair.private.length === 32
 }
 
+function hasSyncKeyBytes(value: unknown): boolean {
+  if (value instanceof Uint8Array) return value.length > 0
+  return Array.isArray(value) && value.length > 0 &&
+    value.every(byte => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+}
+
 async function validateSnapshot(path: string, expectedAccountJid: string, readOnly: boolean): Promise<boolean> {
   const directory = resolve(path)
   const expected = normalizeAccountJid(expectedAccountJid)
@@ -66,7 +72,7 @@ async function validateSnapshot(path: string, expectedAccountJid: string, readOn
     const { proto } = await import('@whiskeysockets/baileys/WAProto/index.js')
     return proto.Message.AppStateSyncKeyData.fromObject(value)
   }
-  const matchesAccount = async (creds: AuthenticationCreds) => {
+  const matchesAccount = (creds: AuthenticationCreds) => {
     // Baileys also returns fresh credentials on read failure, but these lack me.id.
     if (normalizeAccountJid(creds?.me?.id) !== expected || !hasKeyPair(creds.noiseKey) ||
       !hasKeyPair(creds.signedIdentityKey) || !hasKeyPair(creds.signedPreKey?.keyPair) ||
@@ -74,19 +80,18 @@ async function validateSnapshot(path: string, expectedAccountJid: string, readOn
       !Number.isSafeInteger(creds.signedPreKey.keyId) || !Number.isSafeInteger(creds.registrationId) ||
       typeof creds.advSecretKey !== 'string' || Buffer.from(creds.advSecretKey, 'base64').length !== 32) return false
     const id = creds.myAppStateKeyId
-    if (id === undefined) return true
-    if (typeof id !== 'string' || !id) return false
-    if (!files.has(keyFileName('app-state-sync-key', id))) return false
-    const keyData = (await getKey('app-state-sync-key', id))?.keyData
-    return keyData instanceof Uint8Array && keyData.length > 0
+    return id === undefined || (typeof id === 'string' && id.length > 0 && files.has(keyFileName('app-state-sync-key', id)))
   }
 
-  if (!await matchesAccount(state ? state.creds : await readJson(credsFile))) return false
-  if (files.has(backupFile) && !await matchesAccount(await readJson(backupFile))) return false
+  if (!matchesAccount(state ? state.creds : await readJson(credsFile))) return false
+  if (files.has(backupFile) && !matchesAccount(await readJson(backupFile))) return false
 
   for (const name of files) {
     const key = parseKeyFile(name)
-    if (key && await getKey(key.category, key.id) == null) return false
+    if (!key) continue
+    const value = await getKey(key.category, key.id)
+    if (value == null) return false
+    if (key.category === 'app-state-sync-key' && !hasSyncKeyBytes(value.keyData)) return false
   }
   return true
 }
