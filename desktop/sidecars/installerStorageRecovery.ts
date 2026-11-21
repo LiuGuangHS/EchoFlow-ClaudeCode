@@ -12,7 +12,7 @@ import { createStorageMigrationHooks } from '../../src/services/storageMigration
 import { validateRestrictedHeadlessStorage } from '../../src/services/storageStartupValidation'
 import { readLegacyDataMigrationReceipt } from '../electron/services/dataMigrationLegacyRecovery'
 
-type InstallerRecoveryRequest = { source: string; profile: string; installDirs: string[]; env?: NodeJS.ProcessEnv }
+type InstallerRecoveryRequest = { source?: string; profile: string; installDirs: string[]; env?: NodeJS.ProcessEnv }
 type InstallerRecoveryOptions = {
   hooks?: StorageMigrationHooks
   validateRestrictedStartup?(binding: StorageBinding): Promise<void>
@@ -66,6 +66,14 @@ function requireReady(result: StorageMigrationResult): void {
 /** Called only after the PowerShell discovery/identity guards, before the old uninstaller. */
 export async function recoverInstallerStorage(request: InstallerRecoveryRequest, options: InstallerRecoveryOptions = {}): Promise<{ root: string; state: 'ready' }> {
   const env = request.env ?? process.env
+  const homeDir = env.USERPROFILE || env.HOME || homedir()
+  const targetBinding = resolveStorageBinding({ env: { ...env, CLAUDE_CONFIG_DIR: undefined }, homeDir })
+  if (request.source === undefined) {
+    // Accepted cleanup can retire the source and its pointer before the ready receipt is durable.
+    const status = await readStorageMigrationStatus(targetBinding)
+    if (status && status.state !== 'ready') throw new Error(`Finish storage recovery in the application before upgrading (${status.state})`)
+    return { root: targetBinding.root, state: 'ready' }
+  }
   const source = await canonicalPath(request.source)
   const profile = await canonicalPath(request.profile)
   let profileAncestor = request.profile
@@ -74,12 +82,8 @@ export async function recoverInstallerStorage(request: InstallerRecoveryRequest,
   const selected = env.CLAUDE_CONFIG_DIR
   if (selected && (env.CC_HAHA_APP_PORTABLE_DIR !== '1' || await canonicalPath(selected) !== source)) throw new Error('Installer cannot replace an externally managed storage root')
   // An install-contained legacy selection cannot remain the final R after uninstall.
-  const homeDir = env.USERPROFILE || env.HOME || homedir()
   const file = storageLocationFile(homeDir)
-  const binding = {
-    ...resolveStorageBinding({ env: { ...env, CLAUDE_CONFIG_DIR: undefined }, homeDir }),
-    location: { file, moveSource: source },
-  }
+  const binding = { ...targetBinding, location: { file, moveSource: source } }
   const activeRoot = readStorageLocation(file)
   if (activeRoot && activeRoot !== binding.root && activeRoot !== source) throw new Error('Installer source conflicts with the active EchoFlow storage directory')
   const target = await canonicalPath(binding.root)
@@ -149,8 +153,8 @@ export function parseInstallerRecoveryArgs(args: string[]): InstallerRecoveryReq
       values.set(flag, value)
     }
   }
-  if (!values.has('--source') || !values.has('--profile') || !installDirs.length) throw new Error('Missing installer recovery arguments')
-  return { source: values.get('--source')!, profile: values.get('--profile')!, installDirs }
+  if (!values.has('--profile') || !installDirs.length) throw new Error('Missing installer recovery arguments')
+  return { source: values.get('--source'), profile: values.get('--profile')!, installDirs }
 }
 
 if (import.meta.main) {

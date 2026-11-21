@@ -16,7 +16,7 @@ describe('Windows installer recovery prerequisites', () => {
     expect(hook).toContain('!include "${BUILD_RESOURCES_DIR}\\product-identity.generated.nsh"')
     for (const root of ['$R1', '$R2']) {
       for (const name of ['ECHOFLOW_PRODUCT_SLUG', 'ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME']) {
-        expect(fastPath).toContain(`Push "${root}\\\${${name}}"\n  Call CcHahaIsAbsentOrEmptyDirectory\n  Pop $R3\n  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done`)
+        expect(fastPath).toContain(`Push "${root}\\\${${name}}"\n  Push ""\n  Call CcHahaIsAbsentOrEmptyDirectory\n  Pop $R3\n  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done`)
       }
     }
     expect(hook).toContain('-DesktopPackageName "${ECHOFLOW_PRODUCT_SLUG}" -LegacyDesktopPackageName "${ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME}"')
@@ -57,6 +57,8 @@ describe('Windows installer recovery prerequisites', () => {
     expect(helper).toContain('Unselected profile has an unresolved portable data directory')
     expect(recovery).toContain('-ProtectedInstallDirs $protectedRoots')
     expect(helper).toContain('Unselected profile migration history references an application install directory')
+    const bridge = helper.slice(helper.indexOf('function Invoke-InstallerStorageRecovery {'), helper.indexOf('function Resolve-UserDataDirectory {'))
+    expect(bridge).toMatch(/did not confirm a ready complete root'\s*}\s*foreach \(\$installDir in \$InstallDirs\) \{\s*if \(Test-PathMayBeDeleted -InstallDir \$installDir -Candidate \$receipt\.root\)/)
   })
 
   test('keeps terminal, pending, invalid and read-only journal fixtures in Windows SelfTest', () => {
@@ -405,6 +407,7 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
     expect(fastPath).toContain('Push "$R3\\${ECHOFLOW_PRODUCT_NAME}\\app-mode.json"')
     expect(fastPath.match(/Call CcHahaIsStrictDefaultMode/g)).toHaveLength(1)
     expect(fastPath).not.toContain('IfFileExists "$R2\\${ECHOFLOW_PRODUCT_NAME}\\app-mode.json" cc_haha_skip_recovery_done')
+    expect(fastPath).toContain('Push "$R2\\${ECHOFLOW_PRODUCT_NAME}\\${ECHOFLOW_PRODUCT_SLUG}\\migrations"\n  Push "writers"\n  Call CcHahaIsAbsentOrEmptyDirectory\n  Pop $R3\n  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done')
     expect(installerHook).toMatch(
       /Call CcHahaCanSkipLegacyRecovery[\s\S]*No legacy data candidates found for the registered per-user installation[\s\S]*UAC_AsUser_Call Function CcHahaRecoverLegacy/,
     )
@@ -435,6 +438,7 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
       'portable', 'broken', 'crlf', 'bom', 'final-newline', 'extra-field', 'uppercase', 'truncated', 'locked-mode',
       'journal', 'other-journal', 'journal-directory', 'legacy-data', 'elevated', 'inner-uac',
       'different-install', 'machine-install', 'machine-uninstaller', 'config-env', 'managed-env',
+      'local-transaction', 'local-empty-writers', 'local-writer-receipt', 'local-linked-writers', 'local-writers-file',
       ...aliasScenarios,
     ]
     const executable = path.join(root, 'probe.exe')
@@ -444,6 +448,7 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
     try {
       for (const kind of ['Local', 'Roaming']) {
         for (const scenario of scenarios) {
+          if (kind === 'Roaming' && scenario.startsWith('local-')) continue
           const name = `${kind}-${scenario}`
           const fixture = path.join(root, name)
           const selected = path.join(fixture, kind, 'EchoFlow Code')
@@ -485,6 +490,27 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
           if (['journal', 'implicit-default-journal'].includes(scenario)) writeFileSync(path.join(selected, 'data-migration-v1.json'), '{"version":1,"status":{"stage":"completed"}}')
           if (scenario === 'other-journal') writeFileSync(path.join(other, 'data-migration-v1.json'), '{}')
           if (scenario === 'journal-directory') mkdirSync(path.join(selected, 'data-migration-v1.json'))
+          if (scenario.startsWith('local-')) {
+            const directory = path.join(fixture, 'Local', identity.name, identity.slug, 'migrations')
+            mkdirSync(directory, { recursive: true })
+            const writers = path.join(directory, 'writers')
+            if (scenario === 'local-linked-writers') {
+              symlinkSync(install, writers, 'junction')
+            } else if (scenario === 'local-writers-file') {
+              writeFileSync(writers, 'not a directory')
+            } else {
+              mkdirSync(writers)
+              if (scenario !== 'local-empty-writers') {
+                const token = '12345678-1234-1234-1234-123456789abc'
+                writeFileSync(path.join(writers, `424242-${token}.json`), JSON.stringify({ version: 1, host: 'fixture', pid: 424242, token }))
+              }
+            }
+            if (scenario === 'local-transaction') {
+              const transaction = path.join(directory, '11111111-2222-4333-8444-555555555555')
+              mkdirSync(transaction)
+              writeFileSync(path.join(transaction, 'journal.json'), '{"state":"cleanup-required"}')
+            }
+          }
           if (['legacy-data', 'implicit-default-legacy'].includes(scenario)) {
             mkdirSync(path.join(install, 'CLAUDE_CONFIG_DIR'))
             writeFileSync(path.join(install, 'CLAUDE_CONFIG_DIR', 'settings.json'), 'must survive')
@@ -501,10 +527,10 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
               if (state === 'default' || state === 'portable') writeFileSync(path.join(alias, 'app-mode.json'), defaultMode.replace('default', state))
             }
           }
-          const succeeds = ['default', 'empty-other', 'absent-mode', 'implicit-default', 'implicit-default-empty-other'].includes(scenario)
+          const succeeds = ['default', 'empty-other', 'absent-mode', 'implicit-default', 'implicit-default-empty-other', 'local-empty-writers', 'local-writer-receipt'].includes(scenario)
             || (scenario.startsWith('alias-') && scenario.endsWith('-empty'))
           const errorFlag = scenarios.indexOf(scenario) % 2
-          expected.push(`${name}|${Number(succeeds)}|${errorFlag}|r0|r1|r2|r3|r4|r5|r6`)
+          expected.push(`${name}|${Number(succeeds)}|${errorFlag}|r0|r1|r2|r3|r4|r5|r6|r7|stack-sentinel`)
           sections.push(String.raw`
   System::Call 'kernel32::SetEnvironmentVariable(w "APPDATA", w "${path.join(fixture, 'Roaming')}")'
   System::Call 'kernel32::SetEnvironmentVariable(w "LOCALAPPDATA", w "${path.join(fixture, 'Local')}")'
@@ -523,12 +549,15 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
   StrCpy $R4 r4
   StrCpy $R5 r5
   StrCpy $R6 r6
+  StrCpy $R7 r7
+  Push stack-sentinel
   ${errorFlag ? 'SetErrors' : 'ClearErrors'}
   Call CcHahaCanSkipLegacyRecovery
   Pop $0
   StrCpy $1 0
   IfErrors 0 +2
     StrCpy $1 1
+  Pop $3
   ${scenario === 'locked-mode' ? "System::Call 'kernel32::CloseHandle(p $lockedHandle)'" : ''}
   ${hasModeFile ? `System::Call 'kernel32::CreateFileW(w "${modeFile}", i 0x80000000, i 0, p 0, i 3, i 0, p 0) p.s'
   Pop $2
@@ -536,7 +565,7 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
     SetErrorLevel 97
     Quit
   System::Call 'kernel32::CloseHandle(p r2)'` : ''}
-  FileWrite $traceHandle "${name}|$0|$1|$R0|$R1|$R2|$R3|$R4|$R5|$R6$\n"
+  FileWrite $traceHandle "${name}|$0|$1|$R0|$R1|$R2|$R3|$R4|$R5|$R6|$R7|$3$\n"
 `)
         }
       }

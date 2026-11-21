@@ -179,6 +179,35 @@ test('a completed transaction is recovered without requiring its retired source'
   expect((await readStorageMigrationStatus(f.binding))?.id).toBe(completed?.id)
 })
 
+test('a retry with no discoverable source refuses an accepted transaction at the default destination', async () => {
+  const f = await fixture()
+  let journalFile = ''
+  let accepted = ''
+  await recoverInstallerStorage(f.request, { hooks: {
+    ...f.hooks,
+    cleanupResources: async transaction => {
+      journalFile = path.join(transaction, 'journal.json')
+      accepted = await fs.readFile(journalFile, 'utf8')
+    },
+  } })
+  expect(await fs.exists(f.source)).toBe(false)
+  expect(await fs.exists(path.join(f.profile, 'app-mode.json'))).toBe(false)
+  const ready = await fs.readFile(journalFile, 'utf8')
+  expect(JSON.parse(accepted).phase).toBe('accepted')
+  const request = { ...parseInstallerRecoveryArgs(['--profile', f.profile, '--install-dir', f.request.installDirs[0]!]), env: f.request.env }
+  await expect(recoverInstallerStorage(request)).resolves.toEqual({ root: f.binding.root, state: 'ready' })
+
+  // Simulate a crash after source retirement with the previous durable journal still in place.
+  await fs.writeFile(journalFile, accepted)
+  expect((await readStorageMigrationStatus(f.binding))?.state).toBe('cleanup-pending')
+  await expect(recoverInstallerStorage(request)).rejects.toThrow('Finish storage recovery in the application before upgrading (cleanup-pending)')
+  expect(await fs.readFile(journalFile, 'utf8')).toBe(accepted)
+  expect(await fs.exists(f.source)).toBe(false)
+  expect(await fs.readFile(path.join(f.binding.root, 'settings.json'), 'utf8')).toBe('{"unknown":{"future":42}}')
+  await fs.writeFile(journalFile, ready)
+  await expect(recoverInstallerStorage(request)).resolves.toEqual({ root: f.binding.root, state: 'ready' })
+})
+
 test('a request cannot resume a transaction belonging to a different source', async () => {
   const f = await fixture()
   await expect(recoverInstallerStorage(f.request, {

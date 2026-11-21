@@ -667,7 +667,12 @@ function Invoke-InstallerStorageRecovery {
     throw 'Packaged installer storage recovery runtime is unavailable; the old version and source were retained.'
   }
   Assert-NoReparsePointInPath -Path $Bridge
-  $arguments = @('--source', $Source, '--profile', $UserDataDir)
+  $hasSource = -not [string]::IsNullOrWhiteSpace($Source)
+  if ($hasSource) {
+    $arguments = @('--source', $Source, '--profile', $UserDataDir)
+  } else {
+    $arguments = @('--profile', $UserDataDir)
+  }
   foreach ($installDir in $InstallDirs) { $arguments += @('--install-dir', $installDir) }
   $savedErrorAction = $ErrorActionPreference
   try {
@@ -939,18 +944,16 @@ function Invoke-LegacyRecovery {
   if ($existingSharedInstallDirs.Count -gt 0) {
     Assert-NoUndiscoveredLegacySources -ScanDirs $existingSharedInstallDirs -InstallDirs $existingInstallDirs -ActiveSource $source
   }
-  if ([string]::IsNullOrWhiteSpace([string]$source)) {
-    return $null
-  }
-  if ($InstallerIdentitySafety -eq 'untrusted-elevated') {
+  $hasSource = -not [string]::IsNullOrWhiteSpace([string]$source)
+  if ($hasSource -and $InstallerIdentitySafety -eq 'untrusted-elevated') {
     throw 'Legacy data recovery was requested from an elevated installer without the original user process. Run the installer normally (not as Administrator) so recovery is written to the correct Windows user profile.'
   }
-  if (-not $SkipProcessCheck) {
+  if ($hasSource -and -not $SkipProcessCheck) {
     Assert-NoRunningApplication -InstallDirs $existingInstallDirs -ProcessName $ProcessName
   }
 
   foreach ($installDir in $potentialInstallDirs) {
-    if (Test-PathMayBeDeleted -InstallDir $installDir -Candidate $UserDataDir) {
+    if ($hasSource -and (Test-PathMayBeDeleted -InstallDir $installDir -Candidate $UserDataDir)) {
       throw "The mode metadata directory is inside an application install directory: $UserDataDir"
     }
     if (-not [string]::IsNullOrWhiteSpace($RecoveryBridge) -and
@@ -959,7 +962,9 @@ function Invoke-LegacyRecovery {
     }
   }
 
+  # Source retirement can already have removed the discovery evidence. The bridge checks the shared receipt at R.
   $destination = Invoke-InstallerStorageRecovery -Bridge $RecoveryBridge -Source $source -UserDataDir $UserDataDir -InstallDirs $potentialInstallDirs
+  if (-not $hasSource) { return $null }
   if (-not $SkipProcessCheck) {
     Assert-NoRunningApplication -InstallDirs $existingInstallDirs -ProcessName $ProcessName
   }
@@ -1035,9 +1040,13 @@ function Run-SelfTest {
   # These fixtures exercise discovery/guards only; the shared transaction has separate TS tests.
   $bridgeCalls = New-Object 'System.Collections.Generic.List[object]'
   $testFinalRoot = Join-Path $testRoot 'final R'
+  $pendingRetiredRoot = $null
   function Invoke-InstallerStorageRecovery {
     param([string]$Bridge, [string]$Source, [string]$UserDataDir, [string[]]$InstallDirs)
     $bridgeCalls.Add([pscustomobject]@{ Source = $Source; UserDataDir = $UserDataDir; InstallDirs = $InstallDirs })
+    if ($UserDataDir -eq $pendingRetiredRoot -and [string]::IsNullOrWhiteSpace($Source)) {
+      throw 'Finish storage recovery in the application before upgrading (cleanup-pending)'
+    }
     return $testFinalRoot
   }
   $unicodeName = "$([char]0x6570)$([char]0x636E)"
@@ -1171,6 +1180,29 @@ function Run-SelfTest {
       $elevatedFailed = $_.Exception.Message.Contains('original user process')
     }
     Assert-SelfTest -Condition $elevatedFailed -Message 'untrusted elevated recovery did not fail closed'
+
+    $retryInstall = Join-Path $testRoot 'retry after retirement install'
+    $retrySource = Join-Path $retryInstall 'CLAUDE_CONFIG_DIR'
+    $retryProfile = Join-Path $testRoot 'retry after retirement profile'
+    New-Item -ItemType Directory -Path $retrySource -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $retrySource 'settings.json') -Value 'legacy state' -NoNewline
+    Write-TestMode -Dir $retryProfile -Value @{ mode = 'portable'; portable_dir = $retrySource }
+    $retryArguments = @{
+      InstallDirs = @($retryInstall); UserDataDir = $retryProfile; ProcessName = $ProcessName
+      ActiveConfigDir = ''; SkipProcessCheck = $true
+    }
+    $initialResult = Invoke-LegacyRecovery @retryArguments
+    Assert-SelfTest -Condition ($initialResult -eq $testFinalRoot -and $bridgeCalls[$bridgeCalls.Count - 1].Source -eq $retrySource) -Message 'retirement fixture did not discover its initial source'
+    Remove-Item -LiteralPath $retrySource -Recurse -Force
+    Remove-Item -LiteralPath (Join-Path $retryProfile 'app-mode.json') -Force
+    $pendingRetiredRoot = $retryProfile
+    $retryFailure = ''
+    try { Invoke-LegacyRecovery @retryArguments | Out-Null }
+    catch { $retryFailure = $_.Exception.Message }
+    Assert-SelfTest -Condition ($retryFailure.Contains('cleanup-pending')) -Message 'normal discovery bypassed the bridge after source retirement'
+    $pendingRetiredRoot = $null
+    $retryResult = Invoke-LegacyRecovery @retryArguments
+    Assert-SelfTest -Condition ($null -eq $retryResult) -Message 'installer reported new recovery after the retired transaction was ready'
 
     $elevatedDefaultInstall = Join-Path $testRoot 'elevated default install'
     New-Item -ItemType Directory -Path $elevatedDefaultInstall -Force | Out-Null
