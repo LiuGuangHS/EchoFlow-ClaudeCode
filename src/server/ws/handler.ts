@@ -2502,6 +2502,8 @@ async function handleSetCliRuntime(
       }
       resolveClaudeCodeRuntimePath(cliRuntimeId)
     } catch {
+      cliRuntimeOverrides.delete(sessionId)
+      deferredCliRuntimeRestarts.delete(sessionId)
       rejectedCliRuntimeConfigs.set(sessionId, 'The selected CLI runtime is unavailable.')
       sendMessage(ws, { type: 'error', message: 'Unable to select the requested CLI runtime.', code: 'CLI_RUNTIME_INVALID' })
       return
@@ -2844,7 +2846,6 @@ async function restartSessionWithRuntimeConfig(
     const sdkUrl = buildSdkWebSocketUrl(ws, sessionId)
     await conversationService.startSession(sessionId, workDir, sdkUrl, startupSettings)
     if (cliRuntimeId) await commitCliRuntime(sessionId, cliRuntimeId, workDir)
-    rejectedCliRuntimeConfigs.delete(sessionId)
     bindSessionTurnObserver(sessionId)
     bindAllClientSessionOutputs(sessionId)
     runtimeExitStoppedSessions.delete(sessionId)

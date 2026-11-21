@@ -62,6 +62,7 @@ import {
   roughTokenCountEstimationForMessage,
 } from '../../services/tokenEstimation.js'
 import { ProviderService } from './providerService.js'
+import type { ClaudeCodeRuntimeId } from './claudeCodeRuntimeService.js'
 import { shouldHideCommandMetadataContent } from '../../utils/commandMetadata.js'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { getSettings_DEPRECATED } from '../../utils/settings/settings.js'
@@ -204,6 +205,7 @@ export type SessionDetail = SessionListItem & {
 }
 
 export type SessionLaunchInfo = {
+  cliRuntimeId?: ClaudeCodeRuntimeId
   additionalDirectories?: string[]
   filePath: string
   projectDir: string
@@ -1223,6 +1225,7 @@ export class SessionService {
     launchInfo: SessionLaunchInfo | null,
     metadata: {
       workDir: string
+      cliRuntimeId?: ClaudeCodeRuntimeId
       repository?: PreparedSessionWorkspace['repository']
       additionalDirectories?: string[]
       permissionMode?: string
@@ -1233,6 +1236,7 @@ export class SessionService {
     },
   ): boolean {
     if (!launchInfo) return false
+    if ((metadata.cliRuntimeId === 'bundled' || metadata.cliRuntimeId === 'installed') && launchInfo.cliRuntimeId !== metadata.cliRuntimeId) return false
     if (metadata.additionalDirectories !== undefined && JSON.stringify(launchInfo.additionalDirectories ?? []) !== JSON.stringify(metadata.additionalDirectories)) return false
     if (normalizeDriveRootPathForPlatform(launchInfo.workDir) !== metadata.workDir) {
       return false
@@ -1530,6 +1534,7 @@ export class SessionService {
     if (pending) return pending
     const request = withHistoryReadBudget(undefined, async () => {
       const makeState = () => ({
+        cliRuntimeId: undefined as ClaudeCodeRuntimeId | undefined,
         additionalDirectories: undefined as string[] | undefined,
         workDir: undefined as string | undefined, cwd: undefined as string | undefined,
         repository: undefined as PreparedSessionWorkspace['repository'] | undefined,
@@ -1558,6 +1563,7 @@ export class SessionService {
         const record = entry as Record<string, unknown>
         if (record.entrypoint === 'claude-desktop-team-worker') state.isTeamWorker = true
         if (entry.type === 'session-meta') {
+          if (record.cliRuntimeId === 'bundled' || record.cliRuntimeId === 'installed') state.cliRuntimeId = record.cliRuntimeId
           if (record.additionalDirectories !== undefined) state.additionalDirectories = normalizeAdditionalDirectories(record.additionalDirectories)
           if (entry.agentProfile === 'standard' || entry.agentProfile === 'lean') state.agentProfile = entry.agentProfile
           if (typeof record.workDir === 'string') state.workDir = normalizeDriveRootPathForPlatform(record.workDir)
@@ -1615,6 +1621,7 @@ export class SessionService {
           workDir: (launch.workDir !== undefined ? launch.workDir : launch.cwd ?? this.desanitizePath(projectDir)) || process.cwd(),
           customTitle: launch.customTitle,
           transcriptMessageCount: launch.launchCount,
+          ...(launch.cliRuntimeId ? { cliRuntimeId: launch.cliRuntimeId } : {}),
           ...shared(launch),
         },
         customTitle: launch.nonemptyCustomTitle,
@@ -3515,6 +3522,7 @@ export class SessionService {
     const found = await this.findSessionFile(sessionId)
     if (!found) return null
 
+    let cliRuntimeId: ClaudeCodeRuntimeId | undefined
     let latestWorkDir: string | null = null
     let latestCwd: string | null = null
     let repository: PreparedSessionWorkspace['repository'] | undefined
@@ -3560,6 +3568,7 @@ export class SessionService {
       if (entry.type === 'session-meta') {
         if (entry.agentProfile === 'standard' || entry.agentProfile === 'lean') agentProfile = entry.agentProfile
         const record = entry as Record<string, unknown>
+        if (record.cliRuntimeId === 'bundled' || record.cliRuntimeId === 'installed') cliRuntimeId = record.cliRuntimeId
         if (record.additionalDirectories !== undefined) additionalDirectories = normalizeAdditionalDirectories(record.additionalDirectories)
         if (typeof record.workDir === 'string') {
           latestWorkDir = normalizeDriveRootPathForPlatform(record.workDir)
@@ -3708,6 +3717,7 @@ export class SessionService {
 
     const workDir = latestWorkDir || latestCwd || this.desanitizePath(found.projectDir) || process.cwd()
     const launchInfo: SessionLaunchInfo = {
+      ...(cliRuntimeId ? { cliRuntimeId } : {}),
       additionalDirectories,
       filePath: found.filePath,
       projectDir: found.projectDir,
@@ -5331,12 +5341,25 @@ export class SessionService {
       return side && !side.closed ? { ...side.launchInfo, additionalDirectories: [...(side.launchInfo.additionalDirectories ?? [])] } : null
     }
     const memory = this.memoryLaunchInfo.get(this.memorySessionKey(sessionId))
-    const found = await this.findSessionFile(sessionId)
+    const matches = await this.findSessionFiles(sessionId)
+    const found = matches[0]
     if (!found) return memory ? { ...memory, additionalDirectories: [...(memory.additionalDirectories ?? [])], transcriptMessageCount: 0 } : null
 
     const projection = await this.getMetadataProjection(found.filePath, found.projectDir)
     const projected = projection.launchInfo
-    return { ...projected, ...memory, additionalDirectories: [...(memory?.additionalDirectories ?? projected.additionalDirectories ?? [])], transcriptMessageCount: projected.transcriptMessageCount }
+    const launchInfo = { ...projected, ...memory, additionalDirectories: [...(memory?.additionalDirectories ?? projected.additionalDirectories ?? [])], transcriptMessageCount: projected.transcriptMessageCount }
+    // Recover the pre-init pin without replacing the selected conversation or mutating its cached projection.
+    if (launchInfo.cliRuntimeId === undefined) {
+      for (const match of matches.slice(1)) {
+        if (await this.fileHasConversationTranscript(match.filePath)) continue
+        const candidate = (await this.getMetadataProjection(match.filePath, match.projectDir)).launchInfo.cliRuntimeId
+        if (candidate !== undefined) {
+          launchInfo.cliRuntimeId = candidate
+          break
+        }
+      }
+    }
+    return launchInfo
   }
 
   async deleteSessionFile(sessionId: string): Promise<void> {
@@ -5404,15 +5427,16 @@ export class SessionService {
         agentProfile: 'standard' as 'standard' | 'lean',
         extra: {} as Record<string, unknown>,
         permissionMode: undefined as string | undefined,
-        runtime: {} as { runtimeProviderId?: string | null, runtimeModelId?: string, effortLevel?: string, openAIFastMode?: boolean } }
+        runtime: {} as { cliRuntimeId?: ClaudeCodeRuntimeId, runtimeProviderId?: string | null, runtimeModelId?: string, effortLevel?: string, openAIFastMode?: boolean } }
       await streamBoundedHistory(found.filePath, entry => {
         const record = entry as RawEntry
         if (record.type === 'session-meta') {
           // Unknown extension fields merge as patches. The runtime selection does
           // not: a complete selection without effortLevel means auto, so it is
           // reduced exactly like the launch metadata projection instead.
-          const { runtimeProviderId, runtimeModelId, effortLevel: _effortLevel, openAIFastMode, ...extension } = entry
+          const { cliRuntimeId, runtimeProviderId, runtimeModelId, effortLevel: _effortLevel, openAIFastMode, ...extension } = entry
           Object.assign(preserved.extra, extension)
+          if (cliRuntimeId === 'bundled' || cliRuntimeId === 'installed') preserved.runtime.cliRuntimeId = cliRuntimeId
           if (runtimeProviderId === null || typeof runtimeProviderId === 'string') preserved.runtime.runtimeProviderId = runtimeProviderId
           if (typeof runtimeModelId === 'string') preserved.runtime.runtimeModelId = runtimeModelId
           preserved.runtime.effortLevel = resolveSessionEffortLevel(entry, preserved.runtime.effortLevel)
@@ -5459,6 +5483,7 @@ export class SessionService {
         workDir,
         repository,
         ...(permissionMode ? { permissionMode } : {}),
+        ...(runtime.cliRuntimeId ? { cliRuntimeId: runtime.cliRuntimeId } : {}),
         ...(runtime.runtimeProviderId !== undefined ? { runtimeProviderId: runtime.runtimeProviderId } : {}),
         ...(runtime.runtimeModelId ? { runtimeModelId: runtime.runtimeModelId } : {}),
         ...(runtime.effortLevel ? { effortLevel: runtime.effortLevel } : {}),
@@ -5509,6 +5534,7 @@ export class SessionService {
     sessionId: string,
     metadata: {
       workDir: string
+      cliRuntimeId?: ClaudeCodeRuntimeId
       customTitle?: string | null
       additionalDirectories?: string[]
       repository?: PreparedSessionWorkspace['repository']
@@ -5524,6 +5550,7 @@ export class SessionService {
         const side = getSideChat(sessionId)
         if (side && !side.closed) {
           Object.assign(side.launchInfo, metadata, {
+            cliRuntimeId: metadata.cliRuntimeId === 'bundled' || metadata.cliRuntimeId === 'installed' ? metadata.cliRuntimeId : side.launchInfo.cliRuntimeId,
             effortLevel: resolveSessionEffortLevel(metadata, side.launchInfo.effortLevel),
             openAIFastMode: typeof metadata.openAIFastMode === 'boolean' ? metadata.openAIFastMode : side.launchInfo.openAIFastMode,
           })
@@ -5546,6 +5573,7 @@ export class SessionService {
         const projectDir = this.sanitizePath(normalizedWorkDir)
         this.memoryLaunchInfo.set(this.memorySessionKey(sessionId), {
           ...previousInfo,
+          ...(metadata.cliRuntimeId === 'bundled' || metadata.cliRuntimeId === 'installed' ? { cliRuntimeId: metadata.cliRuntimeId } : {}),
           additionalDirectories,
           workDir: normalizedWorkDir, projectDir,
           filePath: path.join(this.getProjectsDir(), projectDir, `${sessionId}.jsonl`),
@@ -5597,9 +5625,23 @@ export class SessionService {
       // That conversation wins file selection, but its launch snapshot still lives
       // in the placeholder until this write transfers it before placeholder cleanup.
       const target = matches.find((match) => match.filePath === targetFilePath)
-      const targetDirectories = target
-        ? (await this.getMetadataProjection(target.filePath, target.projectDir)).launchInfo.additionalDirectories
+      const targetLaunchInfo = target
+        ? (await this.getMetadataProjection(target.filePath, target.projectDir)).launchInfo
         : undefined
+      let cliRuntimeId = metadata.cliRuntimeId === 'bundled' || metadata.cliRuntimeId === 'installed'
+        ? metadata.cliRuntimeId : targetLaunchInfo?.cliRuntimeId
+      if (cliRuntimeId === undefined) {
+        for (const match of matches) {
+          if (match.filePath === targetFilePath || await this.fileHasConversationTranscript(match.filePath)) continue
+          const candidate = (await this.getMetadataProjection(match.filePath, match.projectDir)).launchInfo.cliRuntimeId
+          if (candidate !== undefined) {
+            cliRuntimeId = candidate
+            break
+          }
+        }
+      }
+      const runtimeNeedsTransfer = cliRuntimeId !== undefined && cliRuntimeId !== targetLaunchInfo?.cliRuntimeId
+      const targetDirectories = targetLaunchInfo?.additionalDirectories
       let scopeNeedsTransfer = metadata.additionalDirectories !== undefined && targetDirectories === undefined
       if (metadata.additionalDirectories === undefined) {
         if (targetDirectories !== undefined) {
@@ -5638,9 +5680,10 @@ export class SessionService {
         }
       }
 
-      if (!scopeNeedsTransfer && !customTitle && !this.memoryLaunchInfo.has(this.memorySessionKey(sessionId))) {
+      if (!scopeNeedsTransfer && !runtimeNeedsTransfer && !customTitle && !this.memoryLaunchInfo.has(this.memorySessionKey(sessionId))) {
         if (this.metadataMatchesLaunchInfo(previousInfo, {
           ...metadata,
+          cliRuntimeId,
           additionalDirectories,
           workDir: normalizedWorkDir,
           repository,
@@ -5656,6 +5699,7 @@ export class SessionService {
         isMeta: true,
         workDir: normalizedWorkDir,
         additionalDirectories,
+        ...(cliRuntimeId ? { cliRuntimeId } : {}),
         agentProfile: storedInfo?.agentProfile ?? 'standard',
         repository,
         ...(metadata.permissionMode && VALID_SESSION_PERMISSION_MODES.has(metadata.permissionMode)

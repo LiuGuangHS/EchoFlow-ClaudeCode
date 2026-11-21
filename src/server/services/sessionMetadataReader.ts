@@ -17,8 +17,8 @@ export function isSessionMetadataTextTruncated(entry: object): boolean {
 const rootFields = new Set([
   'type', 'subtype', 'uuid', 'parentUuid', 'parent_tool_use_id', 'isSidechain', 'isMeta',
   'additionalDirectories', 'cwd', 'timestamp', 'workDir', 'repository', 'worktreeSession', 'permissionMode', 'agentProfile',
-  'runtimeProviderId', 'runtimeModelId', 'effortLevel', 'customTitle', 'aiTitle',
-  'entrypoint', 'message', 'content', 'version',
+  'cliRuntimeId', 'runtimeProviderId', 'runtimeModelId', 'effortLevel', 'customTitle', 'aiTitle',
+  'entrypoint', 'message', 'content', 'version', 'archived',
 ])
 const blockFields = new Set(['type', 'name', 'id', 'tool_use_id', 'text'])
 

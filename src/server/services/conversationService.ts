@@ -55,6 +55,11 @@ import {
   resolveClaudeCliLauncher,
 } from '../../utils/desktopBundledCli.js'
 import {
+  resolveClaudeCodeRuntimeId,
+  resolveClaudeCodeRuntimePath,
+  type ClaudeCodeRuntimeId,
+} from './claudeCodeRuntimeService.js'
+import {
   ASK_USER_QUESTION_CLARIFY_MESSAGE,
   ASK_USER_QUESTION_CLARIFY_WITH_QUESTIONS_PREFIX,
   PLAN_REJECTION_MESSAGE,
@@ -289,6 +294,7 @@ function networkRoutingFingerprint(
 }
 
 type SessionProcess = {
+  cliRuntimeId?: ClaudeCodeRuntimeId
   runtimeSelection?: SessionRuntimeSelection
   proc: ReturnType<typeof Bun.spawn>
   outputCallbacks: SessionOutputCallback[]
@@ -380,6 +386,8 @@ export type SessionStartOptions = {
   openAIFastMode?: boolean
   thinking?: 'enabled' | 'adaptive' | 'disabled'
   providerId?: string | null
+  cliRuntimeId?: ClaudeCodeRuntimeId
+  persistCliRuntimeId?: boolean
   resumeInterruptedTurn?: boolean
 }
 
@@ -631,6 +639,7 @@ export class ConversationService {
     repository?: PreparedSessionWorkspace['repository'],
     agentProfile: 'standard' | 'lean' = 'standard',
     additionalDirectories: readonly string[] = [],
+    cliCommand?: readonly string[],
   ): string[] {
     const side = getSideChat(sessionId)
     const dangerousMode = process.env.CLAUDE_DANGEROUS_MODE === '1'
@@ -644,7 +653,7 @@ export class ConversationService {
           ]
         : []
 
-    return this.resolveCliArgs([
+    const args = [
       '--print',
       '--agent-profile', agentProfile,
       '--verbose',
@@ -683,7 +692,8 @@ export class ConversationService {
       '--replay-user-messages',
       ...this.getRuntimeArgs(options),
       ...this.getPermissionArgs(options?.permissionMode, dangerousMode),
-    ])
+    ]
+    return cliCommand ? [...cliCommand, ...args] : this.resolveCliArgs(args)
   }
 
   async startSession(
@@ -691,6 +701,16 @@ export class ConversationService {
     workDir: string,
     sdkUrl: string,
     options?: SessionStartOptions,
+  ): Promise<void> {
+    return this.startSessionWithRuntime(sessionId, workDir, sdkUrl, options)
+  }
+
+  private async startSessionWithRuntime(
+    sessionId: string,
+    workDir: string,
+    sdkUrl: string,
+    options?: SessionStartOptions,
+    resolvedRuntime?: { cliRuntimeId?: ClaudeCodeRuntimeId; command: string[] },
   ): Promise<void> {
     migrationMaintenance.assertAvailable()
     if (this.deletedSessions.has(sessionId)) {
@@ -711,6 +731,11 @@ export class ConversationService {
       throw new ConversationStartupError('Agent teams are unavailable in lean sessions', 'LEAN_CAPABILITY_UNAVAILABLE')
     }
     const launchInfo = options?.teamWorker ? null : await sessionService.getSessionLaunchInfo(sessionId)
+    if (!resolvedRuntime) {
+      const cliRuntimeId = resolveClaudeCodeRuntimeId(options?.cliRuntimeId ?? launchInfo?.cliRuntimeId)
+      // Validate before launch mutations and retain the command across stale-lock retries.
+      resolvedRuntime = { cliRuntimeId, command: this.resolveCliArgs([], cliRuntimeId) }
+    }
     const additionalDirectories = (options?.teamWorker
       ? (await sessionService.getSessionLaunchInfo(options.teamWorker.parentSessionId))?.additionalDirectories
       : launchInfo?.additionalDirectories) ?? []
@@ -754,13 +779,16 @@ export class ConversationService {
       )
       // Replacing the empty placeholder must not erase the session's runtime
       // choice before its first turn writes a real transcript.
-      if (launchInfo.runtimeModelId) {
+      if (launchInfo.runtimeModelId || launchInfo.cliRuntimeId) {
         await sessionService.appendSessionMetadata(sessionId, {
           workDir,
-          runtimeProviderId: launchInfo.runtimeProviderId,
-          runtimeModelId: launchInfo.runtimeModelId,
-          ...(launchInfo.effortLevel ? { effortLevel: launchInfo.effortLevel } : {}),
-          ...(launchInfo.openAIFastMode !== undefined ? { openAIFastMode: launchInfo.openAIFastMode } : {}),
+          ...(launchInfo.cliRuntimeId ? { cliRuntimeId: launchInfo.cliRuntimeId } : {}),
+          ...(launchInfo.runtimeModelId ? {
+            runtimeProviderId: launchInfo.runtimeProviderId,
+            runtimeModelId: launchInfo.runtimeModelId,
+            ...(launchInfo.effortLevel ? { effortLevel: launchInfo.effortLevel } : {}),
+            ...(launchInfo.openAIFastMode !== undefined ? { openAIFastMode: launchInfo.openAIFastMode } : {}),
+          } : {}),
         })
       }
     }
@@ -811,6 +839,7 @@ export class ConversationService {
       launchRepository,
       launchInfo?.agentProfile ?? 'standard',
       additionalDirectories,
+      resolvedRuntime.command,
     )
 
     console.log(
@@ -913,6 +942,7 @@ export class ConversationService {
     })
     const session: SessionProcess = {
       proc,
+      cliRuntimeId: resolvedRuntime.cliRuntimeId ?? 'bundled',
       teamWorker: options?.teamWorker,
       outputCallbacks: [],
       workDir: launchWorkDir,
@@ -998,7 +1028,7 @@ export class ConversationService {
         console.log(
           `[ConversationService] Removed stale lock for ${sessionId}, retrying...`,
         )
-        return this.startSession(sessionId, workDir, sdkUrl, options)
+        return this.startSessionWithRuntime(sessionId, workDir, sdkUrl, options, resolvedRuntime)
       }
 
       console.error(
@@ -1029,7 +1059,8 @@ export class ConversationService {
     const shouldPersistRuntimeMetadata =
       options?.providerId !== undefined ||
       !!options?.model ||
-      !!options?.effort
+      !!options?.effort ||
+      options?.persistCliRuntimeId === true
     if (!options?.teamWorker && (shouldReplacePlaceholder || !launchInfo || shouldPersistRuntimeMetadata)) {
       // system/init can move a newly-created session into its worktree while
       // startup is still awaiting the SDK. Once that authoritative cwd is
@@ -1046,6 +1077,9 @@ export class ConversationService {
           : {}),
         ...(options?.model ? { runtimeModelId: options.model } : {}),
         ...(options?.effort ? { effortLevel: options.effort } : {}),
+        ...(options?.persistCliRuntimeId && options.cliRuntimeId
+          ? { cliRuntimeId: resolvedRuntime.cliRuntimeId }
+          : {}),
       })
       // Startup resumes once the SDK socket attaches, usually before init, so
       // init can move the session while this write is in flight. If it lands
@@ -1387,6 +1421,10 @@ export class ConversationService {
     if (this.sessions.get(sessionId) !== session) return false
     session.runtimeSelection = { ...session.runtimeSelection, providerId: session.providerId ?? null, modelId: model }
     return true
+  }
+
+  getSessionCliRuntimeId(sessionId: string): ClaudeCodeRuntimeId | undefined {
+    return this.sessions.get(sessionId)?.cliRuntimeId
   }
 
   /** The process's acknowledged runtime, unaffected by a queued next-turn selection. */
@@ -2856,9 +2894,10 @@ export class ConversationService {
     }
   }
 
-  private resolveCliArgs(baseArgs: string[]): string[] {
+  private resolveCliArgs(baseArgs: string[], cliRuntimeId?: ClaudeCodeRuntimeId): string[] {
+    const installedPath = resolveClaudeCodeRuntimePath(cliRuntimeId)
     const launcher = resolveClaudeCliLauncher({
-      cliPath: process.env.CLAUDE_CLI_PATH,
+      cliPath: cliRuntimeId === undefined ? process.env.CLAUDE_CLI_PATH : installedPath,
       execPath: process.execPath,
     })
 
