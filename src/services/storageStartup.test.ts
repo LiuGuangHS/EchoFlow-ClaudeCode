@@ -39,6 +39,40 @@ afterEach(() => {
 })
 
 describe('headless storage startup', () => {
+  test('discovers overlapping legacy layouts without treating shared settings or current data as sources', async () => {
+    const { root, env } = fixture()
+    const result = await child(['--eval', String.raw`
+      import assert from 'node:assert/strict'
+      import fs from 'node:fs/promises'
+      import path from 'node:path'
+      import { discoverHeadlessStorageSources } from './src/services/storageStartup.ts'
+      import { resolveStorageBinding } from './src/utils/echoFlowConfigRoot.ts'
+      const binding = resolveStorageBinding()
+      const shared = path.join(process.env.HOME, '.claude')
+      const legacy = path.join(shared, 'cc-haha')
+      await fs.mkdir(legacy, { recursive: true })
+      await fs.mkdir(binding.internalDir, { recursive: true })
+      await fs.writeFile(path.join(shared, 'settings.json'), '{}')
+      await fs.writeFile(path.join(binding.internalDir, 'current.json'), '{}')
+      assert.deepEqual(await discoverHeadlessStorageSources(binding), [])
+      await fs.writeFile(path.join(legacy, 'session.json'), '{}')
+      await fs.writeFile(path.join(binding.root, '.config.json'), '{}')
+      await fs.writeFile(path.join(binding.internalDir, 'scheduled-runs-v1.sqlite-wal'), 'fixture')
+      assert.deepEqual(await discoverHeadlessStorageSources(binding), [
+        { directory: legacy, markerRoot: shared, ownership: 'legacy-internal', destination: 'echoflow-code' },
+        { directory: binding.root, markerRoot: binding.root, layout: 'root-config' },
+        { directory: binding.internalDir, markerRoot: binding.root, destination: 'echoflow-code', layout: 'flat-indexes' },
+      ])
+      const invalidSource = path.join(binding.root, 'cc-haha')
+      await fs.writeFile(invalidSource, 'keep original')
+      await assert.rejects(discoverHeadlessStorageSources(binding), /non-directory storage source/)
+      assert.equal(await fs.readFile(invalidSource, 'utf8'), 'keep original')
+      console.log('ok')
+    `], env)
+    expect(result).toEqual({ code: 0, stdout: 'ok\n', stderr: '' })
+    expect(readdirSync(root).sort()).toEqual(['.config.json', 'cc-haha', 'echoflow-code'])
+  })
+
   test('binds once before writers, permits ready co-writers, and releases only once', async () => {
     const { root, env } = fixture()
     const result = await child(['--eval', prelude + `
