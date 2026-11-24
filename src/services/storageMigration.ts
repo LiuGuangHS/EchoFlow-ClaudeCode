@@ -2646,14 +2646,14 @@ async function publishRelocations(binding: StorageBinding, journal: StorageJourn
       mappings.push(...(source.destination ? [{ from: source.directory, to: source.destination }] : [{ from: path.join(source.directory, 'cc-haha'), to: 'echoflow-code' }, { from: source.directory, to: '.' }]))
       if (!source.destination) roots.push(source.directory)
     }
-    const unique: { from: string; to: string }[] = []
+    const unique = new Map<string, { from: string; to: string }>()
     for (const mapping of mappings) {
-      const same = unique.find(item => item.from === mapping.from)
+      const same = unique.get(mapping.from)
       if (same && same.to !== mapping.to) throw new Error(`Conflicting storage relocation mapping: ${mapping.from}`)
-      if (!same) unique.push(mapping)
+      unique.set(mapping.from, same ? mergeObject(same, mapping, 'storage relocation mapping') as typeof mapping : mapping)
     }
     if (baseline) await copyExclusive(file, path.join(transaction, 'target-before', 'echoflow-code', 'storage-relocations.json'), baseline.digest, transaction, binding.root)
-    await durableJson(staged, { ...unknown as Record<string, unknown>, version: 2, previousRoots: [...new Set(roots)], mappings: unique })
+    await durableJson(staged, { ...unknown as Record<string, unknown>, version: 2, previousRoots: [...new Set(roots)], mappings: [...unique.values()] })
     journal.relocation = { baseline, intent: await regularIdentity(staged) }
     await saveJournal(binding, journal)
   }

@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
+import { approveWhatsAppAdoption, executeDesktopStorageAdoption } from '../../desktop/electron/services/desktopStorageAdoption.js'
 import { runStorageAdoptionCommand } from './storageAdoption.js'
 import {
   armWhatsAppStorageApproval, cancelColdStorageApproval, completeStorageMigration, executeStorageMigration,
@@ -87,14 +88,48 @@ test.each([false, true])('CLI migrates the whole account and preserves the saved
     await assertConsumer(f.binding.root, target)
 
     const moved = resolveStorageBinding({ env: {}, roots: [path.join(f.home, 'moved')] })
+    const relocationsFile = 'storage-relocations.json'
+    const original = await Bun.file(path.join(f.binding.internalDir, relocationsFile)).json()
+    const mapping = original.mappings.find((item: { from: string }) => item.from === f.directory)
+    mapping.futureSource = { keep: true }
+    await writeFile(path.join(f.binding.internalDir, relocationsFile), JSON.stringify(original))
+    await mkdir(moved.internalDir, { recursive: true })
+    await writeFile(path.join(moved.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+    await writeFile(path.join(moved.internalDir, relocationsFile), JSON.stringify({ version: 2, previousRoots: [],
+      mappings: [{ from: f.directory, to: mapping.to, futureTarget: true }] }))
     const result = await executeStorageMigration({ binding: moved,
       sources: [{ directory: f.binding.root, markerRoot: f.binding.root }], hooks: f.hooks })
     expect(result.state).toBe('validation-required')
     expect((await completeStorageMigration(moved, result.id!, f.hooks, async () => {})).state).toBe('ready')
     expect(await readFile(path.join(moved.root, 'adapters.json'), 'utf8')).toBe(f.configBytes)
+    const merged = await Bun.file(path.join(moved.internalDir, relocationsFile)).json()
+    expect(merged.mappings).toContainEqual({ ...mapping, futureTarget: true })
     await assertConsumer(moved.root, path.join(moved.root, preview.account.destination))
   } finally { process.exitCode = previousExitCode ?? 0 }
 }, 30_000)
+
+test('a cold WhatsApp launch resumes its transaction and preserves later account updates', async () => {
+  const f = await fixture(true)
+  await mkdir(f.binding.root)
+  await writeFile(path.join(f.binding.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+  const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)
+  const launch = await approveWhatsAppAdoption(f.binding, preview)
+  const validate = async () => { throw new Error('Unexpected desktop validation') }
+  const interrupted = await executeDesktopStorageAdoption(f.binding, launch, {
+    ...f.hooks, cleanupResources: async () => { throw new Error('Interrupted cleanup') },
+  }, validate)
+  expect(interrupted.state).toBe('cleanup-pending')
+  await expect(readdir(f.directory)).rejects.toMatchObject({ code: 'ENOENT' })
+  const invalid = { ...launch, proof: '0'.repeat(64) }
+  expect((await executeDesktopStorageAdoption(f.binding, invalid, f.hooks, validate)).state).toBe('blocked')
+  expect((await readApprovedStorageTransaction(f.binding, launch.id))?.state).toBe('cleanup-pending')
+  const recovered = await executeDesktopStorageAdoption(f.binding, launch, f.hooks, validate)
+  expect(recovered).toMatchObject({ state: 'ready', id: interrupted.id })
+  const key = path.join(f.binding.root, preview.account.destination, 'session-new.json')
+  await writeFile(key, '{}')
+  expect(await executeDesktopStorageAdoption(f.binding, launch, f.hooks, validate)).toEqual(recovered)
+  expect(await readFile(key, 'utf8')).toBe('{}')
+})
 
 test('an existing config can bind a custom legacy directory without replacing the config', async () => {
   const f = await fixture(true)

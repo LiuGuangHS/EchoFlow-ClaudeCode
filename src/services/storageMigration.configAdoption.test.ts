@@ -144,6 +144,25 @@ for (const identical of [true, false]) {
   })
 }
 
+test('conflicting unknown relocation fields retain both original records', async () => {
+  const f = await fixture()
+  await f.run(`
+    await mark(profile)
+    await mark(root)
+    const file = 'echoflow-code/storage-relocations.json'
+    const record = value => JSON.stringify({ version: 2, previousRoots: [], mappings: [
+      { from: path.join(home, 'retired'), to: 'whatsapp-auth/default', future: { value } },
+    ] })
+    await put(path.join(profile, file), record('source'))
+    await put(path.join(root, file), record('target'))
+    const result = await executeStorageMigration({ binding, sources: [{ directory: profile, markerRoot: profile }], hooks })
+    assert.equal(result.state, 'blocked')
+    assert.match(result.issues.join(), /Conflicting storage entity/)
+    assert.equal(await fs.readFile(path.join(profile, file), 'utf8'), record('source'))
+    assert.equal(await fs.readFile(path.join(root, file), 'utf8'), record('target'))
+  `)
+})
+
 test('selective root config coexists with active flat indexes and an external whole owned profile', async () => {
   const f = await fixture()
   await f.run(`
