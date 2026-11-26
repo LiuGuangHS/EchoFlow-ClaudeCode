@@ -269,7 +269,7 @@ const runtimeOverrides = new Map<string, RuntimeOverride>()
 const rejectedRuntimeConfigs = new Map<string, string>()
 const activeUserTurns = new SessionTurnOwnership<ActiveUserTurnState>()
 const activeCliRuns = new Set<string>()
-type ExecutingInput = { replyUuids: string[]; consumedTurnUuid?: string }
+type ExecutingInput = { replyUuids: string[]; consumedTurnUuid?: string; explicitBatch?: boolean }
 const executingInputUuids = new Map<string, ExecutingInput>()
 const resultInputs = new WeakMap<object, { sessionId: string; input?: ExecutingInput }>()
 type ImReplyReceipt = Extract<ServerMessage, { type: 'input_committed' }>
@@ -537,13 +537,16 @@ function forgetRuntimeInput(sessionId: string): void {
 function belongsToEarlierInput(sessionId: string, turn: ActiveUserTurnState, cliMsg?: any): boolean {
   if (!turn.expectedReplayUuid || isRuntimeExitResult(sessionId, cliMsg)) return false
   const input = cliMsg?.type === 'result' ? getResultInput(sessionId, cliMsg) : executingInputUuids.get(sessionId)
-  return Boolean(input && input.consumedTurnUuid !== turn.expectedReplayUuid &&
-    !input.replyUuids.includes(turn.expectedReplayUuid))
+  if (!input || input.consumedTurnUuid === turn.expectedReplayUuid ||
+    input.replyUuids.includes(turn.expectedReplayUuid)) return false
+  // A legacy guide can change the reply target without proving a queued control turn is separate.
+  if (!input.explicitBatch && !turn.cancelled && (turn.collaborationAck || turn.scheduledTask)) return false
+  return true
 }
 
-function trackInputBatch(sessionId: string, replyUuids: string[]): void {
+function trackInputBatch(sessionId: string, replyUuids: string[], explicitBatch = false): void {
   const previous = executingInputUuids.get(sessionId)
-  if (previous?.replyUuids === replyUuids) return
+  if (previous?.replyUuids === replyUuids && (!explicitBatch || previous.explicitBatch)) return
   for (const id of previous?.replyUuids ?? []) {
     if (!replyUuids.includes(id)) retireImReplyReceipt(sessionId, id)
   }
@@ -551,7 +554,7 @@ function trackInputBatch(sessionId: string, replyUuids: string[]): void {
   const uuid = activeUserTurns.get(sessionId)?.expectedReplayUuid
   const consumedTurnUuid = uuid && (previous?.consumedTurnUuid === uuid || previous?.replyUuids.includes(uuid))
     ? uuid : undefined
-  executingInputUuids.set(sessionId, { replyUuids, consumedTurnUuid })
+  executingInputUuids.set(sessionId, { replyUuids, consumedTurnUuid, explicitBatch: explicitBatch || previous?.explicitBatch })
 }
 
 function trackCliRunState(sessionId: string, cliMsg: any): 'running' | 'idle' | null {
@@ -559,17 +562,27 @@ function trackCliRunState(sessionId: string, cliMsg: any): 'running' | 'idle' | 
   if (uuids || (cliMsg?.type === 'user' && cliMsg.isReplay === true)) {
     acknowledgeActiveTurnReplay(sessionId, cliMsg)
     if (uuids) {
-      trackInputBatch(sessionId, uuids)
+      trackInputBatch(sessionId, uuids, true)
     } else if (!shouldSuppressCliOutputDuringStop(sessionId, cliMsg, null)) {
       const replay = projectUserReplay(cliMsg)
       const current = executingInputUuids.get(sessionId)
       if (replay && !current?.replyUuids.includes(replay.messageUuid ?? '')) {
-        if (replay.messageUuid) {
-          trackInputBatch(sessionId, [replay.messageUuid])
+        if (replay.messageUuid || current?.explicitBatch || current?.consumedTurnUuid) {
+          trackInputBatch(sessionId, replay.messageUuid ? [replay.messageUuid] : [])
         } else {
           executingInputUuids.delete(sessionId)
           for (const id of current?.replyUuids ?? []) retireImReplyReceipt(sessionId, id)
         }
+      }
+    }
+  } else if (cliMsg?.type === 'system' && cliMsg.subtype === 'session_message_receipt') {
+    const turn = activeUserTurns.get(sessionId)
+    if (turn?.expectedReplayUuid && matchesActiveTurnReplay(turn, cliMsg)) {
+      // The CLI can consume an inbox prompt during a tool call in another batch.
+      const uuid = turn.expectedReplayUuid
+      const input = executingInputUuids.get(sessionId)
+      if (input?.consumedTurnUuid !== uuid) {
+        executingInputUuids.set(sessionId, { ...input, replyUuids: input?.replyUuids ?? [], consumedTurnUuid: uuid })
       }
     }
   } else if (cliMsg?.type === 'result') {
