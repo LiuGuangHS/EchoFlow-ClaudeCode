@@ -27,9 +27,17 @@ export type ServerMessage = {
   [key: string]: any
 }
 
-function validApprovalMessage(message: ServerMessage): boolean {
-  const id = (value: unknown) => typeof value === 'string' && value.length > 0
+function validServerMessage(message: ServerMessage): boolean {
+  const id = (value: unknown): value is string => typeof value === 'string' && value.length > 0
+  const anchor = (value: unknown) => value === null || (id(value) && value.length <= 256)
   switch (message.type) {
+    case 'input_committed':
+      return id(message.messageUuid) && anchor(message.replyAnchor)
+    case 'input_turn_start':
+    case 'input_turn_snapshot':
+      return Array.isArray(message.messageUuids) && message.messageUuids.every(id)
+    case 'user_message_replay':
+      return typeof message.content === 'string' && (message.messageUuid === undefined || id(message.messageUuid))
     case 'permission_requests_snapshot':
       return ['toolRequestIds', 'computerUseRequestIds'].every((key) =>
         message[key] === undefined ||
@@ -46,6 +54,7 @@ function validApprovalMessage(message: ServerMessage): boolean {
         (message.allowed === undefined || typeof message.allowed === 'boolean')
     case 'error':
       return typeof message.message === 'string' && typeof message.code === 'string' &&
+        (message.replyAnchor === undefined || anchor(message.replyAnchor)) &&
         (message.requestId === undefined || (id(message.requestId) && ['tool', 'computer_use'].includes(message.permissionType))) &&
         (message.approvalOutcome === undefined || (message.requestId !== undefined && ['rejected', 'uncertain'].includes(message.approvalOutcome)))
     default:
@@ -140,9 +149,11 @@ export class WsBridge {
     content: string,
     attachments?: AttachmentRef[],
     powerActivityLeaseId?: string,
+    replyAnchor?: string | null,
   ): boolean {
     const lease = currentInboundPowerLease(chatId)
     const payload: Record<string, unknown> = { type: 'user_message', content }
+    if (replyAnchor !== undefined) payload.replyAnchor = replyAnchor
     if (attachments && attachments.length > 0) {
       payload.attachments = attachments
     }
@@ -278,7 +289,7 @@ export class WsBridge {
         console.error('[WsBridge] Parse error:', err)
         return
       }
-      if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.type !== 'string' || !validApprovalMessage(msg)) return
+      if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.type !== 'string' || !validServerMessage(msg)) return
       if (msg.type === 'pong') return
       if (this.sessions.get(chatId) !== session) return
       this.trackInbound(session, msg)

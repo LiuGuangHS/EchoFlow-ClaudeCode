@@ -20,7 +20,7 @@ export type PermissionMode =
 export type ClientMessage =
   | { type: 'prewarm_session' }
   | { type: 'sync_state' }
-  | { type: 'user_message'; content: string; attachments?: AttachmentRef[]; sessionReferences?: { sessionId: string }[]; powerActivityLeaseId?: string }
+  | { type: 'user_message'; content: string; attachments?: AttachmentRef[]; sessionReferences?: { sessionId: string }[]; powerActivityLeaseId?: string; replyAnchor?: string | null }
   | {
       type: 'permission_response'
       requestId: string
@@ -112,7 +112,10 @@ export type ServerMessage =
       computerUseRequestIds: string[]
       turnActive: boolean
     }
-  | { type: 'user_message_replay'; content: string; sessionReferences?: { sessionId: string }[]; scheduledTask?: ScheduledTaskMetadata; collaboration?: { sourceSessionId: string; messageId?: string } }
+  | { type: 'input_committed'; messageUuid: string; replyAnchor: string | null }
+  | { type: 'input_turn_start'; messageUuids: string[] }
+  | { type: 'input_turn_snapshot'; messageUuids: string[] }
+  | { type: 'user_message_replay'; messageUuid?: string; content: string; sessionReferences?: { sessionId: string }[]; scheduledTask?: ScheduledTaskMetadata; collaboration?: { sourceSessionId: string; messageId?: string } }
   | { type: 'message_complete'; usage: TokenUsage; timing?: TurnTiming; scheduledTask?: ScheduledTaskMetadata }
   /**
    * `text` is a fragment when the CLI streams `thinking_delta`, and a whole block when
@@ -149,7 +152,7 @@ export type ServerMessage =
   // 期间没有任何增量输出，前端据此显示"慢速模式"轻提示而不是裸转圈。
   | { type: 'streaming_fallback'; cause: StreamingFallbackCause }
   // Only a definite rejection makes a submitted decision safe to retry.
-  | { type: 'error'; message: string; code: string; retryable?: boolean; businessErrorCode?: string; requestId?: string; permissionType?: 'tool' | 'computer_use'; approvalOutcome?: 'rejected' | 'uncertain' }
+  | { type: 'error'; message: string; code: string; replyAnchor?: string | null; retryable?: boolean; businessErrorCode?: string; requestId?: string; permissionType?: 'tool' | 'computer_use'; approvalOutcome?: 'rejected' | 'uncertain' }
   | { type: 'background_task_stop_failed'; taskId: string; message: string }
   | { type: 'system_notification'; subtype: string; message?: string; data?: unknown }
   | { type: 'pong' }

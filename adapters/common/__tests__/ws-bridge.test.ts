@@ -230,6 +230,27 @@ describe('WsBridge: handler serialization', () => {
     } finally { bridge.destroy() }
   })
 
+  it('drops malformed reply routing frames before they can change the output target', async () => {
+    const bridge = new WsBridge(serverUrl, 'test', 'fixture-token')
+    const received: string[] = []
+    try {
+      bridge.connectSession('chat', 'session')
+      bridge.onServerMessage('chat', msg => { received.push(msg.type) })
+      expect(await bridge.waitForOpen('chat')).toBe(true)
+      const socket = await waitForServerConnection()
+      for (const msg of [
+        { type: 'input_committed', messageUuid: 'one', replyAnchor: {} },
+        { type: 'input_turn_start', messageUuids: 'one' },
+        { type: 'input_turn_snapshot', messageUuids: [3] },
+        { type: 'user_message_replay', messageUuid: [], content: 'next' },
+        { type: 'error', code: 'CLI_START_FAILED', message: 'failed', replyAnchor: [] },
+        { type: 'status', state: 'idle' },
+      ]) socket.send(JSON.stringify(msg))
+      expect(await waitFor(() => received.includes('status'))).toBe(true)
+      expect(received).toEqual(['status'])
+    } finally { bridge.destroy() }
+  })
+
   it('transfers only an acquired inbound power lease with the exact user message', async () => {
     const bridge = new WsBridge(serverUrl, 'test', 'fixture-token')
     try {
@@ -238,12 +259,14 @@ describe('WsBridge: handler serialization', () => {
       const socket = await waitForServerConnection()
       const messages: unknown[] = []
       socket.on('message', raw => messages.push(JSON.parse(raw.toString())))
-      expect(bridge.sendUserMessage('lease-chat', 'protected', undefined, 'adapter:message')).toBe(true)
+      expect(bridge.sendUserMessage('lease-chat', 'protected', undefined, 'adapter:message', 'opaque-id')).toBe(true)
       expect(bridge.sendUserMessage('lease-chat', 'legacy')).toBe(true)
-      expect(await waitFor(() => messages.length === 2)).toBe(true)
+      expect(bridge.sendUserMessage('lease-chat', 'main chat', undefined, undefined, null)).toBe(true)
+      expect(await waitFor(() => messages.length === 3)).toBe(true)
       expect(messages).toEqual([
-        { type: 'user_message', content: 'protected', powerActivityLeaseId: 'adapter:message' },
+        { type: 'user_message', content: 'protected', powerActivityLeaseId: 'adapter:message', replyAnchor: 'opaque-id' },
         { type: 'user_message', content: 'legacy' },
+        { type: 'user_message', content: 'main chat', replyAnchor: null },
       ])
     } finally {
       bridge.destroy()

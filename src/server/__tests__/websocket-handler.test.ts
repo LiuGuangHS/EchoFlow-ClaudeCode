@@ -515,6 +515,7 @@ describe('WebSocket approval maintenance gate', () => {
         ws.sent.length = 0
         handleWebSocket.message(ws, JSON.stringify({ type: 'sync_state' }))
         expect(ws.sent.map(payload => JSON.parse(payload))).toEqual([
+          { type: 'input_turn_snapshot', messageUuids: [] },
           { type: 'permission_request', ...toolRequest },
           { type: 'computer_use_permission_request', requestId: cuRequest.requestId, request: cuRequest },
           { type: 'permission_requests_snapshot', toolRequestIds: [toolRequest.requestId], computerUseRequestIds: [cuRequest.requestId], turnActive: true },
@@ -1008,6 +1009,7 @@ describe('WebSocket handler session isolation', () => {
 
     expect(second.sent.map((payload) => JSON.parse(payload))).toEqual([
       { type: 'connected', sessionId },
+      { type: 'input_turn_snapshot', messageUuids: [] },
       {
         type: 'computer_use_permission_request',
         requestId: request.requestId,
@@ -1119,6 +1121,7 @@ describe('WebSocket handler session isolation', () => {
 
     expect(ws.sent.map((payload) => JSON.parse(payload))).toEqual([
       { type: 'status', state: 'idle' },
+      { type: 'input_turn_snapshot', messageUuids: [] },
       {
         type: 'permission_requests_snapshot',
         toolRequestIds: [],
@@ -1215,6 +1218,7 @@ describe('WebSocket handler session isolation', () => {
         type: 'message_complete',
         usage: { input_tokens: 12, output_tokens: 3 },
       },
+      { type: 'input_turn_snapshot', messageUuids: [] },
       {
         type: 'permission_requests_snapshot',
         toolRequestIds: [],
@@ -3035,15 +3039,17 @@ describe('WebSocket handler session isolation', () => {
       task_type: 'local_bash',
       description: 'Shell work in the runtime whose clear fails',
     })
-    handleWebSocket.message(first, JSON.stringify({ type: 'user_message', content: '/clear' }))
+    handleWebSocket.message(first, JSON.stringify({ type: 'user_message', content: '/clear', replyAnchor: 'private-thread' }))
     await flushMicrotasks(30)
 
     for (const client of [first, second]) {
-      expect(client.sent.map((payload) => JSON.parse(payload))).toContainEqual({
+      const clearErrors = client.sent.map(payload => JSON.parse(payload)).filter(msg => msg.code === 'SESSION_CLEAR_FAILED')
+      expect(clearErrors).toEqual([{
         type: 'error',
         message: 'transcript replacement failed',
         code: 'SESSION_CLEAR_FAILED',
-      })
+        ...(client === first ? { replyAnchor: 'private-thread' } : {}),
+      }])
       expect(client.sent.map((payload) => JSON.parse(payload))).toContainEqual({
         type: 'status',
         state: 'idle',
@@ -3401,6 +3407,33 @@ describe('WebSocket handler session isolation', () => {
     }, 3_000)
   })
 
+  it.each(['thread-a', null])('returns the committed SDK UUID and startup rejection to the originating reply anchor (%s)', async replyAnchor => {
+    const sessionId = crypto.randomUUID()
+    const ws = makeClientSocket(sessionId)
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation(() => {})
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue('Fixture')
+    const send = spyOn(conversationService, 'sendMessage').mockImplementation(async (_sid, _text, _files, options) => {
+      options?.onCommitted?.()
+      return true
+    })
+    const other = makeClientSocket(sessionId)
+    handleWebSocket.open(ws)
+    handleWebSocket.open(other)
+    handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content: 'same', replyAnchor: 'superseded' }))
+    handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content: 'same', replyAnchor }))
+    await flushMicrotasks(60)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(ws.sent.map(raw => JSON.parse(raw)).filter(msg => msg.type === 'input_committed')).toEqual([
+      { type: 'input_committed', messageUuid: send.mock.calls[0]?.[3]?.messageUuid, replyAnchor },
+    ])
+    expect(other.sent.map(raw => JSON.parse(raw)).some(msg => msg.type === 'input_committed')).toBe(false)
+    send.mockResolvedValue(false)
+    handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content: 'B', replyAnchor: 'thread-b' }))
+    await flushMicrotasks(60)
+    expect(ws.sent.map(raw => JSON.parse(raw))).toContainEqual(expect.objectContaining({ type: 'error', code: 'CLI_NOT_RUNNING', replyAnchor: 'thread-b' }))
+  })
+
   it('cancels the same pending user admission when Stop arrives before CLI startup', async () => {
     const sessionId = `stop-pending-admission-${crypto.randomUUID()}`
     const ws = makeClientSocket(sessionId)
@@ -3682,6 +3715,7 @@ describe('WebSocket handler session isolation', () => {
 
   it('does not attribute an interrupted result or stale replay to a replacement turn', async () => {
     const sessionId = `stop-replacement-boundary-${crypto.randomUUID()}`
+    let finishReplacementSend!: (sent: boolean) => void
     const ws = makeClientSocket(sessionId)
     const outputCallbacks = new Set<(cliMsg: any) => void>()
     const sentUuids: string[] = []
@@ -3699,6 +3733,7 @@ describe('WebSocket handler session isolation', () => {
       async (_sid, _content, _attachments, options) => {
         sentUuids.push(options?.messageUuid ?? '')
         options?.onCommitted?.()
+        if (sentUuids.length === 2) return new Promise<boolean>(resolve => { finishReplacementSend = resolve })
         return true
       },
     )
@@ -3758,6 +3793,20 @@ describe('WebSocket handler session isolation', () => {
       task_id: 'agent-before-replacement-replay',
     }, 3_000)
 
+    emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [sentUuids[0]] })
+    emit({ type: 'system', subtype: 'input_turn_start', message_uuids: ['batched', sentUuids[1]] })
+    emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'replacement output' }] } })
+    expect(ws.sent.map(raw => JSON.parse(raw)).filter(msg => ['input_turn_start', 'content_delta'].includes(msg.type))).toEqual([
+      { type: 'input_turn_start', messageUuids: ['batched', sentUuids[1]] },
+      { type: 'content_delta', text: 'replacement output' },
+    ])
+    finishReplacementSend(true)
+    const reconnect = makeClientSocket(sessionId)
+    handleWebSocket.open(reconnect)
+    for (const client of [reconnect, ws]) {
+      if (client === ws) handleWebSocket.message(ws, JSON.stringify({ type: 'sync_state' }))
+      expect(client.sent.map(raw => JSON.parse(raw))).toContainEqual({ type: 'input_turn_snapshot', messageUuids: ['batched', sentUuids[1]] })
+    }
     emit({
       type: 'user',
       isReplay: true,
@@ -3784,6 +3833,35 @@ describe('WebSocket handler session isolation', () => {
         output_tokens: 2,
       },
     })
+  })
+
+  it('restores the executing batch and a later tool-time replay across disconnects', async () => {
+    const sessionId = crypto.randomUUID()
+    const ws = makeClientSocket(sessionId)
+    const callbacks = new Set<(frame: any) => void>()
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => { callbacks.add(callback) })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation((_sid, callback) => { callbacks.delete(callback) })
+    spyOn(conversationService, 'sendMessage').mockResolvedValue(true)
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue('Existing title')
+    const emit = (frame: any) => { for (const callback of [...callbacks]) callback(frame) }
+    const replay = (uuid: string) => emit({ type: 'user', uuid, isReplay: true, message: { role: 'user', content: 'replayed' } })
+    const snapshot = (client: ReturnType<typeof makeClientSocket>) => client.sent.map(raw => JSON.parse(raw)).findLast(msg => msg.type === 'input_turn_snapshot')
+    handleWebSocket.open(ws)
+    handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content: 'run' }))
+    await flushMicrotasks(30)
+    emit({ type: 'system', subtype: 'input_turn_start', message_uuids: ['a', 'merged'] })
+    replay('a')
+    handleWebSocket.message(ws, JSON.stringify({ type: 'sync_state' }))
+    expect(snapshot(ws)?.messageUuids).toEqual(['a', 'merged'])
+    handleWebSocket.close(ws)
+    replay('b')
+    const reconnect = makeClientSocket(sessionId)
+    handleWebSocket.open(reconnect)
+    expect(snapshot(reconnect)?.messageUuids).toEqual(['b'])
+    emit({ type: 'result', subtype: 'success', is_error: false })
+    handleWebSocket.message(reconnect, JSON.stringify({ type: 'sync_state' }))
+    expect(snapshot(reconnect)?.messageUuids).toEqual([])
   })
 
   it('keeps consecutive Stop results ordered before a third replacement turn', async () => {

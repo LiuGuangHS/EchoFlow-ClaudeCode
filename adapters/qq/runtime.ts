@@ -20,6 +20,7 @@ import { createAdapterClient } from '../common/adapter-client.js'
 import { AttachmentStore } from '../common/attachment/attachment-store.js'
 import { checkAttachmentLimit } from '../common/attachment/attachment-limits.js'
 import {
+  currentReplyAnchor,
   ImChatRuntime,
   type ChatPort,
   type OutboundImage,
@@ -63,16 +64,11 @@ attachmentStore.gc().catch((err) => {
   console.warn('[QQ] AttachmentStore.gc failed:', err instanceof Error ? err.message : err)
 })
 
-/** Outbound QQ messages must name a peer, and a reply must also name the
- *  inbound message it answers. Both live in the last target we saw per chat. */
-const replyTargets = new Map<string, ReplyTarget>()
-
 function targetFor(chatId: string): ReplyTarget {
-  return replyTargets.get(chatId) ?? { scope: 'c2c', targetId: chatId }
+  return { scope: 'c2c', targetId: chatId, msgId: currentReplyAnchor() }
 }
 
-async function sendPlainText(chatId: string, text: string): Promise<void> {
-  const target = targetFor(chatId)
+async function sendPlainText(target: ReplyTarget, text: string): Promise<void> {
   for (const chunk of splitMessage(text, QQ_TEXT_LIMIT)) {
     await bot.sendText(target, chunk)
   }
@@ -90,10 +86,10 @@ class QqResponse implements ResponseStream {
   private accumulated = ''
   /** How much of `accumulated` the stream bubble already shows. */
   private streamed = 0
+  private nextFrameAt = 0
   private failed = false
 
-  constructor(private readonly chatId: string) {
-    const target = targetFor(chatId)
+  constructor(private readonly target: ReplyTarget) {
     if (target.scope !== 'c2c' || !target.msgId) return
     try {
       this.session = bot.openStream({ target, throttleMs: QQ_STREAM_THROTTLE_MS })
@@ -105,10 +101,18 @@ class QqResponse implements ResponseStream {
   async append(delta: string): Promise<void> {
     if (!delta) return
     this.accumulated += delta
-    if (!this.session || this.failed) return
+    if (!this.session || this.failed || Date.now() < this.nextFrameAt) return
+    await this.sendFrame(this.session)
+  }
+
+  private async sendFrame(session: StreamSession): Promise<void> {
+    // Within the SDK throttle window update() resolves before sending. Keep
+    // that tail here so streamed only advances after an actual frame flush.
+    const text = this.accumulated
     try {
-      await this.session.update(this.accumulated)
-      this.streamed = this.accumulated.length
+      await session.update(text)
+      this.nextFrameAt = Date.now() + QQ_STREAM_THROTTLE_MS
+      this.streamed = text.length
     } catch (err) {
       // Fall back to discrete messages for the rest of the turn: retrying a
       // broken stream would drop the remaining text entirely.
@@ -121,6 +125,11 @@ class QqResponse implements ResponseStream {
     const session = this.session
     this.session = null
 
+    if (session && !this.failed && this.streamed < this.accumulated.length) {
+      const wait = this.nextFrameAt - Date.now()
+      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait))
+      await this.sendFrame(session)
+    }
     if (session && !this.failed) {
       try {
         await session.complete()
@@ -135,7 +144,7 @@ class QqResponse implements ResponseStream {
     // repeat everything the user already read above it.
     const remainder = this.accumulated.slice(this.streamed).trim()
     this.accumulated = ''
-    if (remainder) await sendPlainText(this.chatId, remainder)
+    if (remainder) await sendPlainText(this.target, remainder)
   }
 }
 
@@ -143,10 +152,10 @@ const port: ChatPort = {
   platform: 'qq',
   logPrefix: '[QQ]',
   async sendNotice(chatId, text) {
-    await sendPlainText(chatId, text)
+    await sendPlainText(targetFor(chatId), text)
   },
   createResponse(chatId) {
-    return new QqResponse(chatId)
+    return new QqResponse(targetFor(chatId))
   },
   async sendImage(chatId, image: OutboundImage) {
     const check = checkAttachmentLimit('image', image.buffer.length, image.mime)
@@ -167,9 +176,6 @@ const port: ChatPort = {
     if (target.scope !== 'c2c') return
     // Typing is a courtesy signal; a failure must never surface to the user.
     void bot.sendTyping(target, TYPING_SECONDS).catch(() => {})
-  },
-  clearChat(chatId) {
-    replyTargets.delete(chatId)
   },
 }
 
@@ -232,14 +238,9 @@ bot.on('message', async (_ctx, message) => {
   const payload = extractQqPayload(message as never)
   if (!payload) return
 
-  replyTargets.set(payload.chatId, {
-    scope: 'c2c',
-    targetId: payload.chatId,
-    msgId: message.messageId,
-  })
-
   await runtime.handleInbound({
     chatId: payload.chatId,
+    replyAnchor: message.messageId ?? null,
     userId: payload.userId,
     displayName: payload.displayName,
     dedupKey: payload.dedupKey,

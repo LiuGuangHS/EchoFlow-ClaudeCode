@@ -268,6 +268,7 @@ const runtimeOverrides = new Map<string, RuntimeOverride>()
 const rejectedRuntimeConfigs = new Map<string, string>()
 const activeUserTurns = new SessionTurnOwnership<ActiveUserTurnState>()
 const activeCliRuns = new Set<string>()
+const executingInputUuids = new Map<string, string[]>()
 /**
  * CLI runs that delivered their root foreground `result` and are now only
  * waiting on background tasks. print.ts keeps run() (session_state_changed:
@@ -485,7 +486,46 @@ function trackCliBackgroundTaskLifecycle(
 }
 
 
+function projectUserReplay(cliMsg: any): Extract<ServerMessage, { type: 'user_message_replay' }> | undefined {
+  const text = extractReplayUserText(cliMsg)
+  if (!text) return
+  const type = 'user_message_replay' as const
+  const identity = typeof cliMsg.uuid === 'string' ? { type, messageUuid: cliMsg.uuid } : { type }
+  const scheduledTask = readScheduledTaskMetadata(cliMsg.scheduledTask)
+  if (scheduledTask) return { ...identity, content: String(scheduledTaskDisplayText(text)), scheduledTask }
+  if (isShutdownTeamPrompt(cliMsg.message?.content) || isTeamLeadNotice(cliMsg.message?.content)) return
+  const envelope = parseSessionCollaborationEnvelope(text)
+  if (envelope) return {
+    ...identity, content: envelope.text,
+    collaboration: { sourceSessionId: envelope.senderSessionId, messageId: envelope.messageId },
+  }
+  if (!cliMsg.isMeta) return { ...identity, ...splitSessionReferenceContext(text) }
+}
+
+function inputTurnUuids(cliMsg: any): string[] | undefined {
+  if (cliMsg?.type === 'system' && cliMsg.subtype === 'input_turn_start' &&
+      Array.isArray(cliMsg.message_uuids) && cliMsg.message_uuids.every((id: unknown) => typeof id === 'string')) {
+    return cliMsg.message_uuids
+  }
+}
+
 function trackCliRunState(sessionId: string, cliMsg: any): 'running' | 'idle' | null {
+  const uuids = inputTurnUuids(cliMsg)
+  if (uuids || (cliMsg?.type === 'user' && cliMsg.isReplay === true)) {
+    acknowledgeActiveTurnReplay(sessionId, cliMsg)
+    if (!shouldSuppressCliOutputDuringStop(sessionId, cliMsg, null)) {
+      if (uuids) executingInputUuids.set(sessionId, uuids)
+      else {
+        const replay = projectUserReplay(cliMsg)
+        if (replay && !executingInputUuids.get(sessionId)?.includes(replay.messageUuid ?? '')) {
+          if (replay.messageUuid) executingInputUuids.set(sessionId, [replay.messageUuid])
+          else executingInputUuids.delete(sessionId)
+        }
+      }
+    }
+  } else if (cliMsg?.type === 'result') {
+    executingInputUuids.delete(sessionId)
+  }
   if (cliMsg?.type === 'result' && legacyQueuedSessionChats.has(sessionId)) settleSessionChatActivity(sessionId, cliMsg)
   if (
     cliMsg?.type === 'result' &&
@@ -509,6 +549,7 @@ function trackCliRunState(sessionId: string, cliMsg: any): 'running' | 'idle' | 
     return 'running'
   }
   if (cliMsg.state === 'idle') {
+    executingInputUuids.delete(sessionId)
     if (activeCliRuns.has(sessionId)) powerActivityClock.changed()
     activeCliRuns.delete(sessionId)
     cliRunsAwaitingBackgroundTasks.delete(sessionId)
@@ -549,6 +590,7 @@ function resumeCliRunForeground(sessionId: string): void {
  * releases a hidden session once its CLI is idle could ever let go (#1485).
  */
 function endReplacedCliRun(sessionId: string): void {
+  executingInputUuids.delete(sessionId)
   cliRunsAwaitingBackgroundTasks.delete(sessionId)
   if (!activeCliRuns.delete(sessionId)) return
   sendToSession(sessionId, {
@@ -924,6 +966,11 @@ export const handleWebSocket = {
         typeof rawMessage === 'string' ? rawMessage : rawMessage.toString()
       ) as ClientMessage
 
+      if (message.type === 'user_message' && message.replyAnchor != null &&
+          (typeof message.replyAnchor !== 'string' || !message.replyAnchor.length || message.replyAnchor.length > 256)) {
+        delete message.replyAnchor
+      }
+
       if (migrationMaintenance.isActive && message.type !== 'ping' && message.type !== 'sync_state') {
         if (message.type === 'user_message') releaseAcceptedPowerLease(ws, message.powerActivityLeaseId)
         if (
@@ -938,6 +985,8 @@ export const handleWebSocket = {
             permissionType: message.type === 'permission_response' ? 'tool' : 'computer_use',
             approvalOutcome: 'rejected',
           })
+        } else if (message.type === 'user_message' && message.replyAnchor !== undefined) {
+          sendMessage(ws, { type: 'error', code: 'MIGRATION_IN_PROGRESS', message: 'Data migration is in progress', replyAnchor: message.replyAnchor })
         } else {
           sendError(ws, 'Data migration is in progress', 'MIGRATION_IN_PROGRESS')
         }
@@ -983,6 +1032,7 @@ export const handleWebSocket = {
                 type: 'error',
                 message: err instanceof ApiError ? err.message : 'The request could not be started. Please retry.',
                 code: err instanceof ApiError ? err.code : 'USER_TURN_FAILED',
+                replyAnchor: message.replyAnchor,
                 retryable: true,
               })
               sendMessage(ws, { type: 'status', state: 'idle' })
@@ -1139,7 +1189,7 @@ async function handleUserMessage(
   const desktopSlashCommand = delivery ? null : getDesktopSlashCommand(message.content)
   if (desktopSlashCommand?.commandName === 'clear' && desktopSlashCommand.args.trim()) {
     sendMessage(ws, {
-      type: 'error',
+      type: 'error', replyAnchor: message.replyAnchor,
       message: 'The /clear command does not accept arguments.',
       code: 'INVALID_SLASH_COMMAND_ARGS',
     })
@@ -1148,7 +1198,7 @@ async function handleUserMessage(
   }
 
   if (desktopSlashCommand?.commandName === 'clear') {
-    await handleDesktopClearCommand(ws)
+    await handleDesktopClearCommand(ws, message.replyAnchor)
     return
   }
 
@@ -1183,7 +1233,7 @@ async function handleUserMessage(
       if (activeUserTurns.get(sessionId) === activeTurn && !activeTurn.cancelled) {
         releaseUserTurnWithoutResult(sessionId, activeTurn)
         sendMessage(ws, {
-          type: 'error',
+          type: 'error', replyAnchor: message.replyAnchor,
           message: error instanceof Error ? error.message : 'The request could not be started. Please retry.',
           code: error instanceof ApiError ? error.code : 'USER_TURN_FAILED',
           retryable: true,
@@ -1198,7 +1248,7 @@ async function handleUserMessage(
     activeTurn.admissionPending = false
     if (!collaboration) emitSessionTurnEvent({ type: 'user-input', sessionId })
 
-    const initialRuntimeTransition = await waitForRuntimeTransitionBeforeUserTurn(ws, sessionId)
+    const initialRuntimeTransition = await waitForRuntimeTransitionBeforeUserTurn(ws, sessionId, message.replyAnchor)
     if (
       !initialRuntimeTransition.ok ||
       activeUserTurns.get(sessionId) !== activeTurn ||
@@ -1261,7 +1311,7 @@ async function handleUserMessage(
       const diagnosticMessage = await buildSessionStartupDiagnosticMessage(sessionId, errMsg)
       if (activeUserTurns.get(sessionId) !== activeTurn || activeTurn.cancelled) return
       sendMessage(ws, {
-        type: 'error',
+        type: 'error', replyAnchor: message.replyAnchor,
         message: diagnosticMessage,
         code,
         retryable:
@@ -1279,7 +1329,7 @@ async function handleUserMessage(
       return
     }
 
-    const startupRuntimeTransition = await waitForRuntimeTransitionBeforeUserTurn(ws, sessionId)
+    const startupRuntimeTransition = await waitForRuntimeTransitionBeforeUserTurn(ws, sessionId, message.replyAnchor)
     if (
       startupRuntimeTransition.ok &&
       activeUserTurns.get(sessionId) === activeTurn &&
@@ -1353,7 +1403,11 @@ async function handleUserMessage(
           activeUserTurns.get(sessionId) === activeTurn && !activeTurn.cancelled,
         messageUuid: activeTurn.expectedReplayUuid,
         onCommitted: () => {
+          userMessageSent = true
           activeTurn.messageSent = true
+          if (message.replyAnchor !== undefined) {
+            sendMessage(ws, { type: 'input_committed', messageUuid: activeTurn.expectedReplayUuid!, replyAnchor: message.replyAnchor })
+          }
         },
       },
     )
@@ -1377,7 +1431,7 @@ async function handleUserMessage(
       removeTitleOutputCallback?.()
       discardActiveTitleTurn(sessionId, titleTurnNumber)
       sendMessage(ws, {
-        type: 'error',
+        type: 'error', replyAnchor: message.replyAnchor,
         message: 'CLI process is not running. The session may have ended or the process crashed.',
         code: 'CLI_NOT_RUNNING',
       })
@@ -1717,9 +1771,8 @@ function consumeInterruptedTurnResult(sessionId: string, cliMsg: any): boolean {
 
 function acknowledgeActiveTurnReplay(sessionId: string, cliMsg: any): boolean {
   const activeTurn = activeUserTurns.get(sessionId)
-  const replayMatches = activeTurn
-    ? matchesActiveTurnReplay(activeTurn, cliMsg)
-    : false
+  const replayMatches = activeTurn && (matchesActiveTurnReplay(activeTurn, cliMsg) ||
+    (activeTurn.expectedReplayUuid && inputTurnUuids(cliMsg)?.includes(activeTurn.expectedReplayUuid)))
   const localCommandMatches = activeTurn && !pendingInterruptedTurnResults.has(sessionId)
     ? matchesActiveTurnLocalCommand(activeTurn, cliMsg)
     : false
@@ -1875,17 +1928,19 @@ function applyDeferredRuntimeRestartAfterActiveTurn(
 
 async function handleDesktopClearCommand(
   ws: SessionConnection,
+  replyAnchor?: string | null,
 ) {
   const turnToCancel = activeUserTurns.get(ws.data.sessionId)
   if (turnToCancel) turnToCancel.cancelled = true
   await enqueueRuntimeTransition(ws.data.sessionId, () =>
-    performDesktopClearCommand(ws, turnToCancel),
+    performDesktopClearCommand(ws, turnToCancel, replyAnchor),
   )
 }
 
 async function performDesktopClearCommand(
   ws: SessionConnection,
   turnToCancel: ActiveUserTurnState | undefined,
+  replyAnchor?: string | null,
 ) {
   const { sessionId } = ws.data
 
@@ -1900,6 +1955,7 @@ async function performDesktopClearCommand(
   const activeTitleState = sessionTitleState.get(sessionId)
   if (activeTitleState) activeTitleState.activeTurn = undefined
   const pendingStartup = sessionStartupPromises.get(sessionId)
+  executingInputUuids.delete(sessionId)
   conversationService.stopSession(sessionId)
   // Clearing the lead's context ends its reviewed team for good.
   void endTeamsForParent(sessionId).catch(error => console.error(`[WS] Failed to end the cleared session's team: ${error}`))
@@ -1928,11 +1984,9 @@ async function performDesktopClearCommand(
     runtimeExitStoppedSessions.add(sessionId)
     await emitStoppedForNonAgentTasksAfterRuntimeExit(sessionId)
     const errMsg = err instanceof Error ? err.message : String(err)
-    sendToSession(sessionId, {
-      type: 'error',
-      message: errMsg,
-      code: 'SESSION_CLEAR_FAILED',
-    })
+    for (const client of activeSessions.get(sessionId) ?? []) {
+      sendMessage(client, { type: 'error', message: errMsg, code: 'SESSION_CLEAR_FAILED', replyAnchor: client === ws ? replyAnchor : undefined })
+    }
     sendToSession(sessionId, { type: 'status', state: 'idle' })
     return
   }
@@ -2025,11 +2079,12 @@ const planApprovalTransitions = new Map<string, Set<string>>()
 
 function syncPermissionRequests(ws: SessionConnection): void {
   const { sessionId } = ws.data
+  sendMessage(ws, { type: 'input_turn_snapshot', messageUuids: executingInputUuids.get(sessionId) ?? [] })
   sendMessage(ws, {
     type: 'permission_requests_snapshot',
     toolRequestIds: replayPendingPermissionRequests(ws, sessionId),
     computerUseRequestIds: replayPendingComputerUsePermissionRequests(ws, sessionId),
-    turnActive: hasLiveUserTurnForClient(sessionId),
+    turnActive: executingInputUuids.has(sessionId) || hasLiveUserTurnForClient(sessionId),
   })
 }
 
@@ -2909,6 +2964,7 @@ function handleStopGeneration(
   options: { reapBackgroundTasks?: boolean } = {},
 ) {
   const { sessionId } = ws.data
+  executingInputUuids.delete(sessionId)
   emitSessionTurnEvent({ type: 'stopped', sessionId })
   const stoppedTurn = activeUserTurns.get(sessionId)
   const agentTasks = [...(activeAgentTasks.get(sessionId)?.values() ?? [])]
@@ -4102,6 +4158,7 @@ function cleanupSessionRuntimeState(
   strictCollaborationRuntimeSessions.delete(sessionId)
   rejectedRuntimeConfigs.delete(sessionId)
   activeUserTurns.delete(sessionId)
+  executingInputUuids.delete(sessionId)
   activeCliRuns.delete(sessionId)
   cliRunsAwaitingBackgroundTasks.delete(sessionId)
   sessionStopRequested.delete(sessionId)
@@ -4503,29 +4560,8 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
         }
       }
 
-      const scheduledTask = readScheduledTaskMetadata(cliMsg.scheduledTask)
-      const replayText = extractReplayUserText(cliMsg)
-      if (scheduledTask && replayText) {
-        messages.push({ type: 'user_message_replay', content: String(scheduledTaskDisplayText(replayText)), scheduledTask })
-      } else if (
-        replayText &&
-        !isShutdownTeamPrompt(cliMsg.message?.content) &&
-        // The server's own team notices to the lead are not the user's words.
-        !isTeamLeadNotice(cliMsg.message?.content) &&
-        (!cliMsg.isMeta || parseSessionCollaborationEnvelope(replayText))
-      ) {
-        const collaborationEnvelope = parseSessionCollaborationEnvelope(replayText)
-        messages.push(collaborationEnvelope
-          ? {
-              type: 'user_message_replay',
-              content: collaborationEnvelope.text,
-              collaboration: { sourceSessionId: collaborationEnvelope.senderSessionId, messageId: collaborationEnvelope.messageId },
-            }
-          : {
-              type: 'user_message_replay',
-              ...splitSessionReferenceContext(replayText),
-            })
-      }
+      const replay = projectUserReplay(cliMsg)
+      if (replay) messages.push(replay)
 
       return messages
     }
@@ -4791,6 +4827,8 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
     }
 
     case 'system': {
+      const messageUuids = inputTurnUuids(cliMsg)
+      if (messageUuids) return [{ type: 'input_turn_start', messageUuids }]
       // 区分不同的 system 子类型
       const subtype = cliMsg.subtype
       if (subtype === 'api_retry') {
@@ -6167,6 +6205,7 @@ function enqueueRuntimeTransition(
 async function waitForRuntimeTransitionBeforeUserTurn(
   ws: SessionConnection,
   sessionId: string,
+  replyAnchor?: string | null,
 ): Promise<{ ok: boolean; waited: boolean }> {
   // Stop may replace the admission token before the old result callback runs,
   // or force-kill the CLI without a result. Settle its selections before input.
@@ -6188,7 +6227,7 @@ async function waitForRuntimeTransitionBeforeUserTurn(
       })
       console.error(`[WS] Runtime transition failed before handling user message for ${sessionId}: ${errMsg}`)
       sendMessage(ws, {
-        type: 'error',
+        type: 'error', replyAnchor,
         message: `Failed to switch provider/model: ${errMsg}`,
         code: 'CLI_RESTART_FAILED',
       })
@@ -6210,7 +6249,7 @@ async function waitForRuntimeTransitionBeforeUserTurn(
     const message = rejectedCliRuntime
       ? `The message was not sent. ${rejectedCliRuntime} Select a valid CLI runtime, then retry.`
       : `The message was not sent. ${rejectedConfig} Select a valid model and reasoning effort, then retry.`
-    sendMessage(ws, { type: 'error', message, code: 'USER_TURN_FAILED', retryable: true })
+    sendMessage(ws, { type: 'error', replyAnchor, message, code: 'USER_TURN_FAILED', retryable: true })
     sendMessage(ws, { type: 'status', state: 'idle' })
     failSessionChatActivity(sessionId)
     emitSessionTurnEvent({ type: 'output', sessionId, message: { type: 'result', is_error: true, result: message } })
@@ -6331,6 +6370,7 @@ export function __resetWebSocketHandlerStateForTests(): void {
   prewarmedSessions.clear()
   prewarmIdleTimers.clear()
   activeUserTurns.clear()
+  executingInputUuids.clear()
   activeCliRuns.clear()
   cliRunsAwaitingBackgroundTasks.clear()
   activeBackgroundTaskIds.clear()

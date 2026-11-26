@@ -34,7 +34,7 @@ test.each(['collaboration', 'scheduled'] as const)('headless %s inbox acknowledg
     return new Response(completion(), { headers: { 'content-type': 'text/event-stream' } })
   } })
   const env = createSandboxedTestEnvironment(home, {
-    NODE_ENV: 'production', CI: '1', CC_HAHA_SKIP_DOTENV: '1',
+    CC_HAHA_SESSION_ID: 'fixture-session', NODE_ENV: 'production', CI: '1', CC_HAHA_SKIP_DOTENV: '1',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1',
     ANTHROPIC_API_KEY: 'fixture-key', ANTHROPIC_BASE_URL: server.url.origin,
@@ -50,6 +50,8 @@ test.each(['collaboration', 'scheduled'] as const)('headless %s inbox acknowledg
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
     expect({ code, stderr }).toMatchObject({ code: 0 })
     const events = stdout.trim().split('\n').map(line => JSON.parse(line))
+    const receipt = events.find(event => event.subtype === 'session_message_receipt')
+    expect(events.find(event => event.subtype === 'input_turn_start')?.message_uuids).toEqual([receipt.source_uuid])
     const controls = events.filter(event => event.type === 'control_response')
     expect(controls).toHaveLength(2)
     expect(controls[0].response.response).toMatchObject({ status: 'queued', duplicate: false })

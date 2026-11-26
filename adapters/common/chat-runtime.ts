@@ -11,11 +11,11 @@
  * an image — and keeps its transport, auth and media details to itself. The
  * runtime never imports a platform SDK, so it is testable with a fake port.
  *
- * The port, not the runtime, remembers per-chat reply context (a WeCom frame's
- * `req_id`, a QQ inbound `msgId`, a Slack `thread_ts`): those are platform
- * concepts with platform lifetimes.
+ * Platforms interpret reply anchors; the runtime carries them across queued
+ * inbound work and the corresponding server turn.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import * as path from 'node:path'
 import { enqueueInboundPowerActivity, type InboundPowerLease } from './inbound-power-activity.js'
 import { adapterMigrationLifecycle } from './migration-lifecycle.js'
@@ -82,6 +82,13 @@ export interface ChatPort {
   clearChat?(chatId: string): void
 }
 
+const replyAnchor = new AsyncLocalStorage<string | null | undefined>()
+
+/** QQ message id or Slack thread timestamp for this asynchronous operation. */
+export function currentReplyAnchor(): string | undefined {
+  return replyAnchor.getStore() ?? undefined
+}
+
 /** One inbound user message, already normalized by the platform adapter. */
 export type InboundChatMessage = {
   chatId: string
@@ -89,6 +96,8 @@ export type InboundChatMessage = {
   displayName: string
   /** Stable per-message identity used for replay dedup. */
   dedupKey: string
+  /** Null explicitly targets the main conversation. */
+  replyAnchor?: string | null
   text: string
   attachments?: AttachmentRef[]
   /**
@@ -146,6 +155,8 @@ export class ImChatRuntime {
 
   private readonly runtimeStates = new Map<string, ChatRuntimeState>()
   private readonly buffers = new Map<string, MessageBuffer>()
+  private readonly committedAnchors = new Map<string, Map<string, string | null>>()
+  private readonly activeTurns = new Map<string, { ids: string[]; anchor?: string | null; awaitingSnapshot?: boolean }>()
   private readonly responses = new Map<string, ResponseStream>()
   private readonly pendingPermissions = new Map<string, Set<string>>()
   private readonly submittingPermissions = new Map<string, Set<string>>()
@@ -193,6 +204,10 @@ export class ImChatRuntime {
    * has been handled; adapters normally ignore it, tests await it.
    */
   handleInbound(message: InboundChatMessage): Promise<void> {
+    return replyAnchor.run(message.replyAnchor, () => this.admitInbound(message))
+  }
+
+  private admitInbound(message: InboundChatMessage): Promise<void> {
     const { chatId, dedupKey } = message
     if (!chatId || adapterMigrationLifecycle.isQuiescing) return Promise.resolve()
     if (dedupKey && !this.dedup.tryRecord(`${this.port.platform}:${dedupKey}`)) {
@@ -279,6 +294,7 @@ export class ImChatRuntime {
       effective,
       attachments.length > 0 ? attachments : undefined,
       lease?.id,
+      replyAnchor.getStore(),
     )
     // Socket send is not admission: the server releases this exact id only after
     // its own busy state takes over, including startup and rejection paths.
@@ -330,7 +346,7 @@ export class ImChatRuntime {
         return true
       }
       this.clearTransientChatState(chatId)
-      const sent = this.bridge.sendUserMessage(chatId, '/clear', undefined, lease?.id)
+      const sent = this.bridge.sendUserMessage(chatId, '/clear', undefined, lease?.id, replyAnchor.getStore())
       if (sent && lease) lease.transferred = true
       if (sent) this.getRuntimeState(chatId).state = 'thinking'
       await this.port.sendNotice(
@@ -355,6 +371,59 @@ export class ImChatRuntime {
   // ---------- server stream ----------
 
   async handleServerMessage(chatId: string, msg: ServerMessage): Promise<void> {
+    if (msg.type === 'input_committed') {
+      let anchors = this.committedAnchors.get(chatId)
+      if (!anchors) this.committedAnchors.set(chatId, anchors = new Map())
+      anchors.set(msg.messageUuid, msg.replyAnchor)
+      return
+    }
+    const active = this.activeTurns.get(chatId)
+    if (msg.type === 'connected') {
+      if (active) active.awaitingSnapshot = true
+      return
+    }
+    if (msg.type === 'input_turn_start' || msg.type === 'input_turn_snapshot' || msg.type === 'user_message_replay') {
+      const ids: string[] = msg.type === 'user_message_replay'
+        ? (msg.messageUuid ? [msg.messageUuid] : []) : msg.messageUuids
+      // Merged turns replay each member, but the final input owns the reply.
+      if (active && msg.type === 'user_message_replay' && !active.awaitingSnapshot && active.ids.includes(msg.messageUuid)) return
+      if (active && msg.type === 'input_turn_snapshot' && ids.length > 0 &&
+          ids.length === active.ids.length && ids.every((id, i) => id === active.ids[i])) {
+        active.awaitingSnapshot = false
+        return
+      }
+      await this.finishReplyTurn(chatId)
+      const anchors = this.committedAnchors.get(chatId)
+      if (ids.length) this.activeTurns.set(chatId, { ids, anchor: anchors?.get(ids[ids.length - 1]!) })
+      for (const id of ids) anchors?.delete(id)
+      if (!anchors?.size) this.committedAnchors.delete(chatId)
+      return
+    }
+    // A legacy reconnect can replay permissions or output without any turn identity.
+    if (active?.awaitingSnapshot || (msg.type === 'permission_requests_snapshot' && msg.turnActive === false)) {
+      await this.finishReplyTurn(chatId)
+    }
+    // Rejecting another input during startup must not tear down the live response.
+    if (msg.type === 'error' && msg.replyAnchor !== undefined) {
+      await replyAnchor.run(msg.replyAnchor, () => this.handleServerError(chatId, msg))
+      return
+    }
+    const anchor = this.activeTurns.get(chatId)?.anchor
+    if (msg.type === 'message_complete') {
+      this.activeTurns.delete(chatId)
+      this.imageWatchers.delete(chatId)
+    }
+    await replyAnchor.run(anchor, () => this.routeServerMessage(chatId, msg))
+  }
+
+  private async finishReplyTurn(chatId: string): Promise<void> {
+    const anchor = this.activeTurns.get(chatId)?.anchor
+    this.activeTurns.delete(chatId)
+    this.imageWatchers.delete(chatId)
+    await replyAnchor.run(anchor, () => this.finishResponse(chatId))
+  }
+
+  private async routeServerMessage(chatId: string, msg: ServerMessage): Promise<void> {
     const runtime = this.getRuntimeState(chatId)
     const settled: string[] = []
     if (syncImPermissionState(chatId, msg, runtime, this.pendingPermissions, {
@@ -694,6 +763,8 @@ export class ImChatRuntime {
   }
 
   clearTransientChatState(chatId: string): void {
+    this.committedAnchors.delete(chatId)
+    this.activeTurns.delete(chatId)
     this.buffers.get(chatId)?.reset()
     this.buffers.delete(chatId)
     // Abandoning a turn still has to close its presentation. Dropping the

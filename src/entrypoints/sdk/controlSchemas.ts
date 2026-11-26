@@ -769,6 +769,7 @@ export const SDKSessionMessageReceiptSchema = lazySchema(() =>
 
 export const StdoutMessageSchema = lazySchema(() =>
   z.union([
+    z.object({ type: z.literal('system'), subtype: z.literal('input_turn_start'), message_uuids: z.array(z.string()), session_id: z.string(), uuid: z.string() }),
     SDKSessionMessageReceiptSchema(),
     SDKMessageSchema(),
     SDKStreamlinedTextMessageSchema(),

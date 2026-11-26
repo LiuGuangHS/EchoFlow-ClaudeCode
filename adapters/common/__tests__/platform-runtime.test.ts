@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { QQBot, type QQBotEventMap } from '@tencent-connect/qqbot-nodejs'
 import { WSClient } from '@wecom/aibot-node-sdk'
+import { createSandboxedTestEnvironment } from '../../../scripts/pr/test-environment.js'
+import { WsBridge, type ServerMessage } from '../ws-bridge.js'
+import { AdapterHttpClient } from '../http-client.js'
 import { enqueue } from '../chat-queue.js'
 import { AdapterMigrationLifecycle, adapterMigrationLifecycle } from '../migration-lifecycle.js'
 import { SlackApiClient } from '../../slack/api.js'
@@ -28,7 +31,7 @@ let slackReplies: unknown[]
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'im-runtime-'))
-  const env = { ...fixtureEnv, HOME: root, CLAUDE_CONFIG_DIR: root }
+  const env = createSandboxedTestEnvironment(root, { ...fixtureEnv, CLAUDE_CONFIG_DIR: root })
   savedEnv = new Map(Object.keys(env).map(key => [key, process.env[key]]))
   Object.assign(process.env, env)
   const config = { allowedUsers: [user], defaultWorkDir: root }
@@ -91,7 +94,21 @@ async function waitForSocketEvent(ready: () => boolean, event: string) {
   }
 }
 
-test('QQ answers a private help command using its message target and stops the bot', async () => {
+function captureChatTransport() {
+  let handler!: (message: ServerMessage) => void
+  const forwarded = spyOn(WsBridge.prototype, 'sendUserMessage').mockReturnValue(true)
+  spies.push(forwarded,
+    spyOn(AdapterHttpClient.prototype, 'createSession').mockResolvedValue('fixture-session'),
+    spyOn(WsBridge.prototype, 'connectSession').mockReturnValue(true),
+    spyOn(WsBridge.prototype, 'waitForOpen').mockResolvedValue(true),
+    spyOn(WsBridge.prototype, 'isSessionOpen').mockReturnValue(true),
+    spyOn(WsBridge.prototype, 'onServerMessage').mockImplementation((_chatId, callback) => { handler = callback }),
+  )
+  return { forwarded, serverMessage: (message: ServerMessage) => handler(message) }
+}
+
+test('QQ answers commands and rejected prompts using their message targets and stops the bot', async () => {
+  const { forwarded, serverMessage } = captureChatTransport()
   const start = spyOn(QQBot.prototype, 'start').mockResolvedValue(undefined)
   const stop = spyOn(QQBot.prototype, 'stop').mockImplementation(() => {})
   const on = spyOn(QQBot.prototype, 'on')
@@ -108,6 +125,66 @@ test('QQ answers a private help command using its message target and stops the b
   } as Parameters<QQBotEventMap['message']>[1])
   expect(send).toHaveBeenCalledTimes(1)
   expect(send).toHaveBeenCalledWith(target, expect.stringContaining('/sessions'))
+
+  const messages = ['queued-1', 'queued-2'].map(msgId => ({ ...target, msgId }))
+  await Promise.all(messages.map(replyTarget => handler!({} as Parameters<QQBotEventMap['message']>[0], {
+    kind: 'c2c', senderId: user, content: '/help', messageId: replyTarget.msgId, replyTarget,
+  } as Parameters<QQBotEventMap['message']>[1])))
+  expect(send.mock.calls.slice(1).map(([replyTarget]) => replyTarget)).toEqual(messages)
+
+  spies.push(spyOn(QQBot.prototype, 'sendTyping').mockResolvedValue({}))
+  for (const msgId of ['first', 'second']) {
+    await handler!({} as Parameters<QQBotEventMap['message']>[0], {
+      kind: 'c2c', senderId: user, content: 'same question', messageId: msgId,
+    } as Parameters<QQBotEventMap['message']>[1])
+  }
+  expect(forwarded.mock.calls.map(call => call[4])).toEqual(['first', 'second'])
+  await serverMessage({ type: 'error', code: 'CLI_START_FAILED', message: 'startup failed', replyAnchor: 'second' })
+  expect(send).toHaveBeenLastCalledWith({ ...target, msgId: 'second' }, expect.stringContaining('startup failed'))
+  await serverMessage({ type: 'status', state: 'idle' })
+  await serverMessage({ type: 'content_delta', text: 'background answer' })
+  await serverMessage({ type: 'message_complete' })
+  expect(send).toHaveBeenLastCalledWith({ scope: 'c2c', targetId: user, msgId: undefined }, 'background answer')
+
+  // The CLI may start B before the adapter saw completion for A. A's short
+  // final chunk still needs its original QQ target when streaming is unavailable.
+  const openStream = spyOn(QQBot.prototype, 'openStream').mockImplementation(() => { throw new Error('fixture stream unavailable') })
+  spies.push(openStream)
+  for (const msgId of ['A', 'B']) {
+    await handler!({} as Parameters<QQBotEventMap['message']>[0], {
+      kind: 'c2c', senderId: user, content: 'same question', messageId: msgId,
+    } as Parameters<QQBotEventMap['message']>[1])
+    await serverMessage({ type: 'input_committed', messageUuid: `${msgId}-uuid`, replyAnchor: forwarded.mock.calls.at(-1)?.[4] })
+    await serverMessage({ type: 'input_turn_start', messageUuids: [`${msgId}-uuid`] })
+    await serverMessage({ type: 'content_delta', text: `tail ${msgId}` })
+  }
+  await serverMessage({ type: 'message_complete' })
+  expect(send.mock.calls.slice(-2)).toEqual([
+    [{ ...target, msgId: 'A' }, 'tail A'],
+    [{ ...target, msgId: 'B' }, 'tail B'],
+  ])
+
+  // Exercise the SDK throttle, including its deferred second update.
+  openStream.mockRestore()
+  const prefix = 'a'.repeat(200)
+  let confirmed = ''
+  const createStream = QQBot.prototype.openStream
+  spies.push(spyOn(QQBot.prototype, 'openStream').mockImplementation(function (this: QQBot, options) {
+    spies.push(spyOn(this.messageApi, 'sendC2CStreamMessage').mockImplementation(async (_creds, _user, frame) => {
+      if (confirmed) throw new Error('fixture transport rejected the remaining frames')
+      confirmed = frame.content_raw
+      return { id: 'fixture-stream' }
+    }))
+    return createStream.call(this, options)
+  }))
+  await serverMessage({ type: 'input_committed', messageUuid: 'stream-a', replyAnchor: 'A' })
+  await serverMessage({ type: 'input_turn_start', messageUuids: ['stream-a'] })
+  await serverMessage({ type: 'content_delta', text: prefix })
+  await waitForSocketEvent(() => confirmed === prefix, 'first QQ frame accepted')
+  await serverMessage({ type: 'content_delta', text: 'remaining text' })
+  await serverMessage({ type: 'input_committed', messageUuid: 'stream-b', replyAnchor: 'B' })
+  await serverMessage({ type: 'input_turn_start', messageUuids: ['stream-b'] })
+  expect(send).toHaveBeenLastCalledWith({ ...target, msgId: 'A' }, 'remaining text')
 
   await lifecycle.quiesce()
   expect(stop).toHaveBeenCalledTimes(1)
@@ -146,8 +223,17 @@ test('WeCom answers a private help command and disconnects its client', async ()
 })
 
 test('Slack authenticates before Socket Mode, answers in the incoming thread and closes the socket', async () => {
-  let acknowledge: unknown
+  let acknowledge: { envelope_id: string } | undefined
   let closeCode: number | undefined
+  const firstLookup = Promise.withResolvers<void>()
+  const fixtureFetch = globalThis.fetch
+  let lookups = 0
+  globalThis.fetch = (async (input, init) => {
+    if (new URL(String(input)).pathname === '/api/users.info' && ++lookups === 1) await firstLookup.promise
+    return fixtureFetch(input, init)
+  }) as typeof fetch
+  let sendEvent!: (ts: string, thread: string | undefined, text: string) => void
+  const { forwarded, serverMessage } = captureChatTransport()
   slackSocket = Bun.serve<undefined>({
     hostname: '127.0.0.1', port: 0,
     fetch(request, server) {
@@ -156,11 +242,13 @@ test('Slack authenticates before Socket Mode, answers in the incoming thread and
     },
     websocket: {
       open(socket) {
-        socket.send(JSON.stringify({
-          type: 'events_api', envelope_id: 'envelope', payload: { event: {
-            type: 'message', channel_type: 'im', channel: 'fixture-dm', user, text: '/help', ts: '2.0', thread_ts: '1.0',
+        sendEvent = (ts, thread_ts, text) => socket.send(JSON.stringify({
+          type: 'events_api', envelope_id: ts, payload: { event: {
+            type: 'message', channel_type: 'im', channel: 'fixture-dm', user, text, ts, thread_ts,
           } },
         }))
+        sendEvent('1.1', 'first-thread', '/help')
+        sendEvent('2.0', '1.0', '/help')
       },
       message(_socket, raw) { acknowledge = JSON.parse(String(raw)) },
       close(_socket, code) { closeCode = code },
@@ -173,11 +261,57 @@ test('Slack authenticates before Socket Mode, answers in the incoming thread and
   spies.push(open)
 
   await import('../../slack/runtime.js')
-  await waitForSocketEvent(() => acknowledge !== undefined && slackReplies.length > 0, 'Slack acknowledgment and reply')
-  expect(slackRequests).toEqual(['/api/auth.test', 'openSocketConnection', '/api/users.info', '/api/chat.postMessage'])
+  try {
+    await waitForSocketEvent(() => acknowledge?.envelope_id === '2.0', 'both Slack acknowledgments')
+  } finally { firstLookup.resolve() }
+  await waitForSocketEvent(() => slackReplies.length === 2, 'queued command replies')
+  expect(slackReplies.shift()).toEqual({ channel: 'fixture-dm', thread_ts: 'first-thread', text: expect.stringContaining('/sessions') })
+  expect(slackRequests).toEqual(['/api/auth.test', 'openSocketConnection', '/api/users.info', '/api/chat.postMessage', '/api/chat.postMessage'])
   expect(open.mock.calls).toEqual([[fixtureEnv.SLACK_APP_TOKEN]])
-  expect(acknowledge).toEqual({ envelope_id: 'envelope' })
+  expect(acknowledge).toEqual({ envelope_id: '2.0' })
   expect(slackReplies).toEqual([{ channel: 'fixture-dm', thread_ts: '1.0', text: expect.stringContaining('/sessions') }])
+
+  sendEvent('4.0', '3.0', 'question')
+  await waitForSocketEvent(() => forwarded.mock.calls.length === 1, 'question forwarded')
+  await serverMessage({ type: 'input_committed', messageUuid: 'first-uuid', replyAnchor: forwarded.mock.calls[0]?.[4] })
+  await serverMessage({ type: 'input_turn_start', messageUuids: ['first-uuid'] })
+  await serverMessage({ type: 'content_start', blockType: 'text' })
+  sendEvent('6.0', '5.0', '/help')
+  await waitForSocketEvent(() => slackReplies.length === 2, 'command reply')
+  expect(slackReplies[1]).toEqual({ channel: 'fixture-dm', thread_ts: '5.0', text: expect.stringContaining('/sessions') })
+  sendEvent('8.0', '7.0', 'next question')
+  await waitForSocketEvent(() => forwarded.mock.calls.length === 2, 'next question forwarded')
+  await serverMessage({ type: 'content_delta', text: 'a'.repeat(240) })
+  await waitForSocketEvent(() => slackReplies.length === 3, 'stream flush')
+  expect(slackReplies[2]).toEqual({ channel: 'fixture-dm', thread_ts: '3.0', text: 'a'.repeat(240) })
+  await serverMessage({ type: 'error', code: 'CLI_ERROR', message: 'fixture error' })
+  await serverMessage({ type: 'message_complete' })
+  expect(slackReplies[3]).toEqual({ channel: 'fixture-dm', thread_ts: '3.0', text: expect.stringContaining('fixture error') })
+  await serverMessage({ type: 'input_committed', messageUuid: 'next-uuid', replyAnchor: forwarded.mock.calls[1]?.[4] })
+  await serverMessage({ type: 'input_turn_start', messageUuids: ['next-uuid'] })
+  await serverMessage({ type: 'content_delta', text: 'second answer' })
+  await serverMessage({ type: 'message_complete' })
+  expect(slackReplies[4]).toEqual({ channel: 'fixture-dm', thread_ts: '7.0', text: 'second answer' })
+
+  // A newer prompt can supersede one still in server startup, without a completion for the older input.
+  sendEvent('10.0', '9.0', 'same question')
+  await waitForSocketEvent(() => forwarded.mock.calls.length === 3, 'older prompt forwarded')
+  sendEvent('12.0', '11.0', 'same question')
+  await waitForSocketEvent(() => forwarded.mock.calls.length === 4, 'replacement forwarded')
+  await serverMessage({ type: 'input_committed', messageUuid: 'replacement-uuid', replyAnchor: forwarded.mock.calls[3]?.[4] })
+  await serverMessage({ type: 'input_turn_start', messageUuids: ['replacement-uuid'] })
+  await serverMessage({ type: 'user_message_replay', messageUuid: 'replacement-uuid', content: 'same question' })
+  await serverMessage({ type: 'content_delta', text: 'replacement ' })
+  sendEvent('13.0', undefined, 'same question')
+  await waitForSocketEvent(() => forwarded.mock.calls.length === 5, 'main conversation forwarded')
+  const mainAnchor = forwarded.mock.calls[4]?.[4]
+  expect(mainAnchor).toBeNull()
+  await serverMessage({ type: 'error', code: 'CLI_START_FAILED', message: 'startup failed', replyAnchor: mainAnchor })
+  await serverMessage({ type: 'status', state: 'idle' })
+  expect(slackReplies[5]).toEqual({ channel: 'fixture-dm', text: expect.stringContaining('startup failed') })
+  await serverMessage({ type: 'content_delta', text: 'answer' })
+  await serverMessage({ type: 'message_complete' })
+  expect(slackReplies[6]).toEqual({ channel: 'fixture-dm', thread_ts: '11.0', text: 'replacement answer' })
 
   await lifecycle.quiesce()
   await waitForSocketEvent(() => closeCode !== undefined, 'Slack socket close')

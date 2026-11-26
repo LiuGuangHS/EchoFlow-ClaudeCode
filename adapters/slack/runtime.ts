@@ -24,6 +24,7 @@ import {
   inferMimeFromFileName,
 } from '../common/attachment/mime.js'
 import {
+  currentReplyAnchor,
   ImChatRuntime,
   type ChatPort,
   type OutboundImage,
@@ -56,14 +57,11 @@ attachmentStore.gc().catch((err) => {
 let botUserId: string | undefined
 /** Bounded: `resolveDisplayName` runs for unpaired senders too, so an unbounded
  *  map would grow with every stranger who messages the bot. */
-const displayNames = new Map<string, string>()
+const displayNames = new Map<string, Promise<string>>()
 const DISPLAY_NAME_CACHE_LIMIT = 500
 
-/** The thread the user last wrote in, so answers land where they asked. */
-const replyThreads = new Map<string, string | undefined>()
-
 async function sendChunkedText(chatId: string, text: string): Promise<void> {
-  const threadTs = replyThreads.get(chatId)
+  const threadTs = currentReplyAnchor()
   for (const chunk of splitMessage(text, SLACK_TEXT_LIMIT)) {
     await api.postMessage(chatId, chunk, threadTs)
   }
@@ -83,7 +81,7 @@ class SlackResponse implements ResponseStream {
   private pending = ''
   private lastEditAt = 0
 
-  constructor(private readonly chatId: string) {}
+  constructor(private readonly chatId: string, private readonly threadTs = currentReplyAnchor()) {}
 
   async append(delta: string): Promise<void> {
     if (!delta) return
@@ -119,7 +117,7 @@ class SlackResponse implements ResponseStream {
         if (i === 0 && this.messageTs) {
           await api.updateMessage(this.chatId, this.messageTs, chunk)
         } else {
-          this.messageTs = await api.postMessage(this.chatId, chunk, replyThreads.get(this.chatId))
+          this.messageTs = await api.postMessage(this.chatId, chunk, this.threadTs)
         }
         // A chunk that is not the last one is sealed at its length limit; the
         // remainder continues in a fresh message rather than editing this one.
@@ -159,11 +157,8 @@ const port: ChatPort = {
       buffer: image.buffer,
       filename: `claude-${Date.now()}.${imageExtensionForMime(image.mime)}`,
       title: image.alt,
-      threadTs: replyThreads.get(chatId),
+      threadTs: currentReplyAnchor(),
     })
-  },
-  clearChat(chatId) {
-    replyThreads.delete(chatId)
   },
 }
 
@@ -180,24 +175,22 @@ const runtime = new ImChatRuntime({
   flushCharThreshold: 240,
 })
 
-async function resolveDisplayName(userId: string): Promise<string> {
+function resolveDisplayName(userId: string): Promise<string> {
   const cached = displayNames.get(userId)
   if (cached) return cached
-  try {
-    const info = await api.get<{ user?: { real_name?: string; name?: string } }>('users.info', {
-      user: userId,
-    })
-    const name = info.user?.real_name?.trim() || info.user?.name?.trim() || userId
-    if (displayNames.size >= DISPLAY_NAME_CACHE_LIMIT) {
-      const oldest = displayNames.keys().next().value
-      if (oldest !== undefined) displayNames.delete(oldest)
-    }
-    displayNames.set(userId, name)
-    return name
-  } catch {
-    // users:read may be missing on an app installed from an older manifest.
-    return userId
+  if (displayNames.size >= DISPLAY_NAME_CACHE_LIMIT) {
+    const oldest = displayNames.keys().next().value
+    if (oldest !== undefined) displayNames.delete(oldest)
   }
+  // Share the pending lookup so consecutive messages enter the chat queue in arrival order.
+  const lookup = api.get<{ user?: { real_name?: string; name?: string } }>('users.info', { user: userId })
+    .then(info => info.user?.real_name?.trim() || info.user?.name?.trim() || userId)
+    .catch(() => {
+      if (displayNames.get(userId) === lookup) displayNames.delete(userId)
+      return userId
+    })
+  displayNames.set(userId, lookup)
+  return lookup
 }
 
 async function collectAttachments(chatId: string, files: SlackFile[]): Promise<AttachmentRef[]> {
@@ -249,13 +242,12 @@ const socket = new SlackSocketMode({
     const payload = extractSlackPayload(envelope.payload?.event, { botUserId })
     if (!payload) return
 
-    replyThreads.set(payload.chatId, payload.threadTs)
-
     if (adapterMigrationLifecycle.isQuiescing) return
     void adapterMigrationLifecycle.track((async () => {
       try {
         await runtime.handleInbound({
           chatId: payload.chatId,
+          replyAnchor: payload.threadTs ?? null,
           userId: payload.userId,
           displayName: await resolveDisplayName(payload.userId),
           dedupKey: payload.dedupKey,

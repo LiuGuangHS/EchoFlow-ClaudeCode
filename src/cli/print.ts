@@ -2325,6 +2325,9 @@ function runHeadlessStreaming(
             }
           }
           const batchUuids = batch.map(c => c.uuid).filter(u => u !== undefined)
+          if (process.env.CC_HAHA_SESSION_ID) {
+            output.enqueue({ type: 'system', subtype: 'input_turn_start', message_uuids: batchUuids, session_id: getSessionId(), uuid: randomUUID() })
+          }
           // A host notice can batch with the user's next message; the turn is
           // still the user's when any batched command was typed by them.
           const userStartedTurn = batch.some(isUserStartedCommand)
