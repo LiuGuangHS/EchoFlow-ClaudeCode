@@ -10,9 +10,10 @@ import * as archiveStore from '../../utils/sessionArchiveStore.js'
 import { sanitizePath } from '../../utils/sessionStoragePortable.js'
 import { SessionService } from './sessionService.js'
 import { writeActivityBackfillState } from './localIndex/activityIndex.js'
+import { createLocalIndexCoordinator, discoverActivityTranscriptSources, discoverTranscriptSources } from './localIndex/coordinator.js'
 import { openLocalIndexDatabase, type LocalIndexDatabase } from './localIndex/database.js'
 import { createSessionIndex, type LocalIndexGateway } from './localIndex/sessionIndex.js'
-import { createSessionProjector, type SessionSourceCandidate } from './localIndex/sessionProjector.js'
+import { createSessionProjector, MAX_PROJECTION_RECORDS, type SessionSourceCandidate } from './localIndex/sessionProjector.js'
 import { verifySourceFingerprint } from './localIndex/sourceFingerprint.js'
 
 let root: string
@@ -229,10 +230,10 @@ test('ready first page never enters the exhaustive importer when its completion 
   } finally { migrate.mockRestore(); list.mockRestore(); hydrate.mockRestore(); discover.mockRestore() }
 })
 
-test.each(['on', 'off', 'shadow'] as const)('conflicting copies stay unclassified across project filters and history in %s mode', async mode => {
-  const { service, index, workDir } = await firstUseIndex([
+test.each(['on', 'off', 'shadow', 'degraded'] as const)('conflicting copies stay unclassified across project filters and history with the index %s', async mode => {
+  const { service, gateway, index, workDir, status } = await firstUseIndex([
     { n: 0 }, { n: 1, tail: jsonl({ type: 'session-archive', archived: true }) },
-  ], mode)
+  ], mode === 'degraded' ? 'on' : mode)
   const otherWorkDir = join(root, 'other-workspace')
   const project = sanitizePath(otherWorkDir)
   const file = join(root, 'projects', project, `${firstUseId(1)}.jsonl`)
@@ -245,6 +246,10 @@ test.each(['on', 'off', 'shadow'] as const)('conflicting copies stay unclassifie
     path: file, sessionId: firstUseId(1), projectPath: project, fallbackWorkDir: otherWorkDir,
     fallbackCreatedAt: snapshot.birthtime.toISOString(), fallbackModifiedAt: snapshot.mtime.toISOString(), modifiedAtMs: snapshot.mtimeMs,
   })).toMatchObject({ kind: 'indexed' })
+  if (mode === 'degraded') {
+    gateway.getPublicStatus = () => ({ ...status, state: 'degraded', degradedSources: 1 })
+    gateway.getSourceScopedFailurePaths = () => [file]
+  }
 
   expect(await service.listSessions({ project: workDir })).toMatchObject({ total: 1, sessions: [{ id: firstUseId(0) }] })
   expect(await service.listSessions({ project: otherWorkDir })).toEqual({ total: 0, sessions: [] })
@@ -285,6 +290,147 @@ test('file-backed project pagination does not touch unrelated history after arch
     expect(fileStat.mock.calls.map(([path]) => String(path))).not.toContain(otherFile)
     expect(open.mock.calls.map(([path]) => String(path))).not.toContain(otherFile)
   } finally { readDir.mockRestore(); fileStat.mockRestore(); open.mockRestore() }
+})
+
+test('degraded project pagination skips unrelated physical projects after archive migration', async () => {
+  const { service, gateway, index, candidates, workDir, status } = await firstUseIndex([
+    { n: 0 }, { n: 1 }, { n: 2, tail: jsonl({ type: 'session-archive', archived: true }) },
+  ])
+  const otherWorkDir = join(root, 'other-workspace')
+  const otherProject = sanitizePath(otherWorkDir)
+  const otherDir = join(root, 'projects', otherProject)
+  await mkdir(otherWorkDir)
+  await mkdir(otherDir)
+  const projector = createSessionProjector({ database: database!, index, scope: root })
+  for (const n of [1, 3]) {
+    const file = join(otherDir, `${firstUseId(n)}.jsonl`)
+    await writeFile(file, jsonl({ type: 'session-meta', workDir: otherWorkDir, archived: true }))
+    const snapshot = await stat(file)
+    expect(await projector.projectSource({
+      path: file, sessionId: firstUseId(n), projectPath: otherProject, fallbackWorkDir: otherWorkDir,
+      fallbackCreatedAt: snapshot.birthtime.toISOString(), fallbackModifiedAt: snapshot.mtime.toISOString(), modifiedAtMs: snapshot.mtimeMs,
+    })).toMatchObject({ kind: 'indexed' })
+  }
+  const otherFile = join(otherDir, `${firstUseId(1)}.jsonl`)
+  gateway.getPublicStatus = () => ({ ...status, state: 'degraded', degradedSources: 2 })
+  gateway.getSourceScopedFailurePaths = () => [candidates.get(0)!.path, otherFile]
+  expect(await new SessionService(gateway).listSessions({ project: workDir })).toMatchObject({
+    total: 1, sessions: [{ id: firstUseId(0) }],
+  })
+
+  await writeFile(join(getEchoFlowInternalDir(root), 'session-archives.json'), JSON.stringify({
+    schemaVersion: 1, sessions: { [firstUseId(1)]: { archived: false } },
+  }))
+  await ensureSessionArchivesMigrated(root)
+
+  const list = spyOn(gateway, 'listSessions')
+  const readDir = spyOn(fs, 'readdir')
+  const realpath = spyOn(fs, 'realpath')
+  const open = spyOn(fs, 'open')
+  try {
+    const page = await service.listSessions({ project: workDir, offset: 1, limit: 1 })
+    expect(page.total).toBe(2)
+    expect(page.sessions.map(row => row.id)).toEqual([firstUseId(0)])
+    expect(readDir).not.toHaveBeenCalled()
+    expect(realpath.mock.calls.map(([file]) => String(file))).not.toContain(otherFile)
+    expect(open.mock.calls.map(([file]) => String(file))).not.toContain(otherFile)
+    expect(list).toHaveBeenCalledTimes(1)
+    expect(list.mock.calls[0]?.[0]).toMatchObject({ project: sanitizePath(workDir), offset: 0, limit: 500 })
+  } finally { list.mockRestore(); readDir.mockRestore(); realpath.mockRestore(); open.mockRestore() }
+})
+
+test.each(['complete', 'incomplete index', 'failed overlay', 'lost index coverage'] as const)(
+  'empty degraded project merge checks filesystem fallback with %s', async scenario => {
+    const { service, gateway, candidates, workDir, status } = await firstUseIndex([{ n: 0 }])
+    await ensureSessionArchivesMigrated(root)
+    const failedPath = candidates.get(0)!.path
+    gateway.getPublicStatus = () => ({ ...status, state: 'degraded', degradedSources: 1 })
+    let hasCoverage = true
+    gateway.hasCompletedSessionDiscovery = () => true
+    gateway.getSourceScopedFailurePaths = () => hasCoverage ? [failedPath] : null
+    const emptyProject = scenario === 'complete' || scenario === 'lost index coverage'
+    const project = emptyProject ? join(root, 'empty-workspace') : workDir
+    if (scenario === 'incomplete index') gateway.listSessions = () => ({ total: 1, sessions: [] })
+
+    const readDir = spyOn(fs, 'readdir')
+    const resolvePath = fs.realpath
+    const realpath = spyOn(fs, 'realpath').mockImplementation(async file => {
+      if (scenario === 'lost index coverage' && file === join(root, 'projects')) hasCoverage = false
+      if (scenario === 'failed overlay' && file === failedPath) throw new Error('Fixture overlay read failed')
+      return resolvePath(file)
+    })
+    try {
+      const page = await service.listSessions({ project })
+      if (emptyProject) expect(page).toEqual({ total: 0, sessions: [] })
+      else expect(page).toMatchObject({ total: 1, sessions: [{ id: firstUseId(0) }] })
+      expect(readDir.mock.calls.length > 0).toBe(scenario !== 'complete')
+    } finally { realpath.mockRestore(); readDir.mockRestore() }
+  },
+)
+
+test.each([false, true])('a restarted degraded index only trusts empty projects after discovery (archive imported: %s)', async archiveImported => {
+  const { index, candidates, workDir } = await firstUseIndex([{ n: 0 }, { n: 1 }])
+  if (archiveImported) await ensureSessionArchivesMigrated(root)
+  const failed = candidates.get(1)!
+  await appendFile(failed.path, jsonl({ type: 'progress' }).repeat(MAX_PROJECTION_RECORDS))
+  const projector = createSessionProjector({ database: database!, index, scope: root })
+  await expect(projector.projectSource(failed)).rejects.toMatchObject({ code: 'LOCAL_INDEX_SOURCE_LIMIT' })
+  expect(index.getSource(failed.path)).toMatchObject({ state: 'degraded', lastErrorCode: 'LOCAL_INDEX_SOURCE_LIMIT' })
+  database!.close()
+  database = undefined
+
+  const newWorkDir = join(root, 'new-workspace')
+  const newProjectDir = join(root, 'projects', sanitizePath(newWorkDir))
+  await mkdir(newWorkDir)
+  await mkdir(newProjectDir)
+  await writeFile(join(newProjectDir, `${firstUseId(2)}.jsonl`), jsonl({ type: 'session-meta', workDir: newWorkDir })
+    + jsonl({ type: 'user', uuid: 'offline-user', timestamp: '2026-01-02T00:00:00.000Z', message: { role: 'user', content: 'Added while stopped' } }))
+
+  const scanStarted = Promise.withResolvers<void>()
+  const releaseScan = Promise.withResolvers<void>()
+  const activityStarted = Promise.withResolvers<void>()
+  const releaseActivity = Promise.withResolvers<void>()
+  const restarted = createLocalIndexCoordinator({
+    resolveMode: () => ({ mode: 'on', warningCode: null }),
+    resolveScope: () => root,
+    resolveDatabasePath: () => join(getEchoFlowInternalDir(root), 'db', 'index-v1.sqlite'),
+    discoverSources: async (...args) => {
+      scanStarted.resolve()
+      await releaseScan.promise
+      return discoverTranscriptSources(...args)
+    },
+    discoverActivitySources: async (...args) => {
+      activityStarted.resolve()
+      await releaseActivity.promise
+      return discoverActivityTranscriptSources(...args)
+    },
+  })
+  const service = new SessionService(restarted)
+  const discover = spyOn(service as unknown as { discoverSessionFiles: (...args: unknown[]) => Promise<unknown> }, 'discoverSessionFiles')
+  try {
+    await restarted.start()
+    await scanStarted.promise
+    expect(restarted.getPublicStatus()).toMatchObject({ state: 'degraded', degradedSources: 1 })
+    expect(restarted.getSourceScopedFailurePaths?.()).toEqual([failed.path])
+    expect(await service.listSessions({ project: workDir })).toMatchObject({
+      total: 2, sessions: [{ id: firstUseId(1) }, { id: firstUseId(0) }],
+    })
+    expect(discover).not.toHaveBeenCalled()
+    expect(await service.listSessions({ project: newWorkDir })).toMatchObject({
+      total: 1, sessions: [{ id: firstUseId(2), title: 'Added while stopped' }],
+    })
+
+    releaseScan.resolve()
+    await activityStarted.promise
+    discover.mockClear()
+    expect(await service.listSessions({ project: join(root, 'empty-workspace') })).toEqual({ total: 0, sessions: [] })
+    expect(discover).not.toHaveBeenCalled()
+  } finally {
+    releaseScan.resolve()
+    releaseActivity.resolve()
+    discover.mockRestore()
+    await restarted.stop()
+  }
 })
 
 test('completion publication invalidates file-list and project catalogs without an archive-state write', async () => {

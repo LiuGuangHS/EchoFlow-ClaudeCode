@@ -514,6 +514,7 @@ export function createLocalIndexCoordinator(
   // Whether committed rows describe a complete snapshot: rows existed at
   // startup, or a discovery generation has finished.
   let servableSnapshot = false
+  let sessionDiscoveryComplete = false
   // Per-path failures recorded by the discovery generation that is still
   // running. Its unattributed failures are only recorded at its end, together
   // with `fullSweepFailureCode`.
@@ -1030,6 +1031,7 @@ export function createLocalIndexCoordinator(
         fullSweepFailureCode = genericFailureCode ?? 'LOCAL_INDEX_DISCOVERY_INCOMPLETE'
       }
       fullSweepFailureFromPreviousRun = false
+      sessionDiscoveryComplete = complete
       if (activeSweepFailures === sweepFailures) activeSweepFailures = null
       if (narrate || reprojected > 0) {
         log(
@@ -1299,6 +1301,7 @@ export function createLocalIndexCoordinator(
       activeSweepFailures = null
       const hasCommittedRows = activeIndex.countSources() > 0
       servableSnapshot = hasCommittedRows
+      sessionDiscoveryComplete = false
       let archiveRebuildPending = existingSources.some(source => source.parserVersion < LEGACY_ARCHIVE_PARSER_VERSION)
       if (archiveRebuildPending) {
         try {
@@ -1575,6 +1578,10 @@ export function createLocalIndexCoordinator(
         markDegraded(error, 'LOCAL_INDEX_READ_FAILED')
         return false
       }
+    },
+
+    hasCompletedSessionDiscovery(): boolean {
+      return indexReadAllowed() && started && sessionDiscoveryComplete
     },
 
     getSourceScopedFailurePaths(): readonly string[] | null {

@@ -83,6 +83,8 @@ export interface LocalIndexGateway extends SessionIndexReader {
   getMode(): LocalIndexMode
   getPublicStatus(): LocalIndexStatus
   isSessionScopeReady(): boolean
+  /** Whether transcript discovery has completed since this index was opened. */
+  hasCompletedSessionDiscovery?(): boolean
   isActivityScopeReady?(): boolean
   getActivityStats?(range: StatsDateRange, now?: Date): ClaudeCodeStats | null
   rebuild(): Promise<LocalIndexStatus>

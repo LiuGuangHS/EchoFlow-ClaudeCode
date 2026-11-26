@@ -4197,24 +4197,40 @@ export class SessionService {
       ? this.sanitizePath(normalizeDriveRootPathForPlatform(options.project))
       : undefined
     const archiveSnapshot = readSessionArchiveSnapshot(scope)
+    // Before import, copies in other projects can change an ID's classification.
+    const classificationProject = archiveSnapshot.migrationComplete ? project : undefined
     try {
       const rows: IndexedSessionRow[] = []
       const unknownIds = new Set<string>()
       for (let offset = 0; ; offset += 500) {
-        const page = this.localIndexGateway.listSessions({ limit: 500, offset })
+        const page = this.localIndexGateway.listSessions({ project: classificationProject, limit: 500, offset })
         if (!this.degradedListRemainsServable()) {
           this.markIndexReadFailure()
           return null
         }
         rows.push(...page.sessions.filter(row => !plan.excludedPaths.has(path.resolve(row.transcriptPath))))
-        if (offset + page.sessions.length >= page.total || page.sessions.length === 0) break
+        if (offset + page.sessions.length >= page.total) break
+        if (page.sessions.length < 500) return null
       }
-      rows.push(...await this.readExcludedTranscriptRows(plan, scope, undefined, unknownIds))
-      if (rows.length === 0) return null
+      const emptyIndexRevision = rows.length === 0 && classificationProject !== undefined &&
+        this.localIndexGateway.hasCompletedSessionDiscovery?.()
+        ? this.localIndexGateway.getSessionReadRevision?.()
+        : null
+      rows.push(...await this.readExcludedTranscriptRows(plan, scope, classificationProject, unknownIds))
+      if (rows.length === 0) {
+        // Trust an empty project only if the index and overlay stayed complete across the disk read.
+        if (unknownIds.size > 0 || emptyIndexRevision == null ||
+          mutationEpoch !== getSharedSessionMutationState(this.localIndexGateway).epoch ||
+          this.getDegradedListPlan()?.revision !== plan.revision ||
+          this.localIndexGateway.getSessionReadRevision?.() !== emptyIndexRevision) return null
+        return { sessions: [], total: 0 }
+      }
       const archiveStates = classifySessionArchives(archiveSnapshot, rows.map(row =>
         unknownIds.has(row.id) ? { ...row, legacyArchived: null } : row))
       const visibleRows = rows.filter(row =>
         (project === undefined || row.projectPath === project) && archiveStates.get(row.id) === Boolean(options?.archived))
+      // Rows from other projects cannot prove that this project is empty during startup discovery.
+      if (visibleRows.length === 0 && project !== undefined && !this.localIndexGateway.hasCompletedSessionDiscovery?.()) return null
       visibleRows.sort(compareIndexedListRows)
 
       // Same defaults as the index and file lists.
