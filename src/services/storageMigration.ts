@@ -1028,7 +1028,7 @@ async function withStorageLocation<T>(binding: StorageBinding, action: (database
   } finally { database.close() }
 }
 
-function assertLocationBinding(binding: StorageBinding, database?: DatabaseSync): void {
+async function assertLocationBinding(binding: StorageBinding, database?: DatabaseSync): Promise<void> {
   if (database && !binding.location?.moveSource &&
     database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'retired_import_root'").get() &&
     database.prepare('SELECT 1 FROM retired_import_root WHERE root = ?').get(binding.root)) {
@@ -1039,6 +1039,13 @@ function assertLocationBinding(binding: StorageBinding, database?: DatabaseSync)
   assertLocationTarget(current.target)
   if (current.target.canonical !== binding.root && current.target.canonical !== binding.location?.moveSource) {
     throw new Error('Active EchoFlow storage directory changed; restart with the active directory')
+  }
+  const active = current.target.canonical === binding.root ? binding : resolveStorageBinding({ env: {}, roots: [current.target.canonical] })
+  const [journal] = await readJournals(active, current.transaction)
+  if (!journal) throw new Error('Missing active EchoFlow storage transaction')
+  if (!((journal.phase === 'accepted' && journal.state === 'cleanup-pending') || (journal.phase === 'completed' && journal.state === 'ready')) ||
+    !(journal.legacySelection || journal.sources.some(source => source.handoff && !source.handoff.import))) {
+    throw new Error('Invalid active EchoFlow storage transaction')
   }
 }
 
@@ -1056,7 +1063,7 @@ async function publishStorageLocation(binding: StorageBinding, journal: StorageJ
   if (source || legacySelection) assertSeparateLocation(file, source?.directory ?? legacySelection!.directory)
   await withStorageLocation(binding, async connection => {
     const database = connection!
-    assertLocationBinding(binding, database)
+    await assertLocationBinding(binding, database)
     if (source && database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'retired_import_root'").get()) {
       // A verified explicit move can deliberately reuse a retired directory.
       database.prepare('DELETE FROM retired_import_root WHERE root = ?').run(binding.root)
@@ -1147,10 +1154,14 @@ async function readProcessReceipt(file: string, writer: boolean): Promise<Proces
     (writer ? !writerName || Number(writerName[1]) !== receipt.pid : name !== 'lock.json')) throw new Error('Unknown storage process receipt; manual recovery required')
   return receipt
 }
-async function reapStoppedReceipt(file: string, writer: boolean): Promise<boolean> {
+async function stoppedReceipt(file: string, writer: boolean): Promise<FileIdentity | undefined> {
   const identity = await regularIdentity(file)
-  if (processAlive(await readProcessReceipt(file, writer))) return false
+  if (processAlive(await readProcessReceipt(file, writer))) return
   await checkFile(file, identity)
+  return identity
+}
+async function reapStoppedReceipt(file: string, writer: boolean): Promise<boolean> {
+  if (!await stoppedReceipt(file, writer)) return false
   await fs.unlink(file)
   return true
 }
@@ -1163,7 +1174,7 @@ async function processReceipt(file: string): Promise<() => Promise<void>> {
 }
 async function initializeTarget(binding: StorageBinding): Promise<void> {
   await withStorageLocation(binding, async database => {
-    assertLocationBinding(binding, database)
+    await assertLocationBinding(binding, database)
     await ensureStorageTarget(binding)
   })
 }
@@ -1171,7 +1182,7 @@ async function initializeTarget(binding: StorageBinding): Promise<void> {
 async function lockStorageMigration(binding: StorageBinding, approvalOnly = false): Promise<() => Promise<void>> {
   let release: (() => Promise<void>) | undefined
   return await withStorageLocation(binding, async database => {
-    assertLocationBinding(binding, database)
+    await assertLocationBinding(binding, database)
     if (approvalOnly) await ownership(binding.root)
     await ensureStorageTarget(binding)
     release = await migrationLock(binding, approvalOnly)
@@ -1204,11 +1215,15 @@ export async function acquireStorageWriter(binding: StorageBinding): Promise<{ r
     if ((await fs.readdir(binding.root)).length) await ownership(binding.root)
   }
   let registered: (() => Promise<void>) | undefined
+  let stoppedLock: FileIdentity | undefined
   const release = await withStorageLocation(binding, async database => {
     if (binding.location?.moveSource) throw new Error('A cold move cannot admit an ordinary storage writer')
-    assertLocationBinding(binding, database)
+    await assertLocationBinding(binding, database)
     await ensureStorageTarget(binding)
-    if (await present(lock) && (!database || !await reapStoppedReceipt(lock, false))) throw new Error('Storage migration maintenance barrier is active')
+    if (await present(lock)) {
+      stoppedLock = await stoppedReceipt(lock, false)
+      if (!stoppedLock) throw new Error('Storage migration maintenance barrier is active')
+    }
     const writers = path.join(transactionHome(binding), 'writers')
     await fs.mkdir(writers, { recursive: true, mode: 0o700 })
     await assertUnlinkedDirectoryPath(writers)
@@ -1221,9 +1236,13 @@ export async function acquireStorageWriter(binding: StorageBinding): Promise<{ r
     await assertNoSourceHandoff(binding.root)
     for (const journal of await readJournals(binding)) {
       if (journal.state !== 'ready') throw new Error(`Storage migration is ${journal.state}`)
+      if (journal.phase !== 'completed') throw new Error('Incomplete storage migration journal')
       await assertNoFork(journal)
     }
-    if (await present(lock)) throw new Error('Storage migration maintenance barrier is active')
+    if (await present(lock)) {
+      const current = stoppedLock && await stoppedReceipt(lock, false)
+      if (!stoppedLock || !current || !sameFile(stoppedLock, current)) throw new Error('Storage migration maintenance barrier is active')
+    }
     // A source maintenance lock can become a durable handoff during registration.
     await assertNoSourceHandoff(binding.root)
     return { release }
@@ -1333,12 +1352,13 @@ function parseStorageJournal(value: unknown, binding: StorageBinding, id: string
   legacySelectionEntry(journal)
   return journal
 }
-async function readJournals(binding: StorageBinding): Promise<StorageJournal[]> {
+async function readJournals(binding: StorageBinding, onlyId?: string): Promise<StorageJournal[]> {
   const directory = transactionHome(binding)
   if (!await present(directory)) return []
   await assertUnlinkedDirectoryPath(directory)
   const journals: StorageJournal[] = []
   for (const id of (await fs.readdir(directory)).sort()) {
+    if (onlyId !== undefined && id !== onlyId) continue
     if (id === 'writers' || id === 'lock.json') continue
     if (/^\.pending-[a-f0-9-]{36}$/.test(id)) {
       // Migration cannot change business data before publishing its journal.
@@ -1512,7 +1532,7 @@ async function assertLegacyIndex(directory: string, binding: StorageBinding): Pr
   let acquired = false
   try {
     await withStorageLocation(binding, async database => {
-      assertLocationBinding(binding, database)
+      await assertLocationBinding(binding, database)
       await assertNoSourceHandoff(binding.root)
       let ancestor = binding.root
       while (!await present(ancestor)) { created.push(ancestor); ancestor = path.dirname(ancestor) }
@@ -1596,7 +1616,7 @@ async function armImportSource(source: StorageMigrationSource, target: StorageBi
   const root = source.directory
   const sourceBinding = resolveStorageBinding({ env: {}, roots: [root] })
   await withStorageLocation(target, async database => {
-    assertLocationBinding(target, database)
+    await assertLocationBinding(target, database)
     if (target.location) assertSeparateLocation(target.location.file, root)
     await ownership(root)
     const pending = await pendingSourceHandoff(root)
@@ -1911,7 +1931,7 @@ export async function armStorageHandoff(preview: StorageHandoffPreview, id: stri
   const { plan, sourceIndex } = preview
   const source = plan.sources[sourceIndex]!.directory
   return await withStorageLocation(plan.binding, async database => {
-    assertLocationBinding(plan.binding, database)
+    await assertLocationBinding(plan.binding, database)
     return await writeStorageHandoff(preview, id, source, options)
   })
 }
@@ -2210,16 +2230,33 @@ async function prepareMergedArchives(binding: StorageBinding, journal: StorageJo
   }
 
   let imported = false
-  if (markers.length) {
+  if (markers.length || transcripts.length) {
     const targetMarked = markedRoots.has(binding.root)
     if (!targetMarked || transcripts.some(entry => !markedRoots.has(journal.sources[entry.source]!.directory))) {
       const sessions = Object.assign(Object.create(null), state?.sessions) as ReturnType<typeof migrateArchiveState>['sessions']
+      const matchingTargets: string[] = []
+      const duplicateIds = new Set<string>()
+      if (!markers.length) {
+        const incoming = new Map<string, number>()
+        for (const entry of transcripts) {
+          signal.throwIfAborted()
+          const id = path.basename(entry.destination, '.jsonl')
+          const source = incoming.get(id)
+          if (source !== undefined && source !== entry.source) duplicateIds.add(id)
+          incoming.set(id, entry.source)
+        }
+        for await (const file of listLegacyArchiveTranscripts(binding.root, id => incoming.has(id))) {
+          signal.throwIfAborted()
+          duplicateIds.add(path.basename(file, '.jsonl'))
+          matchingTargets.push(file)
+        }
+      }
       const scanned = new Set<string>()
       const legacy = new Map<string, boolean>()
       const collect = async (file: string, marked: boolean, target = false) => {
         signal.throwIfAborted()
         const id = path.basename(file, '.jsonl')
-        if (Object.hasOwn(sessions, id)) return
+        if ((!markers.length && !duplicateIds.has(id)) || Object.hasOwn(sessions, id)) return
         if (marked) { scanned.add(id); return }
         const identity = target ? await regularIdentity(file) : undefined
         const archived = await readLegacyArchiveTranscript(file)
@@ -2231,12 +2268,13 @@ async function prepareMergedArchives(binding: StorageBinding, journal: StorageJo
       for (const entry of transcripts) {
         await collect(stagedFile(binding, journal, entry), markedRoots.has(journal.sources[entry.source]!.directory))
       }
-      for await (const file of listLegacyArchiveTranscripts(binding.root)) await collect(file, targetMarked, true)
+      for await (const file of markers.length ? listLegacyArchiveTranscripts(binding.root) : matchingTargets) await collect(file, targetMarked, true)
       for (const [id, archived] of legacy) {
         if (archived && scanned.has(id)) throw new Error('Conflicting legacy session archive states; originals retained')
         sessions[id] = { archived }
       }
-      if (legacy.size) {
+      // Without a completion marker, validate the merge but leave legacy import to its normal owner.
+      if (markers.length && legacy.size) {
         state = { ...state, schemaVersion: 1, sessions }
         imported = true
       }
@@ -2712,7 +2750,7 @@ export async function recoverStorageMigration(binding: StorageBinding, hooks: St
       if (!await present(lock)) return { state: 'ready', issues: [] }
       if (binding.location) {
         const ready = await withStorageLocation(binding, async database => {
-          assertLocationBinding(binding, database)
+          await assertLocationBinding(binding, database)
           await assertNoSourceHandoff(binding.root)
           for (const journal of await readJournals(binding)) {
             if (journal.phase !== 'completed' || journal.state !== 'ready') return false

@@ -73,7 +73,7 @@ export async function prepareHeadlessStorage(options?: StorageStartupOptions): P
   const { acquireStorageWriter, completeStorageMigration, executeStorageMigration, prepareStorageMigration, readStorageMigrationStatus, recoverStorageMigration, selectStartupStorage, storageLocationFile } = await import('./storageMigration.js')
   const binding = selectStartupStorage(resolveStorageBinding(), storageLocationFile())
   const status = await readStorageMigrationStatus(binding)
-  if (status && status.state !== 'ready' && (status.handoff || status.legacySelection)) {
+  if (status && status.state !== 'ready' && status.state !== 'cleanup-pending' && (status.handoff || status.legacySelection)) {
     throw new Error('A desktop storage migration is pending; open EchoFlow Desktop to finish it')
   }
   let sources = await discoverHeadlessStorageSources(binding)

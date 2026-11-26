@@ -197,6 +197,97 @@ test('keeps both originals when the archive choices for one session disagree', a
   expect(await fs.readFile(target, 'utf8')).toBe(state(false))
 })
 
+test('keeps both transcripts when unmarked roots disagree on the same session archive state', async () => {
+  const f = await fixture()
+  await archiveTarget(f)
+  const source = path.join(f.home, 'owned-profile')
+  const original = await legacyArchiveTranscript(source, 'duplicate')
+  await fs.copyFile(path.join(f.binding.root, 'app.json'), path.join(source, 'app.json'))
+  const restored = '{"type":"session-archive","archived":false}\n'
+  const targetProject = path.join(f.binding.root, 'projects', 'another-project')
+  await fs.mkdir(targetProject, { recursive: true })
+  const target = path.join(targetProject, 'duplicate.jsonl')
+  await fs.writeFile(target, restored)
+
+  const result = await executeStorageMigration({ binding: f.binding, sources: [{ directory: source, markerRoot: source }], hooks: f.hooks })
+  expect(result.state).toBe('blocked')
+  expect(result.issues).toContain('Conflicting legacy session archive states; originals retained')
+  expect(await fs.readFile(original, 'utf8')).toBe('{"type":"session-archive","archived":true}\n')
+  expect(await fs.readFile(target, 'utf8')).toBe(restored)
+  expect(await fs.exists(path.join(f.binding.root, path.relative(source, original)))).toBe(false)
+})
+
+test('migrates unmarked roots without parsing unrelated destination transcripts', async () => {
+  const f = await fixture()
+  await archiveTarget(f)
+  const source = path.join(f.home, 'owned-profile')
+  const original = await legacyArchiveTranscript(source, 'duplicate')
+  await fs.copyFile(path.join(f.binding.root, 'app.json'), path.join(source, 'app.json'))
+  const targetProject = path.join(f.binding.root, 'projects', 'another-project')
+  await fs.mkdir(targetProject, { recursive: true })
+  await fs.copyFile(original, path.join(targetProject, 'duplicate.jsonl'))
+  const target = path.join(f.binding.root, path.relative(source, original))
+  const unrelated = path.join(targetProject, 'unrelated.jsonl')
+  const truncated = '{"type":"assistant"'
+  await fs.writeFile(unrelated, truncated)
+
+  const result = await executeStorageMigration({ binding: f.binding, sources: [{ directory: source, markerRoot: source }], hooks: f.hooks })
+  expect(result.issues).toEqual([])
+  expect(result.state).toBe('validation-required')
+  expect((await completeStorageMigration(f.binding, result.id!, f.hooks)).state).toBe('ready')
+  expect(await fs.readFile(target, 'utf8')).toBe('{"type":"session-archive","archived":true}\n')
+  expect(await fs.readFile(unrelated, 'utf8')).toBe(truncated)
+  expect(await fs.exists(original)).toBe(false)
+  expect(await fs.exists(path.join(f.binding.internalDir, markerName))).toBe(false)
+})
+
+for (const [scan, nonFileId, blocked] of [
+  ['markerless scan with a unique incoming session', 'unrelated', false],
+  ['markerless scan with a matching destination session', 'incoming', true],
+  ['marker-required full scan', 'unrelated', true],
+] as const) {
+  for (const kind of ['directory', 'symlink'] as const) {
+    test.skipIf(kind === 'symlink' && process.platform === 'win32')(`${scan} handles a destination .jsonl ${kind}`, async () => {
+      const f = await fixture()
+      await archiveTarget(f)
+      const source = path.join(f.home, 'owned-profile')
+      const original = await legacyArchiveTranscript(source, 'incoming')
+      await fs.copyFile(path.join(f.binding.root, 'app.json'), path.join(source, 'app.json'))
+      if (scan === 'marker-required full scan') {
+        const internal = path.join(source, 'cc-haha')
+        await fs.mkdir(internal)
+        await fs.writeFile(path.join(internal, archiveName), JSON.stringify({ schemaVersion: 1, sessions: {} }))
+        await fs.writeFile(path.join(internal, markerName), JSON.stringify({ schemaVersion: 1, archiveStateRequired: true }))
+      }
+      const targetProject = path.join(f.binding.root, 'projects', 'another-project')
+      await fs.mkdir(targetProject, { recursive: true })
+      const nonFile = path.join(targetProject, `${nonFileId}.jsonl`)
+      if (kind === 'directory') await fs.mkdir(nonFile)
+      else await fs.symlink(path.join(f.shared, 'settings.json'), nonFile, 'file')
+
+      const result = await executeStorageMigration({ binding: f.binding, sources: [{ directory: source, markerRoot: source }], hooks: f.hooks })
+      const incoming = path.join(f.binding.root, path.relative(source, original))
+      const transcript = '{"type":"session-archive","archived":true}\n'
+      if (blocked) {
+        expect(result.state).toBe('blocked')
+        expect(result.issues).toContain('Cannot migrate archives from a non-file transcript')
+        expect(await fs.readFile(original, 'utf8')).toBe(transcript)
+        expect(await fs.exists(incoming)).toBe(false)
+      } else {
+        expect(result.issues).toEqual([])
+        expect(result.state).toBe('validation-required')
+        expect((await completeStorageMigration(f.binding, result.id!, f.hooks)).state).toBe('ready')
+        expect(await fs.readFile(incoming, 'utf8')).toBe(transcript)
+        expect(await fs.exists(original)).toBe(false)
+      }
+      const entry = await fs.lstat(nonFile)
+      expect(kind === 'directory' ? entry.isDirectory() : entry.isSymbolicLink()).toBe(true)
+      expect(await fs.exists(path.join(f.binding.internalDir, archiveName))).toBe(false)
+      expect(await fs.exists(path.join(f.binding.internalDir, markerName))).toBe(false)
+    })
+  }
+}
+
 for (const marked of ['source', 'target'] as const) {
   test(`applies the ${marked} archive marker only to transcripts from its own root`, async () => {
     const f = await fixture()

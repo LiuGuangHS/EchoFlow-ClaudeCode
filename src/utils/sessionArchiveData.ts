@@ -1,6 +1,6 @@
 import { createReadStream } from 'node:fs'
 import { lstat, readdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 export type ArchiveRecord = { archived: boolean; [key: string]: unknown }
@@ -35,7 +35,7 @@ export function parseSessionArchiveMarker(value: unknown): ArchiveMarker {
   return marker
 }
 
-export async function* listLegacyArchiveTranscripts(configDir: string): AsyncGenerator<string> {
+export async function* listLegacyArchiveTranscripts(configDir: string, includeSession?: (id: string) => boolean): AsyncGenerator<string> {
   const projectsDir = join(configDir, 'projects')
   let projects
   try {
@@ -51,8 +51,10 @@ export async function* listLegacyArchiveTranscripts(configDir: string): AsyncGen
     const projectDir = join(projectsDir, project.name)
     for (const file of await readdir(projectDir, { withFileTypes: true })) {
       if (!file.name.endsWith('.jsonl')) continue
+      const transcript = join(projectDir, file.name)
+      if (includeSession && !includeSession(basename(transcript, '.jsonl'))) continue
       if (!file.isFile()) throw new Error('Cannot migrate archives from a non-file transcript')
-      yield join(projectDir, file.name)
+      yield transcript
     }
   }
 }

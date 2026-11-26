@@ -159,7 +159,7 @@ test.each(['before', 'after'])('recovers after a process exits %s first journal 
   expect((await recoverStorageMigration(binding, f.hooks)).state).toBe('ready')
 })
 
-test('ready recovery and admission reap only a proven abandoned barrier with a writer already running', async () => {
+test('ready recovery can reap a stopped barrier while ordinary writer admission leaves it intact', async () => {
   const f = await fixture()
   const binding = selectStartupStorage(f.binding, storageLocationFile(f.home))
   const source = await f.owned('old', { original: 'keep the migrated data' })
@@ -188,7 +188,7 @@ test('ready recovery and admission reap only a proven abandoned barrier with a w
     const admitted = await Promise.allSettled([acquireStorageWriter(binding), acquireStorageWriter(binding)])
     for (const lease of admitted) if (lease.status === 'fulfilled') await lease.value.release()
     expect(admitted.map(lease => lease.status)).toEqual(['fulfilled', 'fulfilled'])
-    expect(await fs.exists(barrier)).toBe(false)
+    expect(await fs.readFile(barrier, 'utf8')).toBe(receipt(pid))
     expect(await fs.readdir(path.join(binding.internalDir, 'migrations', 'writers'))).toHaveLength(1)
   } finally { await writer.release() }
 })

@@ -83,10 +83,11 @@ const pendingAcceptedMigration = `
 `
 
 describe('default headless migration admission', () => {
-  test('leaves a pending legacy root selection for desktop validation', async () => {
+  test.each(['unaccepted', 'accepted', 'missing journal'])('headless admission checks the legacy selection receipt: %s', async phase => {
     const result = await startup(`
+      const phase = ${JSON.stringify(phase)}
       const { prepareHeadlessStorage } = await import('./src/services/storageStartup.ts')
-      const { executeStorageMigration, selectStartupStorage, storageLocationFile, readStorageLocation } = await import('./src/services/storageMigration.ts')
+      const { acquireStorageWriter, completeStorageMigration, executeStorageMigration, readStorageMigrationStatus, selectStartupStorage, storageLocationFile, readStorageLocation } = await import('./src/services/storageMigration.ts')
       const { resolveStorageBinding } = await import('./src/utils/echoFlowConfigRoot.ts')
       const { createHash } = await import('node:crypto')
       const file = storageLocationFile()
@@ -105,13 +106,36 @@ describe('default headless migration admission', () => {
         } }],
       })
       if (imported.state !== 'validation-required') throw new Error(JSON.stringify(imported))
+      if (phase !== 'unaccepted') {
+        const pending = await completeStorageMigration(binding, imported.id, {
+          ...hooks, cleanupResources: async () => { throw new Error('fixture interrupted accepted cleanup') },
+        })
+        if (pending.state !== 'cleanup-pending' || readStorageLocation(file) !== root || await fs.exists(pointer)) throw new Error(JSON.stringify(pending))
+        if (phase === 'missing journal') await fs.rm(path.join(binding.internalDir, 'migrations', imported.id), { recursive: true })
+        delete process.env.CLAUDE_CONFIG_DIR
+      }
+      const options = { hooks, validateRestrictedStartup: async () => { throw new Error('Headless startup must not validate a desktop selection') } }
       let failure
       try {
-        const lease = await prepareHeadlessStorage({ hooks, validateRestrictedStartup: async () => {} })
+        const lease = await prepareHeadlessStorage(options)
+        if (lease.binding.root !== root) throw new Error('Registered root was not selected')
         await lease.release()
       } catch (error) { failure = String(error) }
-      if (!failure?.includes('open EchoFlow Desktop')) throw new Error('Unexpected admission result: ' + failure)
-      if (readStorageLocation(file) || await fs.readFile(pointer, 'utf8') !== bytes) throw new Error('Pending legacy selection changed')
+      if (phase === 'accepted') {
+        if (failure || (await readStorageMigrationStatus(binding))?.state !== 'ready') throw new Error('Accepted migration was not completed: ' + failure)
+      } else if (phase === 'missing journal') {
+        if (!failure?.includes('Missing active EchoFlow storage transaction')) throw new Error('Invalid selection was admitted: ' + failure)
+        try {
+          const lease = await acquireStorageWriter(binding)
+          await lease.release()
+          throw new Error('Invalid selection was admitted by the writer lease')
+        } catch (error) {
+          if (!String(error).includes('Missing active EchoFlow storage transaction')) throw error
+        }
+      } else {
+        if (!failure?.includes('open EchoFlow Desktop')) throw new Error('Unexpected admission result: ' + failure)
+        if (readStorageLocation(file) || await fs.readFile(pointer, 'utf8') !== bytes) throw new Error('Pending legacy selection changed')
+      }
     `)
     expect(result).toEqual({ stdout: '', stderr: '', code: 0 })
   })
