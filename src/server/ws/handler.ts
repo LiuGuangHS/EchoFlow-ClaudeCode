@@ -252,6 +252,7 @@ type ActiveUserTurnState = {
   collaborationAck?: 'queued' | 'consumed'
   sendStarted?: boolean
   interruptBoundaryPending?: boolean
+  waitingAfterEarlierResult?: boolean
   replacementAfterStop?: boolean
   expectedReplayUuid?: string
   scheduledTask?: ScheduledTaskMetadata
@@ -268,7 +269,12 @@ const runtimeOverrides = new Map<string, RuntimeOverride>()
 const rejectedRuntimeConfigs = new Map<string, string>()
 const activeUserTurns = new SessionTurnOwnership<ActiveUserTurnState>()
 const activeCliRuns = new Set<string>()
-const executingInputUuids = new Map<string, string[]>()
+type ExecutingInput = { replyUuids: string[]; consumedUuids: Set<string> }
+const executingInputUuids = new Map<string, ExecutingInput>()
+const resultInputs = new WeakMap<object, { sessionId: string; input?: ExecutingInput }>()
+type ImReplyReceipt = Extract<ServerMessage, { type: 'input_committed' }>
+const imReplyReceipts = new Map<string, Map<string, { owner: string; message: ImReplyReceipt }>>()
+const MAX_IM_REPLY_RECEIPTS_PER_SESSION = 256
 /**
  * CLI runs that delivered their root foreground `result` and are now only
  * waiting on background tasks. print.ts keeps run() (session_state_changed:
@@ -509,31 +515,63 @@ function inputTurnUuids(cliMsg: any): string[] | undefined {
   }
 }
 
+function getResultInput(sessionId: string, result: object): ExecutingInput | undefined {
+  const recorded = resultInputs.get(result)
+  if (recorded?.sessionId === sessionId) return recorded.input
+  // Client forwarding and turn completion can run in either order on reconnect.
+  const input = executingInputUuids.get(sessionId)
+  resultInputs.set(result, { sessionId, input })
+  return input
+}
+
+function isRuntimeExitResult(sessionId: string, cliMsg: any): boolean {
+  // ConversationService removes the exited process before publishing its terminal result.
+  return cliMsg?.type === 'result' && cliMsg.is_error === true && !conversationService.hasSession(sessionId)
+}
+
+function forgetRuntimeInput(sessionId: string): void {
+  executingInputUuids.delete(sessionId)
+  imReplyReceipts.delete(sessionId)
+}
+
+function belongsToEarlierInput(sessionId: string, turn: ActiveUserTurnState, cliMsg?: any): boolean {
+  if (!turn.expectedReplayUuid || isRuntimeExitResult(sessionId, cliMsg)) return false
+  const input = cliMsg?.type === 'result' ? getResultInput(sessionId, cliMsg) : executingInputUuids.get(sessionId)
+  return Boolean(input && !input.consumedUuids.has(turn.expectedReplayUuid))
+}
+
 function trackCliRunState(sessionId: string, cliMsg: any): 'running' | 'idle' | null {
   const uuids = inputTurnUuids(cliMsg)
   if (uuids || (cliMsg?.type === 'user' && cliMsg.isReplay === true)) {
     acknowledgeActiveTurnReplay(sessionId, cliMsg)
-    if (!shouldSuppressCliOutputDuringStop(sessionId, cliMsg, null)) {
-      if (uuids) executingInputUuids.set(sessionId, uuids)
-      else {
-        const replay = projectUserReplay(cliMsg)
-        if (replay && !executingInputUuids.get(sessionId)?.includes(replay.messageUuid ?? '')) {
-          if (replay.messageUuid) executingInputUuids.set(sessionId, [replay.messageUuid])
-          else executingInputUuids.delete(sessionId)
+    if (uuids) {
+      // print.ts can hold a result across several batches. The next emitted result settles them all.
+      const consumedUuids = executingInputUuids.get(sessionId)?.consumedUuids ?? new Set<string>()
+      for (const id of uuids) consumedUuids.add(id)
+      executingInputUuids.set(sessionId, { replyUuids: uuids, consumedUuids })
+    } else if (!shouldSuppressCliOutputDuringStop(sessionId, cliMsg, null)) {
+      const replay = projectUserReplay(cliMsg)
+      const current = executingInputUuids.get(sessionId)
+      if (replay && !current?.replyUuids.includes(replay.messageUuid ?? '')) {
+        if (replay.messageUuid) {
+          executingInputUuids.set(sessionId, {
+            replyUuids: [replay.messageUuid],
+            consumedUuids: new Set([...(current?.consumedUuids ?? []), replay.messageUuid]),
+          })
+        } else {
+          executingInputUuids.delete(sessionId)
         }
       }
     }
   } else if (cliMsg?.type === 'result') {
+    const input = getResultInput(sessionId, cliMsg)
+    for (const id of input?.consumedUuids ?? []) retireImReplyReceipt(sessionId, id)
     executingInputUuids.delete(sessionId)
   }
   if (cliMsg?.type === 'result' && legacyQueuedSessionChats.has(sessionId)) settleSessionChatActivity(sessionId, cliMsg)
-  if (
-    cliMsg?.type === 'result' &&
-    cliMsg.is_error === true &&
-    !conversationService.hasSession(sessionId)
-  ) {
-    // ConversationService removes a crashed subprocess before publishing its
-    // synthetic terminal result. No CLI idle event can follow that exit.
+  if (isRuntimeExitResult(sessionId, cliMsg)) {
+    forgetRuntimeInput(sessionId)
+    pendingInterruptedTurnResults.delete(sessionId)
     activeCliRuns.delete(sessionId)
     cliRunsAwaitingBackgroundTasks.delete(sessionId)
     return 'idle'
@@ -590,7 +628,10 @@ function resumeCliRunForeground(sessionId: string): void {
  * releases a hidden session once its CLI is idle could ever let go (#1485).
  */
 function endReplacedCliRun(sessionId: string): void {
-  executingInputUuids.delete(sessionId)
+  forgetRuntimeInput(sessionId)
+  pendingInterruptedTurnResults.delete(sessionId)
+  const turn = activeUserTurns.get(sessionId)
+  if (turn?.messageSent) clearActiveUserTurn(sessionId, turn)
   cliRunsAwaitingBackgroundTasks.delete(sessionId)
   if (!activeCliRuns.delete(sessionId)) return
   sendToSession(sessionId, {
@@ -839,6 +880,8 @@ export type WebSocketData = {
   h5Authorization?: string
   /** Only a machine-token authenticated local socket may take over an IM lease. */
   powerActivityLeaseAuthorized?: boolean
+  /** Private receipt scope established at the machine-token authenticated upgrade. */
+  replyOwner?: string
   sdkToken: string | null
   serverPort: number
   serverHost: string
@@ -1359,6 +1402,7 @@ async function handleUserMessage(
       shouldForward: (cliMsg) => {
         if (
           userMessageSent ||
+          belongsToEarlierInput(sessionId, activeTurn, cliMsg) ||
           (cliMsg.type === 'result' && cliMsg.is_error) ||
           isAgentRunMessageFrame(cliMsg)
         ) {
@@ -1406,7 +1450,7 @@ async function handleUserMessage(
           userMessageSent = true
           activeTurn.messageSent = true
           if (message.replyAnchor !== undefined) {
-            sendMessage(ws, { type: 'input_committed', messageUuid: activeTurn.expectedReplayUuid!, replyAnchor: message.replyAnchor })
+            commitImReply(ws, { type: 'input_committed', messageUuid: activeTurn.expectedReplayUuid!, replyAnchor: message.replyAnchor })
           }
         },
       },
@@ -1639,8 +1683,8 @@ function bindSessionTurnObserver(sessionId: string): void {
   const callback = (message: any) => {
     // The observer is independent of renderer subscriptions, so background
     // sessions keep their task/permission lifecycle when no page is open.
+    const cliRunState = trackCliRunState(sessionId, message)
     if (!hasActiveClients(sessionId)) {
-      const cliRunState = trackCliRunState(sessionId, message)
       const taskLifecycle = trackCliBackgroundTaskLifecycle(sessionId, message)
       stopLateAgentTaskIfRequested(sessionId, taskLifecycle)
       stopLateNonAgentTaskIfRequested(sessionId, taskLifecycle)
@@ -1744,17 +1788,13 @@ function forceStopSharedRuntimeForAgentCancellation(sessionId: string): void {
   // can create their own process groups, and Windows has no lifetime guard.
   runtimeExitFailedSessions.add(sessionId)
   conversationService.stopSession(sessionId)
+  forgetRuntimeInput(sessionId)
   activeCliRuns.delete(sessionId)
   cliRunsAwaitingBackgroundTasks.delete(sessionId)
   clearBackgroundTaskDisconnectCeiling(sessionId)
   cancelSessionDisconnectWatcher(sessionId)
   const stoppedTurn = activeUserTurns.get(sessionId)
-  if (
-    stoppedTurn?.cancelled &&
-    stoppedTurn.replacementAfterStop !== true
-  ) {
-    clearActiveUserTurn(sessionId, stoppedTurn)
-  }
+  if (stoppedTurn?.messageSent || stoppedTurn?.cancelled) clearActiveUserTurn(sessionId, stoppedTurn)
   void emitStoppedForNonAgentTasksAfterRuntimeExit(sessionId).then(() => {
     scheduleDisconnectedSessionCleanupIfIdle(sessionId)
   })
@@ -1776,6 +1816,7 @@ function acknowledgeActiveTurnReplay(sessionId: string, cliMsg: any): boolean {
   const localCommandMatches = activeTurn && !pendingInterruptedTurnResults.has(sessionId)
     ? matchesActiveTurnLocalCommand(activeTurn, cliMsg)
     : false
+  if (activeTurn && (replayMatches || localCommandMatches)) activeTurn.waitingAfterEarlierResult = false
   if (
     !activeTurn ||
     activeTurn.cancelled ||
@@ -1792,6 +1833,8 @@ function acknowledgeActiveTurnReplay(sessionId: string, cliMsg: any): boolean {
   // this replacement turn.
   activeTurn.replacementAfterStop = false
   activeTurn.messageSent = true
+  activeTurn.interruptBoundaryPending = false
+  if (interruptedSessionChats.has(sessionId)) beginSessionChatActivity(sessionId)
   pendingInterruptedTurnResults.delete(sessionId)
   sessionStopRequested.delete(sessionId)
   agentStopRequestedSessions.delete(sessionId)
@@ -1820,47 +1863,41 @@ function bindActiveUserTurnCompletion(
   activeTurn: ActiveUserTurnState,
 ): () => void {
   const callback = (cliMsg: any) => {
-    const interruptedResult = consumeInterruptedTurnResult(sessionId, cliMsg)
-    if (cliMsg?.type === 'result' && activeTurn.scheduledTask && !isAgentRunMessageFrame(cliMsg)) {
+    const isResult = cliMsg?.type === 'result'
+    const runtimeExit = isRuntimeExitResult(sessionId, cliMsg)
+    const interruptedResult = !runtimeExit && consumeInterruptedTurnResult(sessionId, cliMsg)
+    const stillOwnsTurn = activeUserTurns.get(sessionId) === activeTurn
+    const earlierInput = isResult && belongsToEarlierInput(sessionId, activeTurn, cliMsg)
+    if (earlierInput) {
+      if (stillOwnsTurn) activeTurn.waitingAfterEarlierResult = true
+      if (stillOwnsTurn && sessionStopRequested.has(sessionId) && activeTurn.messageSent && !activeTurn.collaborationAck) {
+        // A late start can reveal that Stop interrupted the earlier input.
+        activeTurn.cancelled = false
+        activeTurn.replacementAfterStop = true
+        activeTurn.interruptBoundaryPending = false
+      }
+      // The CLI interrupt dequeues inbox deliveries, but leaves ordinary input queued.
+      if (!(stillOwnsTurn && interruptedResult && activeTurn.cancelled && activeTurn.collaborationAck)) return
+    }
+    if (isResult && !earlierInput && activeTurn.scheduledTask) {
       scheduledTurnResults.set(cliMsg, { sessionId, metadata: activeTurn.scheduledTask })
     }
     if (activeTurn.cancelled) {
-      if (cliMsg?.type === 'result') {
-        const stillOwnsTurn = activeUserTurns.get(sessionId) === activeTurn
-        if (
-          stillOwnsTurn &&
-          interruptedResult &&
-          pendingInterruptedTurnResults.has(sessionId)
-        ) {
-          return
-        }
-        conversationService.removeOutputCallback(sessionId, callback)
-        if (stillOwnsTurn) {
-          settleSessionChatActivity(sessionId, cliMsg)
-          clearActiveUserTurn(sessionId, activeTurn)
-          applyDeferredPermissionModeAfterActiveTurn(ws, sessionId)
-          applyDeferredRuntimeRestartAfterActiveTurn(ws, sessionId)
-        }
-      }
-      return
+      if (!isResult || (stillOwnsTurn && interruptedResult && pendingInterruptedTurnResults.has(sessionId))) return
+    } else {
+      acknowledgeActiveTurnReplay(sessionId, cliMsg)
+      if (!runtimeExit && (activeTurn.replacementAfterStop || interruptedResult)) return
+      if (stillOwnsTurn) mobileActivityClock.progress(sessionId)
+      if (!isResult || (!activeTurn.messageSent && !cliMsg.is_error)) return
     }
 
-    acknowledgeActiveTurnReplay(sessionId, cliMsg)
-    if (activeTurn.replacementAfterStop || interruptedResult) return
-    mobileActivityClock.progress(sessionId)
-    if (
-      cliMsg?.type !== 'result' ||
-      (!activeTurn.messageSent && !cliMsg.is_error)
-    ) return
-
-    settleSessionChatActivity(sessionId, cliMsg)
+    // Legacy runtimes may complete without publishing any consumed UUIDs.
+    if (activeTurn.expectedReplayUuid) retireImReplyReceipt(sessionId, activeTurn.expectedReplayUuid)
     conversationService.removeOutputCallback(sessionId, callback)
+    if (!stillOwnsTurn) return
+    settleSessionChatActivity(sessionId, cliMsg)
     clearActiveUserTurn(sessionId, activeTurn)
-    // Structurally disarm any prewarm idle timer that a concurrent
-    // prewarm_session/user_message flush may have armed on this session: once a
-    // turn completes the session is firmly user-owned, so no prewarm reaper
-    // should survive — regardless of the order in which the two raced.
-    clearPrewarmState(sessionId)
+    if (!activeTurn.cancelled) clearPrewarmState(sessionId)
     applyDeferredPermissionModeAfterActiveTurn(ws, sessionId)
     applyDeferredRuntimeRestartAfterActiveTurn(ws, sessionId)
   }
@@ -1955,7 +1992,7 @@ async function performDesktopClearCommand(
   const activeTitleState = sessionTitleState.get(sessionId)
   if (activeTitleState) activeTitleState.activeTurn = undefined
   const pendingStartup = sessionStartupPromises.get(sessionId)
-  executingInputUuids.delete(sessionId)
+  forgetRuntimeInput(sessionId)
   conversationService.stopSession(sessionId)
   // Clearing the lead's context ends its reviewed team for good.
   void endTeamsForParent(sessionId).catch(error => console.error(`[WS] Failed to end the cleared session's team: ${error}`))
@@ -2077,14 +2114,46 @@ async function handlePrewarmSession(ws: SessionConnection) {
 const EXIT_PLAN_MODE_TOOL_NAME = 'ExitPlanMode'
 const planApprovalTransitions = new Map<string, Set<string>>()
 
+function imReplyOwner(ws: SessionConnection): string | undefined {
+  return ws.data.powerActivityLeaseAuthorized ? ws.data.replyOwner : undefined
+}
+
+function commitImReply(ws: SessionConnection, message: ImReplyReceipt): void {
+  const { sessionId } = ws.data
+  const owner = imReplyOwner(ws)
+  if (!owner) {
+    sendMessage(ws, message)
+    return
+  }
+  let receipts = imReplyReceipts.get(sessionId)
+  if (!receipts) imReplyReceipts.set(sessionId, receipts = new Map())
+  if (receipts.size >= MAX_IM_REPLY_RECEIPTS_PER_SESSION) receipts.delete(receipts.keys().next().value!)
+  receipts.set(message.messageUuid, { owner, message })
+  for (const client of activeSessions.get(sessionId) ?? []) {
+    if (imReplyOwner(client) === owner) sendMessage(client, message)
+  }
+}
+
+function retireImReplyReceipt(sessionId: string, messageUuid: string): void {
+  const receipts = imReplyReceipts.get(sessionId)
+  if (receipts?.delete(messageUuid) && receipts.size === 0) imReplyReceipts.delete(sessionId)
+}
+
 function syncPermissionRequests(ws: SessionConnection): void {
   const { sessionId } = ws.data
-  sendMessage(ws, { type: 'input_turn_snapshot', messageUuids: executingInputUuids.get(sessionId) ?? [] })
+  const owner = imReplyOwner(ws)
+  if (owner) {
+    for (const receipt of imReplyReceipts.get(sessionId)?.values() ?? []) {
+      if (receipt.owner === owner) sendMessage(ws, receipt.message)
+    }
+  }
+  const executingInput = hasStoppedTurnBoundary(sessionId) ? undefined : executingInputUuids.get(sessionId)
+  sendMessage(ws, { type: 'input_turn_snapshot', messageUuids: executingInput?.replyUuids ?? [] })
   sendMessage(ws, {
     type: 'permission_requests_snapshot',
     toolRequestIds: replayPendingPermissionRequests(ws, sessionId),
     computerUseRequestIds: replayPendingComputerUsePermissionRequests(ws, sessionId),
-    turnActive: executingInputUuids.has(sessionId) || hasLiveUserTurnForClient(sessionId),
+    turnActive: Boolean(executingInput) || hasLiveUserTurnForClient(sessionId),
   })
 }
 
@@ -2964,9 +3033,11 @@ function handleStopGeneration(
   options: { reapBackgroundTasks?: boolean } = {},
 ) {
   const { sessionId } = ws.data
-  executingInputUuids.delete(sessionId)
   emitSessionTurnEvent({ type: 'stopped', sessionId })
   const stoppedTurn = activeUserTurns.get(sessionId)
+  const interruptedInput = executingInputUuids.get(sessionId)
+  const queuedOrdinaryTurn = stoppedTurn?.messageSent && !stoppedTurn.collaborationAck &&
+    (interruptedInput ? belongsToEarlierInput(sessionId, stoppedTurn) : stoppedTurn.waitingAfterEarlierResult === true)
   const agentTasks = [...(activeAgentTasks.get(sessionId)?.values() ?? [])]
   // A user-issued Stop ends the whole session's work. Background shell tasks
   // (Bash/PowerShell run_in_background) are tracked as non-Agent tasks, which
@@ -3010,8 +3081,8 @@ function handleStopGeneration(
     stoppedTurn.replacementAfterStop = false
     releaseUserTurnWithoutResult(sessionId, stoppedTurn)
   } else if (stoppedTurn) {
-    stoppedTurn.cancelled = true
-    stoppedTurn.replacementAfterStop = false
+    stoppedTurn.cancelled = !queuedOrdinaryTurn
+    stoppedTurn.replacementAfterStop = queuedOrdinaryTurn === true
   }
 
   void Promise.allSettled(
@@ -3076,8 +3147,9 @@ function handleStopGeneration(
           activeNonAgentTasks.get(sessionId)?.get(task.taskId) === task &&
           !task.localStopConfirmed,
         )
+      const interruptedInputStillRunning = queuedOrdinaryTurn && interruptedInput && executingInputUuids.get(sessionId) === interruptedInput
       if (
-        (stoppedForegroundStillCurrent || stoppedAgentsStillActive || stoppedBackgroundStillActive) &&
+        (stoppedForegroundStillCurrent || interruptedInputStillRunning || stoppedAgentsStillActive || stoppedBackgroundStillActive) &&
         !migrationMaintenance.isActive &&
         conversationService.hasSession(sessionId)
       ) {
@@ -3925,8 +3997,11 @@ function bindTitleSessionOutput(
   shouldProcess: () => boolean,
 ): () => void {
   const callback = (cliMsg: any) => {
-    const interruptedResult = consumeInterruptedTurnResult(sessionId, cliMsg)
+    const runtimeExit = isRuntimeExitResult(sessionId, cliMsg)
+    const interruptedResult = !runtimeExit && consumeInterruptedTurnResult(sessionId, cliMsg)
     acknowledgeActiveTurnReplay(sessionId, cliMsg)
+    if (belongsToEarlierInput(sessionId, activeTurn, cliMsg) &&
+      !(interruptedResult && activeTurn.cancelled && activeTurn.collaborationAck)) return
     if (
       activeUserTurns.get(sessionId) !== activeTurn ||
       activeTurn.cancelled
@@ -3943,7 +4018,7 @@ function bindTitleSessionOutput(
       }
       return
     }
-    if (activeTurn.replacementAfterStop || interruptedResult) return
+    if (!runtimeExit && (activeTurn.replacementAfterStop || interruptedResult)) return
     if (!shouldProcess() && !(cliMsg?.type === 'result' && cliMsg?.is_error)) {
       return
     }
@@ -4158,7 +4233,7 @@ function cleanupSessionRuntimeState(
   strictCollaborationRuntimeSessions.delete(sessionId)
   rejectedRuntimeConfigs.delete(sessionId)
   activeUserTurns.delete(sessionId)
-  executingInputUuids.delete(sessionId)
+  forgetRuntimeInput(sessionId)
   activeCliRuns.delete(sessionId)
   cliRunsAwaitingBackgroundTasks.delete(sessionId)
   sessionStopRequested.delete(sessionId)
@@ -4779,7 +4854,7 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
       const remembered = scheduledTurnResults.get(cliMsg)
       const scheduledTask = remembered?.sessionId === sessionId
         ? remembered.metadata
-        : activeTurn?.scheduledTask
+        : activeTurn && !belongsToEarlierInput(sessionId, activeTurn, cliMsg) ? activeTurn.scheduledTask : undefined
       const completion: ServerMessage = {
         type: 'message_complete', usage,
         ...(timing ? { timing } : {}),
@@ -5676,7 +5751,7 @@ function bindClientSessionOutput(
   removeClientOutputCallback(ws)
 
   const callback = (cliMsg: any) => {
-    consumeInterruptedTurnResult(sessionId, cliMsg)
+    const interruptedResult = !isRuntimeExitResult(sessionId, cliMsg) && consumeInterruptedTurnResult(sessionId, cliMsg)
     acknowledgeActiveTurnReplay(sessionId, cliMsg)
     const transcriptEpoch = sessionTranscriptEpochs.get(sessionId) ?? 0
     trackCliRunState(sessionId, cliMsg)
@@ -5686,8 +5761,10 @@ function bindClientSessionOutput(
     closeLateNonAgentTaskAfterRuntimeExit(sessionId, taskLifecycle)
     closeStoppedAgentsAfterRuntimeExit(sessionId, cliMsg)
     if (taskLifecycle?.suppressForward) return
-    const replacementAwaitingBoundary =
-      activeUserTurns.get(sessionId)?.replacementAfterStop === true
+    const activeTurn = activeUserTurns.get(sessionId)
+    const replacementAwaitingBoundary = activeTurn?.replacementAfterStop === true
+    const interruptedEarlierInput = interruptedResult && activeTurn?.messageSent &&
+      belongsToEarlierInput(sessionId, activeTurn, cliMsg)
     const stoppedTurnTerminalResult =
       cliMsg?.type === 'result' &&
       sessionStopRequested.has(sessionId) &&
@@ -5695,7 +5772,7 @@ function bindClientSessionOutput(
       !pendingInterruptedTurnResults.has(sessionId)
     if (
       shouldSuppressCliOutputDuringStop(sessionId, cliMsg, taskLifecycle) &&
-      !stoppedTurnTerminalResult
+      !stoppedTurnTerminalResult && !interruptedEarlierInput && !isRuntimeExitResult(sessionId, cliMsg)
     ) {
       // Until the interrupted result and the replacement's own replay establish
       // an ordering boundary, unscoped output may still belong to the old
@@ -6371,6 +6448,7 @@ export function __resetWebSocketHandlerStateForTests(): void {
   prewarmIdleTimers.clear()
   activeUserTurns.clear()
   executingInputUuids.clear()
+  imReplyReceipts.clear()
   activeCliRuns.clear()
   cliRunsAwaitingBackgroundTasks.clear()
   activeBackgroundTaskIds.clear()

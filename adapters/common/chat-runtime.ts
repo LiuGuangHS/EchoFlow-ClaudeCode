@@ -371,13 +371,14 @@ export class ImChatRuntime {
   // ---------- server stream ----------
 
   async handleServerMessage(chatId: string, msg: ServerMessage): Promise<void> {
+    const active = this.activeTurns.get(chatId)
     if (msg.type === 'input_committed') {
+      if (active?.ids.includes(msg.messageUuid)) return
       let anchors = this.committedAnchors.get(chatId)
       if (!anchors) this.committedAnchors.set(chatId, anchors = new Map())
       anchors.set(msg.messageUuid, msg.replyAnchor)
       return
     }
-    const active = this.activeTurns.get(chatId)
     if (msg.type === 'connected') {
       if (active) active.awaitingSnapshot = true
       return

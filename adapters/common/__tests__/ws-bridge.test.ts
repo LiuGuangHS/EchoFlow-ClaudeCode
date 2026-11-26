@@ -178,6 +178,24 @@ describe('WsBridge: handler serialization', () => {
     return connections[0]!
   }
 
+  it('keeps the reply owner header across reconnects and separates chats sharing a session', async () => {
+    const owners: Array<string | string[] | undefined> = []
+    server.on('connection', (_ws, request) => { owners.push(request.headers['x-echoflow-reply-owner']) })
+    const bridge = new WsBridge(serverUrl, 'test', 'fixture-token')
+    try {
+      bridge.connectSession('chat-a', 'shared-session')
+      expect(await bridge.waitForOpen('chat-a')).toBe(true)
+      connections[0]!.terminate()
+      expect(await waitFor(() => owners.length === 2, 2_000)).toBe(true)
+      bridge.connectSession('chat-b', 'shared-session')
+      expect(await bridge.waitForOpen('chat-b')).toBe(true)
+      expect(typeof owners[0]).toBe('string')
+      expect(owners[1]).toBe(owners[0])
+      expect(typeof owners[2]).toBe('string')
+      expect(owners[2]).not.toBe(owners[0])
+    } finally { bridge.destroy() }
+  })
+
   it('keeps bridge and helper pending projections aligned through partial snapshots and sends', async () => {
     let now = 0
     const bridge = new WsBridge(serverUrl, 'test', 'fixture-token', { now: () => now, idleReleaseMs: 10 })

@@ -37,8 +37,8 @@ function control(requestId: string, request: Record<string, unknown>) {
   return JSON.stringify({ type: 'control_request', request_id: requestId, request })
 }
 
-function userMessage(text: string) {
-  return JSON.stringify({ type: 'user', session_id: '', parent_tool_use_id: null, message: { role: 'user', content: text } })
+function userMessage(text: string, uuid?: string) {
+  return JSON.stringify({ type: 'user', uuid, session_id: '', parent_tool_use_id: null, message: { role: 'user', content: text } })
 }
 
 async function runPrint(lines: string[]) {
@@ -160,6 +160,7 @@ async function startLiveCli(
   const home = await mkdtemp(join(tmpdir(), 'prompt-suggestion-live-'))
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch })
   const env = createSandboxedTestEnvironment(home, {
+    CC_HAHA_SESSION_ID: crypto.randomUUID(),
     NODE_ENV: 'production', CI: '1', CC_HAHA_SKIP_DOTENV: '1',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1',
@@ -315,7 +316,8 @@ test('a turn that waits for a background agent gets one suggestion after the fin
   }, ['--dangerously-skip-permissions'])
   try {
     cli.write(control('enable', { subtype: 'set_prompt_suggestions', enabled: true }))
-    cli.write(userMessage('KICKOFF 在后台跑一个助手'))
+    const uuid = crypto.randomUUID()
+    cli.write(userMessage('KICKOFF 在后台跑一个助手', uuid))
     const suggestion = await cli.waitFor(event => event.type === 'prompt_suggestion', 0, 30_000)
     expect(suggestion.suggestion).toBe(SUGGESTION)
     // Predicted once, from the settled exchange, and delivered after its result.
@@ -323,6 +325,11 @@ test('a turn that waits for a background agent gets one suggestion after the fin
     expect(log.indexOf('suggestion')).toBeGreaterThan(log.indexOf('followup'))
     const lastResult = cli.events.findLastIndex(event => event.type === 'result')
     expect(cli.events.indexOf(suggestion)).toBeGreaterThan(lastResult)
+    const beforeResult = cli.events.slice(0, lastResult)
+    const starts = beforeResult.filter(event => event.subtype === 'input_turn_start')
+    expect(starts[0]?.message_uuids).toEqual([uuid])
+    expect(starts.at(-1)?.message_uuids).toEqual([])
+    expect(beforeResult.some(event => event.type === 'result')).toBe(false)
   } finally {
     await cli.close()
   }

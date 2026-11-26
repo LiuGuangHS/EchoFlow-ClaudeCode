@@ -16,6 +16,7 @@ import {
   getRuntimeSettings,
   handleWebSocket,
   stopSessionTurn,
+  submitScheduledTaskTurn,
   __registerPendingSessionStartupForTests,
   translateCliMessage,
   type WebSocketData,
@@ -3434,6 +3435,63 @@ describe('WebSocket handler session isolation', () => {
     expect(ws.sent.map(raw => JSON.parse(raw))).toContainEqual(expect.objectContaining({ type: 'error', code: 'CLI_NOT_RUNNING', replyAnchor: 'thread-b' }))
   })
 
+  it.each(['before commit', 'while queued', 'while running'])('restores a lost IM receipt only to its authenticated owner reconnecting %s', async reconnectAt => {
+    const sessionId = crypto.randomUUID()
+    const owner = crypto.randomUUID()
+    const makeOwnerSocket = (replyOwner: string, powerActivityLeaseAuthorized = true) => {
+      const socket = makeClientSocket(sessionId)
+      Object.assign(socket.data, { replyOwner, powerActivityLeaseAuthorized })
+      return socket
+    }
+    const submitting = makeOwnerSocket(owner)
+    const reconnect = makeOwnerSocket(owner)
+    const unrelated = makeOwnerSocket(crypto.randomUUID())
+    const unauthorized = makeOwnerSocket(owner, false)
+    const callbacks = new Set<(frame: any) => void>()
+    const emit = (frame: any) => { for (const callback of [...callbacks]) callback(frame) }
+    const emitStart = () => emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [sdkUuid] })
+    let sdkUuid: string | undefined
+    let commit!: () => void
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => { callbacks.add(callback) })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation((_sid, callback) => { callbacks.delete(callback) })
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue('Fixture')
+    const send = spyOn(conversationService, 'sendMessage').mockImplementation(async (_sid, _text, _files, options) => {
+      sdkUuid = options?.messageUuid
+      await new Promise<void>(resolve => { commit = () => { options?.onCommitted?.(); resolve() } })
+      return true
+    })
+
+    handleWebSocket.open(submitting)
+    handleWebSocket.message(submitting, JSON.stringify({ type: 'user_message', content: 'same prompt', replyAnchor: 'platform-secret' }))
+    await flushMicrotasks(30)
+    expect(send).toHaveBeenCalledTimes(1)
+    handleWebSocket.close(submitting)
+    if (reconnectAt !== 'before commit') commit()
+    if (reconnectAt === 'while running') emitStart()
+    handleWebSocket.open(reconnect)
+    handleWebSocket.open(unrelated)
+    handleWebSocket.open(unauthorized)
+    if (reconnectAt === 'before commit') commit()
+    if (reconnectAt !== 'while running') emitStart()
+
+    const frames = reconnect.sent.map(raw => JSON.parse(raw))
+    const receipt = frames.findIndex(frame => frame.type === 'input_committed')
+    const boundary = frames.findIndex(frame => ['input_turn_snapshot', 'input_turn_start'].includes(frame.type) && frame.messageUuids.includes(sdkUuid))
+    expect(frames[receipt]).toEqual({ type: 'input_committed', messageUuid: sdkUuid, replyAnchor: 'platform-secret' })
+    expect(boundary).toBeGreaterThan(receipt)
+    for (const other of [unrelated, unauthorized]) {
+      expect(other.sent.join('')).not.toContain('platform-secret')
+      expect(other.sent.join('')).not.toContain(owner)
+    }
+    expect(send).toHaveBeenCalledTimes(1)
+
+    emit({ type: 'result', subtype: 'success', is_error: false })
+    reconnect.sent.length = 0
+    handleWebSocket.message(reconnect, JSON.stringify({ type: 'sync_state' }))
+    expect(reconnect.sent.join('')).not.toContain('platform-secret')
+  })
+
   it('cancels the same pending user admission when Stop arrives before CLI startup', async () => {
     const sessionId = `stop-pending-admission-${crypto.randomUUID()}`
     const ws = makeClientSocket(sessionId)
@@ -3862,6 +3920,206 @@ describe('WebSocket handler session isolation', () => {
     emit({ type: 'result', subtype: 'success', is_error: false })
     handleWebSocket.message(reconnect, JSON.stringify({ type: 'sync_state' }))
     expect(snapshot(reconnect)?.messageUuids).toEqual([])
+  })
+
+  it.each([false, true])('completes A and then stopped B in CLI order (client reconnected: %s)', async reconnected => {
+    const sessionId = crypto.randomUUID()
+    let ws = makeClientSocket(sessionId)
+    const callbacks = new Set<(frame: any) => void>()
+    const uuids: string[] = []
+    const emit = (frame: any) => { for (const callback of [...callbacks]) callback(frame) }
+    const start = (id: string) => emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [id] })
+    const send = (content: string) => handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content }))
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => { callbacks.add(callback) })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation((_sid, callback) => { callbacks.delete(callback) })
+    spyOn(conversationService, 'sendInterrupt').mockReturnValue(true)
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue('Fixture')
+    spyOn(conversationService, 'sendMessage').mockImplementation(async (_sid, _text, _files, options) => {
+      uuids.push(options!.messageUuid!)
+      options?.onCommitted?.()
+      return true
+    })
+
+    handleWebSocket.open(ws)
+    send('A')
+    await flushMicrotasks(30)
+    start(uuids[0]!)
+    send('B')
+    await flushMicrotasks(30)
+    expect(uuids).toHaveLength(2)
+    if (reconnected) {
+      handleWebSocket.close(ws)
+      ws = makeClientSocket(sessionId)
+      handleWebSocket.open(ws)
+    }
+    ws.sent.length = 0
+    emit({ type: 'result', subtype: 'success', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } })
+    start(uuids[1]!)
+    handleWebSocket.message(ws, JSON.stringify({ type: 'stop_generation' }))
+    emit({ type: 'result', subtype: 'error', is_error: true, result: 'Interrupted', usage: { input_tokens: 2, output_tokens: 2 } })
+
+    expect(ws.sent.map(raw => JSON.parse(raw)).filter(msg => ['input_turn_start', 'message_complete', 'error'].includes(msg.type))).toEqual([
+      { type: 'message_complete', usage: { input_tokens: 1, output_tokens: 1 } },
+      { type: 'input_turn_start', messageUuids: [uuids[1]] },
+      { type: 'message_complete', usage: { input_tokens: 2, output_tokens: 2 } },
+    ])
+  })
+
+  it.each(['late start', 'empty batch', 'runtime exit', 'idle', 'Stop', 'Stop before start is observed', 'Stop between batches', 'held result followed by B', 'held result followed by a background batch', 'forced Stop', 'clear', 'restart'])('keeps IM receipt ownership across %s', async boundary => {
+    const sessionId = crypto.randomUUID()
+    const ws = makeClientSocket(sessionId)
+    Object.assign(ws.data, { replyOwner: 'fixture-owner', powerActivityLeaseAuthorized: true })
+    const callbacks = new Set<(frame: any) => void>()
+    const uuids: string[] = []
+    const emit = (frame: any) => { for (const callback of [...callbacks]) callback(frame) }
+    const start = (uuid: string) => emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [uuid] })
+    const result = (isError = false) => emit({ type: 'result', subtype: isError ? 'error' : 'success', is_error: isError, result: isError ? 'fixture exit or interrupt' : 'done' })
+    const request = (frame: object) => handleWebSocket.message(ws, JSON.stringify(frame))
+    const syncReceipts = () => {
+      ws.sent.length = 0
+      request({ type: 'sync_state' })
+      return ws.sent.map(raw => JSON.parse(raw)).filter(frame => frame.type === 'input_committed').map(frame => frame.replyAnchor)
+    }
+    let running = true
+    spyOn(conversationService, 'hasSession').mockImplementation(() => running)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => { callbacks.add(callback) })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation((_sid, callback) => { callbacks.delete(callback) })
+    spyOn(conversationService, 'sendInterrupt').mockReturnValue(true)
+    spyOn(conversationService, 'getSessionWorkDir').mockReturnValue(process.env.TMPDIR || '/tmp')
+    spyOn(conversationService, 'getSessionPermissionMode').mockReturnValue('default')
+    spyOn(conversationService, 'stopSession').mockImplementation(() => { running = false; callbacks.clear() })
+    spyOn(conversationService, 'clearOutputCallbacks').mockImplementation(() => { callbacks.clear() })
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue('Fixture')
+    spyOn(sessionService, 'shouldPersistSession').mockReturnValue(false)
+    spyOn(conversationService, 'sendMessage').mockImplementation(async (_sid, _text, _files, options) => {
+      uuids.push(options!.messageUuid!)
+      options?.onCommitted?.()
+      return true
+    })
+
+    handleWebSocket.open(ws)
+    request({ type: 'user_message', content: 'A', replyAnchor: 'thread-a' })
+    await flushMicrotasks(30)
+    if (boundary === 'empty batch') emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [] })
+    else if (boundary !== 'late start' && boundary !== 'Stop before start is observed') start(uuids[0]!)
+    if (boundary === 'held result followed by a background batch') {
+      emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [] })
+      result()
+      emit({ type: 'system', subtype: 'session_state_changed', state: 'idle' })
+      expect(getSessionTurnState(sessionId)).toBe('idle')
+      expect(syncReceipts()).toEqual([])
+      return
+    }
+    request({ type: 'user_message', content: 'B', replyAnchor: 'thread-b' })
+    await flushMicrotasks(30)
+    expect(uuids).toHaveLength(2)
+    expect(syncReceipts()).toEqual(['thread-a', 'thread-b'])
+
+    if (boundary === 'held result followed by B') {
+      start(uuids[1]!)
+      result()
+      expect(getSessionTurnState(sessionId)).toBe('idle')
+      expect(syncReceipts()).toEqual([])
+      return
+    }
+    if (boundary === 'runtime exit') {
+      running = false // ConversationService removes the exited runtime before dispatching this result.
+      result(true)
+      expect(getSessionTurnState(sessionId)).toBe('idle')
+      expect(syncReceipts()).toEqual([])
+      return
+    }
+    if (boundary === 'clear') {
+      const clear = spyOn(sessionService, 'clearSessionTranscript').mockResolvedValue()
+      request({ type: 'user_message', content: '/clear' })
+      await flushMicrotasks(30)
+      expect(clear).toHaveBeenCalled()
+      expect(syncReceipts()).toEqual([])
+      return
+    }
+    if (boundary === 'restart') {
+      spyOn(conversationService, 'getPendingPermissionToolName').mockReturnValue('ExitPlanMode')
+      spyOn(conversationService, 'respondToPermission').mockReturnValue(true)
+      const restart = spyOn(conversationService, 'startSession').mockImplementation(async () => { running = true })
+      spyOn(sessionService, 'getSessionLaunchInfo').mockResolvedValue({
+        filePath: '/tmp/fixture.jsonl', projectDir: '/tmp', workDir: '/tmp', transcriptMessageCount: 0,
+        customTitle: null, runtimeProviderId: 'deepseek', runtimeModelId: 'deepseek-v4-pro',
+      })
+      spyOn(sessionService, 'appendSessionMetadata').mockResolvedValue(undefined)
+      request({ type: 'permission_response', requestId: 'plan', allowed: true, runtimeOverride: { providerId: null, modelId: 'claude-sonnet-5' } })
+      await flushMicrotasks(30)
+      expect(conversationService.sendInterrupt).toHaveBeenCalledWith(sessionId)
+      result(true)
+      for (let attempt = 0; attempt < 20 && !restart.mock.calls.length; attempt++) await Bun.sleep(5)
+      await flushMicrotasks(30)
+      expect(restart).toHaveBeenCalledTimes(1)
+      expect(syncReceipts()).toEqual([])
+      return
+    }
+
+    if (boundary === 'forced Stop') {
+      const timeout = spyOn(globalThis, 'setTimeout').mockImplementation(() => 1 as any)
+      request({ type: 'stop_generation' })
+      const force = timeout.mock.calls.find(([, delay]) => delay === 3_000)?.[0] as (() => void) | undefined
+      expect(force).toBeDefined()
+      force?.()
+      expect(getSessionTurnState(sessionId)).toBe('idle')
+      expect(syncReceipts()).toEqual([])
+      return
+    }
+    if (boundary === 'empty batch') {
+      result()
+      expect(syncReceipts()).toEqual(['thread-a', 'thread-b'])
+      start(uuids[0]!)
+    }
+    const stop = boundary === 'Stop' || boundary === 'Stop before start is observed'
+    if (stop) request({ type: 'stop_generation' })
+    if (boundary === 'late start' || boundary === 'Stop before start is observed') start(uuids[0]!)
+    result(stop)
+    if (boundary === 'idle') emit({ type: 'system', subtype: 'session_state_changed', state: 'idle' })
+    expect(getSessionTurnState(sessionId)).toBe('running')
+    expect(syncReceipts()).toEqual(['thread-b'])
+    if (boundary === 'Stop between batches') {
+      const timeout = spyOn(globalThis, 'setTimeout').mockImplementation(() => 1 as any)
+      request({ type: 'stop_generation' })
+      const force = timeout.mock.calls.find(([, delay]) => delay === 3_000)?.[0] as (() => void) | undefined
+      force?.()
+      expect(conversationService.stopSession).not.toHaveBeenCalled()
+    }
+    start(uuids[1]!)
+    emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'B output' }] } })
+    expect(ws.sent.map(raw => JSON.parse(raw))).toContainEqual({ type: 'content_delta', text: 'B output' })
+    result()
+    expect(getSessionTurnState(sessionId)).toBe('idle')
+    expect(syncReceipts()).toEqual([])
+  })
+
+  it('cancels a queued scheduled delivery without attributing the interrupted batch to it', async () => {
+    const sessionId = crypto.randomUUID()
+    const ws = makeClientSocket(sessionId)
+    const callbacks = new Set<(frame: any) => void>()
+    const emit = (frame: any) => { for (const callback of [...callbacks]) callback(frame) }
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => { callbacks.add(callback) })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation((_sid, callback) => { callbacks.delete(callback) })
+    spyOn(conversationService, 'sendInterrupt').mockReturnValue(true)
+    spyOn(conversationService, 'requestControl').mockResolvedValue({ status: 'queued' })
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue('Fixture')
+
+    handleWebSocket.open(ws)
+    await submitScheduledTaskTurn(sessionId, 'Scheduled input', {
+      messageId: 'scheduled-delivery', serverHost: '127.0.0.1', serverPort: 0,
+      scheduledTask: { taskId: 'task', runId: 'run', scheduledFor: '2026-01-01T00:00:00Z', taskName: 'Fixture' },
+    })
+    emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [] })
+    handleWebSocket.message(ws, JSON.stringify({ type: 'stop_generation' }))
+    emit({ type: 'result', subtype: 'error', is_error: true, result: 'Interrupted' })
+
+    expect(getSessionTurnState(sessionId)).toBe('idle')
+    const complete = ws.sent.map(raw => JSON.parse(raw)).find(frame => frame.type === 'message_complete')
+    expect(complete).toBeDefined()
+    expect(complete.scheduledTask).toBeUndefined()
   })
 
   it('keeps consecutive Stop results ordered before a third replacement turn', async () => {

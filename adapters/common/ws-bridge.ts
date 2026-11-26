@@ -68,6 +68,7 @@ export type MessageHandler = (msg: ServerMessage) => void
 type Session = {
   sessionId: string
   ws: WebSocket
+  replyOwner: string
   reconnectAttempts: number
   reconnectTimer: ReturnType<typeof setTimeout> | null
   /** Last traffic either way; heartbeats do not count. */
@@ -251,10 +252,14 @@ export class WsBridge {
     if (this.localAccessToken) {
       url.searchParams.set('token', this.localAccessToken)
     }
-    const ws = new WebSocket(url)
+    const prev = this.sessions.get(chatId)
+    const carried = prev?.sessionId === sessionId ? prev : undefined
+    const replyOwner = carried?.replyOwner ?? crypto.randomUUID()
+    const ws = new WebSocket(url, {
+      headers: this.localAccessToken ? { 'x-echoflow-reply-owner': replyOwner } : undefined,
+    })
 
     // Cancel any pending reconnect timer for this chatId
-    const prev = this.sessions.get(chatId)
     if (prev) {
       if (prev.reconnectTimer) clearTimeout(prev.reconnectTimer)
       this.closeSocket(prev.ws, 1000, 'session replaced')
@@ -262,10 +267,10 @@ export class WsBridge {
 
     // A reconnect to the same session is not new activity; its snapshot on
     // open refreshes the turn and approval state.
-    const carried = prev?.sessionId === sessionId ? prev : undefined
     const session: Session = {
       sessionId,
       ws,
+      replyOwner,
       reconnectAttempts: prev?.reconnectAttempts ?? 0,
       reconnectTimer: null,
       lastActivityAt: carried?.lastActivityAt ?? this.now(),

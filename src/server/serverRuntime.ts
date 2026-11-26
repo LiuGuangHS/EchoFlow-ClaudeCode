@@ -556,6 +556,8 @@ export function startServer(port = PORT, host = HOST) {
           if (!sessionId || !/^[0-9a-zA-Z_-]{1,64}$/.test(sessionId)) {
             return new Response('Invalid session ID', { status: 400 })
           }
+          const powerActivityLeaseAuthorized = !petAccessAuthorized && isLocalAccessAuthorized(req, localTokenOverride)
+          const replyOwner = powerActivityLeaseAuthorized ? req.headers.get('x-echoflow-reply-owner') : null
           const upgraded = server.upgrade(req, {
             data: {
               sessionId,
@@ -563,7 +565,8 @@ export function startServer(port = PORT, host = HOST) {
               channel: 'client',
               clientKind: petAccessAuthorized ? 'pet' : 'full',
               ...(h5Authorization ? { h5Authorization } : {}),
-              powerActivityLeaseAuthorized: !petAccessAuthorized && isLocalAccessAuthorized(req, localTokenOverride),
+              powerActivityLeaseAuthorized,
+              ...(replyOwner && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(replyOwner) ? { replyOwner } : {}),
               sdkToken: null,
               serverPort,
               serverHost: localConnectHost,

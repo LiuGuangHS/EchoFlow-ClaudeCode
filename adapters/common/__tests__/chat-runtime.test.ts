@@ -263,6 +263,18 @@ describe('reply routing', () => {
     return { frame, delivered }
   }
 
+  it('does not reuse an active reply receipt after reconnect and completion', async () => {
+    const { delivered, frame } = await bufferedReply()
+    await frame({ type: 'connected', sessionId: 'reconnected' })
+    await frame({ type: 'input_committed', messageUuid: 'A', replyAnchor: 'thread-A' })
+    await frame({ type: 'input_turn_snapshot', messageUuids: ['A'] })
+    await frame({ type: 'message_complete' })
+    await frame({ type: 'user_message_replay', messageUuid: 'A', content: 'late replay' })
+    await frame({ type: 'content_delta', text: 'later' })
+    await frame({ type: 'message_complete' })
+    expect(delivered).toEqual([['thread-A', 'before'], [undefined, 'later']])
+  })
+
   for (const snapshotOwner of ['A', 'desktop', 'unknown', 'legacy']) {
     it(`reconciles buffered output on an active snapshot owned by ${snapshotOwner}`, async () => {
       const { delivered, frame } = await bufferedReply()
