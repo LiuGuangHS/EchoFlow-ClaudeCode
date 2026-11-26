@@ -14,7 +14,7 @@ const runtime = fileURLToPath(new URL('../runtime.ts', import.meta.url))
 const lifecycle = fileURLToPath(new URL('../../common/migration-lifecycle.ts', import.meta.url))
 const attachmentStore = fileURLToPath(new URL('../../common/attachment/attachment-store.ts', import.meta.url))
 
-it.each(['idle poll', 'active reply', 'pending attachment GC'] as const)('quiesces WeChat during %s without consuming late updates', async (scenario) => {
+it.each(['idle poll', 'retry backoff', 'active reply', 'pending attachment GC'] as const)('quiesces WeChat during %s without consuming late updates', async (scenario) => {
   const home = await mkdtemp(join(tmpdir(), 'wechat-quiesce-'))
   const root = join(home, 'data')
   try {
@@ -40,6 +40,14 @@ it.each(['idle poll', 'active reply', 'pending attachment GC'] as const)('quiesc
       const late = message(2, 'ABC234')
       const started = Promise.withResolvers()
       const finishReply = Promise.withResolvers()
+      const backoff = ${scenario === 'retry backoff'}
+      if (backoff) {
+        const warn = console.warn
+        console.warn = (...args) => {
+          warn(...args)
+          if (String(args[0]).startsWith('[WeChat] getupdates error:')) started.resolve()
+        }
+      }
       let aborted = false
       let polls = 0
       let replies = 0
@@ -47,6 +55,7 @@ it.each(['idle poll', 'active reply', 'pending attachment GC'] as const)('quiesc
         switch (new URL(url).pathname) {
           case '/ilink/bot/getupdates':
             polls++
+            if (backoff) return Response.json({ ret: 1 })
             if (active) return Response.json({ msgs: [message(1, 'ordinary message'), late] })
             return new Promise(resolve => {
               init.signal.addEventListener('abort', () => {
@@ -104,7 +113,7 @@ it.each(['idle poll', 'active reply', 'pending attachment GC'] as const)('quiesc
       }
       await Promise.all([draining, shuttingDown])
       clearTimeout(watchdog)
-      if (!active) assert.equal(aborted, true, 'the outstanding long poll must be cancelled')
+      if (!active && !backoff) assert.equal(aborted, true, 'the outstanding long poll must be cancelled')
       assert.equal(polls, 1)
       assert.equal(replies, active ? 1 : 0)
       assert.equal(await readFile(config, 'utf8'), initial, 'late update must not write pairing state')
