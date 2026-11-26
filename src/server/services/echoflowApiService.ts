@@ -292,18 +292,23 @@ export class EchoFlowApiService {
       ? { name, group_id: await this.getDedicatedGroupId(credential) }
       : { name, expired_time: -1, remain_quota: 0, unlimited_quota: true, model_limits_enabled: false, model_limits: '', routing_priority: 'auto' }
     this.assertCredentialVersion(endpoint, version)
-    let created: { success?: boolean; message?: unknown; data?: unknown }
+    const uncertainCreate = (status?: number) => new EchoFlowApiError(
+      'service_unavailable', status, 'create outcome is uncertain; check the gateway token list before retrying',
+    )
+    let response: unknown
     try {
-      created = await this.fetchManagementApi(endpoint === 'dedicated' ? '/api/v1/keys' : '/api/token/', credential, endpoint, {
+      response = await this.fetchManagementApi(endpoint === 'dedicated' ? '/api/v1/keys' : '/api/token/', credential, endpoint, {
         method: 'POST', body: JSON.stringify(body),
       })
     } catch (error) {
       if (!(error instanceof EchoFlowApiError)) throw error
       const unreadableSuccess = error.code === 'invalid_response' && error.status !== undefined && error.status >= 200 && error.status < 300
       if (error.code !== 'service_unavailable' && !unreadableSuccess) throw error
-      throw new EchoFlowApiError('service_unavailable', error.status, 'create outcome is uncertain; check the gateway token list before retrying')
+      throw uncertainCreate(error.status)
     }
     this.assertCredentialVersion(endpoint, version)
+    if (!response || typeof response !== 'object' || Array.isArray(response)) throw uncertainCreate()
+    const created: { success?: boolean; code?: unknown; message?: unknown; data?: unknown } = response
     const refusal = gatewayRefusal(created)
     if (refusal) throw new EchoFlowApiError('invalid_response', undefined, safeGatewayDetail(refusal, credential))
     console.info('[echoflow-api] token-created:', JSON.stringify({

@@ -142,13 +142,15 @@ describe('EchoFlowApiService credentials', () => {
     expect(methods).toEqual(['GET'])
   })
 
-  test('reports an uncertain create when its successful HTTP reply cannot be read', async () => {
+  test.each(['{', 'null', '[]', '"accepted"'])('reports an uncertain create for an unusable successful reply %s', async body => {
     stubSite()
     const service = new EchoFlowApiService()
     await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' })
-    const requests = mock(async () => new Response('{', { status: 200 }))
+    const requests = mock(async () => new Response(body, { status: 200 }))
     globalThis.fetch = requests as typeof fetch
-    await expect(service.createAccountToken()).rejects.toMatchObject({ detail: expect.stringContaining('check the gateway token list') })
+    await expect(service.createAccountToken()).rejects.toMatchObject({
+      code: 'service_unavailable', detail: expect.stringContaining('check the gateway token list'),
+    })
     expect(requests).toHaveBeenCalledTimes(1)
   })
 
