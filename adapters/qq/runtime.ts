@@ -261,7 +261,14 @@ bot.on('error', (err: Error) => console.error('[QQ] Connection error:', err.mess
 console.log('[QQ] Starting adapter...')
 console.log(`[QQ] Server: ${config.serverUrl}`)
 console.log(`[QQ] App: ${config.qq.appId}`)
-void adapterMigrationLifecycle.track(bot.start()).catch((err) => {
+// This promise owns the remote gateway lifetime. Shutdown stops the gateway
+// separately and waits for admitted work, which the chat runtime tracks.
+void bot.start().catch((err) => {
+  if (adapterMigrationLifecycle.isQuiescing) {
+    // A pending prefetch can start the SDK token refresher after stop() cleared its gateway controller.
+    bot.stop()
+    return
+  }
   console.error('[QQ] Failed to start:', err instanceof Error ? err.message : err)
   process.exit(1)
 })

@@ -190,6 +190,42 @@ test('QQ answers commands and rejected prompts using their message targets and s
   expect(stop).toHaveBeenCalledTimes(1)
 })
 
+for (const outcome of ['stop', 'stalled body', 'reject'] as const) {
+  test(`QQ token prefetch handles ${outcome} before gateway startup`, async () => {
+    const child = Bun.spawn([process.execPath, '--no-env-file', '-e', `
+      const outcome = ${JSON.stringify(outcome)}
+      const token = Promise.withResolvers()
+      const bodyRead = Promise.withResolvers()
+      globalThis.fetch = url => {
+        if (String(url) !== 'https://bots.qq.com/app/getAppAccessToken') throw Error('unexpected request')
+        return token.promise
+      }
+      const { adapterMigrationLifecycle } = await import(${JSON.stringify(import.meta.resolve('../migration-lifecycle.js'))})
+      await import(${JSON.stringify(import.meta.resolve('../../qq/runtime.js'))})
+      if (outcome === 'reject') {
+        token.reject(Error('fixture token failure'))
+      } else {
+        if (outcome === 'stalled body') {
+          token.resolve(new Response(new ReadableStream({ pull() { bodyRead.resolve() } }), { status: 200 }))
+          await bodyRead.promise
+        }
+        const stopped = adapterMigrationLifecycle.quiesce()
+        await Promise.resolve()
+        if (outcome === 'stop') token.resolve(Response.json({ access_token: 'fixture-token', expires_in: 7200 }))
+        await Promise.race([stopped, Bun.sleep(500).then(() => { throw Error('QQ did not quiesce') })])
+      }
+    `], { env: createSandboxedTestEnvironment(root, fixtureEnv), stdout: 'pipe', stderr: 'pipe', timeout: 3_000 })
+    const [code, errors] = await Promise.all([child.exited, new Response(child.stderr).text()])
+    if (outcome !== 'reject') {
+      expect(errors).not.toContain('Failed to start')
+      expect(code).toBe(0)
+    } else {
+      expect(errors).toContain('fixture token failure')
+      expect(code).toBe(1)
+    }
+  })
+}
+
 test('WeCom answers a private help command and disconnects its client', async () => {
   let client: WSClient | undefined
   const connect = spyOn(WSClient.prototype, 'connect').mockImplementation(function (this: WSClient) {
