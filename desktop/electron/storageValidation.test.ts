@@ -1,6 +1,7 @@
 // @vitest-environment node
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import fs from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -8,6 +9,7 @@ import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
+import { DatabaseSync } from 'node:sqlite'
 import { buildEchoFlowOwnershipMarker, resolveStorageBinding } from '../../src/utils/echoFlowConfigRoot'
 import { completeStorageMigration, executeStorageMigration } from '../../src/services/storageMigration'
 import { CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION, DESKTOP_PERSISTENCE_VERSION_KEY } from '../src/lib/persistenceMigrations'
@@ -32,9 +34,19 @@ async function tree(directory: string): Promise<Record<string, string>> {
 
 // Opt-in native evidence: installed Electron + GUI, all state under a disposable HOME.
 const native = process.env.ECHOFLOW_RUN_NATIVE_STORAGE_VALIDATION === '1' ? it : it.skip
-native.each(['valid', 'package-entry', 'file-origin', 'future-schema', 'corrupt-leveldb', 'missing-idb', 'corrupt-session-log', 'saved-session-data', 'unvalidated-partition', 'login-partitions', 'missing-login-cookie', 'missing-login-token', 'unknown-login-file', 'login-legacy-layout', 'login-transport-policy', 'logged-out-login', 'logged-out-missing-current'])('restricted native profile validation: %s', async variant => {
+const cookieMutations: Record<string, string> = {
+  'missing-path-cookie': "DELETE FROM cookies WHERE name = 'api-scope'",
+  'missing-oauth-cookie': "DELETE FROM cookies WHERE name = 'oauth-scope'",
+  'changed-oauth-cookie': "UPDATE cookies SET value = 'different-fixture-value', encrypted_value = X'' WHERE name = 'oauth-scope'",
+  'changed-cookie-expiry': "UPDATE cookies SET expires_utc = expires_utc + 1 WHERE name = 'oauth-scope'",
+  'unreadable-oauth-cookie': "UPDATE cookies SET value = '', encrypted_value = X'76313000' WHERE name = 'oauth-scope'",
+  'unknown-cookie-scope': "UPDATE cookies SET top_frame_site_key = 'https://github.com' WHERE name = 'oauth-scope'",
+}
+native.each(['valid', 'package-entry', 'file-origin', 'future-schema', 'corrupt-leveldb', 'missing-idb', 'corrupt-session-log', 'saved-session-data', 'unvalidated-partition', 'login-partitions', 'missing-login-cookie', 'missing-login-token', 'unknown-login-file', 'login-legacy-layout', 'login-transport-policy', 'logged-out-login', 'logged-out-missing-current', 'login-cookie-expiry-race', ...Object.keys(cookieMutations)])('restricted native profile validation: %s', async variant => {
   const loggedOut = variant === 'logged-out-login' || variant === 'logged-out-missing-current'
-  const login = loggedOut || ['login-partitions', 'missing-login-cookie', 'missing-login-token', 'unknown-login-file', 'login-legacy-layout', 'login-transport-policy'].includes(variant)
+  const cookieMutation = cookieMutations[variant]
+  const timedCookies = variant === 'login-cookie-expiry-race' || variant === 'changed-cookie-expiry'
+  const login = Boolean(cookieMutation) || loggedOut || timedCookies || ['login-partitions', 'missing-login-cookie', 'missing-login-token', 'unknown-login-file', 'login-legacy-layout', 'login-transport-policy'].includes(variant)
   const fakeCookie = 'native-fixture-session-not-a-credential'
   const fakeToken = 'native-fixture-token-not-a-credential'
   const directory = await fixture()
@@ -85,7 +97,12 @@ app.whenReady().then(async()=>{
   const window = new BrowserWindow({show:false,webPreferences:{sandbox:true,partition:profile.partition}})
   await window.loadURL(profile.url)
   if (profile.endpoint === 'main') {
-   await storage.cookies.set({url:profile.origin,name:'session',value:${JSON.stringify(fakeCookie)},secure:true,httpOnly:true,expirationDate:Date.UTC(2037,0,1)/1000})
+   const persistent = {value:${JSON.stringify(fakeCookie)},secure:true,httpOnly:true,expirationDate:Date.UTC(2037,0,1)/1000}
+   await storage.cookies.set({url:profile.origin,name:'session',...persistent})
+   ${cookieMutation || timedCookies || variant === 'login-partitions' ? `
+   await storage.cookies.set({url:profile.origin + '/api/fixture',path:'/api',name:'api-scope',...persistent})
+   await storage.cookies.set({url:'https://github.com/',name:'oauth-scope',...persistent})
+   ` : ''}
    await storage.cookies.flushStore()
    await window.webContents.executeJavaScript(${JSON.stringify(`localStorage.setItem('user', '{"id":7,"username":"fixture"}')`)})
   } else {
@@ -124,6 +141,19 @@ app.whenReady().then(async()=>{
       child.once('error', error => { clearTimeout(timer); reject(error) })
       child.once('close', (code, signal) => { clearTimeout(timer); seedStopped = true; code === 0 ? resolve() : reject(new Error(`Native fixture seed exited ${code ?? signal}: ${diagnostic}`)) })
     })
+    const cutoff = Date.now() - 60_000
+    if (timedCookies) {
+      // Count at the earlier instant, then let the real Electron child read after expiry.
+      const cutoffMicros = (BigInt(cutoff) + 11_644_473_600_000n) * 1000n
+      const partition = path.join(source, 'Partitions', MAIN_LOGIN_PROFILE.partition.slice('persist:'.length))
+      const store = (await fs.readdir(partition, { recursive: true })).find(name => path.basename(name) === 'Cookies')
+      expect(store).toBeDefined()
+      const db = new DatabaseSync(path.join(partition, store!))
+      try {
+        expect(db.prepare("UPDATE cookies SET expires_utc = ? WHERE name = 'oauth-scope'").run(cutoffMicros + 1n).changes).toBe(1)
+        expect(db.prepare("UPDATE cookies SET expires_utc = ? WHERE name = 'api-scope'").run(cutoffMicros).changes).toBe(1)
+      } finally { db.close() }
+    }
     if (variant === 'file-origin') delete process.env.ELECTRON_RENDERER_URL
     else process.env.ELECTRON_RENDERER_URL = url
     const binding = resolveStorageBinding({ env: {}, roots: [root] })
@@ -150,7 +180,12 @@ app.whenReady().then(async()=>{
       const cookiePartition = path.join(root, 'Partitions', MAIN_LOGIN_PROFILE.partition.slice('persist:'.length))
       const tokenStorage = path.join(root, 'Partitions', DEDICATED_LOGIN_PROFILE.partition.slice('persist:'.length), 'Local Storage')
       const cookieStores = (await fs.readdir(cookiePartition, { recursive: true })).filter(name => /^Cookies(?:-wal|-shm|-journal)?$/.test(path.basename(name)))
-      expect(cookieStores.some(name => path.basename(name) === 'Cookies')).toBe(true)
+      const cookieStore = cookieStores.find(name => path.basename(name) === 'Cookies')
+      expect(cookieStore).toBeDefined()
+      if (cookieMutation) {
+        const db = new DatabaseSync(path.join(cookiePartition, cookieStore!))
+        try { expect(db.prepare(cookieMutation).run().changes).toBe(1) } finally { db.close() }
+      }
       expect((await fs.stat(path.join(tokenStorage, 'leveldb', 'CURRENT'))).isFile()).toBe(true)
       if (variant === 'logged-out-missing-current') await fs.rm(path.join(tokenStorage, 'leveldb', 'CURRENT'))
       if (variant === 'login-legacy-layout') {
@@ -178,7 +213,20 @@ app.whenReady().then(async()=>{
     }
     const original = await tree(source)
     const published = await tree(root)
-    const selectedEntry = variant === 'package-entry' ? path.dirname(childEntry) : childEntry
+    const reads = path.join(directory, 'cookie-reads')
+    let selectedEntry = variant === 'package-entry' ? path.dirname(childEntry) : childEntry
+    if (variant === 'login-cookie-expiry-race') {
+      selectedEntry = path.join(path.dirname(childEntry), 'expiry-fixture.cjs')
+      await fs.writeFile(selectedEntry, `const {app} = require('electron');
+const fs = require('node:fs'); const path = require('node:path');
+const prefix = '--echoflow-storage-validation-request=';
+const request = JSON.parse(fs.readFileSync(process.argv.find(value => value.startsWith(prefix)).slice(prefix.length), 'utf8'));
+if (request.login?.endpoint === 'main') app.on('before-quit', () => {
+  const {login} = JSON.parse(fs.readFileSync(path.join(request.directory, 'result.json'), 'utf8'));
+  fs.appendFileSync(${JSON.stringify(reads)}, path.basename(request.directory) + '=' + login.cookieCount + '\\n');
+});
+require(${JSON.stringify(childEntry)});`)
+    }
     const validation = variant === 'valid' ? (async () => {
       const driver = path.join(directory, 'validator-driver.ts')
       const bundled = path.join(path.dirname(childEntry), 'validator-driver.cjs')
@@ -189,15 +237,23 @@ validateRestrictedDesktopStorage(JSON.parse(process.argv[2]), { executable: proc
       await promisify(execFile)(process.execPath, [bundled, JSON.stringify(binding), electron], {
         cwd: directory, env: { ...env, ELECTRON_RENDERER_URL: url }, timeout: 120_000,
       })
-    })() : validateRestrictedDesktopStorage(binding, { executable: electron, childEntry: selectedEntry })
-    const valid = ['valid', 'package-entry', 'file-origin', 'login-partitions', 'login-legacy-layout', 'login-transport-policy', 'logged-out-login'].includes(variant)
-    if (valid) await validation
+    })() : (async () => {
+      const now = Date.now
+      const clock = timedCookies ? vi.spyOn(Date, 'now').mockImplementation(() => existsSync(reads) ? now() : cutoff) : undefined
+      try { await validateRestrictedDesktopStorage(binding, { executable: electron, childEntry: selectedEntry }) }
+      finally { clock?.mockRestore() }
+    })()
+    const valid = ['valid', 'package-entry', 'file-origin', 'login-partitions', 'login-legacy-layout', 'login-transport-policy', 'logged-out-login', 'login-cookie-expiry-race'].includes(variant)
+    if (valid) {
+      await validation
+      if (variant === 'login-cookie-expiry-race') expect(await fs.readFile(reads, 'utf8')).toBe('published-main=2\nsource-0-main=2\n')
+    } else if (variant === 'changed-cookie-expiry' || variant === 'changed-oauth-cookie') await expect(validation).rejects.toThrow('Native login cookies changed during migration')
     else if (variant === 'logged-out-missing-current') await expect(validation).rejects.toThrow(/manifest/i)
     else if (login) {
       const error = await validation.then(() => null, (error: unknown) => error)
       expect(error).toBeInstanceOf(Error)
       const message = String(error)
-      expect(message).toMatch(variant === 'unknown-login-file' ? /login partition persistence owner/ : variant === 'missing-login-cookie' ? /cookie/i : /localStorage|token/i)
+      expect(message).toMatch(variant === 'unknown-login-file' ? /login partition persistence owner/ : cookieMutation || variant === 'missing-login-cookie' ? /cookie|storage corruption/i : /localStorage|token/i)
       expect(message.includes(fakeCookie) || message.includes(fakeToken)).toBe(false)
     } else await expect(validation).rejects.toThrow(variant === 'future-schema' ? /schema/ : variant === 'corrupt-leveldb' ? /manifest/ : variant === 'missing-idb' ? /IndexedDB/ : variant === 'saved-session-data' ? /sessionStorage/ : variant === 'unvalidated-partition' ? /Partitions/ : /checksum/)
     expect(await tree(source)).toEqual(original)

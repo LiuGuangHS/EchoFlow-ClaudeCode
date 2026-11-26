@@ -68,13 +68,16 @@ if (!process.argv.some(value => value.startsWith('--echoflow-storage-validation'
     if (login && request.login) {
       const proofKey = Buffer.from(request.login.proofKey, 'hex')
       const saved = Object.entries(snapshot.localStorage).sort(([a], [b]) => a.localeCompare(b))
-      const cookies = (await storage.cookies.get({ url: login.origin })).filter(cookie => !cookie.session).map(cookie => JSON.stringify([
+      // A URL filter would hide saved cookies for other paths and OAuth hosts.
+      const cookies = (await storage.cookies.get({})).filter(cookie => !cookie.session)
+      const savedCookies = cookies.map(cookie => JSON.stringify([
         cookie.domain, cookie.path, cookie.name, cookie.value, cookie.secure, cookie.httpOnly, cookie.sameSite, cookie.expirationDate,
       ])).sort()
       const digest = (value: unknown) => createHmac('sha256', proofKey).update(JSON.stringify(value)).digest('hex')
       result = { localStorage: {}, indexedDB: [], login: {
         storageDigest: digest([saved, snapshot.indexedDB]), localCount: saved.length, indexedCount: snapshot.indexedDB.length,
-        cookieDigest: digest(cookies), cookieCount: cookies.length,
+        cookieDigest: digest(savedCookies), cookieCount: cookies.length,
+        cookieExpiryDigest: digest(cookies.map(cookie => cookie.expirationDate).sort()),
       } }
     }
     await fs.writeFile(path.join(request.directory, 'result.json'), JSON.stringify(result), { flag: 'wx', mode: 0o600 })

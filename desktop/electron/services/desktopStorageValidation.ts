@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -21,7 +21,7 @@ import { resolveWorkspaceBrowserPartition } from './workspaceBrowserGuest'
 export type NativeStorageSnapshot = {
   localStorage: Record<string, string>
   indexedDB: { name: string; version: number; stores: { name: string; keyPath: string | string[] | null; autoIncrement: boolean; indexes: unknown[]; records: unknown[] }[] }[]
-  login?: { storageDigest: string; localCount: number; indexedCount: number; cookieDigest: string; cookieCount: number }
+  login?: { storageDigest: string; localCount: number; indexedCount: number; cookieDigest: string; cookieCount: number; cookieExpiryDigest: string }
 }
 export type StorageValidationRequest = {
   version: 1
@@ -260,27 +260,48 @@ async function validateBrowserPartitions(root: string, journal: DesktopValidatio
   }
 }
 
-async function expectedLoginCookieCount(profile: string, origin: string): Promise<number> {
-  const files = [path.join(profile, 'Cookies'), path.join(profile, 'Network', 'Cookies')]
+async function prepareLoginCookieRead(copy: string, cutoff: number, expiryMarkers: Map<bigint, number>): Promise<number[]> {
+  const files = [path.join(copy, 'Cookies'), path.join(copy, 'Network', 'Cookies')]
   const databases: string[] = []
   for (const file of files) if (await exists(file)) databases.push(file)
-  if (!databases.length) return 0
+  if (!databases.length) return []
   if (databases.length !== 1) throw new Error('Conflicting login cookie databases')
-  let count = 0
-  await validateDesktopSQLite(databases[0]!, copy => {
-    const db = new DatabaseSync(copy, { readOnly: true })
-    try {
-      // Chromium cookie expiry uses microseconds since 1601-01-01.
-      const now = (BigInt(Date.now()) + 11_644_473_600_000n) * 1000n
-      const host = new URL(origin).hostname
-      // Chromium's origin lookup includes matching parent domain cookies at '/'.
-      count = Number(db.prepare(`SELECT count(*) AS count FROM cookies
-        WHERE is_persistent = 1 AND expires_utc > ? AND path = '/'
-        AND (host_key = ? OR (substr(host_key, 1, 1) = '.' AND substr(?, -length(host_key)) = host_key))
-      `).get(now, host, `.${host}`)?.count)
-    } finally { db.close() }
-  })
-  return count
+  // The caller has integrity-checked this private profile copy. Never rewrite a published database.
+  const db = new DatabaseSync(databases[0]!, { enableForeignKeyConstraints: false })
+  try {
+    if (db.prepare("PRAGMA main.table_list('cookies')").get()?.type !== 'table' ||
+      db.prepare("SELECT 1 FROM main.sqlite_schema WHERE type = 'trigger' AND tbl_name = 'cookies' COLLATE NOCASE LIMIT 1").get()) {
+      throw new Error('Unsupported login cookie database schema')
+    }
+    // Chromium stores expiry in microseconds since 1601-01-01; Electron reports Unix seconds.
+    const chromiumTime = (ms: bigint) => (ms + 11_644_473_600_000n) * 1000n
+    const active = 'is_persistent = 1 AND expires_utc > ?'
+    const since = chromiumTime(BigInt(cutoff))
+    // shortcut: reject partitioned cookies until the native reader can prove their partition keys.
+    if (db.prepare("SELECT 1 FROM pragma_table_info('cookies') WHERE name = 'top_frame_site_key'").get() &&
+      db.prepare(`SELECT 1 FROM main.cookies WHERE ${active} AND top_frame_site_key IS NOT '' LIMIT 1`).get(since)) {
+      throw new Error('Restricted validation cannot verify partitioned login cookies')
+    }
+    const select = db.prepare(`SELECT rowid, expires_utc FROM main.cookies WHERE ${active}`)
+    select.setReadBigInts(true)
+    const rows = select.all(since)
+    const expirations: number[] = []
+    const update = db.prepare('UPDATE main.cookies SET expires_utc = ? WHERE rowid = ?')
+    db.exec('BEGIN')
+    for (const { rowid, expires_utc } of rows) {
+      if (typeof rowid !== 'bigint' || typeof expires_utc !== 'bigint') throw new Error('Invalid login cookie expiry')
+      let marker = expiryMarkers.get(expires_utc)
+      if (marker === undefined) {
+        // A shared, injective mapping preserves exact original expiry in Chromium's per-cookie proof.
+        marker = Math.floor(cutoff / 1000) + 86_400 + expiryMarkers.size
+        expiryMarkers.set(expires_utc, marker)
+      }
+      if (update.run(chromiumTime(BigInt(marker) * 1000n), rowid).changes !== 1) throw new Error('Could not prepare saved login cookie expiry')
+      expirations.push(marker)
+    }
+    db.exec('COMMIT')
+    return expirations
+  } finally { db.close() }
 }
 
 function levelDBChecksum(type: number, payload: Buffer): number {
@@ -479,6 +500,8 @@ export async function validateRestrictedDesktopStorage(binding: StorageBinding, 
   if (status?.state !== 'validation-required' || !status.id || !/^[a-f0-9-]{36}$/.test(status.id)) throw new Error('Native validation requires the current published migration transaction')
   const transaction = path.join(binding.internalDir, 'migrations', status.id)
   await assertUnlinkedDirectoryPath(transaction)
+  const cutoff = Date.now()
+  const expiryMarkers = new Map<bigint, number>()
   const work = await fs.mkdtemp(path.join(transaction, 'native-validation-'))
   await fs.chmod(work, 0o700)
   try {
@@ -517,10 +540,12 @@ export async function validateRestrictedDesktopStorage(binding: StorageBinding, 
         const profile = path.join(directory, 'profile')
         const partition = await copyProfile(source, profile, login.endpoint)
         const disk = await validateProfileFiles(partition, login.url)
-        const expectedCookies = await expectedLoginCookieCount(partition, login.origin)
+        const expirations = await prepareLoginCookieRead(partition, cutoff, expiryMarkers)
         const result = (await runRestrictedStorageChild({ version: 1, directory, profile, url: login.url, login: { endpoint: login.endpoint, proofKey } }, options.executable ?? process.execPath, childEntry)).login
         if (!result) throw new Error('Missing restricted login storage proof')
-        if (result.cookieCount !== expectedCookies) throw new Error('Chromium could not read all saved login cookies')
+        if (result.cookieCount !== expirations.length) throw new Error('Chromium could not read all saved login cookies')
+        const expiryDigest = createHmac('sha256', Buffer.from(proofKey, 'hex')).update(JSON.stringify(expirations.sort())).digest('hex')
+        if (result.cookieExpiryDigest !== expiryDigest) throw new Error('Chromium could not read saved login cookie expiry')
         if (disk.local && !result.localCount) throw new Error('Chromium could not read saved login localStorage')
         if (disk.indexed && !result.indexedCount) throw new Error('Chromium could not read saved login IndexedDB')
         snapshots.set(login.endpoint, result)
