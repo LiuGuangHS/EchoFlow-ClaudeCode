@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { appendFile, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { createSandboxedTestEnvironment } from '../../../scripts/pr/test-environment.js'
 import { sanitizePath } from '../../utils/sessionStoragePortable.js'
+import type { SessionStartOptions } from './conversationService.js'
 
 type RuntimeId = 'bundled' | 'installed'
 type Launch = { command: string[]; env: Record<string, string> }
@@ -130,7 +131,7 @@ await import(${JSON.stringify(mockCli)})
     await writeFile(configPath, JSON.stringify({ schemaVersion: 1, defaultRuntimeId, installedPath: executable }))
   }
 
-  async function probe(options?: { cliRuntimeId: RuntimeId; persistCliRuntimeId?: boolean }, restore = false): Promise<ProbeResult> {
+  async function probe(options?: SessionStartOptions, restore = false): Promise<ProbeResult> {
     const child = Bun.spawn([process.execPath, '--no-env-file', '-e', probeSource, JSON.stringify({
       sessionId, workDir, serverPath: join(root, 'claude-server'), options, restore,
     })], { cwd: root, env, stdout: 'pipe', stderr: 'pipe' })
@@ -227,6 +228,33 @@ await import(${JSON.stringify(mockCli)})
     expect(restored.restoredCliRuntimeId).toBe('installed')
     await expectLaunch(restored, 'installed')
     expect(restored.cliRuntimeId).toBe('installed')
+  }, 20_000)
+
+  test('the first CLI launch preserves the last legacy archive decision when replacing a placeholder', async () => {
+    await writeFile(transcriptPath, [
+      { type: 'session-meta', workDir, archived: false },
+      { type: 'session-archive', archived: true },
+    ].map(record => JSON.stringify(record)).join('\n') + '\n')
+    const result = await probe({ cliRuntimeId: 'bundled' })
+    expect(result.error).toBeUndefined()
+    expect(result.active).toBe(true)
+    expect(result.launches[0]!.command).toContain('--session-id')
+    const records = (await readFile(transcriptPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(records.find(record => record.type === 'file-history-snapshot')).toBeDefined()
+    expect(records.filter(record => Object.hasOwn(record, 'archived')).at(-1)).toMatchObject({ archived: true })
+  }, 20_000)
+
+  test('a worker inherits the saved CLI pin of a stopped lead at process launch', async () => {
+    await configure('bundled')
+    const parentSessionId = crypto.randomUUID()
+    await writeFile(join(dirname(transcriptPath), `${parentSessionId}.jsonl`), JSON.stringify({ type: 'session-meta', workDir, cliRuntimeId: 'installed' }) + '\n')
+    const result = await probe({ teamWorker: { parentSessionId, teamName: 'fixture', memberId: 'reader', name: 'reader', systemPrompt: 'fixture' } })
+    expect(result.error).toBeUndefined()
+    expect(result.active).toBe(true)
+    const capture: ChildCapture = JSON.parse((await readFile(capturePath, 'utf8')).trim())
+    expect(capture.command).toBe(installedPath)
+    expect(capture.args).toEqual(result.launches[0]!.command.slice(1))
+    expect(capture.args[capture.args.indexOf('--agent-name') + 1]).toBe('reader')
   }, 20_000)
 
   test('an invalid installed choice leaves placeholder history intact before launch preparation', async () => {

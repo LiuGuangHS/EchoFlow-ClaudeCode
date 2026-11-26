@@ -11,6 +11,7 @@ for (const scenario of ['stopped', 'bind-failed'] as const) {
     const home = await mkdtemp(join(tmpdir(), 'storage-library-exit-'))
     const env = createSandboxedTestEnvironment(home, {
       CLAUDE_CLI_PATH: join(home, 'env-cli'),
+      ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG: join(home, 'missing-runtime-settings.json'),
       SERVER_HOST: 'invalid host',
       SERVER_PORT: '-1',
     })
@@ -19,8 +20,14 @@ for (const scenario of ['stopped', 'bind-failed'] as const) {
         import assert from 'node:assert/strict'
         import fs from 'node:fs/promises'
         import path from 'node:path'
-        globalThis.fetch = async () => { throw new Error('Unexpected network request') }
-        const cliPath = path.join(process.env.HOME, 'flag-cli')
+        const loopbackFetch = globalThis.fetch
+        globalThis.fetch = async (input, init) => {
+          const url = new URL(input instanceof Request ? input.url : input)
+          if (url.hostname !== '127.0.0.1') throw new Error('Unexpected network request')
+          return loopbackFetch(input, init)
+        }
+        const cliPath = path.join(process.env.HOME, 'flag-cli.ts')
+        await fs.writeFile(cliPath, 'await import(' + JSON.stringify(${JSON.stringify(new URL('./fixtures/mock-sdk-cli.ts', import.meta.url).href)}) + ')')
         process.argv = [process.execPath, 'server', '--cli-path', cliPath, '--host', '127.0.0.1', '--port', '0']
         const { startServer, stopServerRuntimeForShutdown } = await import('./src/server/index.ts')
         assert.equal(process.env.CLAUDE_CLI_PATH, cliPath)
@@ -32,8 +39,38 @@ for (const scenario of ['stopped', 'bind-failed'] as const) {
           } else {
             const server = startServer()
             try {
-              const response = await server.fetch(new Request('http://127.0.0.1:' + server.port + '/health'))
+              const base = 'http://127.0.0.1:' + server.port
+              const response = await server.fetch(new Request(base + '/health'))
               assert.equal(response.status, 200)
+              const created = await fetch(base + '/api/sessions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workDir: process.env.HOME }),
+              })
+              assert.ok(created.ok, await created.clone().text())
+              const { sessionId } = await created.json()
+              const socket = new WebSocket(base.replace('http:', 'ws:') + '/ws/' + sessionId)
+              try {
+                const reply = await new Promise((resolve, reject) => {
+                  let text = ''
+                  const timer = setTimeout(() => reject(new Error('No completion from the flag-selected CLI')), 8_000)
+                  socket.onmessage = event => {
+                    const frame = JSON.parse(String(event.data))
+                    if (frame.type === 'connected') socket.send(JSON.stringify({ type: 'user_message', content: 'CLI flag fixture' }))
+                    if (frame.type === 'content_delta') text += frame.text
+                    if (frame.type === 'message_complete' || frame.type === 'error') {
+                      clearTimeout(timer)
+                      if (frame.type === 'error') reject(new Error(JSON.stringify(frame)))
+                      else resolve(text)
+                    }
+                  }
+                })
+                assert.equal(reply, 'Echo: CLI flag fixture')
+                const removed = await fetch(base + '/api/sessions/' + sessionId, { method: 'DELETE' })
+                assert.ok(removed.ok, await removed.text())
+              } finally {
+                socket.close()
+              }
             } finally {
               await server.stop(true)
             }
@@ -47,6 +84,7 @@ for (const scenario of ['stopped', 'bind-failed'] as const) {
         new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
       ])
       expect({ code, output: code === 0 ? '' : stdout + '\n' + stderr }).toEqual({ code: 0, output: '' })
+      expect(stdout).not.toContain('[Server] Received SIGTERM')
       expect(await readdir(join(env.CLAUDE_CONFIG_DIR!, 'echoflow-code', 'migrations', 'writers'))).toEqual([])
     } finally { await rm(home, { recursive: true, force: true }) }
   }, 25_000)

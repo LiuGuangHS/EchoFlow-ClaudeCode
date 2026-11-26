@@ -592,7 +592,7 @@ const compiledSidecarSmokeStarts = Number.isInteger(configuredCompiledSidecarSta
   : 2
 
 describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar CLI mode', () => {
-  it('reports its version through both launcher routes without writing storage', async () => {
+  it('reports its version but refuses business commands on unowned storage through both launcher routes', async () => {
     const repoRoot = path.resolve(import.meta.dirname, '../..')
     const builtExecutable = resolveSidecarExecutable(path.join(repoRoot, 'desktop'), resolveHostTriple())
     const fixture = await mkdtemp(joinPath(tmpdir(), 'echoflow-compiled-cli-smoke-'))
@@ -616,6 +616,13 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar CLI mode', () =>
         expect(explicit.stdout.trim()).toMatch(/^\d+\.\d+\.\d+[^\s]* \(Claude Code\)$/)
         expect(alias).toEqual(explicit)
         expect(explicit.stderr).toBe('')
+        expect((await readdir(home, { recursive: true })).sort()).toEqual(before)
+        expect(readFileSync(sentinel, 'utf8')).toBe('{}')
+      }
+      for (const [executable, args] of [[builtExecutable, ['cli', '--app-root', repoRoot]], [installed, []]] as const) {
+        await expect(run(executable, [...args, '--help'], { cwd: fixture, env, timeout: 10_000 })).rejects.toMatchObject({
+          code: 1, stdout: '', stderr: expect.stringContaining('Unproven or future storage ownership'),
+        })
         expect((await readdir(home, { recursive: true })).sort()).toEqual(before)
         expect(readFileSync(sentinel, 'utf8')).toBe('{}')
       }

@@ -17,6 +17,8 @@ import { cleanupOldFileHistoryBackups, cleanupOldSessionEnvDirs, cleanupOldSessi
 import { getFsImplementation } from '../../utils/fsOperations.js'
 import { sanitizePath } from '../../utils/sessionStoragePortable.js'
 import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
+import * as lockfile from '../../utils/lockfile.js'
+import { createSandboxedTestEnvironment } from '../../../scripts/pr/test-environment.js'
 
 let configDir: string
 let projectRoot: string
@@ -452,6 +454,41 @@ describe('reversible session archive', () => {
     expect(await cleanupOldSessionFiles(new Date('2026-01-01T00:00:00.000Z'))).toEqual({ messages: archived ? 0 : 1, errors: 0 })
     if (archived) expect(await fs.readFile(file, 'utf8')).toBe(cleared)
     else await expect(fs.access(file)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('clears with the explicit archive decision published by a competing process', async () => {
+    const file = await seed(0)
+    await fs.appendFile(file, '{"type":"session-archive","archived":"unknown"}\n')
+    const store = new URL('../../utils/sessionArchiveStore.ts', import.meta.url).href
+    const writer = Bun.spawn([process.execPath, '--no-env-file', '-e', `
+      import { withSessionArchiveLock, writeSessionArchive } from ${JSON.stringify(store)}
+      const root = process.env.CLAUDE_CONFIG_DIR
+      await withSessionArchiveLock(root, async () => {
+        console.log('locked')
+        await Bun.stdin.text()
+        writeSessionArchive(root, ${JSON.stringify(idFor(0))}, true)
+      })
+    `], { env: createSandboxedTestEnvironment(configDir, { CLAUDE_CONFIG_DIR: configDir }), stdin: 'pipe', stdout: 'pipe' })
+    const attempted = Promise.withResolvers<void>()
+    const lock = lockfile.lock
+    const attempt = spyOn(lockfile, 'lock').mockImplementation((...args) => {
+      attempted.resolve()
+      return lock(...args)
+    })
+    try {
+      expect(new TextDecoder().decode((await writer.stdout.getReader().read()).value)).toContain('locked')
+      const clearing = new SessionService().clearSessionTranscript(idFor(0), projectRoot)
+      await Promise.race([attempted.promise, clearing.then(() => { throw new Error('Clear completed before the archive write') })])
+      writer.stdin.end()
+      expect(await writer.exited).toBe(0)
+      await clearing
+      expect(await fs.readFile(file, 'utf8')).not.toContain('Archive fixture 0')
+      expect((await new SessionService().getSessionSummary(idFor(0)))?.archived).toBe(true)
+    } finally {
+      attempt.mockRestore()
+      writer.kill()
+      await writer.exited
+    }
   })
 
   it('leaves history intact when clear cannot classify its legacy archive records', async () => {
