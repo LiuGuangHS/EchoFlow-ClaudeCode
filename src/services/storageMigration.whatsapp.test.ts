@@ -131,6 +131,20 @@ test('a cold WhatsApp launch resumes its transaction and preserves later account
   expect(await readFile(key, 'utf8')).toBe('{}')
 })
 
+test('a receipt with a different custom directory hash fails destination validation', async () => {
+  const f = await fixture(true)
+  await mkdir(f.binding.root)
+  await writeFile(path.join(f.binding.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+  const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)
+  const launch = await armWhatsAppStorageApproval(f.binding, preview)
+  const file = path.join(f.binding.internalDir, 'storage-approvals', `${launch.id}.json`)
+  const receipt = await Bun.file(file).json()
+  receipt.whatsapp.destination = path.join('whatsapp-auth', '0'.repeat(64))
+  await writeFile(file, JSON.stringify(receipt))
+  await expect(readApprovedWhatsAppSources(f.binding, launch)).rejects.toThrow('Invalid WhatsApp storage approval')
+  expect(await Bun.file(path.join(f.directory, 'creds.json')).exists()).toBe(true)
+})
+
 test('an existing config can bind a custom legacy directory without replacing the config', async () => {
   const f = await fixture(true)
   const activeConfig = path.join(f.binding.root, 'adapters.json')

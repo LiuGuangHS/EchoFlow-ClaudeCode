@@ -1,6 +1,6 @@
 import type { BrowserWindow, WebContentsView } from 'electron'
 import type { PreviewBounds } from '../../src/lib/desktopHost/types'
-import type { EchoFlowLoginEndpoint, EchoFlowLoginResult, EchoFlowLoginWindow } from './echoFlowLogin'
+import { ECHOFLOW_LOGIN_PROFILES, loginNavigationGuard, type EchoFlowLoginEndpoint, type EchoFlowLoginResult, type EchoFlowLoginWindow } from './echoFlowLogin'
 
 export function loginViewBounds(bounds: PreviewBounds, zoom: number, [width = 0, height = 0]: number[]): PreviewBounds {
   const edge = (value: number, limit: number) => Math.max(0, Math.min(limit, Math.round(value * zoom)))
@@ -131,6 +131,9 @@ export class EchoFlowLoginViewHost {
       child.once('closed', () => { popup = null })
       try {
         child.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+        const guard = loginNavigationGuard(ECHOFLOW_LOGIN_PROFILES[attempt.endpoint])
+        child.webContents.on('will-navigate', guard)
+        child.webContents.on('will-redirect', guard)
         child.setParentWindow(owner)
       } catch {
         popup = null

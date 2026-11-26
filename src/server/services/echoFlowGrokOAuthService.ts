@@ -1,3 +1,4 @@
+import { renameSync } from 'fs'
 import * as fs from 'fs/promises'
 import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import * as path from 'path'
@@ -76,6 +77,7 @@ export class EchoFlowGrokOAuthService {
   private exchangingSession?: GrokOAuthSession
   private generation = 0
   private writes = Promise.resolve()
+  private refreshing?: { generation: number; result: Promise<StoredGrokOAuthTokens | null> }
   private refreshFn: GrokRefreshFn = refreshGrokTokens
 
   setRefreshFn(fn: GrokRefreshFn): void {
@@ -102,17 +104,19 @@ export class EchoFlowGrokOAuthService {
   }
 
   saveTokens(tokens: StoredGrokOAuthTokens): Promise<void> {
+    this.generation++
     return this.enqueueWrite(() => this.writeTokens(tokens))
   }
 
-  private async writeTokens(tokens: StoredGrokOAuthTokens): Promise<void> {
+  private async writeTokens(tokens: StoredGrokOAuthTokens, generation?: number): Promise<void> {
     const filePath = this.getOAuthFilePath()
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     const temporaryPath = `${filePath}.tmp.${process.pid}.${Date.now()}`
     let renamed = false
     try {
       await fs.writeFile(temporaryPath, `${JSON.stringify(tokens, null, 2)}\n`, { mode: 0o600 })
-      await fs.rename(temporaryPath, filePath)
+      if (generation !== undefined && generation !== this.generation) throw new Error('Grok OAuth sign-in was cancelled')
+      renameSync(temporaryPath, filePath)
       renamed = true
     } finally {
       if (!renamed) await fs.rm(temporaryPath, { force: true }).catch(() => {})
@@ -214,9 +218,7 @@ export class EchoFlowGrokOAuthService {
       }
       await this.enqueueWrite(async () => {
         if (generation !== this.generation) throw new Error('Grok OAuth sign-in was cancelled')
-        const committedGeneration = ++this.generation
-        await this.writeTokens(tokens)
-        if (committedGeneration !== this.generation) throw new Error('Grok OAuth sign-in was cancelled')
+        await this.writeTokens(tokens, ++this.generation)
       })
       return tokens
     } finally {
@@ -226,8 +228,17 @@ export class EchoFlowGrokOAuthService {
     }
   }
 
-  async ensureFreshTokens(): Promise<StoredGrokOAuthTokens | null> {
+  ensureFreshTokens(): Promise<StoredGrokOAuthTokens | null> {
     const generation = this.generation
+    if (this.refreshing?.generation === generation) return this.refreshing.result
+    const result = this.readFreshTokens(generation).finally(() => {
+      if (this.refreshing?.result === result) this.refreshing = undefined
+    })
+    this.refreshing = { generation, result }
+    return result
+  }
+
+  private async readFreshTokens(generation: number): Promise<StoredGrokOAuthTokens | null> {
     await this.writes
     if (generation !== this.generation) return null
     const tokens = await this.loadTokens()
@@ -254,7 +265,7 @@ export class EchoFlowGrokOAuthService {
       }
       return await this.enqueueWrite(async () => {
         if (generation !== this.generation) return null
-        await this.writeTokens(updated)
+        await this.writeTokens(updated, generation)
         return generation === this.generation ? updated : null
       })
     } catch (error) {

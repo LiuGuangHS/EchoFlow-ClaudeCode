@@ -1,16 +1,3 @@
-/**
- * Resolves the signed-in EchoFlow site account from the session cookie.
- *
- * The old login flow read the identity out of the site's login response body
- * through the Chrome DevTools Protocol. That coupled login completion to one
- * particular request and left the window hanging whenever the response body
- * was unavailable. The account identity is already available to any request
- * that carries the session cookie, so this module asks the site directly.
- *
- * Only the two fields the desktop app displays are returned; the rest of the
- * user record stays in the main process.
- */
-
 export type EchoFlowLoginIdentity = { userId: string; username: string }
 
 const ECHOFLOW_SELF_URL = 'https://api.echoflowai.cc/api/user/self'
@@ -51,12 +38,6 @@ export function parseSiteIdentity(value: unknown): EchoFlowLoginIdentity | null 
   return { userId, username }
 }
 
-/**
- * The site's own account endpoint accepts the session cookie by itself; the
- * `New-Api-User` header is only needed by callers that do not hold a session.
- * A failed read is deliberately indistinguishable from an unauthenticated one:
- * the login window keeps polling either way.
- */
 /** The client profile the sign-in window sends; the session is bound to it. */
 export type SiteClientProfile = {
   userAgent?: string
@@ -101,14 +82,7 @@ export async function resolveSiteIdentity(
     return null
   }
   if (!response.ok) {
-    // Diagnostic only: status and the gateway's own message, never credentials.
-    const detail = await response.text().catch(() => '')
-    let message: string | undefined
-    try {
-      const parsed = JSON.parse(detail) as { message?: unknown }
-      if (typeof parsed.message === 'string') message = parsed.message.slice(0, 200)
-    } catch {}
-    console.info('[echoFlowLogin] identity-probe:', JSON.stringify({ status: response.status, message }))
+    console.info('[echoFlowLogin] identity-probe:', JSON.stringify({ status: response.status }))
     return null
   }
 

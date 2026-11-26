@@ -5,6 +5,7 @@ import {
   EchoFlowLoginSession,
   MAIN_LOGIN_PROFILE,
   parseDedicatedCredential,
+  loginBootstrapVerdict,
   readDedicatedCredential,
   readPageIdentity,
   siteCookieHeader,
@@ -14,6 +15,17 @@ import {
   type EchoFlowLoginWindow,
   type EchoFlowWindowOpenResult,
 } from './echoFlowLogin'
+
+it.each([
+  [200, '{}', 'ok'],
+  [400, '{"error":"token_invalid"}', 'rejected'],
+  [502, '{"error":"service_unavailable"}', 'unavailable'],
+  [502, '{"error":"invalid_response"}', 'unavailable'],
+  [403, '{"error":"desktop_bridge_required"}', 'unknown'],
+  [500, '<html>Server error</html>', 'unknown'],
+] as const)('maps bootstrap reply %i %s to %s', async (status, body, expected) => {
+  await expect(loginBootstrapVerdict(new Response(body, { status }))).resolves.toBe(expected)
+})
 
 function pendingVerification() {
   let resolve!: (verdict: EchoFlowLoginVerification) => void
@@ -206,6 +218,8 @@ describe('EchoFlow site login session', () => {
 
     expect(window.navigate('will-navigate', 'https://evil.example/callback')).toHaveBeenCalledOnce()
     expect(window.navigate('will-redirect', 'https://api.echoflowai.cc.evil.example/login')).toHaveBeenCalledOnce()
+    expect(window.navigate('will-navigate', 'http://github.com/login')).toHaveBeenCalledOnce()
+    expect(window.navigate('will-redirect', 'https://github.com:8443/login')).toHaveBeenCalledOnce()
     expect(window.navigate('will-navigate', 'https://github.com/login/oauth/authorize')).not.toHaveBeenCalled()
     expect(window.navigate('will-redirect', 'https://accounts.google.com/o/oauth2/v2/auth')).not.toHaveBeenCalled()
     expect(window.navigate('will-navigate', 'https://oauth.telegram.org/auth')).not.toHaveBeenCalled()

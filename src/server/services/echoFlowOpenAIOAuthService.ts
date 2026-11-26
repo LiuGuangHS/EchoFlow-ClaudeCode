@@ -9,6 +9,7 @@
  * 不复制粘贴 —— 保证跟 CLI 走同一套协议实现。
  */
 
+import { renameSync } from 'fs'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import { logTokenRefreshFailure } from './oauthRefreshLog.js'
@@ -93,6 +94,7 @@ export class EchoFlowOpenAIOAuthService {
   private exchangingSession?: OpenAIOAuthSession
   private generation = 0
   private writes = Promise.resolve()
+  private refreshing?: { generation: number; result: Promise<StoredOpenAIOAuthTokens | null> }
   private refreshFn: OpenAIRefreshFn = refreshOpenAITokens
   private callbackPort: number
 
@@ -135,17 +137,19 @@ export class EchoFlowOpenAIOAuthService {
   }
 
   saveTokens(tokens: StoredOpenAIOAuthTokens): Promise<void> {
+    this.generation++
     return this.enqueueWrite(() => this.writeTokens(tokens))
   }
 
-  private async writeTokens(tokens: StoredOpenAIOAuthTokens): Promise<void> {
+  private async writeTokens(tokens: StoredOpenAIOAuthTokens, generation?: number): Promise<void> {
     const filePath = this.getOAuthFilePath()
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`
     let renamed = false
     try {
       await fs.writeFile(tmp, JSON.stringify(tokens, null, 2), { mode: 0o600 })
-      await fs.rename(tmp, filePath)
+      if (generation !== undefined && generation !== this.generation) throw new Error('OpenAI OAuth sign-in was cancelled')
+      renameSync(tmp, filePath)
       renamed = true
     } finally {
       if (!renamed) {
@@ -331,9 +335,7 @@ export class EchoFlowOpenAIOAuthService {
       }
       await this.enqueueWrite(async () => {
         if (generation !== this.generation) throw new Error('OpenAI OAuth sign-in was cancelled')
-        const committedGeneration = ++this.generation
-        await this.writeTokens(tokens)
-        if (committedGeneration !== this.generation) throw new Error('OpenAI OAuth sign-in was cancelled')
+        await this.writeTokens(tokens, ++this.generation)
       })
       return tokens
     } finally {
@@ -343,8 +345,17 @@ export class EchoFlowOpenAIOAuthService {
     }
   }
 
-  async ensureFreshTokens(): Promise<StoredOpenAIOAuthTokens | null> {
+  ensureFreshTokens(): Promise<StoredOpenAIOAuthTokens | null> {
     const generation = this.generation
+    if (this.refreshing?.generation === generation) return this.refreshing.result
+    const result = this.readFreshTokens(generation).finally(() => {
+      if (this.refreshing?.result === result) this.refreshing = undefined
+    })
+    this.refreshing = { generation, result }
+    return result
+  }
+
+  private async readFreshTokens(generation: number): Promise<StoredOpenAIOAuthTokens | null> {
     await this.writes
     if (generation !== this.generation) return null
     const tokens = await this.loadTokens()
@@ -384,7 +395,7 @@ export class EchoFlowOpenAIOAuthService {
       }
       return await this.enqueueWrite(async () => {
         if (generation !== this.generation) return null
-        await this.writeTokens(updated)
+        await this.writeTokens(updated, generation)
         return generation === this.generation ? updated : null
       })
     } catch (err) {

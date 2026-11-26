@@ -111,6 +111,7 @@ export async function startSiteNetworkBridge(options: {
         method,
         headers,
         credentials: 'include',
+        redirect: 'error',
         ...(typeof payload.body === 'string' ? { body: payload.body } : {}),
         signal: AbortSignal.timeout(SITE_NETWORK_FORWARD_TIMEOUT_MS),
       })

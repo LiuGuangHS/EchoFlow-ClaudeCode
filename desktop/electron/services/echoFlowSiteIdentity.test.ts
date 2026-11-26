@@ -85,6 +85,15 @@ describe('resolveSiteIdentity', () => {
     await expect(resolveSiteIdentity('session=abc', refused as unknown as typeof fetch)).resolves.toBeNull()
   })
 
+  it('keeps upstream error bodies out of login diagnostics', async () => {
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+    try {
+      const fetchImpl = vi.fn(async () => Response.json({ message: 'private gateway detail' }, { status: 403 }))
+      await expect(resolveSiteIdentity('session=fixture', fetchImpl as unknown as typeof fetch)).resolves.toBeNull()
+      expect(JSON.stringify(log.mock.calls)).not.toContain('private gateway detail')
+    } finally { log.mockRestore() }
+  })
+
   it('returns null without a cookie instead of asking the site', async () => {
     const fetchImpl = vi.fn(async () => new Response('{}'))
     await expect(resolveSiteIdentity('', fetchImpl as unknown as typeof fetch)).resolves.toBeNull()

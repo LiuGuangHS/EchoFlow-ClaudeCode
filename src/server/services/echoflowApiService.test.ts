@@ -47,6 +47,143 @@ async function readAccountFile(): Promise<string> {
 }
 
 describe('EchoFlowApiService credentials', () => {
+  test.each([
+    new Response('<html>Access denied</html>', { status: 403 }),
+    Response.json({ success: false, message: 'token service temporarily unavailable' }),
+  ])('preserves a live session on an ambiguous gateway refusal %#', async response => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' })
+    globalThis.fetch = mock(async () => response) as typeof fetch
+    await expect(service.refreshAccount()).rejects.toMatchObject({ code: 'service_unavailable' })
+    expect((await service.getAccount())?.live).toBe(true)
+  })
+
+  test('retains the live credential during throttling', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' })
+    globalThis.fetch = mock(async () => new Response('', { status: 429 })) as typeof fetch
+    await expect(service.refreshAccount()).rejects.toMatchObject({ code: 'service_unavailable', status: 429 })
+    expect((await service.getAccount())?.live).toBe(true)
+  })
+
+  test.each([
+    { schemaVersion: 4, userId: 'legacy-looking', managementToken: 'fixture' },
+    { schemaVersion: 3, accounts: { main: { userId: '7', credential: 'future', managementToken: 'fixture' }, dedicated: null } },
+    { schemaVersion: 3, accounts: { main: { userId: '7', credential: 'session', tokens: {} }, dedicated: null } },
+    { accounts: { future: {} } },
+  ])('refuses to overwrite unrecognized account data %#', async (fixture) => {
+    const accountPath = path.join(temporaryConfigDir, 'echoflow-code', 'echoflow-account.json')
+    await fs.mkdir(path.dirname(accountPath))
+    const original = JSON.stringify(fixture)
+    await fs.writeFile(accountPath, original)
+    await expect(new EchoFlowApiService().disconnectAccount()).rejects.toThrow()
+    expect(await readAccountFile()).toBe(original)
+  })
+
+  test('preserves a corrupt account file when disconnecting', async () => {
+    const accountPath = path.join(temporaryConfigDir, 'echoflow-code', 'echoflow-account.json')
+    await fs.mkdir(path.dirname(accountPath))
+    await fs.writeFile(accountPath, '{')
+    await expect(new EchoFlowApiService().disconnectAccount()).rejects.toThrow()
+    expect(await readAccountFile()).toBe('{')
+  })
+
+  test('retains version two extension fields during migration and rebinding', async () => {
+    const accountPath = path.join(temporaryConfigDir, 'echoflow-code', 'echoflow-account.json')
+    await fs.mkdir(path.dirname(accountPath))
+    const main = { userId: '851842', managementToken: 'old', extra: 1, tokens: [{ id: '9', name: 'test', note: 2 }] }
+    const old = { schemaVersion: 2, extra: 3, accounts: { main, dedicated: null, extra: 4 } }
+    await fs.writeFile(accountPath, JSON.stringify(old))
+    globalThis.fetch = mock(async (input) => Response.json({ success: true, data: String(input).endsWith('/self') ? {} : [{ id: 9, name: 'test' }] })) as typeof fetch
+    const service = new EchoFlowApiService()
+    await service.bindAccount('851842', 'new')
+    expect(JSON.parse(await readAccountFile())).toMatchObject({ schemaVersion: 3, extra: 3, accounts: { extra: 4, main: { extra: 1, tokens: [{ note: 2 }] } } })
+    const backup = (await fs.readdir(path.dirname(accountPath))).find(file => file.includes('.bak-before-migration-'))!
+    expect(await fs.readFile(path.join(path.dirname(accountPath), backup), 'utf8')).toBe(JSON.stringify(old))
+  })
+
+  test('retains a created key across an account lookup outage without replaying create', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' })
+    let posts = 0
+    globalThis.fetch = mock(async (_url, init) => {
+      if (init?.method !== 'POST') return new Response('', { status: 503 })
+      posts++
+      return Response.json({ success: true, data: { id: 9, key: 'sk-once' } })
+    }) as typeof fetch
+    const account = await service.createAccountToken()
+    expect(account.refreshedAt).toBeUndefined()
+    expect(posts).toBe(1)
+    await expect(new EchoFlowApiService().selectAccountToken('main', '9')).resolves.toMatchObject({ key: 'sk-once' })
+  })
+
+  test('requires sign-in after a structured 403 even if the reason must be redacted', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' })
+    globalThis.fetch = mock(async () => Response.json({ message: 'invalid session: fixture' }, { status: 403 })) as typeof fetch
+    await expect(service.refreshAccount()).rejects.toMatchObject({ code: 'token_invalid', detail: undefined })
+    expect((await service.getAccount())?.live).toBe(false)
+  })
+
+  test('a failed group lookup reports its reason before any create is sent', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('dedicated', { kind: 'bearer', userId: '7', accessToken: 'fixture' })
+    const methods: string[] = []
+    globalThis.fetch = mock(async (_url, init) => {
+      methods.push(init?.method ?? 'GET')
+      return Response.json({ message: 'groups temporarily unavailable' }, { status: 503 })
+    }) as typeof fetch
+    await expect(service.createAccountToken('dedicated')).rejects.toMatchObject({ code: 'service_unavailable', detail: 'groups temporarily unavailable' })
+    expect(methods).toEqual(['GET'])
+  })
+
+  test('reports an uncertain create when its successful HTTP reply cannot be read', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' })
+    const requests = mock(async () => new Response('{', { status: 200 }))
+    globalThis.fetch = requests as typeof fetch
+    await expect(service.createAccountToken()).rejects.toMatchObject({ detail: expect.stringContaining('check the gateway token list') })
+    expect(requests).toHaveBeenCalledTimes(1)
+  })
+
+  test('reports an uncertain create when the gateway loses its reply', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' })
+    const lostReply = mock(async () => { throw new Error('connection closed') })
+    globalThis.fetch = lostReply as unknown as typeof fetch
+    await expect(service.createAccountToken()).rejects.toMatchObject({
+      code: 'service_unavailable', detail: expect.stringContaining('check the gateway token list'),
+    })
+    expect(lostReply).toHaveBeenCalledTimes(1)
+    expect((await service.getAccount())?.live).toBe(true)
+  })
+
+  test('never writes a create response across an account change by another service', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=fixture' })
+    const started = Promise.withResolvers<void>()
+    const creation = Promise.withResolvers<Response>()
+    globalThis.fetch = mock(async (input, init) => {
+      if (init?.method === 'POST') { started.resolve(); return creation.promise }
+      return Response.json({ success: true, data: String(input).endsWith('/self')
+        ? { id: new Headers(init?.headers).get('new-api-user') } : [] })
+    }) as typeof fetch
+    const result = service.createAccountToken()
+    await started.promise
+    await new EchoFlowApiService().setCredential('main', { kind: 'session', userId: '8', cookie: 'session=new' })
+    creation.resolve(Response.json({ success: true, data: 'sk-old-key' }))
+    await expect(result).rejects.toThrow()
+    expect((await service.getAccount())?.userId).toBe('8')
+    expect(await readAccountFile()).not.toContain('sk-old-key')
+  })
   test('lists tokens with the session cookie and the New-Api-User header', async () => {
     const calls = stubSite()
     const service = new EchoFlowApiService()
@@ -645,6 +782,15 @@ describe('EchoFlowApiService site network bridge', () => {
     // The partition's cookie jar is the credential; sending it here would
     // override the browser's own cookies.
     expect(JSON.stringify(calls[0]?.payload)).not.toContain('session=live')
+  })
+
+  test.each([408, 429, 0])('retains the session when the relay reports status %i', async (status) => {
+    stubBridge({ status: 200, body: '{"success":true,"data":{"id":7}}' })
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', { kind: 'session', userId: '7', cookie: 'session=fixture' })
+    stubBridge({ status, body: '' })
+    await expect(service.refreshAccount()).rejects.toMatchObject({ code: 'service_unavailable' })
+    expect((await service.getAccount())?.live).toBe(true)
   })
 
   test('keeps the gateway reason when the relayed call is refused', async () => {

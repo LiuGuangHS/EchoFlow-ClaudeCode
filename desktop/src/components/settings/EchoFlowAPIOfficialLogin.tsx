@@ -12,6 +12,8 @@ import {
   type EchoFlowEndpoint,
   type EchoFlowTokenSource,
 } from '../../api/echoflow'
+import { DATE_LOCALES } from '@/features/tokenUsage/heatmapModel'
+import { useSettingsStore } from '@/stores/settingsStore'
 import { useProviderStore } from '../../stores/providerStore'
 import { normalizeProviderBaseUrl } from '../../config/providerPresets'
 import { useTranslation } from '../../i18n'
@@ -86,16 +88,10 @@ function withReason(message: string, caught: unknown): string {
   return `${message} — ${caught.message}`
 }
 
-function formatQuota(remainQuota?: number, unlimitedQuota?: boolean, unlimitedLabel = ''): string {
-  if (unlimitedQuota) return unlimitedLabel
-  if (remainQuota !== undefined) {
-    return `¥${remainQuota.toFixed(2)}`
-  }
-  return ''
-}
-
 export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, loginPaneHost, onLoginActive }: Props) {
   const t = useTranslation()
+  const locale = DATE_LOCALES[useSettingsStore(state => state.locale)]
+  const currency = new Intl.NumberFormat(locale, { style: 'currency', currency: 'CNY' })
   const loginTitleId = useId()
   const [login, setLogin] = useState<LoginAttempt | null>(null)
   const activeLoginId = useRef<string | null>(null)
@@ -183,11 +179,11 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
       const disconnect = pendingDisconnects.get(endpoint)
       if (disconnect) {
         setLineFeedback(endpoint, { busy: 'disconnect' })
-        void disconnect.catch(() => {}).then(async () => {
+        void disconnect.then(() => undefined, () => t('echoflowApiOfficialLogin.disconnectFailed')).then(async error => {
           if (loadAccounts.current !== load || accountVersions.current[endpoint] !== version) return
           await load([endpoint])
           if (loadAccounts.current === load && accountVersions.current[endpoint] === version) {
-            setLineFeedback(endpoint, { busy: undefined })
+            setLineFeedback(endpoint, { busy: undefined, error })
           }
         })
       }
@@ -205,7 +201,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
   }, [])
 
   useEffect(() => {
-    onBindingChange?.(Boolean(accounts.main || accounts.dedicated))
+    onBindingChange?.(isLive(accounts.main) || isLive(accounts.dedicated))
   }, [accounts, onBindingChange])
 
   const updateCredentials = (patch: Partial<Credentials>) => {
@@ -439,7 +435,12 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
   }
 
   const accountSummary = account
-    ? `${t('echoflowApiOfficialLogin.userId')}：${account.userId}${account.username ? ` · ${account.username}` : ''}${account.balance !== undefined ? ` · ${t('echoflowApiOfficialLogin.balance')} ${formatQuota(account.balance)}` : ''} · ${account.refreshedAt ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(account.refreshedAt) : t('echoflowApiOfficialLogin.neverSynced')}`
+    ? [
+        t('echoflowApiOfficialLogin.userIdSummary', { id: account.userId }),
+        account.username,
+        account.balance !== undefined && `${t('echoflowApiOfficialLogin.balance')} ${currency.format(account.balance)}`,
+        account.refreshedAt ? new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(account.refreshedAt) : t('echoflowApiOfficialLogin.neverSynced'),
+      ].filter(Boolean).join(' · ')
     : t('echoflowApiOfficialLogin.neverSynced')
 
   const endpointSegments = (['main', 'dedicated'] as const).map((endpoint) => ({
@@ -447,7 +448,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
     label: (
       <span className="flex items-center gap-2">
         <span
-          className={`h-2 w-2 rounded-full ${accounts[endpoint] ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`}
+          className={`h-2 w-2 rounded-full ${isLive(accounts[endpoint]) ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`}
           aria-hidden="true"
         />
         {endpointLabels[endpoint]}
@@ -645,7 +646,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
                     disabled={alreadyAdded}
                     className={`flex items-center gap-2.5 rounded-[var(--radius-md)] border px-3 py-2 text-left transition-colors ${
                       alreadyAdded
-                        ? 'cursor-not-allowed border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] opacity-50'
+                        ? 'cursor-not-allowed border-[var(--color-border)] bg-[var(--color-surface-container-lowest)]'
                         : 'border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] hover:border-[var(--color-brand)] hover:bg-[var(--color-surface-hover)]'
                     }`}
                   >
@@ -653,7 +654,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, logi
                       <span className="truncate text-sm text-[var(--color-text-primary)]">{token.name}</span>
                       <span className="shrink-0 font-mono text-xs text-[var(--color-text-tertiary)]">{token.keyPreview}</span>
                       {token.status && <span className="shrink-0 text-xs text-[var(--color-text-tertiary)]">{token.status}</span>}
-                      {(token.unlimitedQuota || token.remainQuota !== undefined) && <span className="shrink-0 text-xs text-[var(--color-text-secondary)]">{formatQuota(token.remainQuota, token.unlimitedQuota, t('echoflowApiOfficialLogin.unlimitedQuota'))}</span>}
+                      {(token.unlimitedQuota || token.remainQuota !== undefined) && <span className="shrink-0 text-xs text-[var(--color-text-secondary)]">{token.unlimitedQuota ? t('echoflowApiOfficialLogin.unlimitedQuota') : currency.format(token.remainQuota!)}</span>}
                     </span>
                     {alreadyAdded ? (
                       <span className="shrink-0 text-xs text-[var(--color-text-tertiary)]">{t('echoflowApiOfficialLogin.added')}</span>

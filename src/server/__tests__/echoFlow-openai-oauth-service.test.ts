@@ -151,11 +151,8 @@ describe('EchoFlowOpenAIOAuthService — file storage', () => {
   })
 
   test('saveTokens cleans up tmp file when rename fails', async () => {
-    const renameSpy = spyOn(fs, 'rename').mockImplementation(async () => {
-      const error = new Error('rename failed') as NodeJS.ErrnoException
-      error.code = 'EXDEV'
-      throw error
-    })
+    const oauthPath = getEchoFlowOpenAIOAuthFilePath()
+    await fs.mkdir(oauthPath, { recursive: true })
 
     try {
       await expect(
@@ -167,12 +164,11 @@ describe('EchoFlowOpenAIOAuthService — file storage', () => {
           email: 'test@example.com',
           accountId: 'acct_123',
         }),
-      ).rejects.toThrow('rename failed')
+      ).rejects.toThrow()
     } finally {
-      renameSpy.mockRestore()
+      await fs.rmdir(oauthPath)
     }
 
-    const oauthPath = getEchoFlowOpenAIOAuthFilePath()
     const files = await fs.readdir(path.dirname(oauthPath))
     expect(
       files.filter((name) => name.startsWith('openai-oauth.json.tmp.')),
@@ -545,6 +541,33 @@ describe('EchoFlowOpenAIOAuthService — ensureFreshAccessToken', () => {
     expect(loaded?.refreshToken).toBe('refresh-to-preserve')
     expect(loaded?.idToken).toBe('id-token-to-preserve')
     expect(loaded?.clientId).toBe('app_EMoamEEZ73f0CkXaXp7hrann')
+  })
+
+  test('parallel callers rotate the refresh token only once', async () => {
+    await service.saveTokens({ accessToken: 'old', refreshToken: 'once', expiresAt: 1, email: null, accountId: null })
+    let calls = 0
+    service.setRefreshFn(async () => ({ access_token: `rotated-${++calls}`, expires_in: 3600 }))
+    const results = await Promise.all([service.ensureFreshAccessToken(), service.ensureFreshAccessToken()])
+    expect(results).toEqual(['rotated-1', 'rotated-1'])
+    expect(calls).toBe(1)
+  })
+
+  test('a replaced grant survives a late refresh', async () => {
+    const grant = { accessToken: 'old', refreshToken: 'once', expiresAt: 1, email: null, accountId: null }
+    await service.saveTokens(grant)
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<void>()
+    service.setRefreshFn(async () => {
+      started.resolve()
+      await finish.promise
+      return { access_token: 'discard', expires_in: 3600 }
+    })
+    const refresh = service.ensureFreshTokens()
+    await started.promise
+    await service.saveTokens({ ...grant, accessToken: 'replacement' })
+    finish.resolve()
+    expect(await refresh).toBeNull()
+    expect((await service.loadTokens())?.accessToken).toBe('replacement')
   })
 
   test('does not restore tokens from a refresh that finishes after sign-out', async () => {

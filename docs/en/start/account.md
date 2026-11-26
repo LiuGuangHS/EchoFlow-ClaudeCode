@@ -18,7 +18,7 @@ Using a different provider instead? See [Connect a model](./models.md). This pag
 - An account registered at the [EchoFlow console](https://api.echoflowai.cc/console/personal), with credit on it
 - The desktop app installed — see [Download and install](./install.md)
 
-You no longer need to generate a system access token first: the login window hands the site session you already have to the desktop app.
+When you sign in through the site in the desktop app, you can use your existing site session without first generating a system access token.
 
 ## Two lines: main site and dedicated line
 
@@ -33,24 +33,26 @@ EchoFlow SiHub has two entry points. A tab switcher at the top of the account ar
 
 ## Sign in
 
-Find the EchoFlow SiHub area under Settings → Model Settings, pick a line tab, then click **Sign in to EchoFlow SiHub**. A browser window opens; complete the site sign-in there. The window closes itself on success and the account details fill the panel.
+Find the EchoFlow SiHub area under Settings → Model Settings, pick a line tab, then click **Sign in to EchoFlow SiHub**. Complete the site sign-in inside Settings. A third-party identity provider may open its own authorization window. When sign-in succeeds, the app returns to the selected line’s account panel. Select **Cancel** or press Esc to leave the sign-in page.
 
 Once signed in, the header shows that line's **user ID, username, balance, and last refresh time**.
 
-A signed-in line offers three actions:
+On a signed-in line you can:
 
 - **Refresh** — pull the balance and token list again. When the credential has expired, the panel asks you to sign in again.
-- **Sign in to EchoFlow SiHub** — run the browser sign-in again after the credential expires or the app restarts.
-- **Disconnect** — clear the account on this line together with the locally stored sign-in state. **It affects only the selected line**; the other one is untouched.
+- **Sign in to EchoFlow SiHub** — the desktop app tries to restore the session on restart. Sign in again if the credential expires or the session cannot be restored.
+- **Disconnect** — clear the account and the site’s sign-in state for this line in the desktop app. To revoke a call token already issued by the gateway, revoke it separately in the console. **It affects only the selected line**; the other one is untouched.
 
 ### Manual binding (advanced)
 
-Where no login window is available (the browser build, for example, or a remote desktop), expand **Manual binding (advanced)** and enter the **user ID** and **system access token**:
+In the local desktop app, you can also expand **Manual binding (advanced)** and enter the **user ID** and **system access token**:
 
 1. Copy the user ID from your console profile page.
 2. Generate the system access token under Security settings → System access token → Generate token. The field is masked; click the eye icon to reveal it.
 
-The account record lives locally in `echoflow-account.json` (user ID and line only) and is never uploaded; site credentials stay in memory and in the login window's own storage.
+Remote browser connections can read account information. Use the desktop app to bind an account or update credentials.
+
+`echoflow-account.json` stores the line and user ID, along with the username, balance, token list, and refresh time when available. Manual binding saves the system access token in this file. The file may also contain full call-token keys in plain text. Site sign-in cookies and dedicated-line access tokens stay in memory and the line’s browser storage. Treat the account file and any `.bak-before-migration-*` copies as credentials. Exclude them from diagnostic reports.
 
 ## Pick a token and configure a channel
 
@@ -58,28 +60,28 @@ With the account signed in, the card lists that account's call tokens, each show
 
 Selecting a token opens the shared detail panel — model, capabilities, and advanced parameters all live there. **The channel only appears in the model channel list when you save.** Closing the panel without saving leaves nothing behind.
 
-If the account has no usable tokens, click **Create token** above the list. The app creates one with the console's defaults — unlimited quota, no expiry — and lists it right away, so you can pick it without leaving the app. To change quota or expiry, or to check usage, click **Console** next to it.
+If the account has no usable tokens, click **Create token** above the list. The app requests a token from the selected gateway. If the result is uncertain, check the token list in the console before creating another. To change quota or expiry, or to check usage, click **Console** next to it.
 
 ## Tokens and API keys are different
 
 This is the easiest thing to mix up, so it gets its own section:
 
-- **System access token** — belongs to the account and proves "this account is you". Manual binding, account checks, reading the token list, and rotating tokens all rely on it.
+- **System access token** — belongs to the account and proves "this account is you". After manual binding, the desktop app uses it to read the account and token list.
 - **Call token (API key)** — belongs to one channel; it is the credential actually sent with model calls.
 
-**The desktop app shows only a masked API key preview by default.** You select a token ID; tests, creation, and updates are done server-side by "account + token ID" and are forced onto the endpoint that token belongs to. The settings page has an explicit reveal toggle; only when you reveal does it fetch the full key for that account endpoint and token ID. The token list itself still returns masked previews.
+**The desktop app shows only a masked API key preview by default.** You select a token ID; tests, creation, and updates are done server-side by "account + token ID" and are forced onto the endpoint that token belongs to. You can select the token from the list without revealing or copying its full key.
 - Rotating a channel's token needs no pasted secret — just a different token ID.
 - A main-site account's tokens can only build main-site channels; they never leak onto the dedicated line.
 
 ## Upgrading from an older version
 
-Older builds stored a single account. After upgrading, it is migrated into the main-site and dedicated-line slots automatically: the old account lands on the **main site**, and the dedicated line starts empty.
+A single account from an older `echoflow-account.json` moves to the slot for its recorded line. An account without a line marker defaults to the main site.
 
-If the account area looks empty after upgrading, click **Refresh** once. If it is still empty, the migration did not read the old file — sign in or bind manually once. The old `qingyun-account.json` is read for migration only; all new data goes to `echoflow-account.json`.
+If you have only the retired `qingyun-account.json`, the app leaves that file in place. To use the account, sign in or bind manually on the desired line.
 
 ## Troubleshooting
 
-**The login window closed but no account appeared.** Click **Sign in to EchoFlow SiHub** again. A transient network fault or a local server restart can interrupt one verification and close the window early; retrying is enough. If it keeps failing, open **Settings → Diagnostics**: the gateway's own reason for refusing the sign-in is recorded on the `bootstrap-rejected` line.
+**The sign-in page closed before my account appeared.** If the request was already submitted when you cancelled, sign-in can still complete. If the result is uncertain, wait for the panel to reread the selected line and check the user ID. Sign in again only if the account you want is still missing.
 
 **Balance is missing after signing in.** Click **Refresh**. Balance may not have synced right after sign-in; the panel shows "never synced" until it does.
 

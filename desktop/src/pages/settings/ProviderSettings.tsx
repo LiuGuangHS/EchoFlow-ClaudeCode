@@ -1727,7 +1727,9 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
   const normalizedBaseUrl = normalizeProviderBaseUrl(baseUrl)
   const isPresetDefaultEndpoint = normalizedBaseUrl === normalizeProviderBaseUrl(echoFlowDraft ? echoFlowBaseUrl : selectedPreset.baseUrl)
   const apiKeyUrl = isPresetDefaultEndpoint ? selectedPreset.apiKeyUrl?.trim() : undefined
-  const promoText = isPresetDefaultEndpoint ? selectedPreset.promoText?.trim() : undefined
+  const promoText = isPresetDefaultEndpoint && selectedPreset.promoText?.trim() && (selectedPreset.id === 'echoflowai'
+    ? t('settings.providers.echoflowAPIOfficialDesc')
+    : selectedPreset.promoText.trim())
   const displayedSettingsJson = showApiKey
     ? settingsJson
     : maskSettingsJsonSecrets(settingsJson)

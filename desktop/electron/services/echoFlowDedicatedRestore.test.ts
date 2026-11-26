@@ -17,6 +17,8 @@ const CREDENTIAL = {
 
 function makeContents() {
   const contents = Object.assign(new EventEmitter(), {
+    session: { setPermissionCheckHandler: vi.fn(), setPermissionRequestHandler: vi.fn() },
+    setWindowOpenHandler: vi.fn(),
     loadURL: vi.fn(async () => {}),
     getURL: vi.fn(() => `${ORIGIN}/`),
     executeJavaScript: vi.fn<() => Promise<unknown>>(async () => SNAPSHOT),
@@ -40,6 +42,24 @@ describe('dedicated credential restoration', () => {
     const contents = makeContents()
     await expect(readStoredDedicatedCredentialWith(contents, ORIGIN)).resolves.toEqual(CREDENTIAL)
     expect(contents.loadURL).toHaveBeenCalledWith(ORIGIN)
+    expectCleanup(contents)
+  })
+
+  it('confines the hidden view to its own origin before loading and denies popups', async () => {
+    const contents = makeContents()
+    contents.loadURL.mockImplementation(async () => {
+      expect(contents.session.setPermissionCheckHandler).toHaveBeenCalledOnce()
+      expect(contents.session.setPermissionRequestHandler).toHaveBeenCalledOnce()
+      expect(contents.setWindowOpenHandler.mock.calls[0]?.[0]({ url: ORIGIN })).toEqual({ action: 'deny' })
+      for (const event of ['will-navigate', 'will-redirect']) {
+        const preventDefault = vi.fn()
+        contents.emit(event, { preventDefault }, `${ORIGIN}/login`)
+        expect(preventDefault).not.toHaveBeenCalled()
+        contents.emit(event, { preventDefault }, 'https://outside.example/')
+        expect(preventDefault).toHaveBeenCalledOnce()
+      }
+    })
+    await expect(readStoredDedicatedCredentialWith(contents, ORIGIN)).resolves.toEqual(CREDENTIAL)
     expectCleanup(contents)
   })
 

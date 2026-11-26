@@ -47,7 +47,7 @@ describe('embedded EchoFlow login', () => {
     const host = new EchoFlowLoginViewHost(makeView)
     const bounds = { x: 200, y: 80, width: 600, height: 400 }
     const result = host.open(owner as unknown as BrowserWindow, 'active', bounds, signal => {
-      const login = host.createWindow('persist:echoflow-dedicated-login')
+      const login = host.createWindow('persist:echoflow-site-login')
       return new Promise(resolve => signal.addEventListener('abort', () => {
         login.close()
         resolve('cancelled')
@@ -55,11 +55,18 @@ describe('embedded EchoFlow login', () => {
     })
     const popup = Object.assign(new EventEmitter(), {
       isDestroyed: () => false, destroy: vi.fn(), setParentWindow: vi.fn(),
-      webContents: { setWindowOpenHandler: vi.fn() },
+      webContents: Object.assign(new EventEmitter(), { setWindowOpenHandler: vi.fn() }),
     })
     contents.emit('did-create-window', popup)
     expect(popup.setParentWindow).toHaveBeenCalledWith(owner)
-    expect(makeView).toHaveBeenCalledWith('persist:echoflow-dedicated-login')
+    for (const event of ['will-navigate', 'will-redirect']) {
+      const preventDefault = vi.fn()
+      popup.webContents.emit(event, { preventDefault }, 'https://github.com/login')
+      expect(preventDefault).not.toHaveBeenCalled()
+      popup.webContents.emit(event, { preventDefault }, 'https://outside.example/login')
+      expect(preventDefault).toHaveBeenCalledOnce()
+    }
+    expect(makeView).toHaveBeenCalledWith('persist:echoflow-site-login')
     expect(owner.contentView.addChildView).toHaveBeenCalledWith(view)
     expect(view.setBounds).toHaveBeenCalledWith({ x: 250, y: 100, width: 750, height: 500 })
     host.setBounds('stale', null)

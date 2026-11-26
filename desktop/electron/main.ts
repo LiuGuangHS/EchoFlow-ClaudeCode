@@ -5,6 +5,7 @@ import { PublicAccessManager, readPublicAccessControlResponse } from './services
 import {
   EchoFlowLoginSession,
   ECHOFLOW_LOGIN_PROFILES,
+  loginBootstrapVerdict,
   readDedicatedCredential,
   readPageIdentity,
   siteCookieHeader,
@@ -488,15 +489,9 @@ async function bootstrapEchoFlowAccount(
       : { endpoint, kind: 'bearer', accessToken: credential.accessToken, userId: credential.userId }),
     signal: AbortSignal.timeout(SITE_NETWORK_FORWARD_TIMEOUT_MS + 5_000),
   })
-  if (response.ok) {
-    console.info('[echoFlowLogin] credential-verified:', JSON.stringify({ endpoint, kind: credential.kind }))
-    return 'ok'
-  }
-  const body = await response.json() as { error?: unknown }
-  if (response.status === 400 && body?.error === 'token_invalid') return 'rejected'
-  // Only a known pre-commit gateway failure may be retried automatically.
-  if (response.status === 502 && (body?.error === 'service_unavailable' || body?.error === 'invalid_response')) return 'unavailable'
-  return 'unknown'
+  const verdict = await loginBootstrapVerdict(response)
+  if (verdict === 'ok') console.info('[echoFlowLogin] credential-verified:', JSON.stringify({ endpoint, kind: credential.kind }))
+  return verdict
 }
 
 const echoFlowLoginView = new EchoFlowLoginViewHost(partition => {

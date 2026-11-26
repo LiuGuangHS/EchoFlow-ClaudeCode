@@ -205,6 +205,8 @@ describe('ProviderSettings EchoFlow official account entry', () => {
     render(<ProviderSettings />)
 
     expect(await screen.findByText(L('echoflowApiOfficialLogin.needsRelogin'))).toBeInTheDocument()
+    expect(screen.getByTestId('echoflow-account-status')).not.toHaveClass('bg-[var(--color-success)]')
+    expect(screen.getByRole('tab', { name: endpointTab('main') }).querySelector('[aria-hidden="true"]')).not.toHaveClass('bg-[var(--color-success)]')
     expect(apiMocks.getAccounts).toHaveBeenCalledTimes(1)
 
     await act(async () => { resolveRestore(true) })

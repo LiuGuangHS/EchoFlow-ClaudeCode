@@ -315,7 +315,9 @@ RED 日志：`/tmp/echoflow-review-memory-red.log`、`/tmp/echoflow-review-perf-
 
 共享事务已支持显式批准的同目录精确文件清单：回执冻结目的地和文件身份，恢复核对完整操作集，只发布逐文件映射，接受后才清理原文件，不认领共享父目录。更换已归属的完整根时，旧批准回执作为迁移历史保存，不变成新根的活动授权。
 
-CLI 提供 `storage adopt openai-oauth --file /absolute/path/openai-oauth.json`，经交互确认后只收养指定文件。桌面在「设置 → 数据」提供对应入口，由宿主选择文件并确认，在停写和重启后执行迁移。两个入口都在确认前检查文件格式。迁移后的文件由桌面管理的 OpenAI provider 使用，独立 CLI 可通过 `OPENAI_CODEX_OAUTH_FILE` 显式选择新根内的该文件。未指定 override 时，独立 CLI 仍按原有安全存储规则选择凭据。OAuth override 本身不构成迁移授权。Trace、plugin、memory 和 WhatsApp 仍缺类别限定的批准、停写证明和入口接线。
+CLI 提供 `storage adopt openai-oauth --file /absolute/path/openai-oauth.json`，经交互确认后只收养指定文件。桌面在「设置 → 数据」提供对应入口，由宿主选择文件并确认，在停写和重启后执行迁移。两个入口都在确认前检查文件格式。迁移后的文件由桌面管理的 OpenAI provider 使用，独立 CLI 可通过 `OPENAI_CODEX_OAUTH_FILE` 显式选择新根内的该文件。未指定 override 时，独立 CLI 仍按原有安全存储规则选择凭据。OAuth override 本身不构成迁移授权。
+
+WhatsApp 通过「设置 → 数据 → 迁移 WhatsApp 登录」或 `storage adopt whatsapp-auth --directory <绝对目录> [--config <adapters.json 的绝对路径>]` 接管一个完整的已登录账户。确认前会校验认证目录、所需密钥、对应的适配器绑定和目标位置。先停止仍在使用该目录的应用；桌面端确认并重启后执行，验证目标副本后才清理源文件。Trace、plugin、memory 的独立来源仍缺类别限定的批准、停写证明和入口接线。
 
 迁移锁和 writer 回执的空文件、半写文件都缺少可验证的进程身份，继续阻断自动恢复。进程若恰好在创建文件后、写入完成前退出，需要人工核实停写及事务归属。
 

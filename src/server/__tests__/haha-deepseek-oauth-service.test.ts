@@ -22,6 +22,7 @@ let platform: ReturnType<typeof Bun.serve>
 let recorded: Recorded[]
 let exchangeStatus: number
 let exchangeGate: Promise<void> | null
+let profileGate: Promise<void> | null
 let profileStatus: number
 let profileData: unknown
 let platformOmitsUser: boolean
@@ -40,6 +41,7 @@ beforeEach(async () => {
   recorded = []
   exchangeStatus = 200
   exchangeGate = null
+  profileGate = null
   profileStatus = 200
   profileData = null
   platformOmitsUser = false
@@ -74,6 +76,7 @@ beforeEach(async () => {
         })
       }
       if (url.pathname === '/auth-api/v0/users/current') {
+        if (profileGate) await profileGate
         if (profileStatus !== 200) return new Response('no', { status: profileStatus })
         return envelope(profileData)
       }
@@ -268,6 +271,35 @@ describe('HahaDeepSeekOAuthService', () => {
     await waitFor(() => recorded.some((r) => r.path === '/auth-api/v0/users/logout'))
     const logout = recorded.find((r) => r.path === '/auth-api/v0/users/logout')!
     expect(logout.headers.get('x-dsh-auth-token')).toBe('dsh_test_account_token')
+  })
+
+  test('a replacement saved during logout survives cleanup of the previous grant', async () => {
+    const grant = { token: 'dsh_old', issuer: process.env.CC_HAHA_DEEPSEEK_PLATFORM_ORIGIN!, deviceId: 'device' }
+    await service.saveTokens(grant)
+    const logout = service.logout()
+    await service.saveTokens({ ...grant, token: 'dsh_new' })
+    await logout
+    await waitFor(() => recorded.some(r => r.path.endsWith('/users/logout')))
+    expect((await service.loadTokens())?.token).toBe('dsh_new')
+    expect(recorded.find(r => r.path.endsWith('/users/logout'))!.headers.get('x-dsh-auth-token')).toBe('dsh_old')
+  })
+
+  test.each([200, 401, 503])('a late profile response (%i) cannot report, replace or delete the newer login', async status => {
+    const grant = { token: 'dsh_old', issuer: process.env.CC_HAHA_DEEPSEEK_PLATFORM_ORIGIN!, deviceId: 'device' }
+    await service.saveTokens(grant)
+    const release = Promise.withResolvers<void>()
+    profileGate = release.promise
+    profileStatus = status
+    profileData = { id_profile: { name: 'Old User' } }
+    const checking = service.getStatus()
+    try {
+      await waitFor(() => recorded.some(r => r.path.endsWith('/users/current')))
+      await service.saveTokens({ ...grant, token: 'dsh_new' })
+    } finally {
+      release.resolve()
+    }
+    expect(await checking).toEqual({ loggedIn: false })
+    expect((await service.loadTokens())?.token).toBe('dsh_new')
   })
 
   test('a platform-revoked grant stops showing as signed in and is forgotten locally', async () => {

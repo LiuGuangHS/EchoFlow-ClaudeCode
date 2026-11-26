@@ -82,6 +82,33 @@ describe('EchoFlow account routes', () => {
     expect(JSON.stringify(body)).not.toContain('sk-created')
   })
 
+  test('rejects invalid management credential headers before contacting the gateway', async () => {
+    const calls = stubSite()
+    for (const body of [{ userId: 'x'.repeat(129), managementToken: 'fixture' }, { userId: '7', managementToken: 'bad\nvalue' }]) {
+      const response = await route('/api/echoflow/account', { method: 'POST', body: JSON.stringify(body) })
+      expect(await response.json()).toEqual({ error: 'invalid_request' })
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  test.each(['<html>PRIVATE BODY</html>', '{"opaque":"PRIVATE BODY"}', '{"message":"rejected session=live"}'])('omits unsafe upstream detail %#', async (body) => {
+    globalThis.fetch = mock(async () => new Response(body, { status: 401 })) as typeof fetch
+    const response = await signIn()
+    expect(await response.json()).toEqual({ error: 'token_invalid' })
+  })
+
+  test('omits a bearer echoed in an HTTP 200 refusal', async () => {
+    globalThis.fetch = mock(async () => Response.json({ success: false, message: 'expired token fixture-bearer' })) as typeof fetch
+    const response = await signIn({ kind: 'bearer', endpoint: 'dedicated', accessToken: 'fixture-bearer' })
+    expect(await response.json()).toEqual({ error: 'token_invalid' })
+  })
+
+  test.each([{ cookie: 'session=\u0001' }, { userAgent: '\r\nMozilla' }, { userId: '7\n' }])('rejects invalid session header bytes before fetch %#', async (input) => {
+    const calls = stubSite()
+    expect((await signIn(input)).status).toBe(400)
+    expect(calls).toHaveLength(0)
+  })
+
   test('replays the sign-in window fingerprint on every gateway call', async () => {
     const calls = stubSite()
     const userAgent = 'Mozilla/5.0 (X11; Linux x86_64) Chrome/134.0.0.0 Safari/537.36 EchoFlow Code/0.7.2'

@@ -1,14 +1,18 @@
-import type { WebContents } from 'electron'
-import { readDedicatedCredential } from './echoFlowLogin'
+import type { Session, WebContents } from 'electron'
+import { configurePreviewSessionPermissions } from './previewSession'
+import { loginNavigationGuard, readDedicatedCredential } from './echoFlowLogin'
 
 type LoadFailure = (event: unknown, code: number, description: string, url: string, isMainFrame: boolean) => void
 
 type ListenForLoad = {
+  (event: 'will-navigate', listener: ReturnType<typeof loginNavigationGuard>): unknown
+  (event: 'will-redirect', listener: ReturnType<typeof loginNavigationGuard>): unknown
   (event: 'did-finish-load', listener: () => void): unknown
   (event: 'did-fail-load', listener: LoadFailure): unknown
 }
 
-export type DedicatedContents = Pick<WebContents, 'loadURL' | 'getURL' | 'executeJavaScript' | 'isDestroyed' | 'close'> & {
+export type DedicatedContents = Pick<WebContents, 'loadURL' | 'getURL' | 'executeJavaScript' | 'isDestroyed' | 'close' | 'setWindowOpenHandler'> & {
+  session: Pick<Session, 'setPermissionCheckHandler' | 'setPermissionRequestHandler'>
   on: ListenForLoad
   off: ListenForLoad
 }
@@ -30,10 +34,15 @@ export async function readStoredDedicatedCredentialWith(
     if (isMainFrame) stop()
   }
   const timer = setTimeout(stop, 15_000)
+  const guard = loginNavigationGuard({ origin })
 
   try {
     signal?.throwIfAborted()
     signal?.addEventListener('abort', stop)
+    configurePreviewSessionPermissions(contents.session)
+    contents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    contents.on('will-navigate', guard)
+    contents.on('will-redirect', guard)
     contents.on('did-finish-load', finishLoad)
     contents.on('did-fail-load', failLoad)
     // Electron's loadURL resolves at did-finish-load, so either signal is sufficient.
@@ -44,6 +53,8 @@ export async function readStoredDedicatedCredentialWith(
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener('abort', stop)
+    contents.off('will-navigate', guard)
+    contents.off('will-redirect', guard)
     contents.off('did-finish-load', finishLoad)
     contents.off('did-fail-load', failLoad)
     if (!contents.isDestroyed()) contents.close({ waitForBeforeUnload: false })

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import * as fs from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
@@ -83,6 +83,50 @@ describe('EchoFlowGrokOAuthService', () => {
     }
   })
 
+  test.each(['sign-out', 'new login'])('discards an exchange superseded by %s', async action => {
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<Response>()
+    globalThis.fetch = (async () => {
+      started.resolve()
+      return finish.promise
+    }) as typeof fetch
+    const session = await service.startSession()
+    const exchange = service.completeSession('fixture-code', session.state)
+    await started.promise
+    try {
+      if (action === 'sign-out') await service.deleteTokens()
+      else await service.startSession()
+    } finally {
+      finish.resolve(Response.json({ access_token: 'discard', refresh_token: 'fixture-refresh', expires_in: 3600 }))
+    }
+    await expect(exchange).rejects.toThrow('cancelled')
+    expect(await service.loadTokens()).toBeNull()
+  })
+
+  test('superseding a login during its temporary write keeps the previously committed grant', async () => {
+    await service.saveTokens({ accessToken: 'previous', refreshToken: 'refresh', expiresAt: null, email: null })
+    globalThis.fetch = (async () => Response.json({ access_token: 'superseded', refresh_token: 'refresh', expires_in: 3600 })) as typeof fetch
+    const session = await service.startSession()
+    const staged = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const writeFile = fs.writeFile
+    const write = spyOn(fs, 'writeFile').mockImplementation(async (...args) => {
+      await writeFile(...args)
+      staged.resolve()
+      await release.promise
+    })
+    const exchange = service.completeSession('fixture-code', session.state)
+    try {
+      await staged.promise
+      await service.startSession()
+    } finally {
+      write.mockRestore()
+      release.resolve()
+    }
+    await expect(exchange).rejects.toThrow('cancelled')
+    expect((await service.loadTokens())?.accessToken).toBe('previous')
+  })
+
   test('refreshes an expiring token and preserves an unrotated refresh token', async () => {
     await service.saveTokens({
       accessToken: 'old-access',
@@ -104,6 +148,33 @@ describe('EchoFlowGrokOAuthService', () => {
       accessToken: 'new-access',
       refreshToken: 'old-refresh',
     })
+  })
+
+  test('parallel callers rotate the refresh token only once', async () => {
+    await service.saveTokens({ accessToken: 'old', refreshToken: 'once', expiresAt: 1, email: null })
+    let calls = 0
+    service.setRefreshFn(async () => ({ access_token: `rotated-${++calls}`, expires_in: 3600 }))
+    const results = await Promise.all([service.ensureFreshTokens(), service.ensureFreshTokens()])
+    expect(results.map(tokens => tokens?.accessToken)).toEqual(['rotated-1', 'rotated-1'])
+    expect(calls).toBe(1)
+  })
+
+  test('a replaced grant survives a late refresh', async () => {
+    const grant = { accessToken: 'old', refreshToken: 'once', expiresAt: 1, email: null }
+    await service.saveTokens(grant)
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<void>()
+    service.setRefreshFn(async () => {
+      started.resolve()
+      await finish.promise
+      return { access_token: 'discard', expires_in: 3600 }
+    })
+    const refresh = service.ensureFreshTokens()
+    await started.promise
+    await service.saveTokens({ ...grant, accessToken: 'replacement' })
+    finish.resolve()
+    expect(await refresh).toBeNull()
+    expect((await service.loadTokens())?.accessToken).toBe('replacement')
   })
 
   test('does not restore tokens from a refresh that finishes after sign-out', async () => {

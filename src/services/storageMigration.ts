@@ -591,8 +591,7 @@ export async function previewWhatsAppAdoption(binding: StorageBinding, directory
   }
   const account: WhatsAppApproval = {
     directory, identity: await migrationDirectoryIdentity(directory), config, configIdentity: requested.identity,
-    destination: path.join('whatsapp-auth', requested.config.whatsappAuthDir
-      ? createHash('sha256').update(directory).digest('hex') : 'default'),
+    destination: whatsAppDestination(directory, Boolean(requested.config.whatsappAuthDir)),
   }
   checkWhatsAppAdoptionConfig(binding, account, requested)
   const names = (await fs.readdir(directory)).sort()
@@ -696,7 +695,13 @@ function whatsappApprovalSources(binding: StorageBinding, receipt: StorageApprov
     ...(hasConfig ? [create(path.dirname(account.config), [account.config])] : [])]
 }
 
-const whatsappDestination = /^whatsapp-auth[\\/](?:default|[a-f0-9]{64})$/
+function whatsAppDestination(directory: string, custom: boolean): string {
+  return path.join('whatsapp-auth', custom ? createHash('sha256').update(directory).digest('hex') : 'default')
+}
+
+function validWhatsAppDestination(directory: string, destination: string): boolean {
+  return destination === whatsAppDestination(directory, false) || destination === whatsAppDestination(directory, true)
+}
 
 function parseStorageApproval(value: unknown, binding: StorageBinding, id: string): StorageApprovalReceipt {
   const receipt = value as StorageApprovalReceipt
@@ -713,7 +718,7 @@ function parseStorageApproval(value: unknown, binding: StorageBinding, id: strin
   if (receipt.approvalCategory === 'whatsapp-auth') {
     const account = receipt.whatsapp
     if (!account || typeof account.directory !== 'string' || !validDirectoryIdentity(account.identity) ||
-      account.identity.canonical !== account.directory || !whatsappDestination.test(account.destination) ||
+      account.identity.canonical !== account.directory || !validWhatsAppDestination(account.directory, account.destination) ||
       typeof account.config !== 'string' || path.basename(account.config) !== 'adapters.json' ||
       !path.isAbsolute(account.config) || path.resolve(account.config) !== account.config || !validIdentity(account.configIdentity) ||
       !receipt.files.some(file => file.source === path.join(account.directory, 'creds.json')) ||
@@ -1424,7 +1429,7 @@ function assertSourceScope(source: StorageMigrationSource, binding: StorageBindi
     if (source.approvalCategory === 'whatsapp-auth') {
       if (source.destination === undefined) {
         if (source.approvedFiles.length !== 1 || path.basename(source.approvedFiles[0]!) !== 'adapters.json') throw new Error('Invalid WhatsApp configuration scope')
-      } else if (!whatsappDestination.test(source.destination) || !source.approvedFiles.includes(path.join(source.directory, 'creds.json'))) {
+      } else if (!validWhatsAppDestination(source.directory, source.destination) || !source.approvedFiles.includes(path.join(source.directory, 'creds.json'))) {
         throw new Error('Invalid WhatsApp sign-in scope')
       }
       return

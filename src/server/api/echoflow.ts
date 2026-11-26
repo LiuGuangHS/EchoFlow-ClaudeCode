@@ -10,9 +10,13 @@ const service = new EchoFlowApiService()
 const providerService = new ProviderService()
 const ECHOFLOW_PRESET_ID = 'echoflowai'
 
+const headerString = (max: number) => z.string().max(max).regex(/^[\x20-\x7e]+$/).trim().min(1)
+const userIdSchema = headerString(128)
+const credentialHeaderSchema = headerString(8192)
+
 const BindAccountSchema = z.object({
-  userId: z.string().trim().min(1),
-  managementToken: z.string().trim().min(1),
+  userId: userIdSchema,
+  managementToken: credentialHeaderSchema,
   endpoint: z.enum(['main', 'dedicated']).optional(),
 })
 
@@ -51,17 +55,13 @@ const CreateEchoFlowTokenSchema = z.object({
   name: z.string().trim().min(1).max(64).optional(),
 })
 
-const EchoFlowSiteCookiesSchema = z.object({
-  cookie: z.string().min(1).max(16 * 1024).refine(value => !/[\r\n\0]/.test(value)),
-  userId: z.string().trim().min(1).max(128).refine(value => !/[\r\n\0]/.test(value)),
-})
-const EchoFlowHeaderValue = z.string().trim().min(1).max(512).refine(value => !/[\r\n\0]/.test(value))
+const EchoFlowHeaderValue = headerString(512)
 const EchoFlowAccountCredentialSchema = z.discriminatedUnion('kind', [
   z.object({
     endpoint: z.enum(['main', 'dedicated']).default('main'),
     kind: z.literal('session'),
-    cookie: EchoFlowSiteCookiesSchema.shape.cookie,
-    userId: EchoFlowSiteCookiesSchema.shape.userId,
+    cookie: headerString(16 * 1024),
+    userId: userIdSchema,
     // The sign-in window's own client identity. The gateway binds the session
     // to it, so the server has to replay it on every later call.
     userAgent: EchoFlowHeaderValue.optional(),
@@ -70,8 +70,8 @@ const EchoFlowAccountCredentialSchema = z.discriminatedUnion('kind', [
   z.object({
     endpoint: z.literal('dedicated'),
     kind: z.literal('bearer'),
-    accessToken: z.string().trim().min(1).max(8192),
-    userId: z.string().trim().min(1).max(128),
+    accessToken: credentialHeaderSchema,
+    userId: userIdSchema,
   }),
 ])
 

@@ -11,7 +11,7 @@ import { ApiError } from '../../api/client'
 // translate() (and pinning a non-default locale) is what keeps these assertions
 // load-bearing: hardcoding the label again would render the wrong locale and fail.
 const L = (key: Parameters<typeof translate>[1]) => translate('en', key)
-const userIdSummary = (id: string) => new RegExp(`${L('echoflowApiOfficialLogin.userId')}：${id}`)
+const userIdSummary = (id: string) => new RegExp(translate('en', 'echoflowApiOfficialLogin.userIdSummary', { id }))
 const endpointTab = (endpoint: 'main' | 'dedicated') =>
   L(endpoint === 'main' ? 'echoflowApiOfficialLogin.endpointMain' : 'echoflowApiOfficialLogin.endpointDedicated')
 const bindLabel = (endpoint: 'main' | 'dedicated') =>
@@ -530,6 +530,30 @@ describe('EchoFlowAPIOfficialLogin', () => {
     expect(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.managementToken'))).toHaveValue('dedicated-management-secret')
   })
 
+  it('keeps an already added token readable while disabling duplicate adds', async () => {
+    useProviderStore.setState({ providers: [{
+      id: 'existing', presetId: 'echoflowai', name: 'Existing', baseUrl: 'https://api.echoflowai.cc',
+      apiKey: '', apiFormat: 'anthropic', models: { main: 'code', haiku: 'code', sonnet: 'code', opus: 'code' },
+      credentialSource: { kind: 'echoflow-token', endpoint: 'main', tokenId: 'shared-token-id' },
+    }] })
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    const token = await screen.findByRole('button', { name: /Main key.*Added/ })
+    expect(token).toBeDisabled()
+    expect(token.className).not.toMatch(/opacity-/)
+  })
+
+  it('formats summary punctuation, CNY and sync time in the selected locale', async () => {
+    const refreshedAt = new Date(2026, 1, 1, 15, 42).getTime()
+    mockAccounts({ ...mainAccount, refreshedAt }, null)
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    expect(await screen.findByText(/User ID: main-user/)).toHaveTextContent('Balance CN¥12.50')
+    act(() => useSettingsStore.setState({ locale: 'jp' }))
+    const balance = new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'CNY' }).format(12.5)
+    const summary = screen.getByText(/main-user/)
+    expect(summary.textContent).toContain(balance)
+    expect(summary).toHaveTextContent('15:42')
+  })
+
   it('emits only endpoint-scoped token metadata when a key is selected', async () => {
     const onAddFromToken = vi.fn()
     render(<EchoFlowAPIOfficialLogin onAddFromToken={onAddFromToken} />)
@@ -604,6 +628,24 @@ describe('EchoFlowAPIOfficialLogin', () => {
     await waitFor(() => expect(screen.queryByText(userIdSummary(mainAccount.userId))).not.toBeInTheDocument())
     fireEvent.click(screen.getByRole('tab', { name: endpointTab('dedicated') }))
     expect(screen.getByText(userIdSummary(dedicatedAccount.userId))).toBeVisible()
+  })
+
+  it('shows an earlier mount’s rejected sign-out on its own endpoint and enables retry', async () => {
+    let rejectSignOut!: (reason: Error) => void
+    hostMocks.signOut.mockReturnValueOnce(new Promise((_, reject) => { rejectSignOut = reject }))
+    const first = render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    await screen.findByText(userIdSummary(mainAccount.userId))
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.unbind') }))
+    first.unmount()
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    await screen.findByText(userIdSummary(mainAccount.userId))
+    fireEvent.click(screen.getByRole('tab', { name: endpointTab('dedicated') }))
+    await act(async () => { rejectSignOut(new Error('disconnect failed')) })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: endpointTab('main') }))
+    expect(screen.getByRole('alert')).toHaveTextContent(L('echoflowApiOfficialLogin.disconnectFailed'))
+    expect(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.unbind') })).toBeEnabled()
+    expect(hostMocks.signOut).toHaveBeenCalledExactlyOnceWith('main')
   })
 
   it('disconnects only the selected endpoint account', async () => {

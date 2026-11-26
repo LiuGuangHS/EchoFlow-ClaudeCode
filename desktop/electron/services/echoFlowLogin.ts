@@ -74,6 +74,15 @@ export type EchoFlowWindowOpenResult =
  */
 export type EchoFlowLoginVerification = 'ok' | 'rejected' | 'unavailable' | 'unknown'
 
+export async function loginBootstrapVerdict(response: Response): Promise<EchoFlowLoginVerification> {
+  if (response.ok) return 'ok'
+  const body = await response.json().catch(() => null) as { error?: unknown } | null
+  if (response.status === 400 && body?.error === 'token_invalid') return 'rejected'
+  // Only a known pre-commit gateway failure may be retried automatically.
+  if (response.status === 502 && (body?.error === 'service_unavailable' || body?.error === 'invalid_response')) return 'unavailable'
+  return 'unknown'
+}
+
 type Verification = { sent: boolean; result: Promise<EchoFlowLoginVerification> }
 type Restore = { signal?: AbortSignal; abort: AbortController; verification?: Verification; result: Promise<EchoFlowLoginVerification> }
 
@@ -131,12 +140,20 @@ const MAX_IDENTITY_REJECTIONS = 3
  */
 const BLANK_POLLS_BEFORE_RELOAD = 3
 
-export function isAllowedProfileNavigation(profile: EchoFlowLoginProfile, value: string): boolean {
+type LoginDestinations = { origin: string; allowedHosts?: ReadonlySet<string> }
+
+export function isAllowedProfileNavigation(profile: LoginDestinations, value: string): boolean {
   try {
     const url = new URL(value)
-    return url.origin === profile.origin || profile.allowedHosts.has(url.hostname)
+    return url.protocol === 'https:' && (url.origin === profile.origin || profile.allowedHosts?.has(url.host) === true)
   } catch {
     return false
+  }
+}
+
+export function loginNavigationGuard(profile: LoginDestinations) {
+  return (navigation: { preventDefault(): void }, target: string) => {
+    if (!isAllowedProfileNavigation(profile, target)) navigation.preventDefault()
   }
 }
 
@@ -427,9 +444,7 @@ export class EchoFlowLoginSession {
       const isOpen = () => attempt.window === window
       window.webContents.setWindowOpenHandler(details => this.onWindowOpen(profile, details.url))
       for (const event of ['will-navigate', 'will-redirect'] as const) {
-        window.webContents.on(event, (navigation, target) => {
-          if (!isAllowedProfileNavigation(profile, target)) navigation.preventDefault()
-        })
+        window.webContents.on(event, loginNavigationGuard(profile))
       }
       window.webContents.on('dom-ready', () => {
         // The page can be usable while subresources are still loading.

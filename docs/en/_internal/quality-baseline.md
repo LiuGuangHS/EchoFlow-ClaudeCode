@@ -18,7 +18,7 @@ bun run check:impact
 bun run verify
 ```
 
-`bun run verify` does not call real models. It must pass before a live failure can be attributed to a provider, model, or real cross-process path rather than a deterministic regression.
+This maintainer live workflow explicitly requires `bun run verify` to rule out deterministic regressions first. For routine WSL and PR work, run the impact-selected checks. Record a policy check as `blocked` if trusted approval context is missing, and retain the results of completed technical checks. See the [PR CI merge gate](../internals/contributing.md#pr-ci-merge-gate) and [coverage policy](../internals/contributing.md#coverage-policy).
 
 ## Baseline and smoke
 
@@ -82,16 +82,7 @@ Fork PRs do not receive repository secrets, and contributors are not expected to
 
 ## Evidence and failures
 
-Reports normally live under:
-
-```text
-artifacts/quality-runs/<timestamp>/report.md
-artifacts/quality-runs/<timestamp>/report.json
-artifacts/quality-runs/<timestamp>/junit.xml
-artifacts/quality-runs/<timestamp>/logs/*.log
-```
-
-The handoff records the provider selector, commands, exit status, whether live/model execution ran, report paths, and remaining risk. Do not share credentials, arbitrary message bodies, full stacks, user paths, or unredacted upstream responses.
+Use [Evidence and Failure Diagnosis](../internals/contributing.md#evidence-and-failure-diagnosis) to locate the reports, identify the candidate, and interpret coverage and process failures. Check the underlying report for each failed lane. For a live run, also record the provider selector and the scope of the quota authorization. Redact credentials, message bodies, full stacks, user paths, and upstream responses from shared evidence.
 
 Keep the SiHub lesson explicit: 695 offline token tests once passed while every live call failed on an undocumented `New-Api-User` header and group field. Until the real path is exercised, report "offline tests pass, live not verified", not "fixed".
 
@@ -103,4 +94,6 @@ A maintainer explicitly authorizes live checks before a release:
 bun run quality:gate --mode release --allow-live --provider-model <provider>:<model-or-role>:<label>
 ```
 
-Release mode combines PR checks, baseline catalog validation, live baseline, provider smoke, native checks, and the current platform's release `package-smoke`. Live lanes must not be silently skipped; missing provider access, quota, or external accounts must be recorded as a blocker and stop the release.
+`quality:release` is an alias for release mode and requires the same explicit live arguments and quota authorization. Release mode combines PR checks, baseline catalog validation, live baseline, provider smoke, native checks, and the current platform’s release `package-smoke`. Nightly checks have a separate scope. Record missing provider access, quota, or external accounts as a blocker and stop the release.
+
+For the workflow gates and package acceptance evidence required for each target platform, see the [Release Gate](../internals/contributing.md#release-gate).

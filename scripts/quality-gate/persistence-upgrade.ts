@@ -143,6 +143,10 @@ const checks: Check[] = [
     command: ['bun', 'test', './src/server/services/localIndex/traceIndex.test.ts'],
   },
   {
+    title: 'SiHub account store migration and preservation',
+    command: ['bun', '--no-env-file', 'test', './src/server/services/echoflowApiService.test.ts', '--test-name-pattern', 'account data|extension fields|corrupt account'],
+  },
+  {
     title: 'Server persistent JSON migrations',
     command: ['bun', 'test', './src/server/__tests__/persistence-upgrade.test.ts'],
   },

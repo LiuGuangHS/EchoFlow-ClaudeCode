@@ -1,6 +1,7 @@
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import { randomBytes } from 'node:crypto'
+import { z } from 'zod'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { diagnosticsService } from './diagnosticsService.js'
 
@@ -164,8 +165,12 @@ export class EchoFlowApiService {
       this.assertCredentialVersion(endpoint, version)
       const tokens = trimmed.kind === 'token' ? await this.listTokensForCredential(trimmed, endpoint) : undefined
 
-      return await this.commitAccount(endpoint, version, trimmed, (previous) => trimmed.kind === 'token'
+      return await this.commitAccount(endpoint, version, trimmed, (previous) => {
+        const sameAccount = previous?.userId === trimmed.userId ? previous : undefined
+        const { managementToken: _previousToken, ...metadata } = sameAccount ?? {}
+        return trimmed.kind === 'token'
         ? {
+            ...metadata,
             userId: trimmed.userId,
             credential: 'token',
             managementToken: trimmed.managementToken,
@@ -175,25 +180,13 @@ export class EchoFlowApiService {
             endpoint,
           }
         : {
-            // The cookie or bearer token stays in memory; only identity is stored.
+            ...metadata,
             userId: trimmed.userId,
             credential: trimmed.kind,
-            username: user.username || previous?.username,
-            // The saved keys are the only copies the gateway will ever hand out.
-            // The restore at startup re-runs this for the same user, so dropping
-            // them here would make every earlier token unusable on restart. The
-            // balance is the last known one for the same reason: the next
-            // refresh reconciles both against the gateway.
-            ...(previous && previous.userId === trimmed.userId
-              ? {
-                  balance: previous.balance,
-                  userGroup: previous.userGroup,
-                  tokens: previous.tokens,
-                  refreshedAt: previous.refreshedAt,
-                }
-              : {}),
+            username: user.username || sameAccount?.username,
             endpoint,
-          })
+          }
+      })
     } finally {
       if (this.pendingCredentials.get(endpoint) === version) this.pendingCredentials.delete(endpoint)
     }
@@ -213,7 +206,7 @@ export class EchoFlowApiService {
     return account
   }
 
-  async refreshAccount(endpoint: EchoFlowEndpoint = 'main', created?: { id?: string; name: string; key: string }): Promise<EchoFlowAccount> {
+  async refreshAccount(endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowAccount> {
     const version = this.credentialVersions[endpoint]
     if (this.pendingCredentials.has(endpoint)) throw new EchoFlowApiError('token_invalid')
     const accounts = await this.readAccounts()
@@ -242,7 +235,11 @@ export class EchoFlowApiService {
       throw error
     }
     this.assertCredentialVersion(endpoint, version)
-    // Use this operation's credential, not a newer login's live credential.
+    return this.refreshTokens(endpoint, version, credential, user)
+  }
+
+  private async refreshTokens(endpoint: EchoFlowEndpoint, version: number, credential: EchoFlowCredential,
+    user?: EchoFlowUserInfo, created?: { id?: string; name: string; key: string }): Promise<EchoFlowAccount> {
     const tokens = await this.listTokensForCredential(credential, endpoint).catch((error) => {
       // The create response is the only copy of that key; a list that
       // fails right after must not take it down with it.
@@ -255,7 +252,7 @@ export class EchoFlowApiService {
       return null
     })
     return this.commitAccount(endpoint, version, credential, (previous) => {
-      if (!previous) throw new EchoFlowApiError('token_invalid')
+      if (!previous || previous.userId !== credential.userId || previous.credential !== credential.kind) throw new EchoFlowApiError('token_invalid')
       return {
         ...previous,
         userId: credential.userId,
@@ -266,7 +263,7 @@ export class EchoFlowApiService {
           reattachStoredTokenKeys(tokens ?? previous.tokens ?? [], previous.tokens, previous.userId === credential.userId),
           created,
         ),
-        refreshedAt: Date.now(),
+        ...(user ? { refreshedAt: Date.now() } : {}),
         endpoint,
       }
     })
@@ -291,27 +288,27 @@ export class EchoFlowApiService {
     }
     if (!credential) throw new EchoFlowApiError('token_invalid')
     this.assertCredentialVersion(endpoint, version)
-    const created = endpoint === 'dedicated'
-      ? await this.createDedicatedKey(credential, endpoint, name, version)
-      : await this.fetchManagementApi<{ success?: boolean; message?: unknown; data?: unknown }>('/api/token/', credential, endpoint, {
-        method: 'POST',
-        body: JSON.stringify({
-          name,
-          expired_time: -1,
-          remain_quota: 0,
-          unlimited_quota: true,
-          model_limits_enabled: false,
-          model_limits: '',
-          routing_priority: 'auto',
-        }),
+    const body = endpoint === 'dedicated'
+      ? { name, group_id: await this.getDedicatedGroupId(credential) }
+      : { name, expired_time: -1, remain_quota: 0, unlimited_quota: true, model_limits_enabled: false, model_limits: '', routing_priority: 'auto' }
+    this.assertCredentialVersion(endpoint, version)
+    let created: { success?: boolean; message?: unknown; data?: unknown }
+    try {
+      created = await this.fetchManagementApi(endpoint === 'dedicated' ? '/api/v1/keys' : '/api/token/', credential, endpoint, {
+        method: 'POST', body: JSON.stringify(body),
       })
+    } catch (error) {
+      if (!(error instanceof EchoFlowApiError)) throw error
+      const unreadableSuccess = error.code === 'invalid_response' && error.status !== undefined && error.status >= 200 && error.status < 300
+      if (error.code !== 'service_unavailable' && !unreadableSuccess) throw error
+      throw new EchoFlowApiError('service_unavailable', error.status, 'create outcome is uncertain; check the gateway token list before retrying')
+    }
     this.assertCredentialVersion(endpoint, version)
     const refusal = gatewayRefusal(created)
-    if (refusal) throw new EchoFlowApiError('invalid_response', undefined, refusal)
+    if (refusal) throw new EchoFlowApiError('invalid_response', undefined, safeGatewayDetail(refusal, credential))
     console.info('[echoflow-api] token-created:', JSON.stringify({
       endpoint,
       success: created.success,
-      message: typeof created.message === 'string' ? created.message : undefined,
       result: typeof created.data,
     }))
     // The gateway hands the key out once, right here; its token list never
@@ -323,7 +320,7 @@ export class EchoFlowApiService {
         }
       : undefined
     const createdKey = typeof created.data === 'string' && created.data.startsWith('sk-') ? created.data : createdToken?.key
-    const account = await this.refreshAccount(endpoint, createdKey ? { id: createdToken?.id, name, key: createdKey } : undefined)
+    const account = await this.refreshTokens(endpoint, version, credential, undefined, createdKey ? { id: createdToken?.id, name, key: createdKey } : undefined)
     console.info('[echoflow-api] token-list-confirmed:', JSON.stringify({
       endpoint,
       expectedName: name,
@@ -336,23 +333,17 @@ export class EchoFlowApiService {
   }
 
   /** The dedicated gateway's call-token resource is `/api/v1/keys`, and every key needs a group. */
-  private async createDedicatedKey(credential: EchoFlowCredential, endpoint: EchoFlowEndpoint, name: string, version: number) {
+  private async getDedicatedGroupId(credential: EchoFlowCredential) {
     const groups = await this.fetchManagementApi<{ success?: boolean; code?: unknown; message?: unknown; data?: unknown }>(
-      '/api/v1/groups/available', credential, endpoint,
+      '/api/v1/groups/available', credential, 'dedicated',
     )
-    this.assertCredentialVersion(endpoint, version)
     const refusal = gatewayRefusal(groups)
-    if (refusal) throw new EchoFlowApiError('invalid_response', undefined, refusal)
+    if (refusal) throw new EchoFlowApiError('invalid_response', undefined, safeGatewayDetail(refusal, credential))
     const groupId = firstGroupId(groups.data ?? groups)
     if (groupId === null) {
       throw new EchoFlowApiError('invalid_response', undefined, 'the gateway offers no group to create a call token in')
     }
-    return await this.fetchManagementApi<{ success?: boolean; message?: unknown; data?: unknown }>(
-      '/api/v1/keys',
-      credential,
-      endpoint,
-      { method: 'POST', body: JSON.stringify({ name, group_id: groupId }) },
-    )
+    return groupId
   }
 
   async selectAccountToken(endpoint: EchoFlowEndpoint, id: string): Promise<EchoFlowTokenOption> {
@@ -402,7 +393,7 @@ export class EchoFlowApiService {
 
       const refusal = gatewayRefusal(me)
       if (refusal) {
-        throw new EchoFlowApiError(isAuthFailure(refusal) ? 'token_invalid' : 'service_unavailable', undefined, refusal)
+        throw new EchoFlowApiError(isAuthFailure(refusal) ? 'token_invalid' : 'service_unavailable', undefined, safeGatewayDetail(refusal, credential))
       }
       const account = me.data ?? me
       return {
@@ -482,7 +473,7 @@ export class EchoFlowApiService {
       // A refused page is not an empty list: returning the tokens collected so
       // far would tell the user their account has none.
       const refusal = gatewayRefusal(data)
-      if (refusal) throw new EchoFlowApiError('invalid_response', undefined, refusal)
+      if (refusal) throw new EchoFlowApiError('invalid_response', undefined, safeGatewayDetail(refusal, credential))
       // Both gateways may wrap the payload (`{code:0,data}` / `{success,data}`)
       // or answer with the list itself; read whichever is there.
       const payload = data.data ?? data
@@ -560,7 +551,7 @@ export class EchoFlowApiService {
         }
         return normalized
       }
-      if (isStoredAccount(parsed)) {
+      if (isStoredAccount(parsed) && !('schemaVersion' in parsed) && !('accounts' in parsed)) {
         await this.backupAccountsFile(accountPath)
         const endpoint: EchoFlowEndpoint = parsed.endpoint === 'dedicated' ? 'dedicated' : 'main'
         const account = { ...parsed, credential: parsed.credential ?? 'token', endpoint }
@@ -574,7 +565,7 @@ export class EchoFlowApiService {
         await this.writeAccounts(migrated, accountPath)
         return migrated
       }
-      return { ...EMPTY_ACCOUNTS, accounts: { ...EMPTY_ACCOUNTS.accounts } }
+      throw new EchoFlowApiError('invalid_response', undefined, 'unrecognized local account store')
     } catch (error) {
       if (errnoCode(error) !== 'ENOENT') throw error
     }
@@ -641,7 +632,7 @@ export class EchoFlowApiService {
         ...(init.body === undefined ? {} : { body: init.body }),
       }).catch(() => { throw new EchoFlowApiError('service_unavailable') })
 
-      if (!response.ok) throw await failureFromUpstream(response)
+      if (!response.ok) throw failureFromUpstream(response.status, await response.text().catch(() => ''), credential)
 
       return await response.json().catch(() => { throw new EchoFlowApiError('invalid_response', response.status) }) as T
     } catch (error) {
@@ -695,7 +686,7 @@ async function fetchThroughSiteBridge<T>(
     }),
   }).catch(() => { throw new EchoFlowApiError('service_unavailable') })
 
-  if (!response.ok) throw await failureFromUpstream(response)
+  if (!response.ok) throw new EchoFlowApiError('service_unavailable', response.status)
 
   const relay = await response.json().catch(() => {
     throw new EchoFlowApiError('invalid_response', response.status)
@@ -705,11 +696,7 @@ async function fetchThroughSiteBridge<T>(
   // The gateway's answer travels as a string; keep its status so a refused
   // sign-in still reports the reason the gateway gave.
   if (status < 200 || status >= 300) {
-    throw new EchoFlowApiError(
-      status >= 500 ? 'service_unavailable' : 'token_invalid',
-      status,
-      parseUpstreamMessage(text),
-    )
+    throw failureFromUpstream(status, text, credential)
   }
   try {
     return JSON.parse(text) as T
@@ -718,12 +705,13 @@ async function fetchThroughSiteBridge<T>(
   }
 }
 
-async function failureFromUpstream(response: Response): Promise<EchoFlowApiError> {
-  return new EchoFlowApiError(
-    response.status >= 500 ? 'service_unavailable' : 'token_invalid',
-    response.status,
-    await readUpstreamMessage(response),
-  )
+function failureFromUpstream(status: number, text: string, credential: EchoFlowCredential): EchoFlowApiError {
+  const message = parseUpstreamMessage(text)
+  const detail = safeGatewayDetail(message, credential)
+  const code = status === 401 || (status === 403 && isAuthFailure(message)) ? 'token_invalid'
+    : status === 0 || status === 403 || status === 408 || status === 425 || status === 429 || status >= 500 ? 'service_unavailable'
+    : 'invalid_response'
+  return new EchoFlowApiError(code, status, detail)
 }
 
 function sessionHeaders(
@@ -753,8 +741,12 @@ function sessionHeaders(
   }
 }
 
-async function readUpstreamMessage(response: Response): Promise<string | undefined> {
-  return parseUpstreamMessage(await response.text().catch(() => ''))
+function safeGatewayDetail(message: unknown, credential: EchoFlowCredential): string | undefined {
+  if (typeof message !== 'string' || message.length > 300 || /[\x00-\x1f\x7f<>]|\b(?:sk-|Bearer\s|Basic\s|eyJ[\w-]*\.)|\b(?:cookie|session|authorization|[\w-]*token|[\w-]*key)\s*[:=]/i.test(message)) return undefined
+  const secrets = credential.kind === 'session'
+    ? [credential.cookie, ...credential.cookie.split(';').map(pair => pair.slice(pair.indexOf('=') + 1).trim())]
+    : [credential.kind === 'bearer' ? credential.accessToken : credential.managementToken]
+  return secrets.some(secret => secret && message.includes(secret)) ? undefined : message.trim() || undefined
 }
 
 function parseUpstreamMessage(text: string): string | undefined {
@@ -766,9 +758,10 @@ function parseUpstreamMessage(text: string): string | undefined {
     const message = typeof body.error === 'object' && body.error !== null && 'message' in body.error
       ? body.error.message
       : body.message
-    if (typeof message === 'string' && message.trim()) return message.trim().slice(0, 300)
-  } catch {}
-  return text.trim().slice(0, 300) || undefined
+    return typeof message === 'string' ? message : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function toPublicAccount(account: StoredEchoFlowAccount, live = true): EchoFlowAccount {
@@ -819,7 +812,7 @@ function normalizeStoredAccounts(value: unknown): StoredEchoFlowAccounts | null 
   if (accounts.main !== null && !main) return null
   if (accounts.dedicated !== null && !dedicated) return null
   // Root-level unknown fields survive the v2 -> v3 rewrite.
-  return { ...record, schemaVersion: 3, accounts: { main, dedicated } }
+  return { ...record, schemaVersion: 3, accounts: { ...accounts, main, dedicated } }
 }
 
 function toStoredAccount(value: unknown): StoredEchoFlowAccount | null {
@@ -829,12 +822,23 @@ function toStoredAccount(value: unknown): StoredEchoFlowAccount | null {
 }
 
 function isStoredAccount(value: unknown): value is StoredEchoFlowAccount {
-  if (!value || typeof value !== 'object') return false
-  const record = value as { userId?: unknown; managementToken?: unknown; credential?: unknown }
-  if (typeof record.userId !== 'string') return false
-  if (record.credential === 'session' || record.credential === 'bearer') return true
-  return typeof record.managementToken === 'string'
+  return storedAccountSchema.safeParse(value).success
 }
+
+const storedAccountSchema = z.object({
+  userId: z.string().min(1),
+  managementToken: z.string().min(1).optional(),
+  credential: z.enum(['token', 'session', 'bearer']).optional(),
+  endpoint: z.enum(['main', 'dedicated']).optional(),
+  balance: z.number().optional(),
+  userGroup: z.string().optional(),
+  username: z.string().optional(),
+  refreshedAt: z.number().optional(),
+  tokens: z.array(z.object({
+    id: z.string(), name: z.string(), key: z.string().optional(), status: z.string().optional(),
+    remainQuota: z.number().optional(), unlimitedQuota: z.boolean().optional(),
+  })).optional(),
+}).refine(account => account.credential === 'session' || account.credential === 'bearer' || !!account.managementToken)
 
 /** Only a token account can be rebuilt from disk; session and bearer cannot. */
 function storedCredential(account: StoredEchoFlowAccount): EchoFlowCredential | null {
@@ -892,14 +896,15 @@ function reattachStoredTokenKeys(
 ): EchoFlowTokenOption[] {
   if (!sameUser || !stored?.length) return tokens
   const keyedStored = stored.filter((token) => token.key)
-  const keysById = new Map(keyedStored.map((token) => [token.id, token.key!]))
+  const storedById = new Map(stored.map((token) => [token.id, token]))
   const syntheticByName = new Map(
     keyedStored.filter((token) => token.id === token.name || token.id === `created:${token.name}`).map((token) => [token.name, token.key!]),
   )
   return tokens.map((token) => {
-    const key = keysById.get(token.id)
+    const previous = storedById.get(token.id)
+    const key = token.key ?? previous?.key
       ?? (tokens.filter((candidate) => candidate.name === token.name).length === 1 ? syntheticByName.get(token.name) : undefined)
-    return !token.key && key ? { ...token, key } : token
+    return { ...previous, ...token, ...(key ? { key } : {}) }
   })
 }
 
@@ -956,16 +961,5 @@ function booleanFrom(value: unknown): boolean | undefined {
 }
 
 function isAuthFailure(message: string | undefined): boolean {
-  const lower = message?.toLowerCase() ?? ''
-  return lower.includes('token') ||
-    lower.includes('auth') ||
-    lower.includes('unauthorized') ||
-    lower.includes('forbidden') ||
-    lower.includes('invalid') ||
-    lower.includes('令牌') ||
-    lower.includes('无效') ||
-    lower.includes('无权') ||
-    lower.includes('未授权') ||
-    lower.includes('认证') ||
-    lower.includes('鉴权')
+  return /unauthorized|not authenticated|(?:invalid|expired|revoked|missing) (?:access |api )?(?:token|session|credentials?)|(?:token|session|credentials?) (?:is |has )?(?:invalid|expired|revoked)|未登录|无权进行此操作|未授权|(?:令牌|凭据|会话)(?:无效|已?过期)|(?:认证|鉴权)失败/i.test(message ?? '')
 }
