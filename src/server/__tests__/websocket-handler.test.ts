@@ -551,6 +551,20 @@ describe('WebSocket approval maintenance gate', () => {
     expect(second.sent).toEqual([])
   })
 
+  it.each([false, true])('settles a rejected IM input during maintenance (active turn: %s)', active => {
+    const sessionId = crypto.randomUUID()
+    const ws = makeClientSocket(sessionId)
+    if (active) __markActiveTurnForTests(sessionId)
+    migrationMaintenance.begin()
+
+    handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content: 'Not admitted', replyAnchor: 'thread-a' }))
+
+    expect(ws.sent.map(payload => JSON.parse(payload))).toEqual([
+      { type: 'error', message: 'Data migration is in progress', code: 'MIGRATION_IN_PROGRESS', replyAnchor: 'thread-a' },
+      ...(active ? [] : [{ type: 'status', state: 'idle' }]),
+    ])
+  })
+
   it('keeps ordinary messages blocked and ping available during maintenance', async () => {
     const ws = makeClientSocket(`maintenance-ordinary-${crypto.randomUUID()}`)
     const send = spyOn(conversationService, 'sendMessage').mockResolvedValue(true)
@@ -3968,7 +3982,7 @@ describe('WebSocket handler session isolation', () => {
 
   it.each(['late start', 'empty batch', 'runtime exit', 'idle', 'Stop', 'Stop before start is observed', 'Stop between batches', 'held result followed by B', 'held result followed by a background batch', 'forced Stop', 'clear', 'restart'])('keeps IM receipt ownership across %s', async boundary => {
     const sessionId = crypto.randomUUID()
-    const ws = makeClientSocket(sessionId)
+    let ws = makeClientSocket(sessionId)
     Object.assign(ws.data, { replyOwner: 'fixture-owner', powerActivityLeaseAuthorized: true })
     const callbacks = new Set<(frame: any) => void>()
     const uuids: string[] = []
@@ -4018,6 +4032,11 @@ describe('WebSocket handler session isolation', () => {
 
     if (boundary === 'held result followed by B') {
       start(uuids[1]!)
+      handleWebSocket.close(ws)
+      ws = makeClientSocket(sessionId)
+      Object.assign(ws.data, { replyOwner: 'fixture-owner', powerActivityLeaseAuthorized: true })
+      handleWebSocket.open(ws)
+      expect(ws.sent.map(raw => JSON.parse(raw)).filter(frame => frame.type === 'input_committed').map(frame => frame.replyAnchor)).toEqual(['thread-b'])
       result()
       expect(getSessionTurnState(sessionId)).toBe('idle')
       expect(syncReceipts()).toEqual([])

@@ -269,7 +269,7 @@ const runtimeOverrides = new Map<string, RuntimeOverride>()
 const rejectedRuntimeConfigs = new Map<string, string>()
 const activeUserTurns = new SessionTurnOwnership<ActiveUserTurnState>()
 const activeCliRuns = new Set<string>()
-type ExecutingInput = { replyUuids: string[]; consumedUuids: Set<string> }
+type ExecutingInput = { replyUuids: string[]; consumedTurnUuid?: string }
 const executingInputUuids = new Map<string, ExecutingInput>()
 const resultInputs = new WeakMap<object, { sessionId: string; input?: ExecutingInput }>()
 type ImReplyReceipt = Extract<ServerMessage, { type: 'input_committed' }>
@@ -537,7 +537,21 @@ function forgetRuntimeInput(sessionId: string): void {
 function belongsToEarlierInput(sessionId: string, turn: ActiveUserTurnState, cliMsg?: any): boolean {
   if (!turn.expectedReplayUuid || isRuntimeExitResult(sessionId, cliMsg)) return false
   const input = cliMsg?.type === 'result' ? getResultInput(sessionId, cliMsg) : executingInputUuids.get(sessionId)
-  return Boolean(input && !input.consumedUuids.has(turn.expectedReplayUuid))
+  return Boolean(input && input.consumedTurnUuid !== turn.expectedReplayUuid &&
+    !input.replyUuids.includes(turn.expectedReplayUuid))
+}
+
+function trackInputBatch(sessionId: string, replyUuids: string[]): void {
+  const previous = executingInputUuids.get(sessionId)
+  if (previous?.replyUuids === replyUuids) return
+  for (const id of previous?.replyUuids ?? []) {
+    if (!replyUuids.includes(id)) retireImReplyReceipt(sessionId, id)
+  }
+  // A held result can still settle the active turn after an intervening batch.
+  const uuid = activeUserTurns.get(sessionId)?.expectedReplayUuid
+  const consumedTurnUuid = uuid && (previous?.consumedTurnUuid === uuid || previous?.replyUuids.includes(uuid))
+    ? uuid : undefined
+  executingInputUuids.set(sessionId, { replyUuids, consumedTurnUuid })
 }
 
 function trackCliRunState(sessionId: string, cliMsg: any): 'running' | 'idle' | null {
@@ -545,28 +559,25 @@ function trackCliRunState(sessionId: string, cliMsg: any): 'running' | 'idle' | 
   if (uuids || (cliMsg?.type === 'user' && cliMsg.isReplay === true)) {
     acknowledgeActiveTurnReplay(sessionId, cliMsg)
     if (uuids) {
-      // print.ts can hold a result across several batches. The next emitted result settles them all.
-      const consumedUuids = executingInputUuids.get(sessionId)?.consumedUuids ?? new Set<string>()
-      for (const id of uuids) consumedUuids.add(id)
-      executingInputUuids.set(sessionId, { replyUuids: uuids, consumedUuids })
+      trackInputBatch(sessionId, uuids)
     } else if (!shouldSuppressCliOutputDuringStop(sessionId, cliMsg, null)) {
       const replay = projectUserReplay(cliMsg)
       const current = executingInputUuids.get(sessionId)
       if (replay && !current?.replyUuids.includes(replay.messageUuid ?? '')) {
         if (replay.messageUuid) {
-          executingInputUuids.set(sessionId, {
-            replyUuids: [replay.messageUuid],
-            consumedUuids: new Set([...(current?.consumedUuids ?? []), replay.messageUuid]),
-          })
+          trackInputBatch(sessionId, [replay.messageUuid])
         } else {
           executingInputUuids.delete(sessionId)
+          for (const id of current?.replyUuids ?? []) retireImReplyReceipt(sessionId, id)
         }
       }
     }
   } else if (cliMsg?.type === 'result') {
     const input = getResultInput(sessionId, cliMsg)
-    for (const id of input?.consumedUuids ?? []) retireImReplyReceipt(sessionId, id)
-    executingInputUuids.delete(sessionId)
+    if (input && executingInputUuids.get(sessionId) === input) {
+      executingInputUuids.delete(sessionId)
+      for (const id of input.replyUuids) retireImReplyReceipt(sessionId, id)
+    }
   }
   if (cliMsg?.type === 'result' && legacyQueuedSessionChats.has(sessionId)) settleSessionChatActivity(sessionId, cliMsg)
   if (isRuntimeExitResult(sessionId, cliMsg)) {
@@ -1030,6 +1041,10 @@ export const handleWebSocket = {
           })
         } else if (message.type === 'user_message' && message.replyAnchor !== undefined) {
           sendMessage(ws, { type: 'error', code: 'MIGRATION_IN_PROGRESS', message: 'Data migration is in progress', replyAnchor: message.replyAnchor })
+          const { sessionId } = ws.data
+          if (!hasLiveUserTurnForClient(sessionId) && !executingInputUuids.has(sessionId)) {
+            sendMessage(ws, { type: 'status', state: 'idle' })
+          }
         } else {
           sendError(ws, 'Data migration is in progress', 'MIGRATION_IN_PROGRESS')
         }
