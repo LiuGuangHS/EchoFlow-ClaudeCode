@@ -491,9 +491,18 @@ function Invoke-LegacyRecoveryDiagnostic {
   Copy-Item -LiteralPath $packagedBridge -Destination $recoveryBridge
   $source = Join-Path $installDir 'CLAUDE_CONFIG_DIR'
   $settings = Join-Path $source 'settings.json'
+  $ownership = Join-Path $source 'app.json'
+  $target = Join-Path $localAppData $productIdentity.name
+  $location = Join-Path $userProfile '.echoflow-storage\active-root.sqlite'
+  if (Test-Path -LiteralPath $target) { throw 'The recovery diagnostic requires an absent destination.' }
   New-Item -ItemType Directory -Path $source | Out-Null
   [IO.File]::WriteAllText($settings, '{"installerRecoveryFixture":true}')
-  $sourceHash = (Get-FileHash -LiteralPath $settings -Algorithm SHA256).Hash
+  [IO.File]::WriteAllText($ownership, (@{ owner = $productIdentity.name; appId = $productIdentity.appId; schemaVersion = 1 } | ConvertTo-Json -Compress))
+  $protectedFiles = @($settings, $ownership, $appExe, $uninstaller)
+  $hasLocation = Test-Path -LiteralPath $location
+  if ($hasLocation) { $protectedFiles += $location }
+  $originalHashes = @{}
+  foreach ($file in $protectedFiles) { $originalHashes[$file] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash }
   $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
   $arguments = @(
     '-NoLogo',
@@ -533,12 +542,17 @@ function Invoke-LegacyRecoveryDiagnostic {
   if ($exitCode -ne 20 -or ($output -join ' ') -notlike "*$expectedStop*") {
     throw "Packaged legacy recovery did not report a Windows native inventory refusal (helper exit $exitCode)."
   }
-  if (@(Get-ChildItem -LiteralPath $source -Force).Count -ne 1 -or
-      (Get-FileHash -LiteralPath $settings -Algorithm SHA256).Hash -ne $sourceHash) {
-    throw 'Packaged legacy recovery changed the install-contained fixture before refusing.'
+  foreach ($file in $protectedFiles) {
+    if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $originalHashes[$file]) {
+      throw "Packaged legacy recovery changed a protected fixture file before refusing: $file"
+    }
   }
-  Write-SmokeDiagnostic ('Packaged installer recovery refused at the Windows native inventory gate and preserved the install-contained source.')
-  Remove-Item -LiteralPath $settings -Force
+  if (@(Get-ChildItem -LiteralPath $source -Force).Count -ne 2 -or (Test-Path -LiteralPath $target) -or
+      (!$hasLocation -and (Test-Path -LiteralPath $location))) {
+    throw 'Packaged legacy recovery created source, destination, or startup receipt state before refusing.'
+  }
+  Write-SmokeDiagnostic ('Packaged installer recovery refused at the Windows native inventory gate and preserved the install-contained source. Installed files, destination and startup receipt retained their original state.')
+  Remove-Item -LiteralPath $settings, $ownership -Force
   Remove-Item -LiteralPath $source
 }
 
