@@ -36,7 +36,7 @@ bun run scripts/release.ts X.Y.Z
 
 ## 正式发布入口：Release Please
 
-正式发布由 `.github/workflows/release-please.yml` 在 `main` 收到推送后驱动：它按 `release-please-config.json` 和 `.release-please-manifest.json`（记录上一个已发布版本）生成桌面 release PR，并更新 `desktop/package.json` 的版本。当前配置只包含 `desktop`，不自动同步或发布移动版本。合并 release PR 后会创建 tag 和 draft Release；`resolve-release` 校验 tag 指向的提交后，以 `official_release: true`、`draft: false` 调用 `release-desktop.yml`。门禁和六平台构建全部通过后，该 workflow 上传完整资产并取消 draft。
+合并 Release Please 的桌面 release PR 后会创建 tag 和 GitHub Release 草稿。`Release Desktop` 完成门禁和六平台构建后，将完整资产上传到草稿，并在运行摘要中提供 checksum 回执。用这批 Windows 安装包完成验收，再从 `main` 手动运行 `Release Please`，输入 `release_tag`、`release_sha` 和经确认的 `staged_artifact_id`，公开同一批资产。草稿重建、公开结果不明及下游失败的恢复入口统一见[发版步骤](../internals/contributing.md#发版步骤)。
 
 `release-notes/vX.Y.Z.md` 必须在合并 release PR 之前已存在于 `main`，否则 `release-contract` 会失败。
 
@@ -137,7 +137,7 @@ Task 4 仍未完成发布验收，但应用级 `DifferentialHttpExecutor` 已建
 
 完整包回退演练须记录断网、中断、失败响应及后续完整包请求/结果，并验证不会错误发出下载完成、可以重试、安装与重启成功且 provider、会话、Skills、Agents、记忆、自定义数据目录及历史任务状态保留。Linux AppImage 第一阶段继续按完整包更新验收；不要求 `.AppImage.blockmap`。
 
-发布收尾的 `site-release-sync` 在 GitHub Release 完成后触发 `deploy-docs.yml --release <tag>`。`scripts/site-release-manifest.ts` 将更新 yml 逐字节同步到 `site/dist/update/`，并按 release 资产生成 `site/dist/download/manifest.json`；同步在站点上传前执行，失败会阻断 workflow。
+桌面公开后，`site-release-sync` 运行 `deploy-docs.yml`，同步 GitHub 标记为 Latest 的正式版本。补发较旧的版本时，站点继续使用当前 Latest 版本。`scripts/site-release-manifest.ts` 在站点上传前逐字节同步更新 yml 到 `site/dist/update/`，并按同一 release 的资产生成 `site/dist/download/manifest.json`；同步失败时本次站点部署停止。
 
 以下不变量不能破坏：
 

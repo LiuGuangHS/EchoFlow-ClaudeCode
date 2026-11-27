@@ -264,7 +264,7 @@ bun run quality:gate --mode release --allow-live --provider-model <selector>:mai
 
 `quality:release` aliases release mode; real calls still require explicit `--allow-live` and maintainer quota authorization. Release mode composes PR checks, baseline catalog validation, live baseline cases, provider smoke, native checks, and current-platform canonical release `package-smoke --package-kind release`, but does not run every full-sweep check. Reports are written to `artifacts/quality-runs/<timestamp>/`. The publication workflow has the separate deterministic gates below and does not automatically run the manual live release gate.
 
-`release-desktop.yml` verifies the same candidate commit in `verify-governance` (including `check:product-identity` and `check:upstream-content`), `verify-runtime`, and `verify-desktop`. `verify-full-quality` runs the remaining deterministic checks, including coverage and macOS Swift. For a recovered release, coverage compares the candidate to the preceding version on its first-parent history. `publish-release` requires all four groups to pass `release-verify-gate`, along with a successful build and signing preflight.
+`release-desktop.yml` verifies the same candidate commit in `verify-governance` (including `check:product-identity` and `check:upstream-content`), `verify-runtime`, and `verify-desktop`. `verify-full-quality` runs the remaining deterministic checks, including coverage and macOS Swift. For a recovered release, coverage compares the candidate to the preceding version on its first-parent history. `publish-release` stages the official desktop draft and issues a checksum receipt only after all four groups pass `release-verify-gate`, along with a successful build and signing preflight.
 
 Distinguish these evidence layers per target OS/architecture; they are not interchangeable:
 
@@ -280,7 +280,7 @@ For each layer, follow the [common evidence requirements](#evidence-and-failure-
 
 Before publication, use the same artifact intended for release for applicable native launch, installation, older-version upgrade/data preservation, and signing/notarization checks; do not require an unpublished candidate to exist on the official update feed. Verify the post-publication real update path from an older client through hosted metadata, download, installation, and restart separately (below); do not backdate that evidence as a passed pre-publication check.
 
-The current release workflow is not a per-target aggregate gate for all native runtime, installation, and upgrade evidence. Documentation requirements do not imply such automation exists or change publication policy or authorization. In release mode, live lanes are not allowed to be silently skipped. Missing providers, model quota, or external account access will fail the gate and must be recorded as a release blocker.
+The workflow pauses before official publication. Maintainers review native runtime, installation, and upgrade evidence for each target before approving promotion. In release mode, live lanes are not allowed to be silently skipped. Missing providers, model quota, or external account access will fail the gate and must be recorded as a release blocker.
 
 ## Releases and Auto-Update
 
@@ -347,11 +347,14 @@ Before running `bun run scripts/release.ts <version>` for real, confirm `release
 
 ### Release steps
 
-`main` is protected by `pr-quality-gate`, including for admins. Official publication is authorized only by the trusted `Release Please` workflow: it validates the tag and commit, then calls `Release Desktop` with `official_release: true`. Do not treat a direct tag push as the official release process.
+`main` is protected by `pr-quality-gate`, including for admins. Only the trusted `Release Please` workflow authorizes official publication. It validates the tag and commit, then calls `Release Desktop` with `official_release: true` to stage the draft. Do not treat a direct tag push as the official release process.
 
 1. Prepare the version change under the current Release Please configuration and merge it to `main` through a PR. If you use `bun run scripts/release.ts <version>` to help bump the version, prepare the corresponding release notes first; the script creates a version-bump branch and prompts you to open a PR.
-2. After `main` changes, `Release Please` creates/validates the official release tag and calls `Release Desktop` to build and publish. Confirm the run was authorized by `.github/workflows/release-please.yml`, not merely triggered by a tag push.
-3. `bun run scripts/release.ts --tag <version>` creates a local tag only; it does not publish an official release. Pushing that tag still does not replace Release Please's official authorization. If a Release Please-authorized run fails before publication, follow the maintainer recovery process while preserving that authorization boundary. Once a release is published, every run is refused at preflight, so nothing can overwrite installers users are downloading.
+2. After `main` changes, `Release Please` creates or verifies the official tag. `Release Desktop` runs its checks, builds and signs under the selected policy, and uploads the complete draft. The successful staging run summary links to the checksum receipt and its artifact ID. The receipt lists the release ID, tag, candidate SHA, and every asset name and SHA-256 digest. The draft stays private.
+3. Download the draft assets, compare their SHA-256 digests with the receipt, and record the [pre-publication evidence](#release-gate) for each target. Once the evidence is complete and publication is authorized, dispatch `Release Please` from `main` with the receipt’s `release_tag`, `release_sha`, and `staged_artifact_id`. Promotion checks the staging run provenance, the commit behind the tag, the draft ID, and the complete remote asset set, then publishes those bytes without rebuilding. Site sync and enabled mobile delivery start after desktop publication.
+4. If staging fails, the receipt expires, or assets need rebuilding, dispatch `Release Please` from `main` with the original `release_tag` and `release_sha` and leave `staged_artifact_id` blank. If staging reports extra draft assets, identify and remove them with authorization before retrying. Recheck the evidence against the new receipt. `bun run scripts/release.ts --tag <version>` creates a local tag only and does not publish an official release. Published releases cannot be overwritten. Standalone `Release Desktop` drafts do not produce an official receipt.
+
+If the publish request loses its response, retry promotion with the same receipt. The workflow verifies the public release identity, notes, and assets before continuing delivery. If desktop publication succeeded and delivery failed, retry the failed delivery jobs or run `Deploy React Site` (latest stable by default) and `Release Mobile` (original tag and target platform) separately. Check the existing APK and delivery record before retrying mobile delivery.
 
 ### Verify one real update path
 

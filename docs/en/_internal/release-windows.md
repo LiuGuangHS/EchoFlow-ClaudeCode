@@ -36,7 +36,7 @@ Preparation neither creates nor pushes a tag. The separate `bun run scripts/rele
 
 ## Official release entry: Release Please
 
-Official releases are driven by `.github/workflows/release-please.yml` on every push to `main`. It uses `release-please-config.json` and `.release-please-manifest.json` (which records the last published version) to open a desktop release PR and update `desktop/package.json`. The current configuration includes only `desktop`; it neither synchronizes nor publishes the mobile version automatically. Merging the release PR creates the tag and a draft Release; `resolve-release` verifies the commit the tag peels to, then calls `release-desktop.yml` with `official_release: true` and `draft: false`. After the gates and the six-platform build all pass, that workflow uploads the complete asset set and un-drafts the release.
+Merging the desktop release PR from Release Please creates the tag and a GitHub Release draft. After the gates and six-platform builds pass, `Release Desktop` uploads the complete draft assets and links to the checksum receipt in its run summary. Verify those Windows installers, then dispatch `Release Please` from `main` with the `release_tag`, `release_sha`, and approved `staged_artifact_id` to publish the same assets. See the [Release steps](../internals/contributing.md#release-steps) for rebuilding a draft, resolving an uncertain publication result, and recovering site or mobile delivery.
 
 `release-notes/vX.Y.Z.md` must already exist on `main` before the release PR is merged, otherwise `release-contract` fails.
 
@@ -137,7 +137,7 @@ Differential eligibility and canary evidence must come from the app's actual `do
 
 A full-package fallback exercise must record offline, interruption, failed-response evidence, and the subsequent full-package request/result. Verify that no false download-complete event is emitted, retry works, installation and restart succeed, and providers, sessions, Skills, Agents, memories, the custom data directory, and historical task state remain intact. Linux AppImage continues to use full-package updates in this first phase; no `.AppImage.blockmap` is required.
 
-At the end of a release, `site-release-sync` triggers `deploy-docs.yml --release <tag>` after the GitHub Release completes. `scripts/site-release-manifest.ts` copies update yml files byte-for-byte into `site/dist/update/` and creates `site/dist/download/manifest.json` from the release asset list; the sync runs before site upload and failure blocks the workflow.
+After desktop publication, `site-release-sync` runs `deploy-docs.yml` against the stable release that GitHub marks Latest. When an older release is published, the site continues to use the current Latest release. Before site upload, `scripts/site-release-manifest.ts` copies update yml files byte-for-byte into `site/dist/update/` and creates `site/dist/download/manifest.json` from the same release's assets. A sync failure stops that site deployment.
 
 These invariants must not change:
 

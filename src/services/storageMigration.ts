@@ -2719,15 +2719,19 @@ async function publishRelocations(binding: StorageBinding, journal: StorageJourn
   await saveJournal(binding, journal)
 }
 
-async function validatePublished(binding: StorageBinding, journal: StorageJournal, hooks: StorageMigrationHooks): Promise<void> {
-  await assertBoundary(binding, journal, hooks)
-  await assertSQLiteCohorts(binding, journal)
+async function assertPublishedFiles(binding: StorageBinding, journal: StorageJournal): Promise<void> {
   for (const entry of [...journal.entries, ...(journal.archiveFiles ?? [])]) {
     if (!entry.published) throw new Error('Missing published file receipt')
     await checkFile(path.join(binding.root, entry.destination), entry.published)
   }
   if (!journal.relocation?.published) throw new Error('Missing storage relocation receipt')
   await checkFile(path.join(binding.internalDir, 'storage-relocations.json'), journal.relocation.published)
+}
+
+async function validatePublished(binding: StorageBinding, journal: StorageJournal, hooks: StorageMigrationHooks): Promise<void> {
+  await assertBoundary(binding, journal, hooks)
+  await assertSQLiteCohorts(binding, journal)
+  await assertPublishedFiles(binding, journal)
   const whatsapp = await whatsappTransaction(binding, journal.sources, journal)
   if (whatsapp) {
     await assertWhatsAppSource(whatsapp, whatsapp.files)
@@ -2836,11 +2840,11 @@ async function cleanupTransaction(binding: StorageBinding, journal: StorageJourn
   const transaction = transactionPath(binding, journal.id)
   const issues: string[] = []
   await assertBoundary(binding, journal, hooks)
-  if (journal.archiveFiles) {
-    for (const entry of [...journal.archiveFiles, ...journal.entries.filter(entry => archiveDestinations.includes(entry.destination))]) {
-      if (!entry.published) throw new Error('Missing published session archive receipt')
-      await checkFile(path.join(binding.root, entry.destination), entry.published)
-    }
+  // A restart can find originals already retired. Check their published copies before any further cleanup.
+  try { await assertPublishedFiles(binding, journal) } catch (error) {
+    journal.issues = [issue(error)]
+    await saveJournal(binding, journal)
+    return resultOf(journal)
   }
   const im = assertImTransactionScope(journal.sources, journal)
   const whatsapp = await whatsappTransaction(binding, journal.sources, journal)

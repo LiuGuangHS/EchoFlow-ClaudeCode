@@ -208,15 +208,16 @@ describe('mobile delivery outcomes', () => {
 })
 
 describe('release workflow wiring', () => {
-  test('desktop explicitly calls mobile only after publishing, gated by onboarding readiness', () => {
-    const workflow = parse(readFileSync('.github/workflows/release-desktop.yml', 'utf8'))
-    expect(workflow.jobs['release-mobile'].needs).toBe('publish-release')
+  test('Release Please calls mobile only after promotion, gated by onboarding readiness', () => {
+    const workflow = parse(readFileSync('.github/workflows/release-please.yml', 'utf8'))
+    expect(workflow.jobs['release-mobile'].needs).toBe('promote-release')
     expect(workflow.jobs['release-mobile'].uses).toBe('./.github/workflows/release-mobile.yml')
-    expect(workflow.jobs['release-mobile'].if).toBe("vars.MOBILE_RELEASE_ENABLED == 'true' && inputs.official_release == true")
-    expect(workflow.on.workflow_call.inputs.official_release.default).toBe(false)
-    expect(workflow.on.workflow_dispatch.inputs.official_release).toBeUndefined()
-    const releasePlease = parse(readFileSync('.github/workflows/release-please.yml', 'utf8'))
-    expect(releasePlease.jobs['publish-release'].with).toMatchObject({ official_release: true, draft: false })
+    expect(workflow.jobs['release-mobile'].if).toContain("needs.promote-release.result == 'success'")
+    expect(workflow.jobs['release-mobile'].if).toContain("vars.MOBILE_RELEASE_ENABLED == 'true'")
+    expect(workflow.jobs['publish-release'].with).toMatchObject({ official_release: true, draft: false })
+    const desktop = parse(readFileSync('.github/workflows/release-desktop.yml', 'utf8'))
+    expect(desktop.on.workflow_call.inputs.official_release.default).toBe(false)
+    expect(desktop.on.workflow_dispatch.inputs.official_release).toBeUndefined()
   })
   test('manual retry requires a tag, defaults read-only, checks out that tag and preserves platform failure', () => {
     const workflow = parse(readFileSync('.github/workflows/release-mobile.yml', 'utf8'))
