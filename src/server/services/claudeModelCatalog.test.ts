@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getClaudeCodeUserAgent } from '../../utils/userAgent.js'
 import { hahaOAuthService } from './hahaOAuthService.js'
+import { getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import {
   CLAUDE_MODEL_CATALOG,
   CLAUDE_MODELS_ENDPOINT,
@@ -208,7 +209,7 @@ describe('desktop Claude model catalog', () => {
 
   test('unreadable desktop credentials do not fall through to CLI credentials', async () => {
     await saveAccount()
-    await writeFile(join(directory, 'cc-haha', 'oauth.json'), 'invalid JSON')
+    await writeFile(join(getEchoFlowInternalDir(directory), 'oauth.json'), 'invalid JSON')
     const fetchOverride = mockFetch(() => { throw new Error('unexpected call') })
     expect(await getDesktopClaudeModelCatalog({ fetchOverride })).toEqual(CLAUDE_MODEL_CATALOG)
     await expect(refresh(fetchOverride)).rejects.toThrow('Claude OAuth token is unavailable')

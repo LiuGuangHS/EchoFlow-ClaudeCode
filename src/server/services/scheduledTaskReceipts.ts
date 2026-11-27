@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
-import * as os from 'node:os'
+import { getEchoFlowConfigDir } from '../../utils/echoFlowConfigRoot.js'
 import { createHash, randomUUID } from 'node:crypto'
 import type { TaskRun } from './cronScheduler.js'
 
@@ -18,7 +18,7 @@ export type ScheduledTaskReceipt = {
   historyWritten?: boolean
 }
 export function scheduledTaskReceiptsDir(): string {
-  return path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'scheduled_task_receipts')
+  return path.join(getEchoFlowConfigDir(), 'scheduled_task_receipts')
 }
 function receiptPath(directory: string, occurrenceId: string): string {
   return path.join(directory, `${createHash('sha256').update(occurrenceId).digest('hex')}.json`)

@@ -3,10 +3,8 @@ import { listProjectSessionHistory, restoreSelectedSession } from '../common/ses
 import { SESSION_RECONNECT_NOTICE, type SessionRestoreResult } from '../common/session-recovery.js'
 import type { SessionEntry } from '../common/session-store.js'
 import type { ServerMessage } from '../common/ws-bridge.js'
-import {
-  formatPermissionDecisionStatus,
-  type PermissionDecision,
-} from '../common/permission.js'
+import type { PermissionDecision } from '../common/permission.js'
+import { formatImPermissionSubmissionNotice, submitImPermissionDecision, type ImPermissionSubmissionResult } from '../common/permission-sync.js'
 import type {
   AdapterHttpClient,
   ProviderSummary,
@@ -93,14 +91,10 @@ export type TelegramRuntimeCommandController = TelegramCommandController & {
     ctx: TelegramCommandContext,
     decision: PermissionDecision,
     pendingPermissions: Map<string, Set<string>>,
-    onResolved: (chatId: string) => void,
+    submittingPermissions: Map<string, Set<string>>,
   ) => Promise<TelegramPermissionCallbackResult>
 }
-export type TelegramPermissionCallbackResult =
-  | 'sent'
-  | 'unauthorized'
-  | 'not_pending'
-  | 'send_failed'
+export type TelegramPermissionCallbackResult = ImPermissionSubmissionResult | 'unauthorized'
 
 export function telegramMessageDedupKey(chatId: string, messageId: number): string {
   return `telegram:${chatId}:${messageId}`
@@ -146,6 +140,7 @@ export function resolveTelegramPermissionCallback(params: {
   userId: number
   decision: PermissionDecision
   pendingRequestIds?: Set<string>
+  submittingPermissions: Map<string, Set<string>>
   isAllowedUser: (userId: number) => boolean
   sendPermissionResponse: (
     chatId: string,
@@ -153,20 +148,12 @@ export function resolveTelegramPermissionCallback(params: {
     allowed: boolean,
     rule?: string,
   ) => boolean
+  requestSyncState?: (chatId: string) => boolean
 }): TelegramPermissionCallbackResult {
   if (!params.isAllowedUser(params.userId)) return 'unauthorized'
-  if (!params.pendingRequestIds?.has(params.decision.requestId)) return 'not_pending'
-
-  const sent = params.sendPermissionResponse(
-    params.chatId,
-    params.decision.requestId,
-    params.decision.allowed,
-    params.decision.rule,
+  return submitImPermissionDecision(
+    params.chatId, params.decision, params.pendingRequestIds, params.submittingPermissions, params,
   )
-  if (!sent) return 'send_failed'
-
-  params.pendingRequestIds.delete(params.decision.requestId)
-  return 'sent'
 }
 
 async function handleTelegramPermissionCallback(
@@ -180,12 +167,13 @@ async function handleTelegramPermissionCallback(
       allowed: boolean,
       rule?: string,
     ) => boolean
-    onResolved: (chatId: string) => void
+    submittingPermissions: Map<string, Set<string>>
+    requestSyncState?: (chatId: string) => boolean
   },
 ): Promise<TelegramPermissionCallbackResult> {
   const callbackChatId = ctx.callbackQuery?.message?.chat.id
   const callbackUserId = ctx.from?.id
-  if (callbackChatId === undefined || callbackUserId === undefined) {
+  if (callbackChatId === undefined || callbackUserId === undefined || ctx.chat?.type !== 'private') {
     await ctx.answerCallbackQuery('未授权').catch(() => {})
     return 'unauthorized'
   }
@@ -196,10 +184,12 @@ async function handleTelegramPermissionCallback(
     userId: callbackUserId,
     decision,
     pendingRequestIds: deps.pendingPermissions.get(chatId),
+    submittingPermissions: deps.submittingPermissions,
     isAllowedUser: deps.isAllowedUser,
     sendPermissionResponse: deps.sendPermissionResponse,
+    requestSyncState: deps.requestSyncState,
   })
-  if (result !== 'sent') {
+  if (result === 'unauthorized' || result === 'not_pending' || result === 'send_failed') {
     const message = result === 'unauthorized'
       ? '未授权'
       : result === 'not_pending'
@@ -209,13 +199,12 @@ async function handleTelegramPermissionCallback(
     return result
   }
 
-  deps.onResolved(chatId)
-  const statusText = formatPermissionDecisionStatus(decision)
+  const statusText = formatImPermissionSubmissionNotice(result, decision.requestId)
   await ctx.editMessageText(
     `${ctx.callbackQuery?.message?.text ?? ''}\n\n${statusText}`,
   ).catch(() => {})
-  await ctx.answerCallbackQuery(statusText)
-  return 'sent'
+  await ctx.answerCallbackQuery(statusText).catch(() => {})
+  return result
 }
 
 export type TelegramRuntimeCommandControllerDeps = {
@@ -228,6 +217,7 @@ export type TelegramRuntimeCommandControllerDeps = {
     onServerMessage: (chatId: string, handler: (msg: unknown) => void | Promise<void>) => void
     waitForOpen: (chatId: string) => Promise<boolean>
     sendUserMessage: (chatId: string, content: string) => boolean
+    requestSyncState?: (chatId: string) => boolean
     sendPermissionResponse: (
       chatId: string,
       requestId: string,
@@ -282,7 +272,7 @@ export function createTelegramRuntimeCommandController(
   })
   return {
     ...controller,
-    handlePermissionCallback: (ctx, decision, pendingPermissions, onResolved) => handleTelegramPermissionCallback(
+    handlePermissionCallback: (ctx, decision, pendingPermissions, submittingPermissions) => handleTelegramPermissionCallback(
       ctx,
       decision,
       {
@@ -290,7 +280,8 @@ export function createTelegramRuntimeCommandController(
         pendingPermissions,
         sendPermissionResponse: (chatId, requestId, allowed, rule) =>
           deps.bridge.sendPermissionResponse(chatId, requestId, allowed, rule),
-        onResolved,
+        submittingPermissions,
+        requestSyncState: (chatId) => deps.bridge.requestSyncState?.(chatId) ?? false,
       },
     ),
   }

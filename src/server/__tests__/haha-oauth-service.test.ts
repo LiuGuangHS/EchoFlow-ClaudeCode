@@ -61,7 +61,7 @@ describe('HahaOAuthService — file storage', () => {
     }
     await service.saveTokens(tokens)
 
-    const oauthPath = path.join(tmpDir, 'cc-haha', 'oauth.json')
+    const oauthPath = path.join(tmpDir, 'echoflow-code', 'oauth.json')
     const stat = await fs.stat(oauthPath)
     if (process.platform !== 'win32') {
       expect(stat.mode & 0o777).toBe(0o600)
@@ -104,6 +104,33 @@ describe('HahaOAuthService — session management', () => {
     const session = service.startSession({ serverPort: 54321 })
     const found = service.getSession(session.state)
     expect(found?.codeVerifier).toBe(session.codeVerifier)
+  })
+
+  test('logout cancels pending callbacks and an exchange already fetching its profile', async () => {
+    const first = service.startSession({ serverPort: 54321 })
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<void>()
+    service.setExchangeFn(async () => ({ access_token: 'discard', expires_in: 60, scope: 'user:profile' }))
+    service.setFetchProfileFn(async () => {
+      started.resolve()
+      await finish.promise
+      return { subscriptionType: null }
+    })
+    const exchange = service.completeSession('code', first.state)
+    await started.promise
+    const pending = service.startSession({ serverPort: 54321 })
+    await service.deleteTokens()
+    finish.resolve()
+    await expect(exchange).rejects.toThrow()
+    expect(service.getSession(pending.state)).toBeNull()
+    expect(await service.loadTokens()).toBeNull()
+  })
+
+  test('only the latest pending login may complete', () => {
+    const older = service.startSession({ serverPort: 54321 })
+    const latest = service.startSession({ serverPort: 54321 })
+    expect(service.getSession(older.state)).toBeNull()
+    expect(service.getSession(latest.state)).toBe(latest)
   })
 
   test('getSession returns null for unknown state', () => {
@@ -208,6 +235,21 @@ describe('HahaOAuthService — account uuid', () => {
     expect(await service.getAccountUuid('token-a')).toBe('first-account')
     await service.deleteTokens()
     expect(await service.getAccountUuid('token-b')).toBe('second-account')
+  })
+
+  test('a late UUID lookup cannot populate the cache after logout', async () => {
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<string>()
+    service.setFetchAccountUuidFn(async token => {
+      started.resolve()
+      return token === 'old' ? finish.promise : 'new-account'
+    })
+    const lookup = service.getAccountUuid('old')
+    await started.promise
+    await service.deleteTokens()
+    finish.resolve('old-account')
+    expect(await lookup).toBeNull()
+    expect(await service.getAccountUuid('new')).toBe('new-account')
   })
 
   test('returns null instead of throwing when the profile lookup fails', async () => {
@@ -349,6 +391,24 @@ describe('HahaOAuthService — ensureFreshAccessToken', () => {
     expect(first?.accessToken).toBe('expiry-recovered-token')
     expect(second?.accessToken).toBe('expiry-recovered-token')
     expect(refreshCalls).toBe(1)
+  })
+
+  test('a refresh finishing after logout cannot restore the grant', async () => {
+    const tokens = { accessToken: 'old', refreshToken: 'refresh', scopes: [], expiresAt: 1, subscriptionType: null }
+    await service.saveTokens(tokens)
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<void>()
+    service.setRefreshFn(async () => {
+      started.resolve()
+      await finish.promise
+      return { ...tokens, accessToken: 'late', rateLimitTier: null }
+    })
+    const refresh = service.ensureFreshTokens()
+    await started.promise
+    await service.deleteTokens()
+    finish.resolve()
+    expect(await refresh).toBeNull()
+    expect(await service.loadTokens()).toBeNull()
   })
 
   test('returns null when refresh fails', async () => {

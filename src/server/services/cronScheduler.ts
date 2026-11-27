@@ -25,6 +25,7 @@ import { powerActivityClock } from './powerActivityClock.js'
 import { nextScheduledTime } from './scheduledTaskSchedule.js'
 import { claimScheduledTaskReceipt, finishScheduledTaskReceipt, readScheduledTaskReceipts, pruneScheduledTaskReceipts, isReceiptOwnerAlive, scheduledTaskReceiptsDir, type ScheduledTaskReceipt } from './scheduledTaskReceipts.js'
 import { SessionService } from './sessionService.js'
+import { resolveClaudeCodeRuntimePath } from './claudeCodeRuntimeService.js'
 import { sendTaskNotification } from './notificationService.js'
 import { ProviderService } from './providerService.js'
 import { SettingsService } from './settingsService.js'
@@ -530,8 +531,17 @@ export function buildCronCliArgs(
   baseArgs: string[],
   options: CronCliResolutionOptions = {},
 ): string[] {
+  const env = options.env ?? process.env
+  let cliPath = options.cliPath
+  if (cliPath == null) {
+    try {
+      cliPath = resolveClaudeCodeRuntimePath(undefined, env)
+    } catch {
+      // An unavailable installed default must not prevent the existing fallback.
+    }
+  }
   const launcher = resolveClaudeCliLauncher({
-    cliPath: options.cliPath ?? process.env.CLAUDE_CLI_PATH,
+    cliPath: cliPath ?? env.CLAUDE_CLI_PATH,
     execPath: options.execPath ?? process.execPath,
   })
 
@@ -539,7 +549,7 @@ export function buildCronCliArgs(
     return buildClaudeCliArgs(
       launcher,
       baseArgs,
-      options.appRoot ?? process.env.CLAUDE_APP_ROOT,
+      options.appRoot ?? env.CLAUDE_APP_ROOT,
     )
   }
 

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
-import os from 'node:os'
+import { getEchoFlowInternalDir } from '../utils/echoFlowConfigRoot.js'
 import path from 'node:path'
 import type { Server, ServerWebSocket, WebSocketHandler } from 'bun'
 import { isLocalAccessAuthorized } from './localAccessAuth.js'
@@ -165,7 +165,7 @@ export class PublicAccessServer {
 
   constructor(private deps: Dependencies) {
     this.now = deps.now ?? Date.now
-    this.storePath = deps.storePath ?? path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'cc-haha', 'public-access-devices.json')
+    this.storePath = deps.storePath ?? path.join(getEchoFlowInternalDir(), 'public-access-devices.json')
   }
 
   private load() {

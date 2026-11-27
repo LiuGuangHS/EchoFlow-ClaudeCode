@@ -22,6 +22,7 @@ function readWireBody(init?: RequestInit): Record<string, any> {
 describe('buildOpenAICodexFetch', () => {
   let tmpDir: string
   let originalTokenFile: string | undefined
+  let originalConfigDir: string | undefined
   let originalReasoningEffort: string | undefined
   let originalCompression: string | undefined
   let originalFastMode: string | undefined
@@ -29,6 +30,8 @@ describe('buildOpenAICodexFetch', () => {
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openai-codex-fetch-'))
     originalTokenFile = process.env.OPENAI_CODEX_OAUTH_FILE
+    originalConfigDir = process.env.CLAUDE_CONFIG_DIR
+    process.env.CLAUDE_CONFIG_DIR = tmpDir
     originalCompression = process.env.CC_HAHA_OPENAI_REQUEST_COMPRESSION
     originalFastMode = process.env.CC_HAHA_OPENAI_FAST_MODE
     delete process.env.CC_HAHA_OPENAI_FAST_MODE
@@ -60,6 +63,8 @@ describe('buildOpenAICodexFetch', () => {
     } else {
       process.env.OPENAI_CODEX_OAUTH_FILE = originalTokenFile
     }
+    if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
     if (originalReasoningEffort === undefined) {
       delete process.env[OPENAI_CODEX_REASONING_EFFORT_ENV_KEY]
     } else {

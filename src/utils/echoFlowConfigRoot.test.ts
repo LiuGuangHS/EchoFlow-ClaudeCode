@@ -10,7 +10,11 @@ describe('central product storage identity', () => {
     expect(getDefaultEchoFlowConfigDir({ env, homeDir, platform: 'win32' })).toBe(path.join(env.LOCALAPPDATA, PRODUCT_IDENTITY.name))
     expect(getDefaultEchoFlowConfigDir({ env, homeDir, platform: 'darwin' })).toBe(path.join(homeDir, 'Library', 'Application Support', PRODUCT_IDENTITY.name))
     expect(getDefaultEchoFlowConfigDir({ env, homeDir, platform: 'linux' })).toBe(path.join(env.XDG_DATA_HOME, PRODUCT_IDENTITY.configDir))
-    expect(getEchoFlowConfigDir({ env: { CLAUDE_CONFIG_DIR: 'explicit-root' } })).toBe('explicit-root')
+    const explicitRoot = path.join(homeDir, 'explicit-root')
+    expect(getEchoFlowConfigDir({ env: { CLAUDE_CONFIG_DIR: explicitRoot } })).toBe(explicitRoot)
+    const decomposedRoot = path.join(homeDir, 'é-profile')
+    expect(getEchoFlowConfigDir({ env: { CLAUDE_CONFIG_DIR: decomposedRoot } })).toBe(decomposedRoot)
+    expect(() => getEchoFlowConfigDir({ env: { CLAUDE_CONFIG_DIR: 'relative-root' } })).toThrow('absolute directory')
     expect(getEchoFlowInternalDir('fixture-root')).toBe(path.join('fixture-root', PRODUCT_IDENTITY.configDir))
   })
 

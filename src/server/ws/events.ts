@@ -20,7 +20,7 @@ export type PermissionMode =
 export type ClientMessage =
   | { type: 'prewarm_session' }
   | { type: 'sync_state' }
-  | { type: 'user_message'; content: string; attachments?: AttachmentRef[]; sessionReferences?: { sessionId: string }[]; powerActivityLeaseId?: string }
+  | { type: 'user_message'; content: string; attachments?: AttachmentRef[]; sessionReferences?: { sessionId: string }[]; powerActivityLeaseId?: string; replyAnchor?: string | null }
   | {
       type: 'permission_response'
       requestId: string
@@ -43,6 +43,7 @@ export type ClientMessage =
     }
   | { type: 'set_permission_mode'; mode: PermissionMode }
   | { type: 'set_runtime_config'; providerId: string | null; modelId: string; effortLevel?: string; openAIFastMode?: boolean }
+  | { type: 'set_cli_runtime'; cliRuntimeId: 'bundled' | 'installed' }
   | { type: 'stop_generation' }
   | { type: 'ask_user_question_activity'; requestId: string }
   | { type: 'stop_background_task'; taskId: string }
@@ -62,6 +63,7 @@ export type AttachmentRef = {
 // ============================================================================
 
 export const RUNTIME_CONFIG_APPLIED_EVENT = 'runtime_config_applied' as const
+export const CLI_RUNTIME_APPLIED_EVENT = 'cli_runtime_applied' as const
 
 export type ServerMessage =
   | { type: 'connected'; sessionId: string }
@@ -110,7 +112,10 @@ export type ServerMessage =
       computerUseRequestIds: string[]
       turnActive: boolean
     }
-  | { type: 'user_message_replay'; content: string; sessionReferences?: { sessionId: string }[]; scheduledTask?: ScheduledTaskMetadata }
+  | { type: 'input_committed'; messageUuid: string; replyAnchor: string | null }
+  | { type: 'input_turn_start'; messageUuids: string[] }
+  | { type: 'input_turn_snapshot'; messageUuids: string[] }
+  | { type: 'user_message_replay'; messageUuid?: string; content: string; sessionReferences?: { sessionId: string }[]; scheduledTask?: ScheduledTaskMetadata; collaboration?: { sourceSessionId: string; messageId?: string } }
   | { type: 'message_complete'; usage: TokenUsage; timing?: TurnTiming; scheduledTask?: ScheduledTaskMetadata }
   /**
    * `text` is a fragment when the CLI streams `thinking_delta`, and a whole block when
@@ -128,6 +133,7 @@ export type ServerMessage =
       effortLevel?: string
       openAIFastMode?: boolean
     }
+  | { type: typeof CLI_RUNTIME_APPLIED_EVENT; cliRuntimeId: 'bundled' | 'installed' }
   // CLI 是权限模式的唯一真相来源。当 CLI 内部 mode 变化（如 ExitPlanMode 后
   // 恢复到进入 plan 前的模式、Shift+Tab 切换）时，把新模式回传给前端，让桌面端
   // 选择器与 CLI 保持同步，而不是停留在本地影子值上。
@@ -145,7 +151,8 @@ export type ServerMessage =
   // 流式请求失败、CLI 已降级为非流式重试。非流式响应要等完整生成才返回，
   // 期间没有任何增量输出，前端据此显示"慢速模式"轻提示而不是裸转圈。
   | { type: 'streaming_fallback'; cause: StreamingFallbackCause }
-  | { type: 'error'; message: string; code: string; retryable?: boolean; businessErrorCode?: string }
+  // Only a definite rejection makes a submitted decision safe to retry.
+  | { type: 'error'; message: string; code: string; replyAnchor?: string | null; retryable?: boolean; businessErrorCode?: string; requestId?: string; permissionType?: 'tool' | 'computer_use'; approvalOutcome?: 'rejected' | 'uncertain' }
   | { type: 'background_task_stop_failed'; taskId: string; message: string }
   | { type: 'system_notification'; subtype: string; message?: string; data?: unknown }
   | { type: 'pong' }

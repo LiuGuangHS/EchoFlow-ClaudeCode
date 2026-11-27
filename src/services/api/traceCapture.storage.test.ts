@@ -94,12 +94,12 @@ test.each(['anthropic', 'proxy'] as const)('retains request evidence after a lar
   expect(call?.request.semantic?.request).toEqual(expected)
 })
 
-test('preserves legacy settings and the default JSONL and SQLite locations', async () => {
-  const settingsFile = join(config, 'cc-haha', 'settings.json')
-  await fs.mkdir(join(config, 'cc-haha'), { recursive: true })
+test('preserves legacy settings fields at canonical JSONL and SQLite locations', async () => {
+  const settingsFile = join(config, 'echoflow-code', 'settings.json')
+  await fs.mkdir(join(config, 'echoflow-code'), { recursive: true })
   const legacy = { futureField: 'keep', traceCapture: { enabled: false, unknownField: 7 } }
   await fs.writeFile(settingsFile, JSON.stringify(legacy))
-  const storageDir = join(config, 'cc-haha', 'traces')
+  const storageDir = join(config, 'echoflow-code', 'traces')
   expect(getTraceStorageDir()).toBe(storageDir)
   expect(await readTraceCaptureSettings()).toEqual({ enabled: false, storageDir })
   expect(await record('disabled')).toBeNull()
@@ -109,11 +109,11 @@ test('preserves legacy settings and the default JSONL and SQLite locations', asy
   })
   await record('default')
   expect(await fs.readFile(join(storageDir, 'shared-session.jsonl'), 'utf8')).toContain('default')
-  expect((await fs.stat(join(config, 'cc-haha', 'db', 'trace-index-v1.sqlite'))).isFile()).toBe(true)
+  expect((await fs.stat(join(config, 'echoflow-code', 'db', 'trace-index-v1.sqlite'))).isFile()).toBe(true)
 })
 
 test('stores and reads custom traces and their index without moving managed settings', async () => {
-  const storageDir = join(root, 'custom traces')
+  const storageDir = join(config, 'custom traces')
   process.env.CC_HAHA_TRACE_DIR = storageDir
   expect(getTraceStorageDir()).toBe(storageDir)
   expect(readTraceCaptureSettingsSync()).toEqual({ enabled: true, storageDir })
@@ -123,21 +123,21 @@ test('stores and reads custom traces and their index without moving managed sett
   expect(await traceCaptureService.getSessionTraceFile('shared-session')).toEqual({ path: file })
   expect((await traceCaptureService.getSessionTraceOverview('shared-session')).calls.map(call => call.id)).toEqual(['custom'])
   expect((await traceCaptureService.getSessionTraceCall('shared-session', 'custom'))?.model).toBe('custom')
-  expect((await fs.stat(join(storageDir, 'cc-haha', 'db', 'trace-storage-index-v1.sqlite'))).isFile()).toBe(true)
-  await expect(fs.stat(join(config, 'cc-haha', 'traces'))).rejects.toMatchObject({ code: 'ENOENT' })
-  await expect(fs.stat(join(config, 'cc-haha', 'db'))).rejects.toMatchObject({ code: 'ENOENT' })
+  expect((await fs.stat(join(storageDir, 'echoflow-code', 'db', 'trace-storage-index-v1.sqlite'))).isFile()).toBe(true)
+  await expect(fs.stat(join(config, 'echoflow-code', 'traces'))).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(fs.stat(join(config, 'echoflow-code', 'db'))).rejects.toMatchObject({ code: 'ENOENT' })
   expect(await updateTraceCaptureSettings({ enabled: false })).toEqual({ enabled: false, storageDir })
   expect(await record('disabled')).toBeNull()
-  expect(JSON.parse(await fs.readFile(join(config, 'cc-haha', 'settings.json'), 'utf8'))).toEqual({ traceCapture: { enabled: false } })
-  await expect(fs.stat(join(storageDir, 'cc-haha', 'settings.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(JSON.parse(await fs.readFile(join(config, 'echoflow-code', 'settings.json'), 'utf8'))).toEqual({ traceCapture: { enabled: false } })
+  await expect(fs.stat(join(storageDir, 'echoflow-code', 'settings.json'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
 test('isolates indexes, reads, lists and deletion across storage roots with the same session id', async () => {
   await record('default')
   const defaultFile = join(getTraceStorageDir(), 'shared-session.jsonl')
   const defaultBytes = await fs.readFile(defaultFile, 'utf8')
-  const first = join(root, 'first')
-  const second = join(root, 'second')
+  const first = join(config, 'first')
+  const second = join(config, 'second')
   for (const storageDir of [first, second]) {
     process.env.CC_HAHA_TRACE_DIR = storageDir
     await record(storageDir === first ? 'first' : 'second')
@@ -166,8 +166,8 @@ test('isolates indexes, reads, lists and deletion across storage roots with the 
 })
 
 test('keeps an in-flight append and index projection in the captured custom directory', async () => {
-  const first = join(root, 'first')
-  const second = join(root, 'second')
+  const first = join(config, 'first')
+  const second = join(config, 'second')
   process.env.CC_HAHA_TRACE_DIR = first
   let release!: () => void
   const blocked = new Promise<void>(resolve => { release = resolve })
@@ -208,14 +208,14 @@ test('keeps the default index isolated when the custom trace directory is the co
 })
 
 test('keeps list results and settings on the captured root across an asynchronous environment switch', async () => {
-  const first = join(root, 'first')
-  const second = join(root, 'second')
+  const first = join(config, 'first')
+  const second = join(config, 'second')
   process.env.CC_HAHA_TRACE_DIR = first
   await record('first')
   const readFile = fs.readFile.bind(fs)
   const spy = spyOn(fs, 'readFile').mockImplementation(async (...args) => {
     const result = await readFile(...args)
-    if (args[0] === join(config, 'cc-haha', 'settings.json')) process.env.CC_HAHA_TRACE_DIR = second
+    if (args[0] === join(config, 'echoflow-code', 'settings.json')) process.env.CC_HAHA_TRACE_DIR = second
     return result
   })
   await updateTraceCaptureSettings({ enabled: true })
@@ -232,8 +232,8 @@ test('keeps list results and settings on the captured root across an asynchronou
 })
 
 test('deletion waits for an in-flight append and stays on its captured custom root', async () => {
-  const first = join(root, 'first')
-  const second = join(root, 'second')
+  const first = join(config, 'first')
+  const second = join(config, 'second')
   process.env.CC_HAHA_TRACE_DIR = second
   await record('second')
   process.env.CC_HAHA_TRACE_DIR = first
@@ -269,7 +269,7 @@ test('deletion waits for an in-flight append and stays on its captured custom ro
 })
 
 test('a directory shared with other JSONL files neither lists nor deletes them as traces', async () => {
-  const shared = join(root, 'shared')
+  const shared = join(config, 'shared')
   process.env.CC_HAHA_TRACE_DIR = shared
   await record('mine')
   const history = join(shared, 'history.jsonl')
@@ -291,7 +291,7 @@ test('rejects relative paths without writing to the default directory', async ()
 
 test('leaves an occupied path and old trace data untouched after a failed write and rollback', async () => {
   await record('default')
-  const file = join(root, 'occupied')
+  const file = join(config, 'occupied')
   await fs.writeFile(file, 'do not overwrite')
   process.env.CC_HAHA_TRACE_DIR = file
   await expect(record('failed')).rejects.toThrow()
@@ -300,7 +300,19 @@ test('leaves an occupied path and old trace data untouched after a failed write 
   expect((await traceCaptureService.getSessionTraceOverview('shared-session')).calls.map(call => call.id)).toEqual(['default'])
 })
 
+test('rejects root-external storage without changing the external evidence', async () => {
+  const outside = join(root, 'external')
+  await fs.mkdir(outside)
+  await fs.writeFile(join(outside, 'history.jsonl'), 'fixture-evidence')
+  process.env.CC_HAHA_TRACE_DIR = outside
+  expect(() => getTraceStorageDir()).toThrow('outside the selected storage root')
+  await expect(record('external')).rejects.toThrow('outside the selected storage root')
+  expect(await fs.readFile(join(outside, 'history.jsonl'), 'utf8')).toBe('fixture-evidence')
+  expect(await fs.readdir(outside)).toEqual(['history.jsonl'])
+  await expect(fs.stat(config)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
 test('treats an empty directory override as unset', () => {
   process.env.CC_HAHA_TRACE_DIR = '  '
-  expect(getTraceStorageDir()).toBe(join(config, 'cc-haha', 'traces'))
+  expect(getTraceStorageDir()).toBe(join(config, 'echoflow-code', 'traces'))
 })

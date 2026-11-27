@@ -38,6 +38,8 @@ import {
   serializeSourceFingerprint,
 } from '../services/localIndex/sourceFingerprint.js'
 import { readSessionEntriesByLocator } from '../services/localIndex/sessionEntries.js'
+import { buildEchoFlowOwnershipMarker, resolveStorageBinding } from '../../utils/echoFlowConfigRoot.js'
+import { completeStorageMigration, executeStorageMigration, recoverStorageMigration } from '../../services/storageMigration.js'
 import type {
   LocalIndexGateway,
   SessionEntryLocatorPage,
@@ -2939,7 +2941,7 @@ describe('TeamService', () => {
     )
     const archivePath = path.join(
       tmpDir,
-      'cc-haha',
+      'echoflow-code',
       'agent-teams',
       `${crypto.createHash('sha256').update(leadSessionId).digest('hex')}.json`,
     )
@@ -3081,7 +3083,7 @@ describe('TeamService', () => {
     }
     const archivePath = path.join(
       tmpDir,
-      'cc-haha',
+      'echoflow-code',
       'agent-teams',
       `${crypto.createHash('sha256').update(sessionId).digest('hex')}.json`,
     )
@@ -4560,14 +4562,14 @@ describe('TeamService archive compatibility', () => {
   it('does not replace an unreadable current archive with a legacy fallback', async () => {
     const sessionId = 'invalid-current-archive'
     const archiveFile = crypto.createHash('sha256').update(sessionId).digest('hex') + '.json'
-    const currentPath = path.join(tmpDir, 'cc-haha', 'agent-teams', archiveFile)
+    const currentPath = path.join(tmpDir, 'echoflow-code', 'agent-teams', archiveFile)
     await fs.mkdir(path.dirname(currentPath), { recursive: true })
     await fs.writeFile(currentPath, '{invalid', 'utf8')
     await expect(service.getWorkbenchForSession(sessionId)).rejects.toThrow()
     expect(await fs.readFile(currentPath, 'utf8')).toBe('{invalid')
   })
 
-  it('reads legacy archives and rejects divergent current archives without modifying either', async () => {
+  it('imports legacy archives through the transaction and blocks conflicts or resurrection', async () => {
     const sessionId = 'legacy-archive-session'
     const team = {
       name: 'legacy-team',
@@ -4607,21 +4609,32 @@ describe('TeamService archive compatibility', () => {
       }],
     }
     const archiveFile = crypto.createHash('sha256').update(sessionId).digest('hex') + '.json'
-    const legacyPath = path.join(tmpDir, 'echoflow-code', 'agent-teams', archiveFile)
+    const legacyPath = path.join(tmpDir, 'cc-haha', 'agent-teams', archiveFile)
+    const currentPath = path.join(tmpDir, 'echoflow-code', 'agent-teams', archiveFile)
     await fs.mkdir(path.dirname(legacyPath), { recursive: true })
     await fs.writeFile(legacyPath, JSON.stringify(archive), 'utf8')
-
-    const legacy = await service.getWorkbenchForSession(sessionId, { teamName: team.name })
-    expect(legacy?.source).toBe('archive')
-    expect(legacy?.snapshots[0]?.version).toBe('legacy-version')
+    await fs.writeFile(path.join(tmpDir, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+    const binding = resolveStorageBinding({ env: {}, roots: [tmpDir] })
+    // This private fixture has no processes or external resources.
+    const hooks = { platform: 'linux' as const, assertQuiescent: async () => {} }
+    const imported = await executeStorageMigration({
+      binding,
+      sources: [{ directory: path.join(tmpDir, 'cc-haha'), markerRoot: tmpDir, destination: 'echoflow-code' }],
+      hooks,
+    })
+    expect(imported.state).toBe('validation-required')
+    const restored = await service.getWorkbenchForSession(sessionId, { teamName: team.name })
+    expect(restored?.source).toBe('archive')
+    expect(restored?.snapshots[0]?.version).toBe('legacy-version')
+    expect((await completeStorageMigration(binding, imported.id!, hooks)).state).toBe('ready')
+    await expect(fs.stat(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
 
     await Promise.all([service.archiveWorkbenchSnapshot(snapshot), service.archiveWorkbenchSnapshot(snapshot)])
     expect((await service.getWorkbenchForSession(sessionId, { teamName: team.name }))?.snapshots[0]?.version).toBe('legacy-version')
-    const beforeWriteError = await fs.readFile(legacyPath, 'utf8')
-    const currentPath = path.join(tmpDir, 'cc-haha', 'agent-teams', archiveFile)
+    const beforeWriteError = await fs.readFile(currentPath, 'utf8')
     const originalWriteFile = fs.writeFile
     const writeSpy = spyOn(fs, 'writeFile').mockImplementation((...args) => {
-      if (String(args[0]).startsWith(`${legacyPath}.tmp.`)) {
+      if (String(args[0]).startsWith(`${currentPath}.tmp.`)) {
         return Promise.reject(Object.assign(new Error('injected write failure'), { code: 'EACCES' }))
       }
       return originalWriteFile(...args)
@@ -4631,19 +4644,37 @@ describe('TeamService archive compatibility', () => {
     } finally {
       writeSpy.mockRestore()
     }
-    expect(await fs.readFile(legacyPath, 'utf8')).toBe(beforeWriteError)
-    expect(await fs.stat(currentPath).then(() => true, () => false)).toBe(false)
-    await fs.mkdir(path.dirname(currentPath), { recursive: true })
-    await fs.writeFile(currentPath, JSON.stringify({
+    expect(await fs.readFile(currentPath, 'utf8')).toBe(beforeWriteError)
+
+    // Divergence is rejected by the transaction, not by a business-path fallback.
+    const conflictRoot = path.join(tmpDir, 'conflict-root')
+    const conflictLegacy = path.join(conflictRoot, 'cc-haha', 'agent-teams', archiveFile)
+    const conflictCurrent = path.join(conflictRoot, 'echoflow-code', 'agent-teams', archiveFile)
+    await fs.mkdir(path.dirname(conflictLegacy), { recursive: true })
+    await fs.mkdir(path.dirname(conflictCurrent), { recursive: true })
+    await fs.writeFile(path.join(conflictRoot, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+    await fs.writeFile(conflictLegacy, JSON.stringify(archive))
+    await fs.writeFile(conflictCurrent, JSON.stringify({
       ...archive,
       teams: [{ ...archive.teams[0], snapshots: [{ ...snapshot, version: 'current-version' }] }],
-    }), 'utf8')
-    const legacyBefore = await fs.readFile(legacyPath, 'utf8')
-    const currentBefore = await fs.readFile(currentPath, 'utf8')
-    await expect(service.getWorkbenchForSession(sessionId, { teamName: team.name })).rejects.toThrow('Conflicting current and legacy')
-    await expect(service.archiveWorkbenchSnapshot(snapshot)).rejects.toThrow('Conflicting current and legacy')
-    expect(await fs.readFile(legacyPath, 'utf8')).toBe(legacyBefore)
-    expect(await fs.readFile(currentPath, 'utf8')).toBe(currentBefore)
+    }))
+    const legacyBefore = await fs.readFile(conflictLegacy, 'utf8')
+    const currentBefore = await fs.readFile(conflictCurrent, 'utf8')
+    const conflict = await executeStorageMigration({
+      binding: resolveStorageBinding({ env: {}, roots: [conflictRoot] }),
+      sources: [{ directory: path.join(conflictRoot, 'cc-haha'), markerRoot: conflictRoot, destination: 'echoflow-code' }],
+      hooks,
+    })
+    expect(conflict.state).toBe('blocked')
+    expect(await fs.readFile(conflictLegacy, 'utf8')).toBe(legacyBefore)
+    expect(await fs.readFile(conflictCurrent, 'utf8')).toBe(currentBefore)
+
+    await fs.unlink(currentPath)
+    await fs.mkdir(path.dirname(legacyPath), { recursive: true })
+    await fs.writeFile(legacyPath, JSON.stringify(archive))
+    expect((await recoverStorageMigration(binding, hooks)).state).toBe('blocked')
+    expect(await new TeamService().getWorkbenchForSession(sessionId)).toBeNull()
+    await expect(fs.stat(currentPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
 

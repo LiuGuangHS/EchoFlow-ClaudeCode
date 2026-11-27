@@ -2,7 +2,7 @@ import { expect, test, spyOn, mock } from 'bun:test'
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { startServer, quiesceServerRuntimeForMigration, quiesceServerRuntimeForRecovery } from '../index.js'
+import { startServer, quiesceServerRuntimeForMigration, quiesceServerRuntimeForRecovery } from '../serverRuntime.js'
 import { migrationMaintenance } from '../migrationMaintenance.js'
 import { conversationService } from '../services/conversationService.js'
 import { cronScheduler } from '../services/cronScheduler.js'
@@ -25,6 +25,8 @@ test('validation startup keeps business traffic and index writes disabled until 
     await writeFile(join(root, 'settings.json'), '{"unknownOwnerSetting":true}\n')
     await writeFile(join(root, '.config.json'), '{"unknownGlobalOwnerSetting":true}\n')
     getGlobalClaudeFile.cache.clear()
+    const globalConfig = getGlobalClaudeFile()
+    await writeFile(globalConfig, '{"unknownGlobalOwnerSetting":true}\n')
     const sessionId = 'e13ccaf8-c354-491d-a20e-7ce9f5802720'
     await mkdir(join(root, 'projects', 'saved-project'))
     await writeFile(join(root, 'projects', 'saved-project', `${sessionId}.jsonl`), JSON.stringify({ type: 'user', uuid: 'saved-message', sessionId, timestamp: '2026-01-01T00:00:00Z', message: { role: 'user', content: 'Saved conversation' } }) + '\n')
@@ -44,10 +46,11 @@ test('validation startup keeps business traffic and index writes disabled until 
     expect(indexStart).not.toHaveBeenCalled()
     expect(cronStart).not.toHaveBeenCalled()
     expect(await readFile(join(root, 'settings.json'), 'utf8')).toBe('{"unknownOwnerSetting":true}\n')
-    expect((await readdir(root)).sort()).toEqual(['.config.json', 'projects', 'settings.json'])
-    await writeFile(join(root, '.config.json'), '{"invalidGlobalConfig":')
+    expect((await readdir(root)).sort()).toEqual(['.claude.json', '.config.json', 'projects', 'settings.json'])
+    expect(await readFile(join(root, '.config.json'), 'utf8')).toBe('{"unknownGlobalOwnerSetting":true}\n')
+    await writeFile(globalConfig, '{"invalidGlobalConfig":')
     expect((await fetch(`${base}/api/runtime/migration/validate`, { headers: { Authorization: 'Bearer isolated-token' } })).status).toBe(409)
-    await rm(join(root, '.config.json'))
+    await rm(globalConfig)
     await writeFile(join(root, '.claude.json'), '{"effectiveGlobalOwnerSetting":true}\n')
     getGlobalClaudeFile.cache.clear()
     expect((await fetch(`${base}/api/runtime/migration/validate`, { headers: { Authorization: 'Bearer isolated-token' } })).status).toBe(200)

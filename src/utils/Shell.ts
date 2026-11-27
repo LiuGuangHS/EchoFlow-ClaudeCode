@@ -3,7 +3,6 @@ import { constants as fsConstants, readFileSync, unlinkSync } from 'fs'
 import { type FileHandle, mkdir, open, realpath } from 'fs/promises'
 import memoize from 'lodash-es/memoize.js'
 import { isAbsolute, resolve } from 'path'
-import { join as posixJoin } from 'path/posix'
 import { logEvent } from 'src/services/analytics/index.js'
 import {
   getOriginalCwd,
@@ -30,7 +29,7 @@ export type { ExecResult } from './ShellCommand.js'
 
 import { accessSync } from 'fs'
 import { onCwdChangedForHooks } from './hooks/fileChangedWatcher.js'
-import { getClaudeTempDirName } from './permissions/filesystem.js'
+import { getClaudeTempDir } from './permissions/filesystem.js'
 import { getPlatform } from './platform.js'
 import { SandboxManager } from './sandbox/sandbox-adapter.js'
 import { invalidateSessionEnvCache } from './sessionEnvironment.js'
@@ -204,16 +203,13 @@ export async function exec(
     .toString(16)
     .padStart(4, '0')
 
-  // Sandbox temp directory - use per-user directory name to prevent multi-user permission conflicts
-  const sandboxTmpDir = posixJoin(
-    process.env.CLAUDE_CODE_TMPDIR || '/tmp',
-    getClaudeTempDirName(),
-  )
+  // Use the same existing scratch root as the sandbox's write allowlist.
+  const sandboxTmpDir = shouldUseSandbox ? getClaudeTempDir() : undefined
 
   const { commandString: builtCommand, cwdFilePath } =
     await provider.buildExecCommand(command, {
       id,
-      sandboxTmpDir: shouldUseSandbox ? sandboxTmpDir : undefined,
+      sandboxTmpDir,
       useSandbox: shouldUseSandbox ?? false,
       failOnPowerShellError,
     })
@@ -268,13 +264,6 @@ export async function exec(
       undefined,
       abortSignal,
     )
-    // Create sandbox temp directory for sandboxed processes with secure permissions
-    try {
-      const fs = getFsImplementation()
-      await fs.mkdir(sandboxTmpDir, { mode: 0o700 })
-    } catch (error) {
-      logForDebugging(`Failed to create ${sandboxTmpDir} directory: ${error}`)
-    }
   }
 
   const spawnBinary = isSandboxedPowerShell ? '/bin/sh' : binShell

@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { describe, expect, it } from 'vitest'
-import { createComputerUseReplSandboxCommand } from '../../src/utils/computerUse/replRuntime'
 import { REPL_BOOTSTRAP_SOURCE } from '../../src/vendor/computer-use-mcp/replApi'
 import type { ReplInput, ReplOutput } from '../../src/vendor/computer-use-mcp/replProtocol'
 
@@ -20,7 +19,7 @@ async function run(command: string, args: string[], cwd: string, env: NodeJS.Pro
   child.stderr.on('data', chunk => { stderr += String(chunk) })
   const code = await new Promise<number | null>((resolve, reject) => {
     child.once('error', reject)
-    child.once('exit', resolve)
+    child.once('close', resolve)
   })
   if (code !== 0) throw new Error(`${path.basename(command)} exited ${code}: ${stderr}\n${stdout}`)
   return stdout
@@ -69,11 +68,13 @@ describe.skipIf(process.platform !== 'darwin')('compiled desktop Computer Use wo
       await run('/usr/bin/codesign', ['--remove-signature', executable], directory, env)
       await run('/usr/bin/codesign', ['--sign', '-', '--force', '--timestamp=none', executable], directory, env)
 
-      const command = createComputerUseReplSandboxCommand({
+      const sandbox = {
         args: [executable, '--computer-use-repl-worker'],
         readable: [executable, directory],
         directory,
-      })
+      }
+      // Keep the real sandbox wrapper and its Bun-only imports out of Vitest's Node process.
+      const command = await run('bun', ['--no-env-file', '-e', `const {createComputerUseReplSandboxCommand}=await import(${JSON.stringify(path.join(repoRoot, 'src/utils/computerUse/replRuntime.ts'))});process.stdout.write(createComputerUseReplSandboxCommand(${JSON.stringify(sandbox)}))`], directory, env)
       child = spawn('/bin/sh', ['-c', `exec ${command}`], { cwd: directory, env, stdio: 'pipe' })
       closed = new Promise(resolve => child!.once('close', (code, signal) => resolve({ code, signal })))
       const messages: ReplOutput[] = []

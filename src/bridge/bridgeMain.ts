@@ -1,6 +1,6 @@
 import { feature } from 'bun:bundle'
 import { randomUUID } from 'crypto'
-import { hostname, tmpdir } from 'os'
+import { hostname } from 'os'
 import { basename, join, resolve } from 'path'
 import { getRemoteSessionUrl } from '../constants/product.js'
 import { shutdownDatadog } from '../services/analytics/datadog.js'
@@ -12,6 +12,7 @@ import {
   logEventAsync,
 } from '../services/analytics/index.js'
 import { isInBundledMode } from '../utils/bundledMode.js'
+import { ensurePrivateStorageTempRoot } from '../utils/cachePaths.js'
 import { logForDebugging } from '../utils/debug.js'
 import { logForDiagnosticsNoPII } from '../utils/diagLogs.js'
 import { isEnvTruthy, isInProtectedNamespace } from '../utils/envUtils.js'
@@ -349,7 +350,7 @@ export async function runBridgeLoop(
           ? `${config.debugFile.slice(0, ext)}-*${config.debugFile.slice(ext)}`
           : `${config.debugFile}-*`
     } else {
-      debugGlob = join(tmpdir(), 'claude', 'bridge-session-*.log')
+      debugGlob = join(ensurePrivateStorageTempRoot(), 'bridge-session-*.log')
     }
     logger.setDebugLogPath(debugGlob)
   }
@@ -1134,8 +1135,7 @@ export async function runBridgeLoop(
             }
           } else if (config.verbose || process.env.USER_TYPE === 'ant') {
             sessionDebugFile = join(
-              tmpdir(),
-              'claude',
+              ensurePrivateStorageTempRoot(),
               `bridge-session-${safeId}.log`,
             )
           }

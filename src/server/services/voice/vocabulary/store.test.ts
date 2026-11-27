@@ -20,7 +20,7 @@ let originalConfigDir: string | undefined
 
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'voice-vocabulary-'))
-  filePath = path.join(tmpDir, 'cc-haha', 'voice-vocabulary.json')
+  filePath = path.join(tmpDir, 'echoflow-code', 'voice-vocabulary.json')
   clock = Date.parse('2026-11-01T00:00:00.000Z')
   originalConfigDir = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = tmpDir
@@ -51,8 +51,8 @@ async function rejectsWith(promise: Promise<unknown>, status: number) {
 }
 
 describe('voice vocabulary file (persistence)', () => {
-  test('lives in the cc-haha config folder', () => {
-    expect(defaultVoiceVocabularyPath()).toBe(path.join(tmpDir, 'cc-haha', 'voice-vocabulary.json'))
+  test('lives in the canonical internal config folder', () => {
+    expect(defaultVoiceVocabularyPath()).toBe(path.join(tmpDir, 'echoflow-code', 'voice-vocabulary.json'))
   })
 
   test('a missing file reads as empty and is not created by reading', async () => {

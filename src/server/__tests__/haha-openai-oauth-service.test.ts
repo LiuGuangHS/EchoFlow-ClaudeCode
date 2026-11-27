@@ -150,11 +150,8 @@ describe('HahaOpenAIOAuthService — file storage', () => {
   })
 
   test('saveTokens cleans up tmp file when rename fails', async () => {
-    const renameSpy = spyOn(fs, 'rename').mockImplementation(async () => {
-      const error = new Error('rename failed') as NodeJS.ErrnoException
-      error.code = 'EXDEV'
-      throw error
-    })
+    const oauthPath = getHahaOpenAIOAuthFilePath()
+    await fs.mkdir(oauthPath, { recursive: true })
 
     try {
       await expect(
@@ -166,12 +163,11 @@ describe('HahaOpenAIOAuthService — file storage', () => {
           email: 'test@example.com',
           accountId: 'acct_123',
         }),
-      ).rejects.toThrow('rename failed')
+      ).rejects.toThrow()
     } finally {
-      renameSpy.mockRestore()
+      await fs.rmdir(oauthPath)
     }
 
-    const oauthPath = getHahaOpenAIOAuthFilePath()
     const files = await fs.readdir(path.dirname(oauthPath))
     expect(
       files.filter((name) => name.startsWith('openai-oauth.json.tmp.')),

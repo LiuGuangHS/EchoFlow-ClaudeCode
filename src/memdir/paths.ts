@@ -13,6 +13,7 @@ import {
 } from '../utils/envUtils.js'
 import { findCanonicalGitRoot } from '../utils/git.js'
 import { sanitizePath } from '../utils/path.js'
+import { resolveManagedStoragePath } from '../utils/managedStoragePath.js'
 import {
   getInitialSettings,
   getSettingsForSource,
@@ -84,7 +85,7 @@ export function isExtractModeActive(): boolean {
  */
 export function getMemoryBaseDir(): string {
   if (process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR) {
-    return process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR
+    return resolveManagedStoragePath(process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR, 'CLAUDE_CODE_REMOTE_MEMORY_DIR')
   }
   return getClaudeConfigHomeDir()
 }
@@ -146,7 +147,7 @@ function validateMemoryPath(
   ) {
     return undefined
   }
-  return (normalized + sep).normalize('NFC')
+  return normalized + sep
 }
 
 /**
@@ -224,12 +225,10 @@ export const getAutoMemPath = memoize(
   (): string => {
     const override = getAutoMemPathOverride() ?? getAutoMemPathSetting()
     if (override) {
-      return override
+      return resolveManagedStoragePath(override, 'auto-memory directory') + sep
     }
     const projectsDir = join(getMemoryBaseDir(), 'projects')
-    return (
-      join(projectsDir, sanitizePath(getAutoMemBase()), AUTO_MEM_DIRNAME) + sep
-    ).normalize('NFC')
+    return resolveManagedStoragePath(join(projectsDir, sanitizePath(getAutoMemBase()), AUTO_MEM_DIRNAME), 'auto-memory directory') + sep
   },
   () => getProjectRoot(),
 )

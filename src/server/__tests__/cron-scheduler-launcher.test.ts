@@ -23,6 +23,7 @@ import { migrationMaintenance } from '../migrationMaintenance.js'
 const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
 const originalPath = process.env.PATH
 const originalClaudeCliPath = process.env.CLAUDE_CLI_PATH
+const originalRuntimeConfig = process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
 const originalClaudeAppRoot = process.env.CLAUDE_APP_ROOT
 const originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL
 const originalAnthropicModel = process.env.ANTHROPIC_MODEL
@@ -86,6 +87,8 @@ function restoreEnv(): void {
   } else {
     delete process.env.CLAUDE_CLI_PATH
   }
+  if (originalRuntimeConfig !== undefined) process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = originalRuntimeConfig
+  else delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
   if (originalClaudeAppRoot) {
     process.env.CLAUDE_APP_ROOT = originalClaudeAppRoot
   } else {
@@ -159,6 +162,7 @@ describe('cron scheduler launcher resolution', () => {
   beforeEach(async () => {
     tmpDir = await createTmpDir()
     process.env.CLAUDE_CONFIG_DIR = path.join(tmpDir, 'config')
+    delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
     process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
     resetSettingsCache()
     resetTerminalShellEnvironmentCacheForTests()
@@ -248,6 +252,19 @@ describe('cron scheduler launcher resolution', () => {
       appRoot,
       '--print',
     ])
+  })
+
+  it('keeps an explicit launcher ahead of the configured app default', async () => {
+    const cliPath = path.join(tmpDir, 'explicit-claude.exe')
+    const installedPath = path.join(tmpDir, 'installed-claude.exe')
+    const configPath = path.join(tmpDir, 'runtime.json')
+    await fs.writeFile(installedPath, '', { mode: 0o755 })
+    await fs.writeFile(configPath, JSON.stringify({ schemaVersion: 1, defaultRuntimeId: 'installed', installedPath }))
+
+    expect(buildCronCliArgs(['--print'], {
+      cliPath,
+      env: { ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG: configPath },
+    })).toEqual([cliPath, '--print'])
   })
 
   it('builds hidden CLI spawn options for scheduled task subprocesses', () => {
@@ -362,6 +379,32 @@ describe('cron scheduler launcher resolution', () => {
       .then(() => true)
       .catch(() => false)
     expect(bunWasCalled).toBe(false)
+  })
+
+  unixOnly('executeTask uses the installed app default and falls back when it is unavailable', async () => {
+    const configPath = path.join(tmpDir, 'runtime.json')
+    const installedPath = path.join(tmpDir, 'installed-claude')
+    const bundledPath = path.join(tmpDir, 'claude-sidecar')
+    for (const [cliPath, output] of [[installedPath, 'installed'], [bundledPath, 'bundled']] as const) {
+      await fs.writeFile(cliPath, [
+        '#!/bin/sh',
+        'IFS= read -r turn',
+        `printf '%s\\n' '{"type":"result","is_error":false,"result":"${output}"}'`,
+        '/bin/cat >/dev/null',
+        '',
+      ].join('\n'), { mode: 0o755 })
+    }
+    await fs.writeFile(configPath, JSON.stringify({ schemaVersion: 1, defaultRuntimeId: 'installed', installedPath }))
+    process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = configPath
+    process.env.CLAUDE_CLI_PATH = bundledPath
+
+    const cron = new CronService()
+    const scheduler = new CronScheduler(cron)
+    const task = await cron.createTask({ cron: '* * * * *', prompt: 'runtime selection fixture', folderPath: tmpDir, recurring: true })
+
+    expect(await scheduler.executeTask(task)).toMatchObject({ status: 'completed', output: 'installed' })
+    await fs.rm(installedPath)
+    expect(await scheduler.executeTask(task)).toMatchObject({ status: 'completed', output: 'bundled' })
   })
 
   unixOnly('executeTask passes provider-scoped model runtime to the sidecar', async () => {

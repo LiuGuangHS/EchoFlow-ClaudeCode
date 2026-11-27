@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto'
 import { CONNECTORS } from '../services/connectors/catalog.js'
 import type { ConnectorInstallation } from '../services/connectors/types.js'
 import { renderNativeConnectorSkill } from '../services/connectors/nativeConnectorSkill.js'
+import { LEGACY_CONNECTOR_MARKETPLACE, connectorPluginName } from '../services/connectors/pluginIdentity.js'
+import { parseStorageRelocations } from './storageRelocations.js'
 
 type JsonObject = Record<string, unknown>
 
@@ -55,7 +57,12 @@ async function saveFile(stage: string, file: string, content: string): Promise<v
 }
 
 /** Transform only the private staged copy. Stored conversation bytes are never rewritten. */
-export async function relocateManagedData(sourceDir: string, targetDir: string, stagedDir: string): Promise<void> {
+export async function relocateManagedData(sourceDir: string, targetDir: string, stagedDir: string, options?: {
+  internalDirectory: 'echoflow-code'
+  sourceInternalDirectory?: 'cc-haha'
+  internalOnly?: boolean
+  writeRelocations?: boolean
+}): Promise<void> {
   const source = resolve(sourceDir)
   const target = resolve(targetDir)
   const stage = resolve(stagedDir)
@@ -71,23 +78,25 @@ export async function relocateManagedData(sourceDir: string, targetDir: string, 
   const rebase = (value: unknown): unknown => {
     if (typeof value !== 'string' || !isAbsolute(value)) return value
     const root = sourceRoots.find(candidate => inside(candidate, resolve(value)))
-    return root ? join(target, relative(root, resolve(value))) : value
+    if (!root) return value
+    const child = relative(root, resolve(value))
+    if (options?.internalOnly) return join(target, options.internalDirectory, child)
+    if (options?.sourceInternalDirectory && (child === options.sourceInternalDirectory || child.startsWith(`${options.sourceInternalDirectory}${sep}`))) {
+      return join(target, options.internalDirectory, relative(options.sourceInternalDirectory, child))
+    }
+    return join(target, child)
   }
   const stagedPath = (finalPath: string): string => {
     if (!inside(target, resolve(finalPath))) throw new Error('Managed connector path escaped migration target')
     return join(stage, relative(target, resolve(finalPath)))
   }
-  const mappingPath = join(stage, 'cc-haha', 'storage-relocations.json')
-  const mapping = await optionalJson(stage, mappingPath) ?? { version: 1, previousRoots: [] }
-  if (mapping.version !== 1 || !Array.isArray(mapping.previousRoots) ||
-    !mapping.previousRoots.every(root => typeof root === 'string' && isAbsolute(root) && !root.includes('\0'))) {
-    throw new Error('Unsupported or invalid storage relocation metadata')
-  }
+  const mappingPath = join(stage, options?.internalDirectory ?? 'cc-haha', 'storage-relocations.json')
+  const mapping = parseStorageRelocations(await optionalJson(stage, mappingPath) ?? { version: 1, previousRoots: [] })
   const roots = [...mapping.previousRoots as string[], ...sourceRoots]
   const previousRoots: string[] = []
   for (const root of roots) {
     const normalized = resolve(root)
-    if (inside(target, normalized) || inside(normalized, target)) {
+    if (!options && (inside(target, normalized) || inside(normalized, target))) {
       throw new Error('Previous storage root overlaps the migration target')
     }
     const comparable = process.platform === 'win32' ? normalized.toLowerCase() : normalized
@@ -130,8 +139,9 @@ export async function relocateManagedData(sourceDir: string, targetDir: string, 
   for (const folder of ['plugins', 'cowork_plugins']) {
     const marketplacesPath = join(stage, folder, 'known_marketplaces.json')
     const marketplaces = await optionalJson(stage, marketplacesPath)
+    let legacyMarketplaceOwned = false
     if (marketplaces) {
-      for (const value of Object.values(marketplaces)) {
+      for (const [name, value] of Object.entries(marketplaces)) {
         const entry = object(value, 'marketplace')
         if (typeof entry.installLocation !== 'string') throw new Error('Invalid marketplace install location')
         entry.installLocation = rebase(entry.installLocation)
@@ -139,6 +149,10 @@ export async function relocateManagedData(sourceDir: string, targetDir: string, 
         if (location.source === 'file' || location.source === 'directory') {
           if (typeof location.path !== 'string') throw new Error('Invalid local marketplace source')
           location.path = rebase(location.path)
+        }
+        if (name === LEGACY_CONNECTOR_MARKETPLACE && location.source === 'directory') {
+          const managedMarketplace = join(target, 'connectors', 'marketplace')
+          legacyMarketplaceOwned = resolve(entry.installLocation as string) === managedMarketplace && resolve(location.path as string) === managedMarketplace
         }
       }
       await saveFile(stage, marketplacesPath, JSON.stringify(marketplaces, null, 2) + '\n')
@@ -153,7 +167,10 @@ export async function relocateManagedData(sourceDir: string, targetDir: string, 
           const entry = object(item, 'installed plugin')
           if (typeof entry.installPath !== 'string') throw new Error('Invalid installed plugin path')
           entry.installPath = rebase(entry.installPath)
-          const definition = CONNECTORS.find(def => def.pluginId === id)
+          const definition = CONNECTORS.find(def => def.pluginId === id || (
+            legacyMarketplaceOwned && id === `${connectorPluginName(def)}@${LEGACY_CONNECTOR_MARKETPLACE}` &&
+            inside(join(target, folder, 'cache', LEGACY_CONNECTOR_MARKETPLACE, connectorPluginName(def)), resolve(entry.installPath as string))
+          ))
           if (definition && inside(target, resolve(entry.installPath as string))) {
             ownedSkills.set(join(entry.installPath as string, 'skills', `office-${definition.id}`, 'SKILL.md'), definition.id)
           }
@@ -178,5 +195,5 @@ export async function relocateManagedData(sourceDir: string, targetDir: string, 
     const version = managed.version ?? basename(managed.installation.directory).match(/^(.+)-(?:darwin|win32|linux)-(?:x64|arm64)$/)?.[1] ?? definition.version
     await saveFile(stage, file, renderNativeConnectorSkill({ ...definition, version }, managed.installation))
   }
-  await saveFile(stage, mappingPath, JSON.stringify({ ...mapping, version: 1, previousRoots }, null, 2) + '\n')
+  if (options?.writeRelocations !== false) await saveFile(stage, mappingPath, JSON.stringify({ ...mapping, previousRoots }, null, 2) + '\n')
 }

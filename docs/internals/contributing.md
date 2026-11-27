@@ -7,28 +7,19 @@ order: 14
 
 # 参与贡献与质量门禁
 
-这份文档说明贡献代码前应该如何在本地安装、开发、测试和运行质量门禁。目标是让维护者和贡献者都能在提交 PR 前回答一个问题：这次改动有没有破坏核心 Coding Agent 工作流。
+这份文档说明本地安装、开发与模块验证，以及 GitHub Actions 上的 PR 和全量门禁。目标是让维护者和贡献者用对应候选的证据回答：这次改动有没有破坏核心 Coding Agent 工作流。
 
-产品能力、执行绑定、持久化和外部输入的长期约束见[执行、数据与信任边界](./execution-boundaries.md)。本页维护检查流程和测试设计；任务进度、审计清单及临时验证记录不作为已实现架构发布。
+日常工作、授权、安全和验证基本规则统一见[根 AGENTS.md](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/AGENTS.md)，桌面设计见 [DESIGN.md](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/DESIGN.md)。产品能力、执行绑定、持久化和外部输入的长期约束见[执行、数据与信任边界](./execution-boundaries.md)。本页维护检查流程和测试设计；任务进度、审计清单及临时验证记录不作为已实现架构发布。
 
 ## 环境准备
 
 验证前由执行者完成 preflight：从根 `package.json` 的 `packageManager` 读取预期 Bun 版本，记录实际解析到的可执行文件、版本，以及从仓库启动的嵌套进程是否解析到同一版本；不能只检查 shell alias。版本管理器安装的真实二进制可用，不按 `mise` / `asdf` 目录名拒绝；保留所选 lane 必需的平台工具路径和测试专用 PATH fixture，不盲目清空 PATH。只核对所选 lane 需要的 Node、Rust 工具链及缓存。
 
-下面的依赖安装、工具与缓存准备是显式 setup，可以需要网络；确定性检查的执行阶段不得隐式下载缺失工具或自动授予信任。现有 `check:docs` 命令包含已声明的隔离依赖安装，应将该准备阶段与后续确定性构建、检查区分。缺少前置条件时，交接标为 `blocked` / `not run` 并说明补齐方式；自动化失败仍须非零退出，不能改报成功。目前尚无覆盖所有验证入口的统一 preflight；这里是执行要求，不代表已新增强制校验。
+依赖安装、工具与缓存准备须在授权范围内显式进行，可以需要网络；确定性检查的执行阶段不得隐式下载缺失工具或自动授予信任。现有 `check:docs` 命令包含已声明的隔离依赖安装，应将该准备阶段与后续确定性构建、检查区分。缺少前置条件时，交接标为 `blocked` / `not run` 并说明补齐方式；自动化失败仍须非零退出，不能改报成功。目前尚无覆盖所有验证入口的统一 preflight；这里是执行要求，不代表已新增强制校验。
 
-在项目根目录显式安装依赖：
+根目录运行 `bun install`；涉及 `desktop/` 时在该目录安装依赖。涉及 `adapters/` 或运行 `check:adapters` / `check:native` 时，也在 `adapters/` 安装依赖。CI 的必需 PR job 使用匹配的 Bun 和 `bun install --frozen-lockfile`，不更新锁文件。
 
-```bash
-bun install
-```
-
-如果改动涉及 `desktop/`，也安装桌面端依赖：
-
-```bash
-cd desktop
-bun install
-```
+选中 harness 检查时，还需 Node `>= 24.9.0`，并单独用 `npm --prefix harness ci` 按独立锁文件准备依赖（可能联网）。准备后运行 `npm --prefix harness test`（现有 Bun 调度不改变 Node 运行时）及独立的 `bun run audit:harness`；必需 audit 失败必须传播。`bun run check:harness` 包含安装与 suite，不含 audit。详见 [harness 工具链说明](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/harness/README.md#工具链)。
 
 首次运行桌面开发版或 `check:native` 前，在 `desktop/` 运行一次 `bun run prepare:cloudflared`。它下载固定版本的官方连接程序、校验 SHA-256，并放入被 Git 忽略的本机缓存；普通用户的安装包已包含该程序。原生检查只验证和使用已有缓存，不会下载；跨平台构建可传 `--target-triple` 选择目标平台。
 
@@ -40,43 +31,97 @@ HTTPS_PROXY=http://127.0.0.1:7890 bun run prepare:cloudflared
 
 请将示例地址改为自己的 HTTP 代理地址。如果当前网络无法下载，可以从报错中的官方地址下载对应版本和平台的文件，再用 `CC_HAHA_CLOUDFLARED_ARCHIVE=/绝对路径/下载文件 bun run prepare:cloudflared` 导入。离线导入仍会校验固定的 SHA-256，不接受其他版本或未校验的可执行文件。
 
-如果改动涉及 `adapters/`，或者要运行 `check:adapters` / `check:native`，安装 adapter 依赖：
-
-```bash
-cd adapters
-bun install
-```
-
 不要提交本地运行产物，例如 `artifacts/quality-runs/`、`node_modules/`、`desktop/node_modules/`。
 
 ## 四层门禁分工
 
 | 层级 | 触发 | 运行内容 | 约束 |
 | --- | --- | --- | --- |
-| 本地迭代 | 手动 | 最窄的相关测试；`bun run check:impact` 选中的命令 | 秒级反馈 |
+| 本地迭代 | 手动 | 覆盖改动的定向测试，跨模块时按影响面补测 | WSL 只做定向/模块验证，不重复云端全量 |
 | PR（必过） | `pull_request`，以及合入 `main` 后的 `push` | impact 选中的确定性 lane，含 `check:agent-flow`、`check:agent-e2e`；覆盖率只报告不阻塞 | 无模型、无 provider、无 secret、fork 可跑 |
-| 全量 | `nightly-quality.yml` 每天定时（北京时间 03:00）+ 维护者手动触发 | 无路径选择地运行 workflow 列出的确定性检查、独立 macOS Swift 检查和模块图健康度；含 `check:desktop-ui-smoke` | 无模型、无 secret；手动 `skip_coverage` 默认关闭，UI smoke 缺依赖会明确跳过 |
+| 全量 | 发版候选调用 `nightly-quality.yml`，维护者也可手动触发 | 无路径选择地运行 workflow 列出的确定性检查、独立 macOS Swift 检查和模块图健康度；含 `check:release-surface`、`check:desktop-ui-smoke` | 无模型、无 secret；手动 `skip_coverage` 默认关闭，UI smoke 缺依赖会明确跳过 |
 | Release | 维护者手动 `bun run quality:release -- --allow-live --provider-model <selector>:main` | PR checks、baseline catalog/live、native 与当前平台打包 smoke；全量层另行执行，非自动包含其全部检查 | 真实模型需维护者显式授权；不是发布 workflow 本身 |
 
-`release-desktop.yml` 不直接调用 `bun run verify`，但有发布门禁：`verify-governance`（`check:policy`、`check:product-identity`、`check:upstream-content`）、`verify-runtime`（`check:server`、`check:agent-flow`、`check:adapters`）和 `verify-desktop`（`check:desktop`、`check:persistence-upgrade`）汇入 `release-verify-gate`。`publish-release` 同时依赖构建矩阵与该汇总门禁，任一验证组不成功就不能发布。各 job 绑定同一 release SHA；这不是完整 `verify`、全量层或手动 live release gate 的替代品。`scripts/pr/release-workflow.test.ts` 分别守卫不直接调用 `verify` 和实际发布依赖。全量层每天一次的频率由 `pr-quality-workflow.test.ts` 固定，改频率需维护者决定。
+手动全量统一使用 `nightly-quality.yml`；原 `push-quality.yml` 入口退役，本地 `quality:push` 语义不变。PR 按影响面选择检查。发版时，同一候选上的发布检查和全量检查共同覆盖各模块。真实模型只用于 Release 与明确授权额度的维护者手动 smoke；普通贡献者无需 provider 即可运行 PR 层。
 
-分层原则：**PR 只跑改动能影响到的范围**，因此它天然无法覆盖"没有 PR 碰过的检查"和"只有全套一起跑才暴露的问题"——这两个盲区交给每天的全量层；**真实模型/额度只出现在 Release 与维护者手动 smoke**，任何贡献者在没有 provider 的情况下都必须能跑通 PR 层的全部门禁。
+## AI Coding Agent 修复循环
 
-## 普通 PR 的影响面检查
+日常诊断、协作及授权以[根规则](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/AGENTS.md)为准；以下是从改动到交付的统一流程。沿真实调用链核对预期、实际结果和日志，区分观察、推测与未知，不从命名推断缺陷；保留校验与错误处理，现有契约不能满足目标时才重设计。
 
-先让仓库按变更路径列出需要运行的检查：
+### PR 提交流程
+
+1. 核对已有明确授权是否覆盖将要进行的分支、提交、推送、PR 或合并操作；同范围不重复确认，未覆盖的操作先取得授权。获授权时使用 `fix/session-reconnect` 等普通产品分支。
+2. 声明变更面（`desktop`、`mobile`、`server`、`adapter`、`native`、`docs`、`provider/runtime`、`agent-loop` 或 `release`），按[功能质量契约](#功能质量契约)补回归并完成最小修复。
+3. WSL 本地运行覆盖改动的定向测试。还有跨模块行为需要验证时，再按[影响面检查](#普通-pr-的影响面检查)选取相应检查。需要 live 或发布证据时，再满足[Baseline](#真实模型-baseline)或[Release](#release-门禁)的专用前提。
+4. 按[证据与失败诊断](#证据与失败诊断)记录候选、命令、summary、报告路径和缺口；用 [PR 模板](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/.github/pull_request_template.md)交付用户影响、变更文件、所补测试、coverage/E2E/live 报告或 blocker、剩余风险，再执行已获授权的提交、推送和 PR 操作。
+5. 收集候选对应的 PR Actions 结果。PR-ready/push-ready 须区分「本地模块验证完成，可提交/推送供 CI 验证」与「候选 PR Actions 门禁已通过」；前者不证明可合并，也不授予操作权限。
+
+PR 门禁通过须有候选完整 SHA 对应的 Actions run 链接、最终 `pr-quality-gate` 和所选 job 结果，并记录实际测试的 checkout/merge SHA 与 PR head/base 的对应关系。未提交工作区、后续修改或其他 SHA 不能复用旧 CI 绿灯；尚无对应运行时标为 `not run` / pending。full validation 必须注明范围及 Actions 证据；nightly 只证明该 SHA 的确定性全量，不替代 PR 门禁或 release 的 live、各平台产物、安装/升级及发布验收。
+
+### 普通 PR 的影响面检查
 
 ```bash
 bun run check:impact
 ```
 
-选择是**依赖感知**的：除了改动文件自身的路径前缀，还会把「谁 import 了这些文件」纳入检查范围（`scripts/pr/module-graph.ts`）。这修掉了纯前缀路由的漏检，例如改 `src/shared/modelReasoning.ts` 会选中 `check:desktop`（`desktop/src/lib/runtimeSelection.ts` 直接 import 它），改 `desktop/src/lib/browserSafePort.ts` 会选中 `check:native`（`desktop/electron/services/sidecarManager.ts` import 它，而 `desktop/tsconfig.json` 并不编译 `desktop/electron/`）。报告的 `## Cross-surface impact` 会指名是哪个 importer 触发了额外检查。
+`check:impact` 只选范围，不证明行为正确。`scripts/pr/change-policy.ts` 是路由事实来源；路径前缀决定 area 和 blocking 规则，`scripts/pr/module-graph.ts` 的 importer 图只扩大检查选择，不要求为未触达区域补测试。报告的 `## Cross-surface impact` 指明额外检查的 importer。例如 renderer 的工具被 Electron host 引用时会选中 `check:native`，因为 renderer tsconfig 不编译 `desktop/electron/`。图构建失败则告警并选择全部 surface，不静默退回前缀路由。
 
-依赖图只**放宽检查选择**，不影响 area 标签和任何 blocking 规则——改一个 hub 文件不会因此要求你为没碰过的文件补测试。图构建失败时会选中全部 surface 并打印告警，不会静默退回前缀路由。
+本地 policy 需要例外判定却缺少可信 PR author 和 base branch CODEOWNERS 时，保持 `blocked`；缺上下文不等于已证实缺审批。不得从 `git user` 或工作区 CODEOWNERS 推断身份、伪造 label 或用 `ALLOW_*` 绕过；保留技术结果，等待可核验的 PR/base 上下文。
 
-本地 policy 需要例外判定却缺少可信 PR author 和 base branch CODEOWNERS 时，保持 `blocked`；缺上下文不等于已证实缺审批。不得从 `git user` 或工作区 CODEOWNERS 推断维护者身份，也不得伪造 label 或使用 `ALLOW_*` 绕过。保留技术检查结果，等待可核验的 PR/base 上下文后再作治理结论。
+### 按改动范围补充测试
 
-## 无模型的端到端 Agent 门禁
+运行 impact 输出的模块命令，不逐个运行所有 lane。完整命令以[根 package.json](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/package.json)的 `scripts` 为准，组合与选择见 [modes.ts](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/scripts/quality-gate/modes.ts)；涉及持久化升级须运行 `bun run check:persistence-upgrade`，Electron/sidecar/打包须按 impact 跑 `check:native`，不能用 renderer 检查替代。移动端 `check:mobile` 包含类型、lint、测试及离线 H5 导出，H5/mock 不能替代原生设备证据。
+
+### 本机 Push 前提醒
+
+push 不再自动运行本地质量门禁；`bun run verify` 不是 WSL 默认动作，也不是提交或推送前置条件。只有明确选择额外的本地 PR 验证时才使用下列入口：
+
+| 命令 | 语义 |
+| --- | --- |
+| `bun run verify` | 等价于 `quality:pr` / `quality:verify`，按 impact 运行 PR lane；所选 coverage 阻塞本地验证，无真实模型，不等于 nightly 全量或 release 验收 |
+| `bun run quality:push` | 可选快捷检查，复用 PR impact/policy/路径检查但跳过 coverage，不能替代完整验证 |
+| `bun run hooks:install` | 可选安装本机 pre-push hook，只打印非阻塞提醒，不阻止 `git push` |
+
+### PR CI 合并门禁
+
+`pr-quality.yml` 对 PR 的代码事件和合入 `main` 的 push 按改动范围运行检查。普通标签变更不重跑产品测试。维护者添加或撤销审批标签时，门禁重新读取当前标签。添加 `run-coverage` 可为涉及覆盖率的改动单独请求报告。标签事件不取消正在运行的代码检查。
+
+`pr-quality-gate` 要求当前 PR 候选的技术检查和审批都通过。选中的阻塞 job 必须成功，未选中的必须跳过。缺失、取消或属于其他候选的结果无法放行。提示性的 `coverage-checks` 独立报告（见[覆盖率策略](#覆盖率策略)）。PR 的 server 和 desktop 分片合起来运行完整检查，desktop 第一片 lint、最后一片 build。任一分片失败即 job 失败。
+
+`main` 的分支保护要求 `pr-quality-gate`，管理员同样适用，发布也走 PR。个人 CODEOWNER 作者可免 `allow-cli-core-change`；作者身份和 CODEOWNERS 必须取可信 PR/base，其他贡献者改 CLI 核心仍需维护者标签，其他例外不变。必需 PR job 离线、无 provider/secret/付费服务、fork 可跑；`pull_request_target` 只用可信 base 检查元数据，不执行 PR head、不安装其依赖或向其暴露 secrets。更改 workflow 不授权更改分支保护或仓库设置。
+
+## 功能质量契约
+
+新功能、bugfix 和行为变化均须交付可验证证据，人和 AI Coding Agent 同样适用：
+
+- 可执行 JS/TS 生产改动同 PR 带同区域测试。`change-policy.ts` 分别检查 `desktop/src/`、`src/server/`、其余 `src/` 和 `adapters/`；只有维护者确认不适合自动化并显式加 `allow-missing-tests` 才可例外。文案/CSS 不单独要求新增测试，仍须完成 impact 检查。
+- 纯逻辑用单测；server/API/provider/runtime 用 API 或 request-shape 测试；桌面 UI/store/API 用 Vitest/Testing Library；跨 UI、WebSocket、provider proxy、native sidecar 或发布打包的用户流程补 E2E/桌面 smoke。
+- agent loop、工具、provider 路由、模型选择、文件编辑、权限、恢复及桌面聊天必须在 PR 中有 mock/fixture 契约（见[无模型门禁](#无模型的端到端-agent-门禁)）；不能用 live 替代确定性回归。
+
+### 回归测试设计
+
+缺陷先 **RED → GREEN → 重构**：通过真实入口补最小回归，确认因目标缺陷而非环境/fixture 失败，再最小修复；通过后才能重构。无法复现就记录输入、环境、观察与缺口，不把一直通过的测试称为复现或已证实修复。同区域测试文件只是最低信号，还须证明行为：
+
+- **驱动状态迁移。** 用 `handleServerMessage`、真实 store action 或用户事件产生状态，不用 `setState` 写出迁移结果；初始化 fixture 仍可直接设置。
+- **断言行为不变量。** 验证数据属于哪个会话/模型，不抄当前屏幕字符串；输入和预期来自行为契约，不为掩盖失败改预期。
+- **覆盖丢弃与保留。** 去重、合并、过滤均验证两个方向；消息拦截 replay、保留真实重复，透传 `uuid` / `toolUseId` 等上游身份，不靠文本猜测。
+- **验证跨边界连接。** 从真实入口经调用方和依赖断言最终可观察行为，不 mock 被测模块；server/store/component 各自通过不等于消息驱动 UI。
+- **验证失败与恢复。** 按风险覆盖错误、超时、取消、重试/重连，断言失败状态、资源清理与恢复可用，且不重复已接受副作用、不越过权限。
+- **保护旧兼容。** 旧 key/路径/marker 行为受影响时补证据，不因名字陈旧删除；迁移用旧 fixture 验证部分失败重试，以及成功后用户主动清除偏好、重启不再被旧数据恢复。这是测试要求，不是修复声明。
+
+### 覆盖率策略
+
+生成物/构建产物不计产品覆盖率，维护区域逐步达到 75-80%+，新增/变更可执行生产行满足 `coverage-thresholds.json` 的 changed-line 门槛。baseline 在 `scripts/quality-gate/coverage-baseline.json`；CI 优先比较 base branch baseline，不允许下降超出窗口。修改 baseline/threshold 必须有维护者 `allow-coverage-baseline-change` 和原因，不为过门禁降标准；历史低覆盖是技术债，新 PR 至少要让触达区域更好。
+
+本地 `bun run verify` 的所选 coverage lane 是阻塞项，失败即本地验证失败；需要 PR 变更行报告时，添加 `run-coverage` 标签即可为涉及覆盖率的改动运行 `coverage-checks`。普通 PR 默认跳过此提示项。它仍执行源码覆盖率统计、baseline ratchet、75-80%+ 目标差距报告及 changed-line coverage，提示性不等于可忽略失败。采集边界和诊断见[证据与失败诊断](#证据与失败诊断)。
+
+#### 覆盖率参考
+
+- [Google Testing Blog](https://testing.googleblog.com/2020/08/code-coverage-best-practices.html)：60% acceptable、75% commendable、90% exemplary；changed/per-commit 90% 是合理下限。
+- [Microsoft Visual Studio / Azure DevOps](https://learn.microsoft.com/en-us/visualstudio/test/using-code-coverage-to-determine-how-much-code-is-being-tested)：通常目标约 80%，典型要求可为 75%，生成代码可放宽。
+- [ChromiumOS EC](https://chromium.googlesource.com/chromiumos/platform/ec/+/main/docs/code_coverage.md)：新增/变更行至少 80%。
+
+### 无模型的端到端 Agent 门禁
 
 ```bash
 bun run check:agent-flow       # 真实 server + 真实 WebSocket + mock CLI
@@ -85,11 +130,11 @@ bun run check:agent-replay     # 只跑录制回放
 bun run check:desktop-ui-smoke # 真实桌面 UI + 真实权限对话框 + mock CLI
 ```
 
-三条通道都不需要 provider、凭据或公网。
+四条通道都不需要 provider、凭据或公网。
 
 `check:agent-e2e` 只假一个模型：本机回环起一个 Anthropic 兼容端点（`scripts/quality-gate/mock-llm/`），通过桌面端「新增服务商」同一个 API 注册成 provider，真实 CLI 照常跑 agent 循环、真实工具改真实（临时）磁盘。脚本化模型对自然语言提示做出模型式的反应，所以它和 `check:agent-flow:live` 共用同一份场景（`agent-flow/liveScenarios.ts`）：mock 证明管线，live 证明真模型也落到同样结果。另有只有 mock 能确定性断言的场景——工具输出真的回传给了模型（nonce 核对）、拒绝授权以错误结果回到模型、停止生成真的掐断了上游连接、上游报错后会话还能继续。改 agent 循环、工具、权限、provider 接线时，新增行为优先在这里加场景，而不是只写单元测试。
 
-手写的 mock 只能流出作者想象中的模型输出：用量固定、工具参数一次给全、没有 thinking、没有 OpenAI 格式。所以 `check:agent-e2e` 还会跑流量回放（`scripts/quality-gate/replay/`）：维护者用真实的 DeepSeek Flash 把场景跑一遍，把上游流量录制成 `cassettes/*.json` 提交进仓库；CI 用回放服务器把这些录制流量原样喂给真实 server 和真实 CLI，不联网、不需要凭据。录制下来的是真实形态：thinking 和签名、切成很多片的工具参数（Grep/Read/Edit/Bash）、一轮并行调用多个工具、工具失败后模型自行纠正、大段命令输出、子 Agent 自己的工具循环（含两个子 Agent 并行）、项目 MCP 服务器的工具、图片附件（用 DeepSeek Flash 的视觉版录制）、Agent Teams 从队长出方案、批准、两个成员先后干活到汇报和收尾的完整流程、长对话里的自动压缩和手动 `/compact`、用户停止时截断的流、中文对话，以及经过 server 代理转换的 OpenAI Chat 流（含 reasoning 和中断）。
+手写 mock 不能代表全部上游形态，因此 `check:agent-e2e` 还会跑流量回放（`scripts/quality-gate/replay/`）：维护者用真实的 DeepSeek Flash 把场景跑一遍，把上游流量录制成 `cassettes/*.json` 提交进仓库；CI 用回放服务器把这些录制流量原样喂给真实 server 和真实 CLI，不联网、不需要凭据。录制保留 thinking/签名、工具参数分片与并行、失败恢复、大输出、子 Agent/Teams、MCP、图片、自动/手动压缩、中断、中文和经 proxy 转换的 OpenAI Chat 流；具体场景由 `scripts/quality-gate/replay/` 的 catalog 维护。
 
 - **匹配规则**：请求按队列依次对应录制流量。每个 agent 循环（主 agent、子 Agent、团队成员）按启动它的第一条用户消息各自成一个队列，严格比对模型、stream、最后一条消息的角色、用户输入文本，以及工具结果是否正好回应上一轮的工具调用（并行工具按完成顺序回传，只比对集合）；对不上就返回 400 `replay_mismatch`，并在 `artifacts/agent-e2e/replay/<format>/<id>.report.json` 写出字段级差异。标题这类不带工具的旁路请求尽量回放，录制流量里没有就给占位回复，不判失败。
 - **运行时差异**：临时工作目录、沙箱配置目录、项目目录名、会话 ID、日期和临时目录在录制流量里存成 `{{WORK_ROOT}}` 这类占位符，回放时换成本次运行的值；路径被切进多个分片也能正确还原。应用按时钟现生成、回复又必须原样引用的值（例如团队成员关停请求的 ID）存成 `{{V1}}` 这类学习位，回放时从第一个带它的请求里学到本次的值，再填进后面的回复。Agent Teams 的消息合并依赖时序，这个场景按录制时的模型延迟和流速回放，其余场景压缩回放节奏。
@@ -98,50 +143,15 @@ bun run check:desktop-ui-smoke # 真实桌面 UI + 真实权限对话框 + mock 
 
 `check:agent-flow` 覆盖新建 Session → 选运行时 → 首轮流式 → 工具调用 → 权限批准/拒绝 → 工具失败 → API 错误 → 中断 → 断线重连权限重放 → 会话恢复。`check:desktop-ui-smoke` 在真实浏览器里点真实的 Allow 按钮，需要 `agent-browser` 与已安装的 desktop 依赖，缺失时会打印原因并跳过。
 
-`agent-browser` 只属于这条已提交的 lane（在 Linux CI 上以 headless 方式运行）以及维护者手动执行的 `desktop/scripts/e2e-*-agent-browser.sh`。临时的浏览器操作（手动验证、截图、探索性 UI 检查）请走 `ego-browser` skill，不要因为仓库里出现 `agent-browser` 就把它当通用浏览器工具。
+临时 UI 验证（手动检查、截图、探索性测试）使用当前会话可用的浏览器工具或仓库已有的隔离桌面预览，记录实际操作和结果。`agent-browser` 仅用于这条已提交的 lane（在 Linux CI 上以 headless 方式运行）和维护者手动执行的 `desktop/scripts/e2e-*-agent-browser.sh`。
 
 所有会启动真实 server 的 quality-gate lane 都跑在沙箱配置目录里（`scripts/quality-gate/sandbox.ts`），并在结束时校验没有写过开发者真实的 `~/.claude`；写了就判定 lane 失败。
 
-开发时运行 impact report 选中的窄命令即可。需要声明 PR-ready 或完整验证时，直接使用统一入口，无需先单独执行其全部 lane：
+## 证据与失败诊断
 
-```bash
-bun run verify
-```
+验证证据须绑定候选：完整 Git SHA、dirty diff 及相关未跟踪源码的内容指纹，并记录环境（OS/架构、工具版本与路径）、实际命令、退出状态、最终 summary 和日志；发布产物还须记录 SHA-256。相关源码、依赖或环境变化会使受影响的旧证据失效。交接明确区分 `passed`、`failed`、`skipped`、`blocked`、`not run`；运行未完成、缺最终 summary 或后台任务状态不明均不是 `passed`。共享证据须脱敏，不暴露凭据、用户配置、完整 transcript 或上游响应体。
 
-`bun run verify` 等价于 `bun run quality:pr`，会按改动范围执行被选中的 policy、desktop、mobile、server、adapter、native、provider contract、chat contract、persistence、docs 和 coverage lane。它不调用真实大模型。小范围外部贡献者不需要在本机运行无关模块；GitHub CI 会再次执行精确的 path-aware gate。
-
-主质量报告会内嵌当前测试范围、结果矩阵、覆盖率摘要，并链接完整 coverage/JUnit/log artifact：
-
-```text
-artifacts/quality-runs/<timestamp>/report.md
-artifacts/quality-runs/<timestamp>/report.json
-artifacts/quality-runs/<timestamp>/junit.xml
-artifacts/quality-runs/<timestamp>/logs/*.log
-artifacts/coverage/<timestamp>/coverage-report.md
-artifacts/coverage/<timestamp>/coverage-report.json
-```
-
-PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quality:verify` 仍然保留给习惯显式质量命名的用户，但推荐文档和 AI prompt 都使用 `bun run verify`。
-
-本地 `bun run verify` 的 coverage lane 被选中时是阻塞项，失败会使本地验证失败；不要把托管 PR 的提示性策略套用于本地。托管覆盖率在 PR 上只报告、不阻塞合并：`coverage-checks` 作为独立 check 显示结果，不在 `pr-quality-gate` 的 `needs` 里，必过状态不等它跑完（它约 25 分钟）；它仍然执行四件事：按源码口径统计覆盖率、执行 baseline ratchet、报告 75-80%+ 的目标差距，并对新增/变更的可执行生产代码行执行 changed-line coverage。当前 baseline 记录在 `scripts/quality-gate/coverage-baseline.json`，CI 会优先对比 base branch 的 baseline，新增 PR 不允许覆盖率下降超过允许窗口。`coverage-baseline.json` 或 `coverage-thresholds.json` 变更必须由维护者加 `allow-coverage-baseline-change` 后才能合并。Quarantine 只用于维护者的 baseline/release 追踪，不得隐藏确定性的 provider/chat 契约测试；当前普通 PR gate 不依赖 quarantine 才能通过。
-
-## AI Coding Agent 修复循环
-
-任务的完成标准是实现目标行为、运行当前 diff 必需的验证，并修复由本次改动造成的失败。任务范围内的本地编辑、隔离 fixture 检查和相关失败修复无需逐步请求批准；提交、推送、发布、仓库设置及真实模型额度仍遵循根 `AGENTS.md` 的授权边界。
-
-共享 checkout 中，同一文件同一时间只有一个写入者；依赖安装、构建和完整门禁只由一个执行者串行运行，读者不重复已委派的调查。恢复任务时先核对已有后台任务及其状态、当前候选和已有证据；副作用是否完成不明时，不盲目重放命令。
-
-模块迭代先理解问题，再决定改法：对照预期行为与实际结果，阅读模块、调用方、已有测试和相关日志，沿真实调用链定位原因；把已观察到的证据、待验证的推测和未知项分开，不从文件名或代码外观推断缺陷。
-
-改动前明确契约与边界：输入、输出和错误如何传递；状态由谁持有、何时迁移和持久化；资源由谁创建、取消和释放；权限在哪个信任边界校验；哪些调用方、旧数据、协议与用户行为必须兼容。涉及跨进程或执行引擎时，对照[执行、数据与信任边界](execution-boundaries.md)，沿调用链完成必要修改，不另建隐藏执行路径。
-
-根据证据选择保留、修复、合并、重设计或验证后退役：保留行为正确且职责清晰的实现；修复已定位的缺陷；合并重复职责但保留原有校验和错误处理；只有现有契约无法满足目标时才重设计。退役前确认调用方和入口已迁移或不再使用，验证旧数据兼容、状态交接与资源清理，不能仅因命名陈旧或实现复杂就删除。
-
-质量看目标行为、边界是否清晰以及回归证据，不以机械改名、拆文件或代码行数衡量。重构服务于已确认的问题，不把与目标无关的结构调整混入修复。
-
-`bun run check:impact` 只选择检查范围，不证明行为正确；普通任务运行选中的检查，需要 PR-ready/full validation 时直接使用 `bun run verify`，不必先单独重复执行其全部 lane。修复期间先重跑受影响的窄检查，交付时补齐最终 diff 的所需证据。没有后续改动或未解决风险时，不要反复运行已经通过的检查。无关的现有失败或环境阻塞应准确报告，而不是为了让结果变绿擅自扩大修改范围。
-
-验证证据须绑定候选：完整 Git SHA、dirty diff 及相关未跟踪源码的内容指纹，并记录环境（OS/架构、工具版本与路径）、实际命令、退出状态、最终 summary 和日志；发布产物还须记录 SHA-256。相关源码、依赖或环境变化会使受影响的旧证据失效。运行未完成、缺最终 summary 或后台任务状态不明均不是 `passed`。
+主报告 `artifacts/quality-runs/<timestamp>/report.md` / `report.json` 内嵌范围、结果矩阵和 coverage 摘要，链接同目录的 `junit.xml`、`logs/*.log` 及 `artifacts/coverage/<timestamp>/coverage-report.md` / `.json`。
 
 当前 quality runner 在 lane 执行前后采集 `candidate.before` / `candidate.after`：完整 HEAD、HEAD→index 的 `indexDiffSha256`、index→worktree 的 `worktreeDiffSha256`，以及非 ignored 未跟踪文件的 `untrackedSha256`（按原始文件名字节排序，包含路径、权限、类型及内容身份；符号链接只记录链接目标字节，不跟随读取）。读取或 Git 失败的端点标记为 `unknown`，不是干净候选。`candidate.status` 为 `stable`、`changed` 或 `invalid`；`candidate.failures` 独立于 lane 计数，候选变化或未知会使总体 `status` 与 CLI 退出失败，JSON、Markdown 和 JUnit 也保留此失败，即使所有 lane 通过。
 
@@ -173,126 +183,28 @@ Changed-line 数字必须连同 `changedLines.scope` 阅读：它记录 `strateg
 
 Dirty fallback 仍只在存在未暂存 tracked 改动时触发；staged-only 可能选择 branch fallback，或在 main 上没有 diff。dirty coverage 不是整条分支覆盖率。diff/scope 采集失败会注明 unknown，但现有 empty-fallback 评分未改变；此时零行不证明没有变更，也不能宣称全分支达标。
 
-只有最终 diff 的 `bun run verify` 报告通过，才能声明 PR-ready/full validation。不要通过降低 coverage baseline/threshold 或改写测试预期掩盖失败。
-
-## 回归测试设计
-
-缺陷修复遵循 **RED → GREEN → 重构**：先补能通过真实入口复现缺陷的最小回归测试，运行并确认它因目标缺陷失败（RED），而不是因环境或 fixture 错误失败；再做最小修复让它通过（GREEN），最后在测试保持通过的前提下重构。无法复现时，如实记录尝试过的输入、环境、观察结果和证据缺口；不要把一直通过的测试说成已复现，也不要据此宣称缺陷已被证实修复。
-
-同区域测试文件是门禁的最低信号，测试还需要证明实际行为：
-
-- **驱动状态迁移。** 需要验证迁移时，通过 `handleServerMessage`、真实 store action 或用户事件产生状态，避免直接 `setState` 写出本应由迁移生成的结果。初始化 fixture 仍可直接设置状态。
-- **断言行为不变量。** 断言用户应看到哪个会话或模型的数据，而不是抄下当前屏幕的字符串；测试输入和预期应由预期行为契约支撑，不为掩盖失败而修改。
-- **覆盖丢弃与保留两个方向。** 验证去重、合并和过滤规则应丢弃及应保留的情况。消息去重尤其要拦住 replay、保留真实重复；透传上游 `uuid` / `toolUseId` 等身份，避免用文本猜测身份。
-- **跨边界测试连接点。** server、store、component 分别通过并不能证明消息真正驱动了 UI；从真实入口经过调用方和依赖，断言最终可观察行为，避免 mock 被测模块本身。
-- **验证失败与恢复。** 按改动风险覆盖错误、超时、取消、重试或重连；断言失败后的状态和资源清理、恢复后的可继续使用，以及不会重复执行已接受的副作用或越过权限边界。
-- **行为变化时保护旧兼容。** 仅当改动影响旧 key、路径或 marker 的行为时补兼容证据，不因命名陈旧就删除。涉及迁移时，用旧 fixture 验证部分失败后的重试，以及迁移成功后用户主动清除偏好、再次启动也不会被旧数据恢复；这是测试要求，不是已修复产品缺陷的声明。
-
-覆盖率报告也有边界：`desktop/vitest.config.ts` 只采集 `src/**`，不包含 Electron main process。仓库现有 Bun coverage baseline 中分支总数为 0，`coverage.ts` 把 `0/0` 显示为 100%；这不代表测到了全部分支。查看当前配置和报告，不把历史覆盖率数字当作新改动的证明。
-
-### 覆盖率参考
-
-外部参考口径：
-
-- [Google Testing Blog](https://testing.googleblog.com/2020/08/code-coverage-best-practices.html)：60% acceptable、75% commendable、90% exemplary；changed/per-commit coverage 90% 是合理下限。
-- [Microsoft Visual Studio / Azure DevOps 文档](https://learn.microsoft.com/en-us/visualstudio/test/using-code-coverage-to-determine-how-much-code-is-being-tested)：团队通常以约 80% 为目标，典型项目要求可为 75%，生成代码可以放宽。
-- [ChromiumOS EC](https://chromium.googlesource.com/chromiumos/platform/ec/+/main/docs/code_coverage.md)：新增或变更行要求至少 80% 覆盖。
-
-## 维护 Agent 指导
-
-根 `AGENTS.md` 保留项目约束与入口，专项规则留在对应目录，解释和示例按需放到文档。共享指导应适用于贡献者使用的不同模型；能力升级后重新核对重复流程和宽泛停止条件，不能据此跳过现行安全或 CI 契约。这次整理参考了 Eric Provencher 的 [Rethinking skills and prompts for GPT-6 Astra](https://x.com/pvncher/status/2095991462416490862)（2026-09-04）。
-
-长期个人偏好放用户级指导，不覆盖仓库约束；模块规则放最近的 `AGENTS.md` 或适用的目录规则，复杂操作流程放 skill。必须零例外执行的规则应由适用的权限、hook 或 CI 检查落实；自然语言指导不是已实现的强制门禁，新增自动化仍须遵守配置与授权边界。
-
-模块 README 应说明模块功能、职责与非职责、主要入口、依赖和数据归属，以及开发与验证命令；详细设计按需链接，不复制总仓库规则或保存临时任务日志。触达模块时主动核对说明与实现是否一致，报告实际缺口并修正范围内文档，不为凑齐模板批量重写无关模块。
-
-仓库技能的描述只写适用任务和必要的区分信息，操作细节放正文或引用文件。多工作流技能用短入口路由；避免为了覆盖更多关键词而扩大触发范围。模型默认值、工具格式和压缩行为属于产品实现，更新相关文档前应先核对源码。
-
-把可复现失败或规则冲突收敛为有界反馈：代码变化时先补最小行为回归，修复实际共享实现，运行选中的检查，再只更新最近的一处既有权威规则；不复制多份说明，也不以只匹配文档字符串的测试代替行为证据。分别写明要求、当前已实现的强制检查和待做工程。可按用户请求修改范围内指导，但不得自主扩权限、降门槛、退役行为或改未请求的全局配置，也不新增无止境循环或任务账本。
-
-## 功能质量契约
-
-所有新功能、bugfix 和行为变化都必须带着可验证证据交付。这条规则同时约束人和 AI Coding Agent：
-
-- 先声明变更面：`desktop`、`mobile`、`server`、`adapter`、`native`、`docs`、`provider/runtime`、`agent-loop` 或 `release`。
-- 可执行 JS/TS 生产代码变更必须同 PR 带同区域测试；`scripts/pr/change-policy.ts` 分别检查 `desktop/src/`、`src/server/`、其余 `src/` 和 `adapters/` 四个区域，除非维护者显式加 `allow-missing-tests`。文案或 CSS 等非可执行文件不因这一规则单独要求新增测试，仍需完成 impact 选中的检查。
-- 纯逻辑写单元测试；server/API/provider/runtime 写 API 或 request-shape 测试；桌面 UI/store/API 写 Vitest/Testing Library；跨 UI、WebSocket、provider proxy、native sidecar、发布打包的用户流程要补 E2E 或桌面 UI smoke。
-- agent loop、工具调用、provider 路由、模型选择、文件编辑、权限、会话恢复、桌面聊天改动，PR 内必须有 mock/fixture 测试；live smoke 或 baseline 仅在确定性检查通过且维护者明确授权额度后运行。发现本机 provider 不代表获得授权，未运行时如实说明。
-- 覆盖率是功能的一部分。本项目按 Google/Microsoft 风格执行：生成物/构建产物不计入产品覆盖率，维护中的产品区域要逐步达到 75-80%+，新增或变更的可执行生产代码行必须满足 `coverage-thresholds.json` 里的 changed-line coverage 门槛。
-- 不要为了过门禁随便降低 `coverage-baseline.json` 或 `coverage-thresholds.json`；确实要改时必须有 `allow-coverage-baseline-change` 和原因。历史低覆盖区域是技术债，新 PR 至少要让触达区域更好。
-- PR 描述必须写清楚：改了哪些文件、补了哪些测试、coverage 报告路径、E2E/live 报告路径或 blocker、剩余风险。
-
-## 本机 Push 前提醒
-
-push 不再自动运行本地质量门禁。需要质量检查时，请手动运行：
-
-```bash
-bun run quality:push
-```
-
-`bun run quality:push` 复用 PR gate 的 impact/policy/路径检查，但默认跳过耗时的 coverage lane；完整覆盖率仍保留在 `bun run verify`、`bun run quality:pr` 和 CI。
-
-仍然可以安装本机 pre-push hook，但它只打印非阻塞提醒，不会卡住 `git push`：
-
-```bash
-bun run hooks:install
-```
-
-拥有可信仓库环境和模型额度的维护者可以手动运行真实 provider smoke 和桌面 agent-browser smoke：
-
-```bash
-bun run quality:providers
-bun run quality:smoke -- --provider-model minimax:main:minimax-main
-```
-
-需要完整 live baseline 时使用：
-
-```bash
-bun run quality:gate --mode baseline --allow-live --provider-model minimax:main:minimax-main
-```
-
-## PR CI 合并门禁
-
-`.github/workflows/pr-quality.yml` 会在 PR `opened`、`synchronize`、`reopened`、`ready_for_review`、`labeled`、`unlabeled` 时触发，合入 `main` 后还会按这次 push 的改动范围再跑一次（标签类例外只在 PR 上判定，不会在 main 上重新阻塞）。`scope-plan` 不安装依赖，只负责稳定地产生影响面计划；`policy-enforcement` 独立安装锁定依赖并执行 policy，因此 policy 失败也不会吞掉产品测试结果。产品 job 只依赖 `scope-plan`，按路径选择 desktop、mobile、server、adapter、native、provider contract、chat contract、persistence、docs 和 coverage lane。最后的 `pr-quality-gate` 会严格核对每个 job：选中的必须 success，未选中的必须 skipped，cancelled 或缺失结果都不能误判为通过。server 和 desktop 两条最长的 lane 在 CI 里用 `--shard=<i>/<n>` 拆到多个 runner 并行，只为缩短墙钟时间：分片合起来恰好跑完整套检查（desktop 第一片顺带 lint、最后一片顺带 build），任一分片失败该 job 即失败；本地和每日全量不分片。
-
-`main` 的分支保护把 `pr-quality-gate` 设为 required status check，并且对管理员同样生效：红的 PR 谁都合不进去，所以发版也走 PR（见「发版步骤」）。CODEOWNER 自己提的 PR 不需要 `allow-cli-core-change` 标签，外部贡献者改 CLI 核心路径仍需维护者加标签。本机 hook 只做提醒，真正阻止低质量 merge 的是 PR gate。
+覆盖率采集还有边界：`desktop/vitest.config.ts` 只采集 `src/**`，不包含 Electron main process。仓库现有 Bun coverage baseline 中分支总数为 0，`coverage.ts` 把 `0/0` 显示为 100%；这不代表测到了全部分支。查看当前配置和报告，不把历史覆盖率数字当作新改动的证明。
 
 ### 门禁红了怎么办
 
-门禁只有在「绿 = 可以合」时才有用，所以 `main` 必须一直是绿的：
+- **本次行为变化导致失败**：先修复回归；只有预期行为确实改变才在同 PR 更新断言并说明原因，不改预期掩盖缺陷。
+- **无关既有失败**：对照 `main` 最近的 PR Quality（push）和全量；另开修复 PR 须获授权，不能立即修复就报告 blocker，不绕过必需 lane。Quarantine 仅供维护者 baseline/release 追踪，`check:quarantine` 审计 owner/到期日，不豁免普通 PR，也不隐藏确定性 provider/chat 契约。
+- **偶发失败**：`check:server` 单独重跑失败文件，`FLAKY`（重跑过）和 `FAILED`（仍失败）都使门禁失败；重跑用于诊断，修复竞态，不加长超时或放宽断言掩盖。隔离是最后手段，须记录原因和 owner。
+- **门禁需调整**：同步修改 `change-policy.ts`、workflow 和对应测试，运行 `check:policy`，有 `actionlint` 时也运行；保持 `pr-quality-gate` 名称和 blocking 语义，不擅改仓库保护。
 
-- **你改了行为，测试红了**：门禁在正常工作。在同一个 PR 里更新测试，说明为什么旧断言不再成立。
-- **红的不是你的改动造成的**：先看 `main` 上最近一次 PR Quality（push）和全量是否也红。是的话单独开 PR 修；不能立即修复就报告 blocker，不绕过必需的确定性 lane 合并。`scripts/quality-gate/quarantine.json` 仅供维护者 baseline/release 追踪（负责人、到期日由 `check:quarantine` 审计），不是 PR 必需门禁的豁免。
-- **偶发失败（flaky）**：`check:server` 会把失败的文件单独重跑一次，日志里标成 `FLAKY`（单独跑能过）或 `FAILED`（单独跑也挂），但两种情况门禁都是红的。`FLAKY` 说明是竞态，去修竞态本身（常见原因是断言了「最后一个请求」或依赖墙钟时间），不要给测试加长超时或放宽断言来掩盖。
-- **门禁本身要调整**：改 `scripts/pr/change-policy.ts`、workflow 和对应测试（`check:policy`），保持 `pr-quality-gate` 这个汇总检查名不变，分支保护就不用动。
+## 维护 Agent 指导
 
-## 按改动范围补充测试
+第一方规则从[根 AGENTS.md](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/AGENTS.md)按领域链接；个人偏好放用户级指导，不覆盖仓库约束。共享指导适配不同模型，能力升级后核对重复流程和宽泛停止条件，但不跳过安全/CI 契约。领域规则、实现和示例只维护最近的一处权威来源；复杂操作用 skill，描述仅说明适用任务和必要区分，多工作流用短路由，细节放正文/引用，不堆触发关键词。
 
-根据你改动的区域补充运行：
+模块 README 说明职责/非职责、入口、依赖、数据归属和开发验证命令，链接设计而不复制总仓规则或保存任务日志；触达时核对实现并修范围内缺口，不批量重写无关模块。模型默认值、工具格式、压缩行为等实现说明先核对源码。
 
-```bash
-bun run check:server      # 服务端 API、WebSocket、provider、会话等测试
-bun run check:desktop     # 桌面端 lint、Vitest、生产构建
-bun run check:mobile      # 移动端类型、lint、测试与离线 H5 导出
-bun run check:adapters    # IM adapter 测试
-bun run check:native      # 桌面 sidecar、Electron host 与 package-smoke 检查
-bun run check:provider-contract # Provider/runtime/proxy 的离线契约测试
-bun run check:chat-contract     # WebSocket、会话与桌面 chat store 契约测试
-bun run check:persistence-upgrade # 持久化迁移和旧 fixture 兼容性
-bun run check:docs        # 独立安装、构建并检查 site/ React 文档站
-bun run check:quarantine  # 维护者 baseline/release quarantine 审计
-bun run check:coverage    # root、desktop、adapters 覆盖率报告和 ratchet 门禁
-```
-
-如果只改了很窄的文件，先跑对应的定向测试即可；只有在声明 PR-ready/full validation 时才需要本地再跑 `bun run verify`，托管 CI 仍会执行所有被选中的必需 lane。
-
-可执行 JS/TS 生产代码改动必须带对应测试文件；同区域划分见上文 功能质量契约 和 `scripts/pr/change-policy.ts`，缺失时会触发阻断。只有维护者确认不适合自动化测试时，才能使用 `allow-missing-tests`。覆盖率 baseline/threshold 变更同样需要维护者确认并加 `allow-coverage-baseline-change`。
+可复现失败/规则冲突按有界闭环处理：最小行为回归 → 共享实现修复 → 选中检查 → 最近一处权威规则；文档字符串测试不能替代行为证据。区分要求、已实现的权限/hook/CI 强制检查及待做工程；必须零例外执行的规则应由适用权限、hook 或 CI 落实，自然语言不是强制门禁，新增自动化仍须遵守配置与授权边界。只改用户请求的范围，不自主扩权限、降门槛、退役行为、改全局配置或新增无止境循环/任务账本。
 
 ## 真实模型 Baseline
 
 `quality:baseline` 用来跑真实 Coding Agent 任务：启动本地服务端、创建隔离 fixture、让模型通过聊天修代码、跑测试，并保存 transcript、diff、verification log 和报告。它还会对 provider 进行 live smoke：已保存或当前激活的 OpenAI-compatible provider 会验证连通性、proxy 转换和流式 proxy 结果；env-only provider smoke 只验证上游连通性和转换管线。
 
-默认命令不会调用真实模型：
+普通 PR 不要求 live。维护者运行真实 smoke/baseline 前，须先通过确定性检查；本节专用前提还包括显式 `bun run verify` 通过（含所选阻塞 coverage）、provider 使用范围明确及额度授权，不能将它推广为普通提交/推送前提。机器上找到 provider 不等于获授权。默认命令不会调用真实模型：
 
 ```bash
 bun run quality:baseline
@@ -306,39 +218,21 @@ bun run quality:baseline
 bun run quality:providers
 ```
 
-输出示例：
-
-```text
-Saved providers:
-  MiniMax
-    selector: minimax
-    main: MiniMax-M2.7-highspeed
-      --provider-model minimax:main:minimax-main
-```
-
-复制输出里的参数运行 baseline：
+复制输出中的 `--provider-model` 参数（不要猜 UUID/模型 ID）：
 
 ```bash
-bun run quality:gate --mode baseline --allow-live --provider-model minimax:main:minimax-main
+bun run quality:gate --mode baseline --allow-live --provider-model <provider>:<model-or-role>:<label>
 ```
 
 如果只需要跑 provider smoke 和桌面 agent-browser smoke，而不跑全部 baseline case，可以使用：
 
 ```bash
-bun run quality:smoke --provider-model minimax:main:minimax-main
+bun run quality:smoke --provider-model <provider>:<model-or-role>:<label>
 ```
 
-可以一次跑多个模型：
+一次运行多个模型时重复 `--provider-model`。selector 来自桌面「设置 → 服务商」的本机配置，贡献者可用自己的 provider，无需维护者 UUID 或供应商。名称冲突时 `quality:providers` 输出 provider ID；模型 ID 含冒号时优先用角色，例如 `--provider-model custom:haiku:custom-haiku`，由脚本解析实际 ID。
 
-```bash
-bun run quality:gate --mode baseline --allow-live \
-  --provider-model codingplan:main:codingplan-main \
-  --provider-model minimax:main:minimax-main
-```
-
-`provider` selector 来自桌面端「设置 → 服务商」里保存的本机配置。别人 clone 代码后不需要知道你的 provider UUID，也不需要使用你的供应商；他们可以在自己的桌面端添加 provider 后运行 `bun run quality:providers` 选择自己的模型。
-
-如果没有保存 provider，也可以用环境变量跑一条 unsaved provider smoke：
+未保存 provider 时可用一次性环境变量跑 unsaved provider smoke；不得把真实 key 写入命令历史、日志或共享报告：
 
 ```bash
 QUALITY_GATE_PROVIDER_BASE_URL=https://example.com \
@@ -348,9 +242,9 @@ QUALITY_GATE_PROVIDER_API_FORMAT=openai_chat \
 bun run quality:gate --mode baseline --allow-live
 ```
 
-## 什么时候必须跑 Baseline
+### 什么时候必须跑 Baseline
 
-以下改动在确定性 contract/E2E 通过后，建议由可信维护者补跑 live baseline：
+以下改动在满足上述专用前提后，建议由可信维护者补跑 live baseline：
 
 - 桌面聊天、会话恢复、WebSocket、CLI bridge
 - provider/model/runtime 选择
@@ -368,7 +262,9 @@ bun run quality:gate --mode baseline --allow-live
 bun run quality:gate --mode release --allow-live --provider-model <selector>:main
 ```
 
-`quality:release` 是 release 模式的别名，真实调用仍需显式 `--allow-live` 和维护者额度授权。release 模式会组合 PR checks、baseline catalog、live baseline、native checks，并用当前平台 canonical release artifact 跑 `package-smoke --package-kind release`，但不等于运行全量层的全部检查。发版报告同样写入 `artifacts/quality-runs/<timestamp>/`。发布 workflow 的三组验证及汇总依赖见上文「四层门禁分工」；它们不直接调用 `bun run verify`，也不自动调用手动 live release gate。
+`quality:release` 是 release 模式的别名，真实调用仍需显式 `--allow-live` 和维护者额度授权。release 模式会组合 PR checks、baseline catalog、live baseline、native checks，并用当前平台 canonical release artifact 跑 `package-smoke --package-kind release`，但不等于运行全量层的全部检查。发版报告同样写入 `artifacts/quality-runs/<timestamp>/`。发布 workflow 另有下列确定性门禁，不自动调用手动 live release gate。
+
+`release-desktop.yml` 将同一候选提交交给 `verify-governance`（含 `check:product-identity` 和 `check:upstream-content`）、`verify-runtime` 和 `verify-desktop`。`verify-full-quality` 补跑其余确定性检查，包括覆盖率和 macOS Swift。恢复旧版本时，覆盖率对比候选第一父系上的前一版本。四组检查全部通过 `release-verify-gate`，且构建和签名前置检查成功后，`publish-release` 才能发布。
 
 发布证据应按目标 OS/架构区分以下层次，不能互相替代：
 
@@ -380,7 +276,7 @@ bun run quality:gate --mode release --allow-live --provider-model <selector>:mai
 | 安装 / 升级 / 数据保留 | 真实安装及从受支持旧版本升级，验证用户数据、自定义目录和设置保留 |
 | 签名 / 公证 / 启动策略 | 按平台及明确选择的发布模式验证签名、公证和 Gatekeeper；允许注明限制的未签名 macOS / Windows 包，未签名不等于签名验收通过 |
 
-每层记录所用候选（完整 SHA、dirty diff 和相关未跟踪源码指纹）、目标、命令、退出状态、summary、日志及产物 SHA-256，关联到实际发布的同一产物；重建或签名改变字节后须重新关联并验证受影响证据。下方平台矩阵仍全部受支持，不能用单一平台结果代替其他目标，也不能静默移除目标。`skipped`、`UNEXERCISED`、`blocked` / `not run` 不证明相应路径已覆盖；合法的不相关 skip 仍允许，这不改变 lane 状态或现有 blocking 规则。
+每层按[通用证据要求](#证据与失败诊断)记录候选、目标和产物 SHA-256，关联到实际发布的同一产物；重建或签名改变字节后须重新关联并验证受影响证据。下方平台矩阵仍全部受支持，不能用单一平台结果代替其他目标，也不能静默移除目标。`skipped`、`UNEXERCISED`、`blocked` / `not run` 不证明相应路径已覆盖；合法的不相关 skip 仍允许，这不改变 lane 状态或现有 blocking 规则。
 
 发布前用待发布的同一产物完成适用的原生启动、安装、旧版升级/数据保留及签名/公证验证；不要求尚未发布的候选已经出现在正式更新源中。正式发布后再验证旧版经线上 metadata、下载、安装和重启的真实更新链路（见下文），这项发布后证据不能倒写成发布前已经通过。
 
@@ -447,7 +343,7 @@ bun test scripts/pr/release-workflow.test.ts scripts/release-update-metadata.tes
 bun run check:policy
 ```
 
-正式执行 `bun run scripts/release.ts <version>` 前，先确认对应的 `release-notes/v<version>.md` 已经存在，并单独取得创建分支和提交的授权。非 dry-run 会创建 `release/vX.Y.Z` 分支并提交版本与 release notes，不创建 tag、不推送、不发布；默认只更新桌面版本，只有显式传入 `--mobile <patch|minor|major|x.y.z>` 才同时递增独立的移动版本。
+正式执行 `bun run scripts/release.ts <version>` 前，先确认对应的 `release-notes/v<version>.md` 已经存在，并核对当前已有授权是否覆盖创建分支和提交的副作用；只有未覆盖时才补充确认。非 dry-run 会创建 `release/vX.Y.Z` 分支并提交版本与 release notes，不创建 tag、不推送、不发布；默认只更新桌面版本，只有显式传入 `--mobile <patch|minor|major|x.y.z>` 才同时递增独立的移动版本。
 
 ### 发版步骤
 
@@ -470,43 +366,16 @@ bun run check:policy
 
 各平台的重点不同：macOS signed 模式要确认 release job 走的是签名产物且启动策略检查通过；unsigned 模式不验收自动更新，而应验证手动安装升级及数据保留，记录系统提示和 Computer Use 不可用的限制；Windows 要确认 `latest.yml` 和 `-win-x64.exe` / `-win-arm64.exe` 两个安装包都在 Release 资产里，未签名时的 SmartScreen 提示不代表 updater 失败；Linux 优先用 AppImage 验证自动更新，`.deb`、`.rpm` 只作手动安装包发布。
 
-## PR 提交流程
-
-1. 新建普通产品分支，例如 `fix/session-reconnect` 或 `feat/provider-quality-gate`。
-2. 安装依赖并完成改动。
-3. 为行为变化补测试。
-4. 运行相关定向测试。
-5. 可选：运行 `bun run hooks:install`，让后续 push 显示非阻塞提醒。
-6. 如果要声明 PR-ready/full validation，运行 `bun run verify`。
-7. 高风险改动由可信维护者运行 live baseline；外部贡献者记录未运行原因即可。
-8. 在 PR 描述里写清楚用户影响、测试命令、覆盖率/质量报告 summary、已知风险。
-
 ## 常见问题
 
 ### 没有 provider 可以跑吗？
 
-可以。运行影响面检查和它选中的确定性命令：
-
-```bash
-bun run check:impact
-```
-
-`bun run verify` 也不需要真实模型；只有 live baseline 需要。维护者可以先在桌面端 设置 → 服务商 添加自己的 provider，再运行：
-
-```bash
-bun run quality:providers
-```
+可以，按[影响面检查](#普通-pr-的影响面检查)运行确定性命令；`verify` 也不调用真实模型。只有明确授权的 live 才需要 provider，见[真实模型 Baseline](#真实模型-baseline)。
 
 ### provider selector 冲突怎么办？
 
-如果两个 provider 名称生成了相同 selector，`quality:providers` 会退回输出 provider ID。直接复制它给出的 `--provider-model ...` 即可。
+复制 `quality:providers` 的输出，不手工猜 selector；冲突回退和角色选择见[Baseline 参数说明](#真实模型-baseline)。
 
 ### 模型 ID 里带冒号怎么办？
 
-优先使用角色选择，例如：
-
-```bash
---provider-model custom:haiku:custom-haiku
-```
-
-脚本会把 `haiku` 解析成本机 provider 配置里的真实模型 ID。
+使用 [Baseline](#真实模型-baseline) 中的角色 selector 示例。

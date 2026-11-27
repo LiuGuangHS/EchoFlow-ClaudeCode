@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto'
 import type { Readable, Writable } from 'node:stream'
-import { adapterMigrationLifecycle } from './migration-lifecycle.js'
+import { quiesceAdapterProcess } from './migration-lifecycle.js'
 
 /** An inherited anonymous pipe is available only to the owning desktop host. */
 export function installAdapterMigrationControl(options: {
@@ -31,7 +31,7 @@ export function installAdapterMigrationControl(options: {
       const expected = Buffer.from(options.token)
       if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) continue
       stopping = true
-      void (options.quiesce ?? (() => adapterMigrationLifecycle.quiesce()))().then(() => {
+      void (options.quiesce ?? quiesceAdapterProcess)().then(() => {
         output.write(JSON.stringify({ type: 'migration_quiesced', requestId: request.requestId }) + '\n', () => exit(0))
       }, () => {
         output.write(JSON.stringify({ type: 'migration_quiesce_failed', requestId: request.requestId }) + '\n', () => exit(1))

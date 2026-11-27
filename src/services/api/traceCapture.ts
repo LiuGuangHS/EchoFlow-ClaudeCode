@@ -4,6 +4,8 @@ import { promises as fs } from 'fs'
 import type { Stats } from 'fs'
 import { dirname, isAbsolute, join, resolve } from 'path'
 import { getClaudeConfigHomeDir, isEnvDefinedFalsy, isEnvTruthy } from '../../utils/envUtils.js'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
+import { resolveManagedStoragePath } from '../../utils/managedStoragePath.js'
 import {
   openTraceIndexDatabase,
   type TraceIndexDatabase,
@@ -355,7 +357,12 @@ function currentTraceScopeContext(): TraceScopeContext {
   if (configuredDir && (!isAbsolute(configuredDir) || configuredDir.includes('\0'))) {
     throw traceResourceError('TRACE_INVALID_STORAGE_DIR', 'CC_HAHA_TRACE_DIR must be an absolute directory path')
   }
-  const storageDir = configuredDir ? resolve(configuredDir) : join(scope, 'cc-haha', 'traces')
+  let storageDir: string
+  try {
+    storageDir = resolveManagedStoragePath(configuredDir || join(getEchoFlowInternalDir(scope), 'traces'), 'CC_HAHA_TRACE_DIR')
+  } catch (error) {
+    throw traceResourceError('TRACE_INVALID_STORAGE_DIR', error instanceof Error ? error.message : String(error))
+  }
   // Keep the managed settings scope separate from the trace storage scope.
   // A custom directory gets its own disposable index under the existing
   // managed-path boundary, rather than sharing an index with another root.
@@ -366,7 +373,7 @@ function currentTraceScopeContext(): TraceScopeContext {
     target: {
       // The storage root may equal the config root, whose legacy index describes
       // a different JSONL directory. Never share that index with custom storage.
-      path: join(indexScope, 'cc-haha', 'db', configuredDir ? 'trace-storage-index-v1.sqlite' : 'trace-index-v1.sqlite'),
+      path: join(getEchoFlowInternalDir(indexScope), 'db', configuredDir ? 'trace-storage-index-v1.sqlite' : 'trace-index-v1.sqlite'),
       scope: indexScope,
       customStorage: Boolean(configuredDir),
     },
@@ -3451,7 +3458,7 @@ function sanitizeTraceFileName(sessionId: string): string {
 }
 
 function getManagedSettingsPath(scope = getClaudeConfigHomeDir()): string {
-  return join(scope, 'cc-haha', 'settings.json')
+  return join(getEchoFlowInternalDir(scope), 'settings.json')
 }
 
 function defaultTraceCaptureSettings(

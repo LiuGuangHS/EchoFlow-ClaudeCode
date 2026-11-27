@@ -232,6 +232,7 @@ export async function getWechatUpdates(params: {
   token: string
   getUpdatesBuf?: string
   timeoutMs?: number
+  signal?: AbortSignal
 }): Promise<WechatGetUpdatesResp> {
   try {
     const rawText = await apiPostFetch({
@@ -243,10 +244,12 @@ export async function getWechatUpdates(params: {
       }),
       token: params.token,
       timeoutMs: params.timeoutMs ?? GET_UPDATES_TIMEOUT_MS,
+      signal: params.signal,
       label: 'wechatGetUpdates',
     })
     return JSON.parse(rawText) as WechatGetUpdatesResp
   } catch (err) {
+    params.signal?.throwIfAborted()
     if (err instanceof Error && err.name === 'AbortError') {
       return { ret: 0, msgs: [], get_updates_buf: params.getUpdatesBuf }
     }
@@ -376,6 +379,7 @@ async function apiPostFetch(params: {
   body: string
   token?: string
   timeoutMs: number
+  signal?: AbortSignal
   label: string
 }): Promise<string> {
   const url = new URL(params.endpoint, ensureTrailingSlash(params.baseUrl))
@@ -386,7 +390,7 @@ async function apiPostFetch(params: {
       method: 'POST',
       headers: buildHeaders({ token: params.token, body: params.body }),
       body: params.body,
-      signal: controller.signal,
+      signal: params.signal ? AbortSignal.any([params.signal, controller.signal]) : controller.signal,
     })
     const rawText = await res.text()
     if (!res.ok) throw new Error(`${params.label} ${res.status}: ${rawText}`)

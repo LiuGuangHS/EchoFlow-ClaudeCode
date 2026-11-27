@@ -51,6 +51,22 @@ test('remote adapter prepares marker and handles missing key, replacement, disco
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
+test.each(['echoflow-connectors', 'haha-connectors'])('remote adapter binds catalog recipes and credential writes to the resolved %s identity', async marketplace => {
+  const f = fixture()
+  const actual = { ...definition, pluginId: `office-remote-fixture@${marketplace}` }
+  const catalogRecipe = { ...recipe, pluginId: 'office-remote-fixture@echoflow-connectors' }
+  const boundIds: string[] = []
+  const createBridge = f.dependencies.createBridge
+  const saveApiKey = f.dependencies.saveApiKey
+  f.dependencies.createBridge = bound => { boundIds.push(bound.pluginId); return createBridge(bound) }
+  f.dependencies.saveApiKey = (bound, key) => { boundIds.push(bound.pluginId); saveApiKey(bound, key) }
+  const adapter = createRemoteConnectorAdapter(actual, '/tmp/owned-remote-fixture', catalogRecipe, f.dependencies)
+  await adapter.configure!({ apiKey: 'fake-bound-secret' })
+  expect(boundIds).toEqual([actual.pluginId, actual.pluginId])
+  expect(catalogRecipe.pluginId).toBe('office-remote-fixture@echoflow-connectors')
+  expect(() => createRemoteConnectorAdapter({ ...actual, pluginId: 'office-remote-fixture@external' }, '/tmp/owned-remote-fixture', catalogRecipe, f.dependencies)).toThrow('identity')
+})
+
 test('remote adapter validates owned paths and configuration before side effects', async () => {
   const f = fixture()
   const adapter = createRemoteConnectorAdapter(definition, '/tmp/owned-remote-fixture', recipe, f.dependencies)

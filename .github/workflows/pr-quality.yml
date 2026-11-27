@@ -1,4 +1,5 @@
 name: PR Quality
+run-name: ${{ github.event.label && 'Labels' || 'Code' }} PR ${{ github.event.pull_request.number || 0 }} @ ${{ github.sha }}
 
 # Also runs after every merge to main, scoped to what that push changed. A gate
 # that only ever looks at pull requests lets main drift red unnoticed, and then
@@ -14,18 +15,18 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: pr-quality-${{ github.event.pull_request.number || github.sha }}
+  group: pr-quality-${{ github.event.pull_request.number || github.sha }}-${{ !github.event.label && 'code' || contains(fromJSON('["allow-cli-core-change","allow-missing-tests","allow-coverage-baseline-change"]'), github.event.label.name) && 'approval' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   scope-plan:
     name: scope-plan
+    if: ${{ (!github.event.label || contains(fromJSON('["allow-cli-core-change","allow-missing-tests","allow-coverage-baseline-change"]'), github.event.label.name)) || (github.event.action == 'labeled' && github.event.label.name == 'run-coverage') }}
     runs-on: ubuntu-latest
     outputs:
       areas: ${{ steps.policy.outputs.areas }}
       area_labels: ${{ steps.policy.outputs.area_labels }}
-      blocked: ${{ steps.policy.outputs.blocked }}
-      blocking_reasons: ${{ steps.policy.outputs.blocking_reasons }}
+      required_approval_labels: ${{ steps.policy.outputs.required_approval_labels || steps.metadata.outputs.required_approval_labels }}
       desktop_checks: ${{ steps.policy.outputs.desktop_checks }}
       mobile_checks: ${{ steps.policy.outputs.mobile_checks }}
       server_checks: ${{ steps.policy.outputs.server_checks }}
@@ -35,10 +36,11 @@ jobs:
       chat_contract_checks: ${{ steps.policy.outputs.chat_contract_checks }}
       agent_flow_checks: ${{ steps.policy.outputs.agent_flow_checks }}
       agent_e2e_checks: ${{ steps.policy.outputs.agent_e2e_checks }}
+      harness_checks: ${{ steps.policy.outputs.harness_checks }}
       persistence_checks: ${{ steps.policy.outputs.persistence_checks }}
       policy_checks: ${{ steps.policy.outputs.policy_checks }}
       docs_checks: ${{ steps.policy.outputs.docs_checks }}
-      coverage_checks: ${{ steps.policy.outputs.coverage_checks }}
+      coverage_checks: ${{ steps.policy.outputs.coverage_checks || steps.metadata.outputs.coverage_checks }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -85,12 +87,18 @@ jobs:
 
       - name: Build deterministic scope plan
         id: policy
-        run: bun run scripts/pr/change-policy.ts --files0 changed-files.nul --labels-file labels.txt --author-file author.txt --codeowners-file codeowners.txt --plan-only
+        if: ${{ !github.event.label }}
+        run: &plan bun run scripts/pr/change-policy.ts --files0 changed-files.nul --labels-file labels.txt --author-file author.txt --codeowners-file codeowners.txt --plan-only
+
+      - name: Read label requirements and coverage scope
+        id: metadata
+        if: github.event.label
+        run: *plan
 
   policy-enforcement:
     name: policy-enforcement
     needs: scope-plan
-    if: ${{ always() && needs.scope-plan.result == 'success' }}
+    if: ${{ !github.event.label && needs.scope-plan.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       # The public content audit runs on every PR and every main push, not only
@@ -113,6 +121,16 @@ jobs:
       - name: Audit public product content
         run: bun run check:upstream-content
 
+      - name: Record Bun version
+        id: bun-cache-version
+        if: needs.scope-plan.outputs.policy_checks == 'true'
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        if: needs.scope-plan.outputs.policy_checks == 'true'
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         if: needs.scope-plan.outputs.policy_checks == 'true'
         run: bun install --frozen-lockfile
@@ -120,24 +138,6 @@ jobs:
       - name: Run policy regression tests
         if: needs.scope-plan.outputs.policy_checks == 'true'
         run: bun run check:policy
-
-      - name: Enforce change policy
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BLOCKED: ${{ needs.scope-plan.outputs.blocked }}
-          BLOCKING_REASONS: ${{ needs.scope-plan.outputs.blocking_reasons }}
-        run: |
-          # Label-based exceptions are granted on the pull request. After the merge the
-          # labels are gone, so re-blocking main on them would only make main red.
-          if [ "$EVENT_NAME" != "pull_request" ]; then
-            echo "Change policy was enforced on the pull request"
-            exit 0
-          fi
-          if [ "$BLOCKED" = "true" ]; then
-            echo "::error::${BLOCKING_REASONS:-Change policy blocked this pull request}"
-            exit 1
-          fi
-          echo "Change policy passed"
 
   # Sharded for wall time, not selection: the shards together run every desktop
   # check (shard 1 also lints, the last also builds). Unsharded it took ~8 minutes.
@@ -157,6 +157,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -167,11 +175,13 @@ jobs:
       - name: Install adapter dependencies
         working-directory: adapters
         run: bun install --frozen-lockfile
-      # `bun run build` also exports the phone app (mobile/) into dist/m, and Expo needs Node 22.
+      # Only the last shard builds dist/m; the test-only shard does not need Expo.
       - uses: actions/setup-node@v5
+        if: matrix.shard == 2
         with:
           node-version: 22
       - name: Install mobile dependencies
+        if: matrix.shard == 2
         working-directory: mobile
         run: bun install --frozen-lockfile
       - name: Run desktop checks
@@ -192,6 +202,14 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install mobile dependencies
@@ -220,6 +238,14 @@ jobs:
           bun-version-file: package.json
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -239,6 +265,30 @@ jobs:
       - name: Run root runtime checks
         run: bun run check:server --shard=${{ matrix.shard }}/3
 
+  harness-checks:
+    name: harness-checks
+    needs: scope-plan
+    if: needs.scope-plan.outputs.harness_checks == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: harness/package-lock.json
+      - name: Install harness dependencies
+        run: npm --prefix harness ci
+      - name: Run independent harness suite
+        run: bun run --cwd harness test
+      - name: Run required repository harness audit
+        run: bun run audit:harness
+
   provider-contract-checks:
     name: provider-contract-checks
     needs: scope-plan
@@ -251,6 +301,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Run offline provider contracts
@@ -268,6 +326,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -288,6 +354,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Run deterministic agent flow
@@ -313,6 +387,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Run the agent loop against a mock LLM and recorded traffic
@@ -337,6 +419,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install adapter dependencies
         working-directory: adapters
         run: bun install --frozen-lockfile
@@ -362,6 +452,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -423,10 +521,21 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
         working-directory: desktop
+        run: bun install --frozen-lockfile
+      - name: Install adapter dependencies
+        working-directory: adapters
         run: bun install --frozen-lockfile
       - name: Run persistence upgrade contracts
         run: bun run check:persistence-upgrade
@@ -448,15 +557,11 @@ jobs:
       - name: Run docs checks
         run: npm --prefix site ci && npm --prefix site run build && npm --prefix site run check
 
-  # Advisory: reported on the pull request as its own check, never a merge blocker.
-  # None of the agent projects this gate was modelled on block on coverage, and a
-  # job that fails for reasons unrelated to the diff trains everyone to ignore the
-  # gate. It is also kept out of pr-quality-gate's needs: it takes ~25 minutes, and
-  # the required status used to wait for a lane that never decided it.
+  # An opt-in PR report reruns the suites with instrumentation against the PR base.
   coverage-checks:
     name: coverage-checks
     needs: scope-plan
-    if: github.event_name == 'pull_request' && needs.scope-plan.outputs.coverage_checks == 'true'
+    if: github.event_name == 'pull_request' && needs.scope-plan.outputs.coverage_checks == 'true' && contains(github.event.pull_request.labels.*.name, 'run-coverage') && (!github.event.label || (github.event.action == 'labeled' && github.event.label.name == 'run-coverage'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -468,6 +573,14 @@ jobs:
           bun-version-file: package.json
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Record Bun version
+        id: bun-cache-version
+        run: printf 'version=%s\n' "$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Bun downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-cache-version.outputs.version }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -502,8 +615,8 @@ jobs:
           path: artifacts/coverage/
           retention-days: 14
 
-  pr-quality-gate:
-    name: pr-quality-gate
+  pr-quality-technical:
+    name: pr-quality-technical
     needs:
       - scope-plan
       - policy-enforcement
@@ -514,12 +627,13 @@ jobs:
       - chat-contract-checks
       - agent-flow-checks
       - agent-e2e-checks
+      - harness-checks
       - adapter-checks
       - desktop-native-checks
       - macos-swift-checks
       - persistence-checks
       - docs-checks
-    if: always()
+    if: ${{ always() && !github.event.label }}
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected quality job to pass
@@ -560,6 +674,7 @@ jobs:
           require_selected "chat-contract-checks" "${{ needs.scope-plan.outputs.chat_contract_checks }}" "${{ needs.chat-contract-checks.result }}"
           require_selected "agent-flow-checks" "${{ needs.scope-plan.outputs.agent_flow_checks }}" "${{ needs.agent-flow-checks.result }}"
           require_selected "agent-e2e-checks" "${{ needs.scope-plan.outputs.agent_e2e_checks }}" "${{ needs.agent-e2e-checks.result }}"
+          require_selected "harness-checks" "${{ needs.scope-plan.outputs.harness_checks }}" "${{ needs.harness-checks.result }}"
           require_selected "adapter-checks" "${{ needs.scope-plan.outputs.adapter_checks }}" "${{ needs.adapter-checks.result }}"
           require_selected "desktop-native-checks" "${{ needs.scope-plan.outputs.desktop_native_checks }}" "${{ needs.desktop-native-checks.result }}"
           require_selected "macos-swift-checks" "${{ needs.scope-plan.outputs.desktop_native_checks }}" "${{ needs.macos-swift-checks.result }}"
@@ -569,3 +684,58 @@ jobs:
           if [ "$failures" -gt 0 ]; then
             exit 1
           fi
+
+  pr-quality-gate:
+    # A skipped job also creates a successful check, so reserve the required name.
+    name: ${{ (!github.event.label || contains(fromJSON('["allow-cli-core-change","allow-missing-tests","allow-coverage-baseline-change"]'), github.event.label.name)) && 'pr-quality-gate' || 'label-event' }}
+    if: ${{ always() && (!github.event.label || contains(fromJSON('["allow-cli-core-change","allow-missing-tests","allow-coverage-baseline-change"]'), github.event.label.name)) }}
+    needs: [scope-plan, pr-quality-technical]
+    permissions:
+      actions: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - name: Require candidate checks and current approvals
+        uses: actions/github-script@v7
+        env:
+          SCOPE: ${{ needs.scope-plan.result }}
+          TECHNICAL: ${{ needs.pr-quality-technical.result }}
+          REQUIRED_LABELS: ${{ needs.scope-plan.outputs.required_approval_labels }}
+        with:
+          script: |
+            if (process.env.SCOPE !== 'success') throw new Error('Scope plan failed')
+            const pr = context.payload.pull_request
+            const required = JSON.parse(process.env.REQUIRED_LABELS)
+            async function checkApprovals() {
+              const { data } = await github.rest.pulls.get({ ...context.repo, pull_number: pr.number })
+              if (data.head.sha !== pr.head.sha || data.base.sha !== pr.base.sha) throw new Error('PR candidate changed')
+              const missing = required.filter(label => !data.labels.some(current => current.name === label))
+              if (missing.length) throw new Error(`Maintainer approval required: ${missing.join(', ')}`)
+            }
+            if (!context.payload.label) {
+              if (process.env.TECHNICAL !== 'success') throw new Error('Technical checks failed')
+              if (pr) await checkApprovals()
+              return
+            }
+            await checkApprovals()
+            // Only code runs use this title. The merge SHA binds both parents and the tested tree.
+            const title = `Code PR ${pr.number} @ ${context.sha}`
+            const query = { ...context.repo, workflow_id: 'pr-quality.yml', event: 'pull_request', head_sha: pr.head.sha, per_page: 100 }
+            let run
+            for await (const page of github.paginate.iterator(github.rest.actions.listWorkflowRuns, query)) {
+              run = page.data.find(item => item.display_title === title)
+              if (run) break
+            }
+            if (!run) throw new Error('No code run for this PR candidate')
+            for (;;) {
+              const { data: current } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: run.id })
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+                ...context.repo, run_id: run.id, attempt_number: current.run_attempt, per_page: 100,
+              })
+              const technical = jobs.find(job => job.name === 'pr-quality-technical')
+              if (technical?.conclusion === 'success' && current.conclusion !== 'cancelled') break
+              if (technical?.conclusion || current.status === 'completed') throw new Error('Technical checks did not pass')
+              await new Promise(resolve => setTimeout(resolve, 30000))
+            }
+            await checkApprovals()

@@ -62,7 +62,7 @@ function makeRequest(
 }
 
 async function readDesktopUiFile(): Promise<Record<string, unknown>> {
-  const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'desktop-ui.json'), 'utf-8')
+  const raw = await fs.readFile(path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'), 'utf-8')
   return JSON.parse(raw) as Record<string, unknown>
 }
 
@@ -111,9 +111,9 @@ describe('DesktopUiPreferencesService', () => {
       avatarUpdatedAt: '2025-01-01T00:00:00.000Z',
       futureProfile: { keep: true },
     }
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
     const fixture = { schemaVersion: 4, profile, futureField: { keep: true } }
-    await fs.writeFile(path.join(tmpDir, 'cc-haha', 'desktop-ui.json'), JSON.stringify(fixture))
+    await fs.writeFile(path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'), JSON.stringify(fixture))
 
     const service = new DesktopUiPreferencesService()
     expect((await service.readPreferences()).preferences.profile).toEqual(profile)
@@ -137,8 +137,8 @@ describe('DesktopUiPreferencesService', () => {
       displayName: PRODUCT_NAME,
       subtitle: PRODUCT_REPO_URL.replace(/^https?:\/\//, ''),
     }
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-    await fs.writeFile(path.join(tmpDir, 'cc-haha', 'desktop-ui.json'), JSON.stringify(fixture))
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+    await fs.writeFile(path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'), JSON.stringify(fixture))
 
     const service = new DesktopUiPreferencesService()
     expect((await service.readPreferences()).preferences.profile).toEqual(expectedProfile)
@@ -165,17 +165,17 @@ describe('DesktopUiPreferencesService', () => {
     [{ displayName: 'Local Operator' }, { displayName: 'Local Operator', subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode' }],
     [{ displayName: '   ', subtitle: 42 }, { displayName: 'EchoFlow Code', subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode' }],
   ])('fills only missing or invalid profile fields: %j', async (profile, expected) => {
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-    await fs.writeFile(path.join(tmpDir, 'cc-haha', 'desktop-ui.json'), JSON.stringify({ schemaVersion: 4, profile }))
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+    await fs.writeFile(path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'), JSON.stringify({ schemaVersion: 4, profile }))
 
     const service = new DesktopUiPreferencesService()
     expect((await service.readPreferences()).preferences.profile).toEqual({ ...expected, avatarFile: null, avatarUpdatedAt: null })
   })
 
   test('normalizes old schema files and preserves unknown fields when updating sidebar preferences', async () => {
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'desktop-ui.json'),
+      path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'),
       JSON.stringify({
         schemaVersion: 4,
         futureField: { keep: true },
@@ -257,12 +257,12 @@ describe('DesktopUiPreferencesService', () => {
   })
 
   test('quarantines corrupt desktop-ui.json and reports defaults as missing', async () => {
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-    await fs.writeFile(path.join(tmpDir, 'cc-haha', 'desktop-ui.json'), '{bad json', 'utf-8')
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+    await fs.writeFile(path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'), '{bad json', 'utf-8')
 
     const service = new DesktopUiPreferencesService()
     const result = await service.readPreferences()
-    const files = await fs.readdir(path.join(tmpDir, 'cc-haha'))
+    const files = await fs.readdir(path.join(tmpDir, 'echoflow-code'))
 
     expect(result.exists).toBe(false)
     expect(result.preferences.sidebar.hiddenProjects).toEqual([])
@@ -342,9 +342,9 @@ describe('DesktopUiPreferencesService', () => {
   })
 
   test('normalizes invalid pet preferences while preserving unrelated fields', async () => {
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'desktop-ui.json'),
+      path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'),
       JSON.stringify({
         schemaVersion: 3,
         futureField: { keep: true },
@@ -384,7 +384,7 @@ describe('DesktopUiPreferencesService', () => {
     })
     const current = await readDesktopUiFile()
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'desktop-ui.json'),
+      path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'),
       JSON.stringify({ ...current, futureField: { keep: true } }),
       'utf-8',
     )
@@ -456,9 +456,9 @@ describe('DesktopUiPreferencesService', () => {
   })
 
   test('migrates a schema-3 pet to a hidden task panel while preserving other and unknown fields', async () => {
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'desktop-ui.json'),
+      path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'),
       JSON.stringify({
         schemaVersion: 3,
         futureField: { keep: true },
@@ -496,9 +496,9 @@ describe('DesktopUiPreferencesService', () => {
   })
 
   test('patches pet preferences without downgrading future schema or sibling fields', async () => {
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'desktop-ui.json'),
+      path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'),
       JSON.stringify({
         schemaVersion: 99,
         futureRoot: { keep: 'root' },
@@ -627,21 +627,21 @@ describe('DesktopUiPreferencesService', () => {
     expect(after.profile.avatarFile).toBe('profile/avatar.png')
     expect(typeof after.profile.avatarUpdatedAt).toBe('string')
 
-    const avatar = await fs.readFile(path.join(tmpDir, 'cc-haha', 'profile', 'avatar.png'))
+    const avatar = await fs.readFile(path.join(tmpDir, 'echoflow-code', 'profile', 'avatar.png'))
     expect([...avatar]).toEqual([137, 80, 78, 71])
   })
 
   test('clears only managed profile avatar files', async () => {
     const service = new DesktopUiPreferencesService()
     await service.updateProfileAvatar(new Uint8Array([137, 80, 78, 71]), 'image/png')
-    await fs.writeFile(path.join(tmpDir, 'cc-haha', 'profile', 'local-note.txt'), 'keep me', 'utf-8')
+    await fs.writeFile(path.join(tmpDir, 'echoflow-code', 'profile', 'local-note.txt'), 'keep me', 'utf-8')
 
     const after = await service.clearProfileAvatar()
 
     expect(after.profile.avatarFile).toBeNull()
     expect(after.profile.avatarUpdatedAt).toBeNull()
-    await expect(fs.readFile(path.join(tmpDir, 'cc-haha', 'profile', 'avatar.png'))).rejects.toThrow()
-    await expect(fs.readFile(path.join(tmpDir, 'cc-haha', 'profile', 'local-note.txt'), 'utf-8')).resolves.toBe('keep me')
+    await expect(fs.readFile(path.join(tmpDir, 'echoflow-code', 'profile', 'avatar.png'))).rejects.toThrow()
+    await expect(fs.readFile(path.join(tmpDir, 'echoflow-code', 'profile', 'local-note.txt'), 'utf-8')).resolves.toBe('keep me')
   })
 
   test('rejects unsupported or oversized profile avatars', async () => {
@@ -905,7 +905,7 @@ describe('desktop UI preferences API', () => {
   test('keeps the profile readable when its managed avatar is missing or exceeds the upload limit', async () => {
     const service = new DesktopUiPreferencesService()
     await service.updateProfileAvatar(new Uint8Array([255, 216, 255]), 'image/jpeg')
-    const avatarPath = path.join(tmpDir, 'cc-haha', 'profile', 'avatar.jpg')
+    const avatarPath = path.join(tmpDir, 'echoflow-code', 'profile', 'avatar.jpg')
     await fs.unlink(avatarPath)
     const read = async () => {
       const request = makeRequest('GET', '/api/desktop-ui/preferences/profile')
@@ -1086,8 +1086,8 @@ describe('DesktopUiPreferencesService voiceInput section', () => {
   afterEach(teardown)
 
   async function writeDesktopUiFile(contents: Record<string, unknown>) {
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-    await fs.writeFile(path.join(tmpDir, 'cc-haha', 'desktop-ui.json'), JSON.stringify(contents), 'utf-8')
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+    await fs.writeFile(path.join(tmpDir, 'echoflow-code', 'desktop-ui.json'), JSON.stringify(contents), 'utf-8')
   }
 
   test('normalizes old schema files without voiceInput and preserves unknown fields', async () => {

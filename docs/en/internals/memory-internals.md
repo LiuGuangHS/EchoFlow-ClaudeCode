@@ -48,19 +48,7 @@ Path resolution priority (highest to lowest):
 3. {memoryBase}/projects/{sanitized-git-root}/memory/  <- Default computed path
 ```
 
-**Key source** `src/memdir/paths.ts:223`:
-
-```typescript
-export const getAutoMemPath = memoize(
-  (): string => {
-    const override = getAutoMemPathOverride() ?? getAutoMemPathSetting()
-    if (override) return override
-    const projectsDir = join(getMemoryBaseDir(), 'projects')
-    return join(projectsDir, sanitizePath(getAutoMemBase()), AUTO_MEM_DIRNAME) + sep
-  },
-  () => getProjectRoot(),  // Cache key = project root
-)
-```
+The implementation entry point is `src/memdir/paths.ts`. This priority selects a directory within the same bound data root; it does not authorize external writes. Environment and user-setting paths must also pass the root-containment check. An old external directory requires migration rather than being returned directly as the active location. The default `memoryBase` is `<data-root>`; user-data migration does not take over project-level `.claude` directories.
 
 ### Path Security Validation
 
@@ -325,11 +313,11 @@ Generates a manifest consumed by Sonnet or the extraction agent:
 
 ![Agent Memory Three-Level Scoping](./images/10-agent-memory.png)
 
-Subagents (launched via the Agent tool) have an independent three-level memory system:
+Subagents (launched via the Agent tool) have an independent three-level memory system. `<data-root>` is the unified data root described in [Environment Variables](../cli/env.md#local-runtime-and-privacy); project-level `.claude` paths are unchanged:
 
 | Scope | Path | Description |
 |-------|------|-------------|
-| **user** | `~/.claude/agent-memory/{agentType}/` | Global user-level |
+| **user** | `<data-root>/agent-memory/{agentType}/` | Global user-level |
 | **project** | `.claude/agent-memory/{agentType}/` | Project-level (committed to VCS) |
 | **local** | `.claude/agent-memory-local/{agentType}/` | Local-level (not committed) |
 
@@ -345,7 +333,7 @@ When the `TEAMMEM` feature flag is enabled:
 ### Directory Structure
 
 ```
-~/.claude/projects/{hash}/memory/
+<data-root>/projects/{hash}/memory/
 ├── MEMORY.md           <- Personal memory index
 ├── user_*.md           <- Personal memories
 └── team/               <- Team shared directory

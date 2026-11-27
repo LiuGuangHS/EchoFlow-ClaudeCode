@@ -7,6 +7,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { SettingsService } from '../services/settingsService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { conversationService } from '../services/conversationService.js'
 import { handleSettingsApi } from '../api/settings.js'
 import { handleModelsApi } from '../api/models.js'
@@ -1694,9 +1695,9 @@ describe('Models API', () => {
     it('reads the signed-in DeepSeek account listing even while another provider is active', async () => {
       const providerSvc = new ProviderService()
       await providerSvc.activateProvider('grok-official')
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+      await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
       await fs.writeFile(
-        path.join(tmpDir, 'cc-haha', 'deepseek-oauth.json'),
+        path.join(getEchoFlowInternalDir(tmpDir), 'deepseek-oauth.json'),
         JSON.stringify({ token: 'fake-account-token', issuer: 'https://platform.deepseek.com', deviceId: 'fake-device' }),
       )
       await fs.writeFile(

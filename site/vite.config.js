@@ -38,7 +38,10 @@ function docsManifestPlugin() {
         try {
           response.statusCode = 200
           response.setHeader('Content-Type', imageMimeTypes[extension])
-          response.end(await fs.readFile(sourcePath))
+          // Keep the public URL while serving the canonical product icon.
+          response.end(await fs.readFile(pathname === '/images/app-icon.png'
+            ? path.join(paths.repoDir, 'desktop/public/app-icon.png')
+            : sourcePath))
         } catch {
           next()
         }

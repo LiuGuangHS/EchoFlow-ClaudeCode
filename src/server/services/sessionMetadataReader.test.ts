@@ -28,6 +28,16 @@ async function read(content: string) {
   return { entries, scan, skipped }
 }
 
+test.each(['session-meta', 'session-archive'] as const)('retains boolean archive knowledge in oversized %s records without retaining ignored extensions', async type => {
+  for (const archived of [true, false]) {
+    const content = JSON.stringify({ type, archived, futureExtension: large }) + '\n'
+    const { entries, scan } = await read(content)
+    expect(scan).toMatchObject({ omittedRecords: 0, projectedRecords: 1, nextOffset: Buffer.byteLength(content) })
+    expect(entries).toEqual([{ entry: { type, archived }, complete: true, offset: 0 }])
+    expect(await readFile(file, 'utf8')).toBe(content)
+  }
+})
+
 test('large image bodies retain launch and context fields, including metadata after the body', async () => {
   const entry = { type: 'user', message: { content: [{ type: 'image', source: { data: large } }, { type: 'text', text: '你好 🌎' }], role: 'user' }, cwd: '/tmp/正确', uuid: 'turn', parentUuid: 'previous', parent_tool_use_id: 'agent', isSidechain: true, isMeta: false }
   const content = JSON.stringify(entry) + '\n'

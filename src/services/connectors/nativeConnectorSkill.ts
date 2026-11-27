@@ -1,4 +1,5 @@
 import type { ConnectorDefinition, ConnectorId, ConnectorInstallation } from './types.js'
+import { connectorPluginName } from './pluginIdentity.js'
 
 export const nativeConnectorRecipes: Record<ConnectorId, { name: string; help: string; task: string }> = {
   feishu: { name: '飞书 / Feishu', help: 'calendar --help', task: 'Read the user’s calendar agenda with calendar +agenda. Discover document commands with docs --help.' },
@@ -16,10 +17,10 @@ function powershellQuote(value: string) {
 
 
 export function renderNativeConnectorSkill(definition: ConnectorDefinition, installation: ConnectorInstallation): string {
-  const expectedName = `office-${definition.id}`
-  if (definition.pluginId !== `${expectedName}@haha-connectors` || !nativeConnectorRecipes[definition.id]) {
-    throw new Error('Invalid managed native connector identity')
-  }
+  let expectedName: string
+  try { expectedName = connectorPluginName(definition) }
+  catch { throw new Error('Invalid managed native connector identity') }
+  if (!nativeConnectorRecipes[definition.id]) throw new Error('Invalid managed native connector identity')
   const recipe = nativeConnectorRecipes[definition.id]!
   const command = [installation.command, ...installation.args]
   // Only adapter-owned non-secret environment entries belong in skill text.

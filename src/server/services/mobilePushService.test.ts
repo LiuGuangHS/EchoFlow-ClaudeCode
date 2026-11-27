@@ -17,7 +17,7 @@ function fixture(configured = true) {
   const service = new MobilePushService({ directory, transport, activities: async () => activities, summary: async () => ({ title: 'fixture session' }), now: () => now })
   service.start(() => remoteActive)
   cleanups.push(() => { service.stop(); rmSync(directory, { recursive: true, force: true }) })
-  return { service, directory, sent, transport, state: (value: MobileActivity[]) => { activities = value }, advance: (ms: number) => { now += ms }, revoke: () => { remoteActive = false } }
+  return { service, directory, sent, transport, now: () => now, state: (value: MobileActivity[]) => { activities = value }, advance: (ms: number) => { now += ms }, revoke: () => { remoteActive = false } }
 }
 
 test('configuration absence is normal unavailability and never records successful registration', () => {
@@ -197,7 +197,7 @@ test('stores written before relay providers load unchanged and keep using direct
   const migrated = migrateMobilePushStore(legacy)
   expect(migrated.registrations).toHaveLength(1)
   expect(migrateMobilePushStore({ ...legacy, registrations: [{ ...legacy.registrations[0], provider: 'carrier-pigeon' }] }).registrations).toEqual([])
-  const restarted = new MobilePushService({ directory: f.directory, transport: f.transport, activities: async () => [{ id: 's', activityState: 'waiting', requestId: 'q1', toolName: 'Bash' }], summary: async () => null })
+  const restarted = new MobilePushService({ directory: f.directory, now: f.now, transport: f.transport, activities: async () => [{ id: 's', activityState: 'waiting', requestId: 'q1', toolName: 'Bash' }], summary: async () => null })
   await restarted.tick()
   restarted.stop()
   expect(f.sent).toHaveLength(1)
@@ -731,14 +731,14 @@ test('explicit push test reports notConfigured and failures without credentials'
   const f = fixture()
   f.service.register(input(), {})
   let configured = false
-  const broken = new MobilePushService({ directory: f.directory, transport: { configured: () => configured, send: async () => { throw new Error(`APNs rejected ${input().token} bearer secret-jwt`) } }, activities: () => [], summary: async () => null })
+  const broken = new MobilePushService({ directory: f.directory, now: f.now, transport: { configured: () => configured, send: async () => { throw new Error(`APNs rejected ${input().token} bearer secret-jwt`) } }, activities: () => [], summary: async () => null })
   expect(await broken.sendTest(input().token, undefined, {})).toEqual({ status: 'notConfigured' })
   configured = true
   const result = await broken.sendTest(input().token, undefined, {})
   expect(result.status).toBe('failed')
   expect(JSON.stringify(result)).not.toContain(input().token)
   expect(JSON.stringify(result)).not.toContain('secret-jwt')
-  const invalid = new MobilePushService({ directory: f.directory, transport: { configured: () => true, send: async () => 'invalidToken' }, activities: () => [], summary: async () => null })
+  const invalid = new MobilePushService({ directory: f.directory, now: f.now, transport: { configured: () => true, send: async () => 'invalidToken' }, activities: () => [], summary: async () => null })
   expect((await invalid.sendTest(input().token, undefined, {})).status).toBe('failed')
   expect(await invalid.sendTest(input().token, undefined, {})).toEqual({ status: 'noRegistration' })
   void broken.stop(); void invalid.stop()

@@ -16,6 +16,7 @@ import {
   getRuntimeSettings,
   handleWebSocket,
   stopSessionTurn,
+  submitScheduledTaskTurn,
   __registerPendingSessionStartupForTests,
   translateCliMessage,
   type WebSocketData,
@@ -26,6 +27,7 @@ import {
 } from '../ws/disconnectGraceConfig.js'
 import { conversationService } from '../services/conversationService.js'
 import { ApiError } from '../middleware/errorHandler.js'
+import { migrationMaintenance } from '../migrationMaintenance.js'
 import { computerUseApprovalService } from '../services/computerUseApprovalService.js'
 import { sessionService } from '../services/sessionService.js'
 import { observeSessionTurns, type SessionTurnEvent } from '../services/sessionTurnEvents.js'
@@ -449,6 +451,139 @@ describe('WebSocket handler session title lifecycle', () => {
       sessionId,
       title: 'Design the renderer cache',
     })
+  })
+})
+
+describe('WebSocket approval maintenance gate', () => {
+  afterEach(() => {
+    migrationMaintenance.resetForTests()
+    __resetWebSocketHandlerStateForTests()
+    mock.restore()
+  })
+
+  it.each(['tool', 'computer_use'] as const)('rejects %s approval for every submitting client without consuming the pending owner', async (permissionType) => {
+    const sessionId = `maintenance-approval-${crypto.randomUUID()}`
+    const first = makeClientSocket(sessionId)
+    const second = makeClientSocket(sessionId)
+    const unrelated = makeClientSocket(`maintenance-unrelated-${crypto.randomUUID()}`)
+    const toolRequest = { requestId: 'maintenance-tool', toolName: 'ExitPlanMode', input: {}, autoAnswerDeadline: null }
+    const cuRequest = {
+      requestId: 'maintenance-cu', reason: 'Inspect another app', apps: [], requestedFlags: {},
+      screenshotFiltering: 'native' as const,
+    }
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue(null)
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation(() => {})
+    spyOn(conversationService, 'getPendingPermissionRequests').mockImplementation(id => id === sessionId ? [toolRequest] : [])
+    spyOn(conversationService, 'getPendingPermissionToolName').mockReturnValue(toolRequest.toolName)
+    const respond = spyOn(conversationService, 'respondToPermission').mockReturnValue(true)
+    const resolveCu = spyOn(computerUseApprovalService, 'resolveApproval')
+    const setModel = spyOn(conversationService, 'setModel').mockResolvedValue(true)
+    const interrupt = spyOn(conversationService, 'sendInterrupt').mockReturnValue(true)
+    const stop = spyOn(conversationService, 'stopSession').mockImplementation(() => {})
+    const start = spyOn(conversationService, 'startSession').mockResolvedValue()
+    const send = spyOn(conversationService, 'sendMessage').mockResolvedValue(true)
+    const metadata = spyOn(sessionService, 'appendSessionMetadata').mockResolvedValue()
+    for (const ws of [first, second, unrelated]) handleWebSocket.open(ws)
+    __markActiveTurnForTests(sessionId)
+    const approval = computerUseApprovalService.requestApproval(sessionId, cuRequest).catch(error => error)
+    const events: SessionTurnEvent[] = []
+    const unsubscribe = observeSessionTurns(event => { events.push(event) })
+    try {
+      for (const ws of [first, second, unrelated]) ws.sent.length = 0
+      migrationMaintenance.begin()
+      const requestId = permissionType === 'tool' ? toolRequest.requestId : cuRequest.requestId
+      const decision = JSON.stringify(permissionType === 'tool' ? {
+        type: 'permission_response', requestId, allowed: true,
+        runtimeOverride: { providerId: null, modelId: 'claude-sonnet-5' },
+      } : {
+        type: 'computer_use_permission_response', requestId,
+        response: { granted: [], denied: [], flags: { clipboardRead: false, clipboardWrite: false, systemKeyCombos: false }, userConsented: true },
+      })
+      for (const ws of [first, second]) handleWebSocket.message(ws, decision)
+      await flushMicrotasks(30)
+      const error = {
+        type: 'error', code: 'MIGRATION_IN_PROGRESS', message: 'Data migration is in progress',
+        requestId, permissionType, approvalOutcome: 'rejected',
+      }
+      for (const ws of [first, second]) expect(ws.sent.map(payload => JSON.parse(payload))).toEqual([error, error])
+      expect(unrelated.sent).toEqual([])
+      expect(conversationService.getPendingPermissionRequests(sessionId)).toEqual([toolRequest])
+      expect(computerUseApprovalService.getPendingRequests(sessionId)).toEqual([cuRequest])
+      for (const operation of [respond, resolveCu, setModel, interrupt, stop, start, send, metadata]) expect(operation).not.toHaveBeenCalled()
+      expect(events).toEqual([])
+      for (const ws of [first, second]) {
+        ws.sent.length = 0
+        handleWebSocket.message(ws, JSON.stringify({ type: 'sync_state' }))
+        expect(ws.sent.map(payload => JSON.parse(payload))).toEqual([
+          { type: 'input_turn_snapshot', messageUuids: [] },
+          { type: 'permission_request', ...toolRequest },
+          { type: 'computer_use_permission_request', requestId: cuRequest.requestId, request: cuRequest },
+          { type: 'permission_requests_snapshot', toolRequestIds: [toolRequest.requestId], computerUseRequestIds: [cuRequest.requestId], turnActive: true },
+          { type: 'session_state', turnState: 'running', activeBackgroundTaskIds: [] },
+        ])
+      }
+      migrationMaintenance.resetForTests()
+      await flushMicrotasks(30)
+      for (const operation of [respond, resolveCu, setModel, interrupt, stop, start, send, metadata]) expect(operation).not.toHaveBeenCalled()
+    } finally {
+      unsubscribe()
+      computerUseApprovalService.cancelSession(sessionId)
+      await approval
+    }
+  })
+
+  it.each([undefined, null, 42, {}, [], ''].map(requestId => ({ requestId })))('does not correlate malformed approval requestId %j during maintenance', ({ requestId }) => {
+    const first = makeClientSocket(`maintenance-invalid-${crypto.randomUUID()}`)
+    const second = makeClientSocket(first.data.sessionId)
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue(null)
+    handleWebSocket.open(first)
+    handleWebSocket.open(second)
+    first.sent.length = 0
+    second.sent.length = 0
+    migrationMaintenance.begin()
+    for (const type of ['permission_response', 'computer_use_permission_response']) {
+      handleWebSocket.message(first, JSON.stringify({ type, requestId }))
+    }
+    expect(first.sent.map(payload => JSON.parse(payload))).toEqual(Array(2).fill({
+      type: 'error', message: 'Data migration is in progress', code: 'MIGRATION_IN_PROGRESS',
+    }))
+    expect(second.sent).toEqual([])
+  })
+
+  it.each([false, true])('settles a rejected IM input during maintenance (active turn: %s)', active => {
+    const sessionId = crypto.randomUUID()
+    const ws = makeClientSocket(sessionId)
+    if (active) __markActiveTurnForTests(sessionId)
+    migrationMaintenance.begin()
+
+    handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content: 'Not admitted', replyAnchor: 'thread-a' }))
+
+    expect(ws.sent.map(payload => JSON.parse(payload))).toEqual([
+      { type: 'error', message: 'Data migration is in progress', code: 'MIGRATION_IN_PROGRESS', replyAnchor: 'thread-a' },
+      ...(active ? [] : [{ type: 'status', state: 'idle' }]),
+    ])
+  })
+
+  it('keeps ordinary messages blocked and ping available during maintenance', async () => {
+    const ws = makeClientSocket(`maintenance-ordinary-${crypto.randomUUID()}`)
+    const send = spyOn(conversationService, 'sendMessage').mockResolvedValue(true)
+    const interrupt = spyOn(conversationService, 'sendInterrupt').mockReturnValue(true)
+    const metadata = spyOn(sessionService, 'appendSessionMetadata').mockResolvedValue()
+    migrationMaintenance.begin()
+    for (const message of [
+      { type: 'user_message', content: 'Do not submit', requestId: 'not-an-approval' },
+      { type: 'stop_generation' },
+      { type: 'set_cli_runtime', cliRuntimeId: 'installed' },
+      { type: 'set_runtime_config', providerId: null, modelId: 'claude-sonnet-5' },
+    ]) handleWebSocket.message(ws, JSON.stringify(message))
+    handleWebSocket.message(ws, JSON.stringify({ type: 'ping' }))
+    await flushMicrotasks(30)
+    expect(ws.sent.map(payload => JSON.parse(payload))).toEqual([
+      ...Array(4).fill({ type: 'error', message: 'Data migration is in progress', code: 'MIGRATION_IN_PROGRESS' }),
+      { type: 'pong' },
+    ])
+    for (const operation of [send, interrupt, metadata]) expect(operation).not.toHaveBeenCalled()
   })
 })
 
@@ -889,6 +1024,7 @@ describe('WebSocket handler session isolation', () => {
 
     expect(second.sent.map((payload) => JSON.parse(payload))).toEqual([
       { type: 'connected', sessionId },
+      { type: 'input_turn_snapshot', messageUuids: [] },
       {
         type: 'computer_use_permission_request',
         requestId: request.requestId,
@@ -1000,6 +1136,13 @@ describe('WebSocket handler session isolation', () => {
 
     expect(ws.sent.map((payload) => JSON.parse(payload))).toEqual([
       { type: 'status', state: 'idle' },
+      { type: 'input_turn_snapshot', messageUuids: [] },
+      {
+        type: 'permission_requests_snapshot',
+        toolRequestIds: [],
+        computerUseRequestIds: [],
+        turnActive: false,
+      },
       { type: 'session_state', turnState: 'idle', activeBackgroundTaskIds: [] },
     ])
   })
@@ -1089,6 +1232,13 @@ describe('WebSocket handler session isolation', () => {
       {
         type: 'message_complete',
         usage: { input_tokens: 12, output_tokens: 3 },
+      },
+      { type: 'input_turn_snapshot', messageUuids: [] },
+      {
+        type: 'permission_requests_snapshot',
+        toolRequestIds: [],
+        computerUseRequestIds: [],
+        turnActive: false,
       },
       {
         type: 'session_state',
@@ -2904,15 +3054,17 @@ describe('WebSocket handler session isolation', () => {
       task_type: 'local_bash',
       description: 'Shell work in the runtime whose clear fails',
     })
-    handleWebSocket.message(first, JSON.stringify({ type: 'user_message', content: '/clear' }))
+    handleWebSocket.message(first, JSON.stringify({ type: 'user_message', content: '/clear', replyAnchor: 'private-thread' }))
     await flushMicrotasks(30)
 
     for (const client of [first, second]) {
-      expect(client.sent.map((payload) => JSON.parse(payload))).toContainEqual({
+      const clearErrors = client.sent.map(payload => JSON.parse(payload)).filter(msg => msg.code === 'SESSION_CLEAR_FAILED')
+      expect(clearErrors).toEqual([{
         type: 'error',
         message: 'transcript replacement failed',
         code: 'SESSION_CLEAR_FAILED',
-      })
+        ...(client === first ? { replyAnchor: 'private-thread' } : {}),
+      }])
       expect(client.sent.map((payload) => JSON.parse(payload))).toContainEqual({
         type: 'status',
         state: 'idle',
@@ -3270,6 +3422,90 @@ describe('WebSocket handler session isolation', () => {
     }, 3_000)
   })
 
+  it.each(['thread-a', null])('returns the committed SDK UUID and startup rejection to the originating reply anchor (%s)', async replyAnchor => {
+    const sessionId = crypto.randomUUID()
+    const ws = makeClientSocket(sessionId)
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation(() => {})
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue('Fixture')
+    const send = spyOn(conversationService, 'sendMessage').mockImplementation(async (_sid, _text, _files, options) => {
+      options?.onCommitted?.()
+      return true
+    })
+    const other = makeClientSocket(sessionId)
+    handleWebSocket.open(ws)
+    handleWebSocket.open(other)
+    handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content: 'same', replyAnchor: 'superseded' }))
+    handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content: 'same', replyAnchor }))
+    await flushMicrotasks(60)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(ws.sent.map(raw => JSON.parse(raw)).filter(msg => msg.type === 'input_committed')).toEqual([
+      { type: 'input_committed', messageUuid: send.mock.calls[0]?.[3]?.messageUuid, replyAnchor },
+    ])
+    expect(other.sent.map(raw => JSON.parse(raw)).some(msg => msg.type === 'input_committed')).toBe(false)
+    send.mockResolvedValue(false)
+    handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content: 'B', replyAnchor: 'thread-b' }))
+    await flushMicrotasks(60)
+    expect(ws.sent.map(raw => JSON.parse(raw))).toContainEqual(expect.objectContaining({ type: 'error', code: 'CLI_NOT_RUNNING', replyAnchor: 'thread-b' }))
+  })
+
+  it.each(['before commit', 'while queued', 'while running'])('restores a lost IM receipt only to its authenticated owner reconnecting %s', async reconnectAt => {
+    const sessionId = crypto.randomUUID()
+    const owner = crypto.randomUUID()
+    const makeOwnerSocket = (replyOwner: string, powerActivityLeaseAuthorized = true) => {
+      const socket = makeClientSocket(sessionId)
+      Object.assign(socket.data, { replyOwner, powerActivityLeaseAuthorized })
+      return socket
+    }
+    const submitting = makeOwnerSocket(owner)
+    const reconnect = makeOwnerSocket(owner)
+    const unrelated = makeOwnerSocket(crypto.randomUUID())
+    const unauthorized = makeOwnerSocket(owner, false)
+    const callbacks = new Set<(frame: any) => void>()
+    const emit = (frame: any) => { for (const callback of [...callbacks]) callback(frame) }
+    const emitStart = () => emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [sdkUuid] })
+    let sdkUuid: string | undefined
+    let commit!: () => void
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => { callbacks.add(callback) })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation((_sid, callback) => { callbacks.delete(callback) })
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue('Fixture')
+    const send = spyOn(conversationService, 'sendMessage').mockImplementation(async (_sid, _text, _files, options) => {
+      sdkUuid = options?.messageUuid
+      await new Promise<void>(resolve => { commit = () => { options?.onCommitted?.(); resolve() } })
+      return true
+    })
+
+    handleWebSocket.open(submitting)
+    handleWebSocket.message(submitting, JSON.stringify({ type: 'user_message', content: 'same prompt', replyAnchor: 'platform-secret' }))
+    await flushMicrotasks(30)
+    expect(send).toHaveBeenCalledTimes(1)
+    handleWebSocket.close(submitting)
+    if (reconnectAt !== 'before commit') commit()
+    if (reconnectAt === 'while running') emitStart()
+    handleWebSocket.open(reconnect)
+    handleWebSocket.open(unrelated)
+    handleWebSocket.open(unauthorized)
+    if (reconnectAt === 'before commit') commit()
+    if (reconnectAt !== 'while running') emitStart()
+
+    const frames = reconnect.sent.map(raw => JSON.parse(raw))
+    const receipt = frames.findIndex(frame => frame.type === 'input_committed')
+    const boundary = frames.findIndex(frame => ['input_turn_snapshot', 'input_turn_start'].includes(frame.type) && frame.messageUuids.includes(sdkUuid))
+    expect(frames[receipt]).toEqual({ type: 'input_committed', messageUuid: sdkUuid, replyAnchor: 'platform-secret' })
+    expect(boundary).toBeGreaterThan(receipt)
+    for (const other of [unrelated, unauthorized]) {
+      expect(other.sent.join('')).not.toContain('platform-secret')
+      expect(other.sent.join('')).not.toContain(owner)
+    }
+    expect(send).toHaveBeenCalledTimes(1)
+
+    emit({ type: 'result', subtype: 'success', is_error: false })
+    reconnect.sent.length = 0
+    handleWebSocket.message(reconnect, JSON.stringify({ type: 'sync_state' }))
+    expect(reconnect.sent.join('')).not.toContain('platform-secret')
+  })
+
   it('cancels the same pending user admission when Stop arrives before CLI startup', async () => {
     const sessionId = `stop-pending-admission-${crypto.randomUUID()}`
     const ws = makeClientSocket(sessionId)
@@ -3551,6 +3787,7 @@ describe('WebSocket handler session isolation', () => {
 
   it('does not attribute an interrupted result or stale replay to a replacement turn', async () => {
     const sessionId = `stop-replacement-boundary-${crypto.randomUUID()}`
+    let finishReplacementSend!: (sent: boolean) => void
     const ws = makeClientSocket(sessionId)
     const outputCallbacks = new Set<(cliMsg: any) => void>()
     const sentUuids: string[] = []
@@ -3568,6 +3805,7 @@ describe('WebSocket handler session isolation', () => {
       async (_sid, _content, _attachments, options) => {
         sentUuids.push(options?.messageUuid ?? '')
         options?.onCommitted?.()
+        if (sentUuids.length === 2) return new Promise<boolean>(resolve => { finishReplacementSend = resolve })
         return true
       },
     )
@@ -3627,6 +3865,20 @@ describe('WebSocket handler session isolation', () => {
       task_id: 'agent-before-replacement-replay',
     }, 3_000)
 
+    emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [sentUuids[0]] })
+    emit({ type: 'system', subtype: 'input_turn_start', message_uuids: ['batched', sentUuids[1]] })
+    emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'replacement output' }] } })
+    expect(ws.sent.map(raw => JSON.parse(raw)).filter(msg => ['input_turn_start', 'content_delta'].includes(msg.type))).toEqual([
+      { type: 'input_turn_start', messageUuids: ['batched', sentUuids[1]] },
+      { type: 'content_delta', text: 'replacement output' },
+    ])
+    finishReplacementSend(true)
+    const reconnect = makeClientSocket(sessionId)
+    handleWebSocket.open(reconnect)
+    for (const client of [reconnect, ws]) {
+      if (client === ws) handleWebSocket.message(ws, JSON.stringify({ type: 'sync_state' }))
+      expect(client.sent.map(raw => JSON.parse(raw))).toContainEqual({ type: 'input_turn_snapshot', messageUuids: ['batched', sentUuids[1]] })
+    }
     emit({
       type: 'user',
       isReplay: true,
@@ -3653,6 +3905,240 @@ describe('WebSocket handler session isolation', () => {
         output_tokens: 2,
       },
     })
+  })
+
+  it('restores the executing batch and a later tool-time replay across disconnects', async () => {
+    const sessionId = crypto.randomUUID()
+    const ws = makeClientSocket(sessionId)
+    const callbacks = new Set<(frame: any) => void>()
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => { callbacks.add(callback) })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation((_sid, callback) => { callbacks.delete(callback) })
+    spyOn(conversationService, 'sendMessage').mockResolvedValue(true)
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue('Existing title')
+    const emit = (frame: any) => { for (const callback of [...callbacks]) callback(frame) }
+    const replay = (uuid: string) => emit({ type: 'user', uuid, isReplay: true, message: { role: 'user', content: 'replayed' } })
+    const snapshot = (client: ReturnType<typeof makeClientSocket>) => client.sent.map(raw => JSON.parse(raw)).findLast(msg => msg.type === 'input_turn_snapshot')
+    handleWebSocket.open(ws)
+    handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content: 'run' }))
+    await flushMicrotasks(30)
+    emit({ type: 'system', subtype: 'input_turn_start', message_uuids: ['a', 'merged'] })
+    replay('a')
+    handleWebSocket.message(ws, JSON.stringify({ type: 'sync_state' }))
+    expect(snapshot(ws)?.messageUuids).toEqual(['a', 'merged'])
+    handleWebSocket.close(ws)
+    replay('b')
+    const reconnect = makeClientSocket(sessionId)
+    handleWebSocket.open(reconnect)
+    expect(snapshot(reconnect)?.messageUuids).toEqual(['b'])
+    emit({ type: 'result', subtype: 'success', is_error: false })
+    handleWebSocket.message(reconnect, JSON.stringify({ type: 'sync_state' }))
+    expect(snapshot(reconnect)?.messageUuids).toEqual([])
+  })
+
+  it.each([false, true])('completes A and then stopped B in CLI order (client reconnected: %s)', async reconnected => {
+    const sessionId = crypto.randomUUID()
+    let ws = makeClientSocket(sessionId)
+    const callbacks = new Set<(frame: any) => void>()
+    const uuids: string[] = []
+    const emit = (frame: any) => { for (const callback of [...callbacks]) callback(frame) }
+    const start = (id: string) => emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [id] })
+    const send = (content: string) => handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content }))
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => { callbacks.add(callback) })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation((_sid, callback) => { callbacks.delete(callback) })
+    spyOn(conversationService, 'sendInterrupt').mockReturnValue(true)
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue('Fixture')
+    spyOn(conversationService, 'sendMessage').mockImplementation(async (_sid, _text, _files, options) => {
+      uuids.push(options!.messageUuid!)
+      options?.onCommitted?.()
+      return true
+    })
+
+    handleWebSocket.open(ws)
+    send('A')
+    await flushMicrotasks(30)
+    start(uuids[0]!)
+    send('B')
+    await flushMicrotasks(30)
+    expect(uuids).toHaveLength(2)
+    if (reconnected) {
+      handleWebSocket.close(ws)
+      ws = makeClientSocket(sessionId)
+      handleWebSocket.open(ws)
+    }
+    ws.sent.length = 0
+    emit({ type: 'result', subtype: 'success', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } })
+    start(uuids[1]!)
+    handleWebSocket.message(ws, JSON.stringify({ type: 'stop_generation' }))
+    emit({ type: 'result', subtype: 'error', is_error: true, result: 'Interrupted', usage: { input_tokens: 2, output_tokens: 2 } })
+
+    expect(ws.sent.map(raw => JSON.parse(raw)).filter(msg => ['input_turn_start', 'message_complete', 'error'].includes(msg.type))).toEqual([
+      { type: 'message_complete', usage: { input_tokens: 1, output_tokens: 1 } },
+      { type: 'input_turn_start', messageUuids: [uuids[1]] },
+      { type: 'message_complete', usage: { input_tokens: 2, output_tokens: 2 } },
+    ])
+  })
+
+  it.each(['late start', 'empty batch', 'runtime exit', 'idle', 'Stop', 'Stop before start is observed', 'Stop between batches', 'held result followed by B', 'held result followed by a background batch', 'forced Stop', 'clear', 'restart'])('keeps IM receipt ownership across %s', async boundary => {
+    const sessionId = crypto.randomUUID()
+    let ws = makeClientSocket(sessionId)
+    Object.assign(ws.data, { replyOwner: 'fixture-owner', powerActivityLeaseAuthorized: true })
+    const callbacks = new Set<(frame: any) => void>()
+    const uuids: string[] = []
+    const emit = (frame: any) => { for (const callback of [...callbacks]) callback(frame) }
+    const start = (uuid: string) => emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [uuid] })
+    const result = (isError = false) => emit({ type: 'result', subtype: isError ? 'error' : 'success', is_error: isError, result: isError ? 'fixture exit or interrupt' : 'done' })
+    const request = (frame: object) => handleWebSocket.message(ws, JSON.stringify(frame))
+    const syncReceipts = () => {
+      ws.sent.length = 0
+      request({ type: 'sync_state' })
+      return ws.sent.map(raw => JSON.parse(raw)).filter(frame => frame.type === 'input_committed').map(frame => frame.replyAnchor)
+    }
+    let running = true
+    spyOn(conversationService, 'hasSession').mockImplementation(() => running)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => { callbacks.add(callback) })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation((_sid, callback) => { callbacks.delete(callback) })
+    spyOn(conversationService, 'sendInterrupt').mockReturnValue(true)
+    spyOn(conversationService, 'getSessionWorkDir').mockReturnValue(process.env.TMPDIR || '/tmp')
+    spyOn(conversationService, 'getSessionPermissionMode').mockReturnValue('default')
+    spyOn(conversationService, 'stopSession').mockImplementation(() => { running = false; callbacks.clear() })
+    spyOn(conversationService, 'clearOutputCallbacks').mockImplementation(() => { callbacks.clear() })
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue('Fixture')
+    spyOn(sessionService, 'shouldPersistSession').mockReturnValue(false)
+    spyOn(conversationService, 'sendMessage').mockImplementation(async (_sid, _text, _files, options) => {
+      uuids.push(options!.messageUuid!)
+      options?.onCommitted?.()
+      return true
+    })
+
+    handleWebSocket.open(ws)
+    request({ type: 'user_message', content: 'A', replyAnchor: 'thread-a' })
+    await flushMicrotasks(30)
+    if (boundary === 'empty batch') emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [] })
+    else if (boundary !== 'late start' && boundary !== 'Stop before start is observed') start(uuids[0]!)
+    if (boundary === 'held result followed by a background batch') {
+      emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [] })
+      result()
+      emit({ type: 'system', subtype: 'session_state_changed', state: 'idle' })
+      expect(getSessionTurnState(sessionId)).toBe('idle')
+      expect(syncReceipts()).toEqual([])
+      return
+    }
+    request({ type: 'user_message', content: 'B', replyAnchor: 'thread-b' })
+    await flushMicrotasks(30)
+    expect(uuids).toHaveLength(2)
+    expect(syncReceipts()).toEqual(['thread-a', 'thread-b'])
+
+    if (boundary === 'held result followed by B') {
+      start(uuids[1]!)
+      handleWebSocket.close(ws)
+      ws = makeClientSocket(sessionId)
+      Object.assign(ws.data, { replyOwner: 'fixture-owner', powerActivityLeaseAuthorized: true })
+      handleWebSocket.open(ws)
+      expect(ws.sent.map(raw => JSON.parse(raw)).filter(frame => frame.type === 'input_committed').map(frame => frame.replyAnchor)).toEqual(['thread-b'])
+      result()
+      expect(getSessionTurnState(sessionId)).toBe('idle')
+      expect(syncReceipts()).toEqual([])
+      return
+    }
+    if (boundary === 'runtime exit') {
+      running = false // ConversationService removes the exited runtime before dispatching this result.
+      result(true)
+      expect(getSessionTurnState(sessionId)).toBe('idle')
+      expect(syncReceipts()).toEqual([])
+      return
+    }
+    if (boundary === 'clear') {
+      const clear = spyOn(sessionService, 'clearSessionTranscript').mockResolvedValue()
+      request({ type: 'user_message', content: '/clear' })
+      await flushMicrotasks(30)
+      expect(clear).toHaveBeenCalled()
+      expect(syncReceipts()).toEqual([])
+      return
+    }
+    if (boundary === 'restart') {
+      spyOn(conversationService, 'getPendingPermissionToolName').mockReturnValue('ExitPlanMode')
+      spyOn(conversationService, 'respondToPermission').mockReturnValue(true)
+      const restart = spyOn(conversationService, 'startSession').mockImplementation(async () => { running = true })
+      spyOn(sessionService, 'getSessionLaunchInfo').mockResolvedValue({
+        filePath: '/tmp/fixture.jsonl', projectDir: '/tmp', workDir: '/tmp', transcriptMessageCount: 0,
+        customTitle: null, runtimeProviderId: 'deepseek', runtimeModelId: 'deepseek-v4-pro',
+      })
+      spyOn(sessionService, 'appendSessionMetadata').mockResolvedValue(undefined)
+      request({ type: 'permission_response', requestId: 'plan', allowed: true, runtimeOverride: { providerId: null, modelId: 'claude-sonnet-5' } })
+      await flushMicrotasks(30)
+      expect(conversationService.sendInterrupt).toHaveBeenCalledWith(sessionId)
+      result(true)
+      for (let attempt = 0; attempt < 20 && !restart.mock.calls.length; attempt++) await Bun.sleep(5)
+      await flushMicrotasks(30)
+      expect(restart).toHaveBeenCalledTimes(1)
+      expect(syncReceipts()).toEqual([])
+      return
+    }
+
+    if (boundary === 'forced Stop') {
+      const timeout = spyOn(globalThis, 'setTimeout').mockImplementation(() => 1 as any)
+      request({ type: 'stop_generation' })
+      const force = timeout.mock.calls.find(([, delay]) => delay === 3_000)?.[0] as (() => void) | undefined
+      expect(force).toBeDefined()
+      force?.()
+      expect(getSessionTurnState(sessionId)).toBe('idle')
+      expect(syncReceipts()).toEqual([])
+      return
+    }
+    if (boundary === 'empty batch') {
+      result()
+      expect(syncReceipts()).toEqual(['thread-a', 'thread-b'])
+      start(uuids[0]!)
+    }
+    const stop = boundary === 'Stop' || boundary === 'Stop before start is observed'
+    if (stop) request({ type: 'stop_generation' })
+    if (boundary === 'late start' || boundary === 'Stop before start is observed') start(uuids[0]!)
+    result(stop)
+    if (boundary === 'idle') emit({ type: 'system', subtype: 'session_state_changed', state: 'idle' })
+    expect(getSessionTurnState(sessionId)).toBe('running')
+    expect(syncReceipts()).toEqual(['thread-b'])
+    if (boundary === 'Stop between batches') {
+      const timeout = spyOn(globalThis, 'setTimeout').mockImplementation(() => 1 as any)
+      request({ type: 'stop_generation' })
+      const force = timeout.mock.calls.find(([, delay]) => delay === 3_000)?.[0] as (() => void) | undefined
+      force?.()
+      expect(conversationService.stopSession).not.toHaveBeenCalled()
+    }
+    start(uuids[1]!)
+    emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'B output' }] } })
+    expect(ws.sent.map(raw => JSON.parse(raw))).toContainEqual({ type: 'content_delta', text: 'B output' })
+    result()
+    expect(getSessionTurnState(sessionId)).toBe('idle')
+    expect(syncReceipts()).toEqual([])
+  })
+
+  it('cancels a queued scheduled delivery without attributing the interrupted batch to it', async () => {
+    const sessionId = crypto.randomUUID()
+    const ws = makeClientSocket(sessionId)
+    const callbacks = new Set<(frame: any) => void>()
+    const emit = (frame: any) => { for (const callback of [...callbacks]) callback(frame) }
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => { callbacks.add(callback) })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation((_sid, callback) => { callbacks.delete(callback) })
+    spyOn(conversationService, 'sendInterrupt').mockReturnValue(true)
+    spyOn(conversationService, 'requestControl').mockResolvedValue({ status: 'queued' })
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue('Fixture')
+
+    handleWebSocket.open(ws)
+    await submitScheduledTaskTurn(sessionId, 'Scheduled input', {
+      messageId: 'scheduled-delivery', serverHost: '127.0.0.1', serverPort: 0,
+      scheduledTask: { taskId: 'task', runId: 'run', scheduledFor: '2026-01-01T00:00:00Z', taskName: 'Fixture' },
+    })
+    emit({ type: 'system', subtype: 'input_turn_start', message_uuids: [] })
+    handleWebSocket.message(ws, JSON.stringify({ type: 'stop_generation' }))
+    emit({ type: 'result', subtype: 'error', is_error: true, result: 'Interrupted' })
+
+    expect(getSessionTurnState(sessionId)).toBe('idle')
+    const complete = ws.sent.map(raw => JSON.parse(raw)).find(frame => frame.type === 'message_complete')
+    expect(complete).toBeDefined()
+    expect(complete.scheduledTask).toBeUndefined()
   })
 
   it('keeps consecutive Stop results ordered before a third replacement turn', async () => {
@@ -4471,6 +4957,7 @@ describe('WebSocket handler session isolation', () => {
     const events: SessionTurnEvent[] = []
     const unsubscribe = observeSessionTurns(event => { events.push(event) })
     const ws = makeClientSocket('permission-scheduler')
+    spyOn(conversationService, 'getPendingPermissionToolName').mockReturnValue('Read')
     const respond = spyOn(conversationService, 'respondToPermission').mockReturnValue(true)
     try {
       handleWebSocket.message(ws, JSON.stringify({ type: 'permission_response', requestId: 'approved', allowed: true }))
@@ -4513,6 +5000,7 @@ describe('WebSocket handler session isolation', () => {
     const sessionId = `permission-resolution-${crypto.randomUUID()}`
     const first = makeClientSocket(sessionId)
     const second = makeClientSocket(sessionId)
+    spyOn(conversationService, 'getPendingPermissionToolName').mockReturnValue('Read')
     spyOn(conversationService, 'respondToPermission').mockReturnValue(true)
     spyOn(computerUseApprovalService, 'resolveApproval').mockReturnValue(true)
 
@@ -4781,12 +5269,17 @@ describe('WebSocket handler session isolation', () => {
   it('approves ExitPlanMode with a cross-provider switch via restart and auto-continue', async () => {
     const sessionId = `plan-cross-provider-${crypto.randomUUID()}`
     const ws = makeClientSocket(sessionId)
+    const second = makeClientSocket(sessionId)
 
     let sessionRunning = true
+    let pending = true
     spyOn(conversationService, 'hasSession').mockImplementation(() => sessionRunning)
-    spyOn(conversationService, 'getPendingPermissionToolName').mockReturnValue('ExitPlanMode')
+    spyOn(conversationService, 'getPendingPermissionToolName').mockImplementation(() => pending ? 'ExitPlanMode' : undefined)
     spyOn(conversationService, 'getSessionWorkDir').mockReturnValue('/tmp')
-    spyOn(conversationService, 'respondToPermission').mockReturnValue(true)
+    spyOn(conversationService, 'respondToPermission').mockImplementation(() => {
+      pending = false
+      return true
+    })
     spyOn(conversationService, 'sendInterrupt').mockReturnValue(true)
     spyOn(conversationService, 'stopSession').mockImplementation(() => {
       sessionRunning = false
@@ -4818,10 +5311,11 @@ describe('WebSocket handler session isolation', () => {
     })
 
     handleWebSocket.open(ws)
+    handleWebSocket.open(second)
     // The approval bar sits on an active turn: the CLI is blocked waiting for
     // this permission, so stop_generation must interrupt it before restart.
     __markActiveTurnForTests(sessionId)
-    handleWebSocket.message(ws, JSON.stringify({
+    const decision = JSON.stringify({
       type: 'permission_response',
       requestId: 'perm-plan-2',
       allowed: true,
@@ -4829,7 +5323,10 @@ describe('WebSocket handler session isolation', () => {
         providerId: null,
         modelId: 'claude-sonnet-5',
       },
-    }))
+    })
+    handleWebSocket.message(ws, decision)
+    handleWebSocket.message(second, decision)
+    handleWebSocket.message(second, JSON.stringify({ type: 'permission_response', requestId: 'perm-plan-2', allowed: false }))
     await flushMicrotasks(30)
 
     expect(consoleError).not.toHaveBeenCalled()
@@ -4858,6 +5355,13 @@ describe('WebSocket handler session isolation', () => {
     await new Promise((resolve) => setTimeout(resolve, 100))
     await flushMicrotasks(30)
 
+    handleWebSocket.message(second, decision)
+    await flushMicrotasks(30)
+    expect(conversationService.respondToPermission).toHaveBeenCalledTimes(1)
+    expect(conversationService.sendInterrupt).toHaveBeenCalledTimes(1)
+    expect(conversationService.stopSession).toHaveBeenCalledTimes(1)
+    expect(conversationService.startSession).toHaveBeenCalledTimes(1)
+    expect(conversationService.sendMessage).toHaveBeenCalledTimes(1)
     // A runtime restart replaces only the lead's process; approved team
     // members are independent processes and keep working.
     expect(conversationService.stopSession).toHaveBeenCalledWith(sessionId, { keepTeamWorkers: true })
@@ -4916,9 +5420,202 @@ describe('WebSocket handler session isolation', () => {
     expect(sessionService.appendSessionMetadata).not.toHaveBeenCalled()
     expect(ws.sent.map((payload) => JSON.parse(payload))).toContainEqual({
       type: 'error',
-      message: 'Failed to apply the execution model. The plan is still waiting for approval.',
+      message: 'Failed to complete the execution model transition. Synchronize the session before continuing.',
       code: 'RUNTIME_CONFIG_INVALID',
+      requestId: 'perm-plan-3',
+      permissionType: 'tool',
+      approvalOutcome: 'uncertain',
     })
+
+    spyOn(conversationService, 'getPendingPermissionRequests').mockReturnValue([{
+      requestId: 'perm-plan-3', toolName: 'ExitPlanMode', input: {}, autoAnswerDeadline: null,
+    }])
+    ws.sent.length = 0
+    handleWebSocket.message(ws, JSON.stringify({ type: 'sync_state' }))
+    expect(ws.sent.map(payload => JSON.parse(payload))).toContainEqual(expect.objectContaining({
+      type: 'permission_request', requestId: 'perm-plan-3', autoAnswerDeadline: null,
+    }))
+    expect(ws.sent.map(payload => JSON.parse(payload))).toContainEqual(expect.objectContaining({
+      type: 'permission_requests_snapshot', toolRequestIds: ['perm-plan-3'], computerUseRequestIds: [],
+    }))
+  })
+
+  it.each(['model', 'metadata', 'unavailable'] as const)('keeps a failed %s side effect uncertain without replaying the transition', async (failure) => {
+    mockSavedDeepSeekProvider()
+    const sessionId = `plan-uncertain-${crypto.randomUUID()}`
+    const first = makeClientSocket(sessionId)
+    const second = makeClientSocket(sessionId)
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'getSessionWorkDir').mockReturnValue('/tmp')
+    spyOn(conversationService, 'getPendingPermissionToolName').mockReturnValue('ExitPlanMode')
+    spyOn(sessionService, 'getSessionLaunchInfo').mockResolvedValue({
+      filePath: '/tmp/plan-session.jsonl', projectDir: '/tmp', workDir: '/tmp',
+      transcriptMessageCount: 0, customTitle: null,
+      runtimeProviderId: 'deepseek', runtimeModelId: 'deepseek-v4-pro',
+    })
+    const setModel = spyOn(conversationService, 'setModel').mockImplementation(async () => {
+      if (failure === 'model') throw new Error('model command sent but acknowledgement lost')
+      return failure !== 'unavailable'
+    })
+    const metadata = spyOn(sessionService, 'appendSessionMetadata').mockImplementation(async () => {
+      throw new Error('metadata may have been persisted before failure')
+    })
+    const respond = spyOn(conversationService, 'respondToPermission').mockReturnValue(true)
+    const decision = JSON.stringify({
+      type: 'permission_response', requestId: 'uncertain-plan', allowed: true,
+      runtimeOverride: { providerId: 'deepseek', modelId: 'deepseek-v4-flash' },
+    })
+    handleWebSocket.message(first, decision)
+    handleWebSocket.message(second, decision)
+    await flushMicrotasks(40)
+    expect(first.sent.map(payload => JSON.parse(payload))).toContainEqual(expect.objectContaining({
+      type: 'error', requestId: 'uncertain-plan', permissionType: 'tool', approvalOutcome: 'uncertain',
+    }))
+    handleWebSocket.message(second, decision)
+    await flushMicrotasks(40)
+    expect(setModel).toHaveBeenCalledTimes(1)
+    expect(metadata).toHaveBeenCalledTimes(failure === 'metadata' ? 1 : 0)
+    expect(respond).not.toHaveBeenCalled()
+  })
+
+  it.each(['finalize', 'stop'] as const)('does not repeat plan approval after an uncertain %s boundary', async (failure) => {
+    const sessionId = `plan-boundary-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId)
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'getSessionWorkDir').mockReturnValue('/tmp')
+    spyOn(conversationService, 'getPendingPermissionToolName').mockReturnValue('ExitPlanMode')
+    spyOn(sessionService, 'getSessionLaunchInfo').mockResolvedValue({
+      filePath: '/tmp/plan-session.jsonl', projectDir: '/tmp', workDir: '/tmp',
+      transcriptMessageCount: 0, customTitle: null,
+      runtimeProviderId: 'deepseek', runtimeModelId: 'deepseek-v4-pro',
+    })
+    const metadata = spyOn(sessionService, 'appendSessionMetadata').mockResolvedValue(undefined)
+    const respond = spyOn(conversationService, 'respondToPermission').mockImplementation(() => {
+      if (failure === 'finalize') throw new Error('approval send outcome lost')
+      return true
+    })
+    const interrupt = spyOn(conversationService, 'sendInterrupt').mockImplementation(() => {
+      throw new Error('interrupt acknowledgement lost')
+    })
+    const start = spyOn(conversationService, 'startSession')
+    const decision = JSON.stringify({
+      type: 'permission_response', requestId: 'boundary-plan', allowed: true,
+      runtimeOverride: { providerId: null, modelId: 'claude-sonnet-5' },
+    })
+    handleWebSocket.message(ws, decision)
+    await flushMicrotasks(40)
+    expect(ws.sent.map(payload => JSON.parse(payload))).toContainEqual(expect.objectContaining({
+      type: 'error', requestId: 'boundary-plan', permissionType: 'tool', approvalOutcome: 'uncertain',
+    }))
+    handleWebSocket.message(ws, decision)
+    handleWebSocket.message(ws, JSON.stringify({ type: 'permission_response', requestId: 'boundary-plan', allowed: false }))
+    await flushMicrotasks(40)
+    expect(metadata).toHaveBeenCalledTimes(1)
+    expect(respond).toHaveBeenCalledTimes(1)
+    expect(interrupt).toHaveBeenCalledTimes(failure === 'stop' ? 1 : 0)
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('releases every submitting client after a definite plan approval rejection', async () => {
+    const sessionId = `rejected-plan-clients-${crypto.randomUUID()}`
+    const first = makeClientSocket(sessionId)
+    const second = makeClientSocket(sessionId)
+    spyOn(conversationService, 'getPendingPermissionToolName').mockReturnValue('ExitPlanMode')
+    handleWebSocket.open(first)
+    handleWebSocket.open(second)
+    const decision = JSON.stringify({
+      type: 'permission_response', requestId: 'invalid-shared-plan', allowed: true,
+      runtimeOverride: { providerId: null, modelId: ' ' },
+    })
+    handleWebSocket.message(first, decision)
+    handleWebSocket.message(second, decision)
+    await flushMicrotasks(30)
+    for (const ws of [first, second]) {
+      expect(ws.sent.map(payload => JSON.parse(payload))).toContainEqual(expect.objectContaining({
+        type: 'error', requestId: 'invalid-shared-plan', permissionType: 'tool', approvalOutcome: 'rejected',
+      }))
+    }
+  })
+
+  it('rejects invalid plan input before any side effect and replays the original owner request on sync', async () => {
+    const ws = makeClientSocket(`invalid-plan-${crypto.randomUUID()}`)
+    spyOn(conversationService, 'getPendingPermissionToolName').mockReturnValue('ExitPlanMode')
+    spyOn(conversationService, 'getPendingPermissionRequests').mockReturnValue([{
+      requestId: 'invalid-plan', toolName: 'ExitPlanMode', input: {}, autoAnswerDeadline: null,
+    }])
+    const setModel = spyOn(conversationService, 'setModel')
+    const respond = spyOn(conversationService, 'respondToPermission')
+    const metadata = spyOn(sessionService, 'appendSessionMetadata')
+    handleWebSocket.message(ws, JSON.stringify({
+      type: 'permission_response', requestId: 'invalid-plan', allowed: true,
+      runtimeOverride: { providerId: null, modelId: ' ' },
+    }))
+    await flushMicrotasks(30)
+    expect(ws.sent.map(payload => JSON.parse(payload))).toContainEqual(expect.objectContaining({
+      type: 'error', requestId: 'invalid-plan', permissionType: 'tool', approvalOutcome: 'rejected',
+    }))
+    expect(setModel).not.toHaveBeenCalled()
+    expect(respond).not.toHaveBeenCalled()
+    expect(metadata).not.toHaveBeenCalled()
+    ws.sent.length = 0
+    handleWebSocket.message(ws, JSON.stringify({ type: 'sync_state' }))
+    expect(ws.sent.map(payload => JSON.parse(payload))).toContainEqual(expect.objectContaining({
+      type: 'permission_request', requestId: 'invalid-plan', autoAnswerDeadline: null,
+    }))
+    expect(ws.sent.map(payload => JSON.parse(payload))).toContainEqual(expect.objectContaining({
+      type: 'permission_requests_snapshot', toolRequestIds: ['invalid-plan'], computerUseRequestIds: [],
+    }))
+  })
+
+  it.each(['owner-send', 'stop'] as const)('does not unlock a plan response after a failure at %s', async (failure) => {
+    const sessionId = `plan-finalize-fault-${crypto.randomUUID()}`
+    const first = makeClientSocket(sessionId)
+    const second = makeClientSocket(sessionId)
+    let pending = true
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'getPendingPermissionToolName').mockImplementation(() => pending ? 'ExitPlanMode' : undefined)
+    spyOn(sessionService, 'getSessionLaunchInfo').mockResolvedValue({
+      filePath: '/tmp/plan-session.jsonl', projectDir: '/tmp', workDir: '/tmp',
+      transcriptMessageCount: 0, customTitle: null,
+      runtimeProviderId: 'deepseek', runtimeModelId: 'deepseek-v4-pro',
+    })
+    spyOn(sessionService, 'appendSessionMetadata').mockResolvedValue()
+    const respond = spyOn(conversationService, 'respondToPermission').mockImplementation(() => {
+      pending = false
+      if (failure === 'owner-send') throw new Error('owner send failed after removing pending')
+      return true
+    })
+    const interrupt = spyOn(conversationService, 'sendInterrupt').mockImplementation(() => { throw new Error('interrupt failed') })
+    const start = spyOn(conversationService, 'startSession').mockResolvedValue()
+    handleWebSocket.open(first)
+    handleWebSocket.open(second)
+    __markActiveTurnForTests(sessionId)
+    const decision = JSON.stringify({
+      type: 'permission_response', requestId: 'finalize-plan', allowed: true,
+      runtimeOverride: { providerId: null, modelId: 'claude-sonnet-5' },
+    })
+    handleWebSocket.message(first, decision)
+    await flushMicrotasks(40)
+    expect(first.sent.map(payload => JSON.parse(payload))).toContainEqual(expect.objectContaining({
+      type: 'error', requestId: 'finalize-plan', permissionType: 'tool', approvalOutcome: 'uncertain',
+    }))
+    handleWebSocket.message(second, decision)
+    await flushMicrotasks(40)
+    expect(respond).toHaveBeenCalledTimes(1)
+    expect(interrupt).toHaveBeenCalledTimes(failure === 'stop' ? 1 : 0)
+    expect(start).not.toHaveBeenCalled()
+    handleWebSocket.message(second, JSON.stringify({ type: 'sync_state' }))
+    expect(second.sent.map(payload => JSON.parse(payload))).toContainEqual(expect.objectContaining({
+      type: 'permission_requests_snapshot', toolRequestIds: [], computerUseRequestIds: [],
+    }))
+  })
+
+  it('ignores late external approval responses before reaching the SDK owner', () => {
+    const ws = makeClientSocket(`late-approval-${crypto.randomUUID()}`)
+    spyOn(conversationService, 'getPendingPermissionToolName').mockReturnValue(undefined)
+    const respond = spyOn(conversationService, 'respondToPermission').mockReturnValue(true)
+    handleWebSocket.message(ws, JSON.stringify({ type: 'permission_response', requestId: 'already-resolved', allowed: true }))
+    expect(respond).not.toHaveBeenCalled()
   })
 
   it('only forwards boundary resolutions while Stop gates late unscoped output', () => {

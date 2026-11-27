@@ -16,12 +16,12 @@ import { currentInboundPowerLease } from '../../common/inbound-power-activity.js
 type Platform = 'feishu' | 'dingtalk' | 'wechat' | 'whatsapp'
 const platforms: Platform[] = ['feishu', 'dingtalk', 'wechat', 'whatsapp']
 const chatFor = (platform: Platform) => platform === 'dingtalk' ? 'dingtalk:dm:fixture-user' : `${platform}-chat`
-let feishu: typeof import('../index.js')
+let feishu: typeof import('../runtime.js')
 let feishuStartupWsClient: Lark.WSClient
-let dingtalk: typeof import('../../dingtalk/index.js')
+let dingtalk: typeof import('../../dingtalk/runtime.js')
 let dingtalkCardCallback: Parameters<DWClient['registerCallbackListener']>[1]
-let wechat: typeof import('../../wechat/index.js')
-let whatsapp: typeof import('../../whatsapp/index.js')
+let wechat: typeof import('../../wechat/runtime.js')
+let whatsapp: typeof import('../../whatsapp/runtime.js')
 let server: Bun.Server<{ sessionId: string }>
 let temporaryRoot: string
 let httpOrigin: string
@@ -37,6 +37,7 @@ let dingtalkDelivery: {
   delivered: string[]
   finishedCards: string[]
 } | undefined
+const snapshotIds = new Map<string, string[]>()
 const sentPrompts: Array<{ sessionId: string; content: string }> = []
 const activeLeases = new Set<string>()
 const acceptedLeases: string[] = []
@@ -117,7 +118,7 @@ beforeAll(async () => {
       open(socket) {
         socket.send(JSON.stringify({ type: 'connected' }))
         socket.send(JSON.stringify({
-          type: 'permission_requests_snapshot', toolRequestIds: [],
+          type: 'permission_requests_snapshot', toolRequestIds: snapshotIds.get(socket.data.sessionId) ?? [],
           turnActive: socket.data.sessionId === 'history-active',
         }))
       },
@@ -141,7 +142,7 @@ beforeAll(async () => {
     FEISHU_APP_ID: 'fixture-app', FEISHU_APP_SECRET: 'fixture-secret',
     DINGTALK_CLIENT_ID: 'fixture-client', DINGTALK_CLIENT_SECRET: 'fixture-secret',
     WECHAT_ACCOUNT_ID: 'fixture-account', WECHAT_BOT_TOKEN: 'fixture-token', WECHAT_BASE_URL: httpOrigin,
-    WHATSAPP_AUTH_DIR: path.join(temporaryRoot, 'whatsapp-auth'), CC_HAHA_LOCAL_ACCESS_TOKEN: '',
+    WHATSAPP_AUTH_DIR: path.join(temporaryRoot, '.claude', 'whatsapp-auth'), CC_HAHA_LOCAL_ACCESS_TOKEN: '',
   }
   Object.assign(process.env, env)
   fs.mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true })
@@ -171,8 +172,8 @@ beforeAll(async () => {
     }
     throw new Error(`External network is forbidden in this fixture: ${url.origin}${url.pathname}`)
   }) as typeof fetch
-  // Exercise the sidecar's actual startup branch, with only the external SDK
-  // boundary replaced. The later test checks both clients' transport wiring.
+  // Start the real runtimes without binding this shared test process. Admission
+  // runs in child fixtures; the later test checks both clients' transport wiring.
   let started!: () => void
   const startup = new Promise<void>(resolve => { started = resolve })
   const botInfo = spyOn(Lark.Client.prototype, 'request').mockImplementation(async () => ({
@@ -182,15 +183,13 @@ beforeAll(async () => {
     feishuStartupWsClient = this
     started()
   })
-  const originalArgv = [...process.argv]
   const shutdownSignals = ['SIGINT', 'SIGTERM'] as const
   const signalListeners = new Map(shutdownSignals.map(signal => [signal, new Set(process.listeners(signal))]))
-  process.argv.push('--feishu')
   try {
-    feishu = await import('../index.js')
+    feishu = await import('../runtime.js')
+    feishu.startFeishuAdapter()
     await startup
   } finally {
-    process.argv.splice(0, process.argv.length, ...originalArgv)
     botInfo.mockRestore()
     wsStart.mockRestore()
     for (const signal of shutdownSignals) {
@@ -205,11 +204,10 @@ beforeAll(async () => {
   })
   const connect = spyOn(DWClient.prototype, 'connect').mockResolvedValue(undefined)
   spies.push(spyOn(DWClient.prototype, 'socketCallBackResponse').mockImplementation(() => {}))
-  process.argv.push('--dingtalk')
   try {
-    dingtalk = await import('../../dingtalk/index.js')
+    dingtalk = await import('../../dingtalk/runtime.js')
+    dingtalk.startDingTalkAdapter()
   } finally {
-    process.argv.splice(0, process.argv.length, ...originalArgv)
     registerCallback.mockRestore()
     connect.mockRestore()
     for (const signal of shutdownSignals) {
@@ -218,8 +216,8 @@ beforeAll(async () => {
       }
     }
   }
-  wechat = await import('../../wechat/index.js')
-  whatsapp = await import('../../whatsapp/index.js')
+  wechat = await import('../../wechat/runtime.js')
+  whatsapp = await import('../../whatsapp/runtime.js')
   spies.push(spyOn(feishu.larkClient.im.message, 'create').mockImplementation(async (request: any) => {
     notices.push(String(request.data.content))
     return { code: 0, data: { message_id: `fixture-${++sequence}` } }
@@ -486,6 +484,8 @@ for (const platform of platforms) {
       const binding = adapter.sessionStore.get(chatId)?.sessionId
       await send(platform, '1')
       expect(adapter.sessionStore.get(chatId)?.sessionId).toBe(binding)
+      expect(adapter.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
+      await adapter.handleServerMessage(chatId, { type: 'permission_resolved', permissionType: 'tool', requestId: 'approval' })
       expect(adapter.getRuntimeState(chatId).pendingPermissionCount).toBe(0)
       await adapter.handleServerMessage(chatId, { type: 'permission_requests_snapshot', toolRequestIds: ['desktop-approval'], turnActive: true })
       await adapter.handleServerMessage(chatId, { type: 'permission_resolved', permissionType: 'tool', requestId: 'desktop-approval' })
@@ -530,6 +530,199 @@ for (const platform of platforms) {
     })
   })
 }
+
+async function permissionCard(platform: 'feishu' | 'dingtalk', requestId: string, userId = 'fixture-user') {
+  if (platform === 'feishu') {
+    return feishu.handleCardAction({
+      operator: { open_id: userId }, context: { open_chat_id: chatFor(platform) },
+      action: { value: { action: 'permit', requestId, allowed: true } },
+    })
+  }
+  await dingtalkCardCallback({
+    specVersion: '1.0', type: 'CALLBACK',
+    headers: { appId: 'fixture-client', connectionId: 'fixture', contentType: 'application/json', messageId: `card-${++sequence}`, time: '0', topic: TOPIC_CARD },
+    data: JSON.stringify({
+      type: 'actionCallback', userId, outTrackId: `permission_${requestId}`,
+      content: JSON.stringify({ cardPrivateData: { params: { action: 'permit', requestId, allowed: true } } }),
+    }),
+  })
+}
+
+for (const platform of platforms) {
+  describe(`${platform} actual approval owner lifecycle`, () => {
+    const chatId = chatFor(platform)
+    const requestId = 'owner-approval'
+    const request = { type: 'permission_request', requestId, toolName: 'Bash', input: { command: 'pwd' } }
+    const error = { type: 'error', permissionType: 'tool', requestId, message: 'Invalid signature thinking', approvalOutcome: 'rejected' }
+
+    beforeEach(async () => {
+      const adapter = adapterFor(platform)
+      adapter.clearTransientChatState(chatId)
+      adapter.sessionSelectionController.clear(chatId)
+      await send(platform, '/status')
+      await adapter.handleServerMessage(chatId, request)
+    })
+    afterEach(() => { adapterFor(platform).clearTransientChatState(chatId) })
+
+    it('counts unique requests and waits for owner resolution after a retryable send failure', async () => {
+      const adapter = adapterFor(platform)
+      const response = spyOn(adapter.bridge, 'sendPermissionResponse').mockReturnValueOnce(false).mockReturnValue(true)
+      try {
+        await adapter.handleServerMessage(chatId, request)
+        expect(adapter.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
+        await send(platform, '1')
+        expect(notices.at(-1)).toContain('权限响应发送失败')
+        await send(platform, '1')
+        expect(notices.at(-1)).toContain('已发送，等待服务端确认')
+        expect(adapter.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
+        await send(platform, '2')
+        expect(response).toHaveBeenCalledTimes(2)
+        expect(notices.at(-1)).toContain('请勿重复提交')
+        const before = notices.length
+        for (let i = 0; i < 2; i++) {
+          await adapter.handleServerMessage(chatId, { type: 'permission_resolved', permissionType: 'tool', requestId })
+        }
+        expect(adapter.getRuntimeState(chatId).pendingPermissionCount).toBe(0)
+        expect(notices.slice(before).filter(text => text.includes('已不再等待确认'))).toHaveLength(1)
+        expect(notices.at(-1)).not.toMatch(/已允许|已批准|已拒绝/)
+      } finally { response.mockRestore() }
+    })
+
+    it('unlocks only matching tool rejection and does not rebuild or reset on approval errors', async () => {
+      const adapter = adapterFor(platform)
+      const response = spyOn(adapter.bridge, 'sendPermissionResponse').mockReturnValue(true)
+      const binding = adapter.sessionStore.get(chatId)
+      const creationsBefore = newSessionCount
+      try {
+        await send(platform, '1')
+        for (const unrelated of [{ ...error, requestId: 'other' }, { ...error, permissionType: 'computer_use' }, { ...error, approvalOutcome: undefined }]) {
+          await adapter.handleServerMessage(chatId, unrelated)
+          expect(adapter.getRuntimeState(chatId)).toMatchObject({ state: 'permission_pending', pendingPermissionCount: 1 })
+          expect(adapter.sessionStore.get(chatId)).toEqual(binding)
+          await send(platform, '1')
+          expect(response).toHaveBeenCalledTimes(1)
+        }
+        expect(newSessionCount).toBe(creationsBefore)
+        await adapter.handleServerMessage(chatId, error)
+        expect(adapter.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
+        await send(platform, '3')
+        expect(response).toHaveBeenCalledTimes(2)
+        expect(response).toHaveBeenLastCalledWith(chatId, requestId, false, undefined)
+      } finally { response.mockRestore() }
+    })
+
+    it.each(['throw', 'uncertain'] as const)('keeps %s locked and requests the original owner state', async mode => {
+      const adapter = adapterFor(platform)
+      const response = spyOn(adapter.bridge, 'sendPermissionResponse').mockImplementation(() => {
+        if (mode === 'throw') throw new Error('delivery unknown')
+        return true
+      })
+      const sync = spyOn(adapter.bridge, 'requestSyncState').mockReturnValue(true)
+      const binding = adapter.sessionStore.get(chatId)
+      const creationsBefore = newSessionCount
+      try {
+        await send(platform, '1')
+        if (mode === 'uncertain') await adapter.handleServerMessage(chatId, { ...error, approvalOutcome: 'uncertain' })
+        expect(sync).toHaveBeenCalledTimes(1)
+        expect(sync).toHaveBeenCalledWith(chatId)
+        await send(platform, '1')
+        if (platform === 'feishu' || platform === 'dingtalk') await permissionCard(platform, requestId)
+        expect(response).toHaveBeenCalledTimes(1)
+        expect(adapter.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
+        expect(adapter.sessionStore.get(chatId)).toEqual(binding)
+        expect(newSessionCount).toBe(creationsBefore)
+      } finally { response.mockRestore(); sync.mockRestore() }
+    })
+
+    it('ignores partial, malformed and computer-use updates, then settles a tool snapshot once', async () => {
+      const adapter = adapterFor(platform)
+      const response = spyOn(adapter.bridge, 'sendPermissionResponse').mockReturnValue(true)
+      try {
+        await send(platform, '1')
+        const before = notices.length
+        for (const message of [
+          { type: 'permission_resolved', permissionType: 'computer_use', requestId },
+          { type: 'permission_requests_snapshot', turnActive: true },
+          { type: 'permission_requests_snapshot', computerUseRequestIds: [], turnActive: false },
+          { type: 'permission_requests_snapshot', toolRequestIds: [null], turnActive: false },
+          { type: 'permission_requests_snapshot', toolRequestIds: [], computerUseRequestIds: [1], turnActive: false },
+          { type: 'permission_requests_snapshot', toolRequestIds: [] },
+        ]) {
+          await adapter.handleServerMessage(chatId, message)
+          expect(adapter.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
+          await send(platform, '1')
+          expect(response).toHaveBeenCalledTimes(1)
+        }
+        const snapshot = { type: 'permission_requests_snapshot', toolRequestIds: [], turnActive: false }
+        await adapter.handleServerMessage(chatId, snapshot)
+        await adapter.handleServerMessage(chatId, snapshot)
+        await adapter.handleServerMessage(chatId, { type: 'permission_resolved', permissionType: 'tool', requestId })
+        expect(adapter.getRuntimeState(chatId)).toMatchObject({ state: 'idle', pendingPermissionCount: 0 })
+        expect(notices.slice(before).filter(text => text.includes('已不再等待确认'))).toHaveLength(1)
+      } finally { response.mockRestore() }
+    })
+
+    it('preserves the submission lock across reconnect but clears it on cleanup and new session', async () => {
+      const adapter = adapterFor(platform)
+      const response = spyOn(adapter.bridge, 'sendPermissionResponse').mockReturnValue(true)
+      const sessionId = adapter.sessionStore.get(chatId)!.sessionId
+      try {
+        await send(platform, '1')
+        snapshotIds.set(sessionId, [requestId])
+        adapter.bridge.resetSession(chatId)
+        await send(platform, '/status')
+        expect(adapter.bridge.getSessionId(chatId)).toBe(sessionId)
+        expect(adapter.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
+        await send(platform, '1')
+        expect(response).toHaveBeenCalledTimes(1)
+        adapter.clearTransientChatState(chatId)
+        await adapter.handleServerMessage(chatId, request)
+        await send(platform, '1')
+        expect(response).toHaveBeenCalledTimes(2)
+        await send(platform, '/new Fixture')
+        expect(adapter.getRuntimeState(chatId).pendingPermissionCount).toBe(0)
+        await adapter.handleServerMessage(chatId, request)
+        await send(platform, '1')
+        expect(response).toHaveBeenCalledTimes(3)
+      } finally { snapshotIds.delete(sessionId); response.mockRestore() }
+    })
+
+    if (platform === 'feishu' || platform === 'dingtalk') {
+      it.each(['text', 'card'] as const)('shares %s-first deduplication with the other entrypoint and retains the card recipient until settled', async first => {
+        const adapter = adapterFor(platform)
+        const response = spyOn(adapter.bridge, 'sendPermissionResponse').mockReturnValue(true)
+        try {
+          if (first === 'text') await send(platform, '1')
+          else await permissionCard(platform, requestId)
+          const toast = await permissionCard(platform, requestId)
+          if (platform === 'feishu') expect(toast.toast.content).toContain('等待服务端确认')
+          await send(platform, '1')
+          expect(response).toHaveBeenCalledTimes(1)
+          expect(adapter.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
+          await adapter.handleServerMessage(chatId, error)
+          await permissionCard(platform, requestId)
+          expect(response).toHaveBeenCalledTimes(2)
+          await adapter.handleServerMessage(chatId, { type: 'permission_resolved', permissionType: 'tool', requestId })
+          await permissionCard(platform, requestId)
+          expect(response).toHaveBeenCalledTimes(2)
+          expect(adapter.getRuntimeState(chatId).pendingPermissionCount).toBe(0)
+        } finally { response.mockRestore() }
+      })
+    }
+  })
+}
+
+it.each(['', 'outsider'])('rejects Feishu permission cards without an authorized operator (%s)', async userId => {
+  const chatId = chatFor('feishu')
+  feishu.clearTransientChatState(chatId)
+  await feishu.handleServerMessage(chatId, { type: 'permission_requests_snapshot', toolRequestIds: ['operator-approval'], turnActive: true })
+  const response = spyOn(feishu.bridge, 'sendPermissionResponse').mockReturnValue(true)
+  try {
+    expect((await permissionCard('feishu', 'operator-approval', userId)).toast.type).toBe('warning')
+    expect(response).not.toHaveBeenCalled()
+    expect(feishu.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
+  } finally { response.mockRestore(); feishu.clearTransientChatState(chatId) }
+})
 
 for (const platform of ['feishu', 'whatsapp'] as const) {
   describe(`${platform} outbound image boundary`, () => {
@@ -690,7 +883,7 @@ describe('DingTalk permission callback authorization', () => {
           if (boundary === 'recipient') {
             expect(response).toHaveBeenCalledTimes(1)
             expect(response).toHaveBeenCalledWith(chatId, requestId, decision.allowed, 'rule' in decision ? decision.rule : undefined)
-            expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(0)
+            expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
             await callback(envelope)
             expect(response).toHaveBeenCalledTimes(1)
           } else {
@@ -699,8 +892,10 @@ describe('DingTalk permission callback authorization', () => {
             fs.writeFileSync(configPath, originalConfig)
             await callback({ ...envelope, type: 'actionCallback', userId: 'fixture-user', outTrackId: `permission_${requestId}` })
             expect(response).toHaveBeenCalledTimes(1)
-            expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(0)
+            expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
           }
+          await dingtalk.handleServerMessage(chatId, { type: 'permission_resolved', permissionType: 'tool', requestId })
+          expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(0)
         } finally {
           fs.writeFileSync(configPath, originalConfig)
           response.mockRestore()
@@ -709,6 +904,21 @@ describe('DingTalk permission callback authorization', () => {
       })
     }
   }
+
+  it('fills the recipient from a real request after snapshot restoration without double counting', async () => {
+    const restoredId = 'restored-card'
+    await dingtalk.handleServerMessage(chatId, { type: 'permission_requests_snapshot', toolRequestIds: [restoredId], turnActive: true })
+    await dingtalk.handleServerMessage(chatId, { type: 'permission_request', requestId: restoredId, toolName: 'Bash', input: {} })
+    expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
+    const response = spyOn(dingtalk.bridge, 'sendPermissionResponse').mockReturnValue(true)
+    try {
+      await permissionCard('dingtalk', restoredId)
+      expect(response).toHaveBeenCalledTimes(1)
+      expect(response).toHaveBeenCalledWith(chatId, restoredId, true, undefined)
+      await dingtalk.handleServerMessage(chatId, { type: 'permission_resolved', permissionType: 'tool', requestId: restoredId })
+      expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(0)
+    } finally { response.mockRestore() }
+  })
 
   it('uses the pending request chat, not client-supplied chatId, and keeps failed sends pending', async () => {
     const otherChat = 'dingtalk:dm:other'
@@ -725,6 +935,8 @@ describe('DingTalk permission callback authorization', () => {
       expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
       await callback(envelope)
       expect(response).toHaveBeenCalledTimes(2)
+      expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(1)
+      await dingtalk.handleServerMessage(chatId, { type: 'permission_resolved', permissionType: 'tool', requestId })
       expect(dingtalk.getRuntimeState(chatId).pendingPermissionCount).toBe(0)
       expect(dingtalk.getRuntimeState(otherChat).pendingPermissionCount).toBe(1)
     } finally {

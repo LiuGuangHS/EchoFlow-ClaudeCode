@@ -1,0 +1,276 @@
+import { afterEach, expect, test } from 'bun:test'
+import { link, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { Readable } from 'node:stream'
+import { approveWhatsAppAdoption, executeDesktopStorageAdoption } from '../../desktop/electron/services/desktopStorageAdoption.js'
+import { runStorageAdoptionCommand } from './storageAdoption.js'
+import {
+  armWhatsAppStorageApproval, cancelColdStorageApproval, completeStorageMigration, executeStorageMigration,
+  previewWhatsAppAdoption, readApprovedStorageTransaction, readApprovedWhatsAppSources, recoverStorageMigration,
+} from './storageMigration.js'
+import { buildEchoFlowOwnershipMarker, resolveStorageBinding } from '../utils/echoFlowConfigRoot.js'
+import { createSandboxedTestEnvironment } from '../../scripts/pr/test-environment.js'
+
+const requireAdapter = createRequire(new URL('../../adapters/package.json', import.meta.url))
+const { useMultiFileAuthState } = await import(requireAdapter.resolve('@whiskeysockets/baileys/lib/Utils/use-multi-file-auth-state.js'))
+
+const accountJid = '15550100001@s.whatsapp.net'
+const appKey = 'fixture-key'
+const roots: string[] = []
+afterEach(async () => {
+  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
+})
+
+async function fixture(custom = false, missingKey = false) {
+  const home = await realpath(await mkdtemp(path.join(tmpdir(), 'whatsapp-storage-migration-')))
+  roots.push(home)
+  const binding = resolveStorageBinding({ env: {}, roots: [path.join(home, 'active')] })
+  const shared = path.join(home, '.claude')
+  const config = path.join(shared, 'adapters.json')
+  const directory = custom ? path.join(home, 'custom auth') : path.join(shared, 'whatsapp-auth', 'default')
+  await mkdir(shared)
+  await writeFile(path.join(shared, 'settings.json'), 'unrelated')
+  const configBytes = JSON.stringify({
+    whatsapp: { accountJid, ...(custom && { authDir: directory }) },
+    future: { keep: true },
+  }) + '\n'
+  await writeFile(config, configBytes)
+  const auth = await useMultiFileAuthState(directory)
+  auth.state.creds.me = { id: '15550100001:4@s.whatsapp.net' }
+  auth.state.creds.myAppStateKeyId = appKey
+  await auth.saveCreds()
+  await writeFile(path.join(directory, 'creds.json.bak'), await readFile(path.join(directory, 'creds.json')))
+  if (!missingKey) await auth.state.keys.set({ 'app-state-sync-key': { [appKey]: { keyData: Buffer.alloc(32, 42) } } })
+  const hooks = { assertQuiescent: async (directories: readonly string[]) => {
+    expect(directories.every(dir => dir.startsWith(home + path.sep))).toBe(true)
+  } }
+  return { home, binding, shared, config, configBytes, directory, auth, hooks }
+}
+
+test.each([false, true])('CLI migrates the whole account and preserves the saved config (custom path: %s)', async custom => {
+  const f = await fixture(custom)
+  const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)
+  const target = path.join(f.binding.root, preview.account.destination)
+  const input = Object.assign(Readable.from(['yes\n']), { isTTY: true })
+  const messages: string[] = []
+  const previousExitCode = process.exitCode
+  try {
+    await runStorageAdoptionCommand(['storage', 'adopt', 'whatsapp-auth', '--directory', f.directory, '--config', f.config], {
+      binding: f.binding, hooks: f.hooks, input,
+      output: { write: message => { messages.push(String(message)); return true } },
+    })
+    expect(messages.join('')).toContain('Storage adoption completed')
+    expect(messages.join('')).not.toContain(accountJid)
+    expect(messages.join('')).not.toContain(`app-state-sync-key-${appKey}.json`)
+    expect(await readFile(path.join(f.binding.root, 'adapters.json'), 'utf8')).toBe(f.configBytes)
+    expect(await Bun.file(f.config).exists()).toBe(false)
+    await expect(readdir(f.directory)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(path.join(f.shared, 'settings.json'), 'utf8')).toBe('unrelated')
+    const assertConsumer = async (root: string, expected: string) => {
+      const child = Bun.spawn([process.execPath, '--no-env-file', '--eval', `
+        import assert from 'node:assert/strict'
+        import { loadConfig } from './adapters/common/config.ts'
+        import { validateWhatsAppAuthDirectory } from './adapters/whatsapp/storageAdoption.ts'
+        const { authDir, accountJid } = loadConfig().whatsapp
+        assert.equal(authDir, process.env.EXPECTED_AUTH)
+        await validateWhatsAppAuthDirectory(authDir, accountJid)
+      `], {
+        cwd: path.resolve(import.meta.dir, '../..'),
+        env: createSandboxedTestEnvironment(f.home, {
+          CLAUDE_CONFIG_DIR: root, EXPECTED_AUTH: expected,
+          ...(custom && { WHATSAPP_AUTH_DIR: f.directory }),
+        }), stdout: 'ignore', stderr: 'inherit', timeout: 30_000,
+      })
+      expect(await child.exited).toBe(0)
+    }
+    await assertConsumer(f.binding.root, target)
+
+    const moved = resolveStorageBinding({ env: {}, roots: [path.join(f.home, 'moved')] })
+    const relocationsFile = 'storage-relocations.json'
+    const original = await Bun.file(path.join(f.binding.internalDir, relocationsFile)).json()
+    const mapping = original.mappings.find((item: { from: string }) => item.from === f.directory)
+    mapping.futureSource = { keep: true }
+    await writeFile(path.join(f.binding.internalDir, relocationsFile), JSON.stringify(original))
+    await mkdir(moved.internalDir, { recursive: true })
+    await writeFile(path.join(moved.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+    await writeFile(path.join(moved.internalDir, relocationsFile), JSON.stringify({ version: 2, previousRoots: [],
+      mappings: [{ from: f.directory, to: mapping.to, futureTarget: true }] }))
+    const result = await executeStorageMigration({ binding: moved,
+      sources: [{ directory: f.binding.root, markerRoot: f.binding.root }], hooks: f.hooks })
+    expect(result.state).toBe('validation-required')
+    expect((await completeStorageMigration(moved, result.id!, f.hooks, async () => {})).state).toBe('ready')
+    expect(await readFile(path.join(moved.root, 'adapters.json'), 'utf8')).toBe(f.configBytes)
+    const merged = await Bun.file(path.join(moved.internalDir, relocationsFile)).json()
+    expect(merged.mappings).toContainEqual({ ...mapping, futureTarget: true })
+    await assertConsumer(moved.root, path.join(moved.root, preview.account.destination))
+  } finally { process.exitCode = previousExitCode ?? 0 }
+}, 30_000)
+
+test('a cold WhatsApp launch resumes its transaction and preserves later account updates', async () => {
+  const f = await fixture(true)
+  await mkdir(f.binding.root)
+  await writeFile(path.join(f.binding.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+  const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)
+  const launch = await approveWhatsAppAdoption(f.binding, preview)
+  const validate = async () => { throw new Error('Unexpected desktop validation') }
+  const interrupted = await executeDesktopStorageAdoption(f.binding, launch, {
+    ...f.hooks, cleanupResources: async () => { throw new Error('Interrupted cleanup') },
+  }, validate)
+  expect(interrupted.state).toBe('cleanup-pending')
+  await expect(readdir(f.directory)).rejects.toMatchObject({ code: 'ENOENT' })
+  const invalid = { ...launch, proof: '0'.repeat(64) }
+  expect((await executeDesktopStorageAdoption(f.binding, invalid, f.hooks, validate)).state).toBe('blocked')
+  expect((await readApprovedStorageTransaction(f.binding, launch.id))?.state).toBe('cleanup-pending')
+  const recovered = await executeDesktopStorageAdoption(f.binding, launch, f.hooks, validate)
+  expect(recovered).toMatchObject({ state: 'ready', id: interrupted.id })
+  const key = path.join(f.binding.root, preview.account.destination, 'session-new.json')
+  await writeFile(key, '{}')
+  expect(await executeDesktopStorageAdoption(f.binding, launch, f.hooks, validate)).toEqual(recovered)
+  expect(await readFile(key, 'utf8')).toBe('{}')
+})
+
+test('a receipt with a different custom directory hash fails destination validation', async () => {
+  const f = await fixture(true)
+  await mkdir(f.binding.root)
+  await writeFile(path.join(f.binding.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+  const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)
+  const launch = await armWhatsAppStorageApproval(f.binding, preview)
+  const file = path.join(f.binding.internalDir, 'storage-approvals', `${launch.id}.json`)
+  const receipt = await Bun.file(file).json()
+  receipt.whatsapp.destination = path.join('whatsapp-auth', '0'.repeat(64))
+  await writeFile(file, JSON.stringify(receipt))
+  await expect(readApprovedWhatsAppSources(f.binding, launch)).rejects.toThrow('Invalid WhatsApp storage approval')
+  expect(await Bun.file(path.join(f.directory, 'creds.json')).exists()).toBe(true)
+})
+
+test('an existing config can bind a custom legacy directory without replacing the config', async () => {
+  const f = await fixture(true)
+  const activeConfig = path.join(f.binding.root, 'adapters.json')
+  await mkdir(f.binding.root)
+  await writeFile(path.join(f.binding.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+  await writeFile(activeConfig, f.configBytes)
+  const preview = await previewWhatsAppAdoption(f.binding, f.directory)
+  const sources = await readApprovedWhatsAppSources(f.binding, await armWhatsAppStorageApproval(f.binding, preview))
+  expect(sources).toHaveLength(1)
+  const result = await executeStorageMigration({ binding: f.binding, sources, hooks: f.hooks })
+  expect(result.state).toBe('validation-required')
+  expect((await completeStorageMigration(f.binding, result.id!, f.hooks)).state).toBe('ready')
+  expect(await readFile(activeConfig, 'utf8')).toBe(f.configBytes)
+  expect(await readFile(f.config, 'utf8')).toBe(f.configBytes)
+})
+
+test('CLI failure keeps the account identifier in rejected filenames private', async () => {
+  const f = await fixture()
+  const key = path.join(f.directory, `tctoken-${accountJid}.json`)
+  const other = path.join(f.shared, 'unrelated.json')
+  await writeFile(other, '{}')
+  await link(other, key)
+  const input = Object.assign(Readable.from(['yes\n']), { isTTY: true })
+  const messages: string[] = []
+  const previousExitCode = process.exitCode
+  try {
+    await runStorageAdoptionCommand(['storage', 'adopt', 'whatsapp-auth', '--directory', f.directory, '--config', f.config], {
+      binding: f.binding, hooks: f.hooks, input,
+      output: { write: message => { messages.push(String(message)); return true } },
+    })
+    expect(process.exitCode).toBe(1)
+    expect(messages.join('')).not.toContain(accountJid)
+    expect(await readFile(key, 'utf8')).toBe('{}')
+    expect(await readFile(f.config, 'utf8')).toBe(f.configBytes)
+  } finally { process.exitCode = previousExitCode ?? 0 }
+})
+
+test.each(['missing', 'empty'] as const)('rejects an app-state key that is %s before taking ownership of the cold approval', async key => {
+  const f = await fixture(false, true)
+  await mkdir(f.binding.root)
+  await writeFile(path.join(f.binding.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+  if (key === 'empty') await writeFile(path.join(f.directory, `app-state-sync-key-${appKey}.json`), '{}')
+  const snapshot = async () => Promise.all((await readdir(f.directory)).sort().map(async name => [name, await readFile(path.join(f.directory, name))]))
+  const before = await snapshot()
+  const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)
+  const launch = await armWhatsAppStorageApproval(f.binding, preview, true)
+  const sources = await readApprovedWhatsAppSources(f.binding, launch)
+  const result = await executeStorageMigration({ binding: f.binding, sources, hooks: f.hooks })
+  expect(result.state).toBe('blocked')
+  expect(result.issues.join()).toContain('WhatsApp authentication directory could not be validated')
+  expect(await readApprovedStorageTransaction(f.binding, launch.id)).toBeUndefined()
+  await cancelColdStorageApproval(f.binding, launch.id)
+  expect((await recoverStorageMigration(f.binding, f.hooks)).state).toBe('ready')
+  expect(await snapshot()).toEqual(before)
+  await expect(readdir(path.join(f.binding.root, preview.account.destination))).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await readFile(f.config, 'utf8')).toBe(f.configBytes)
+})
+
+test('stopping the cold migration before publication leaves the approval cancellable', async () => {
+  const f = await fixture()
+  await mkdir(f.binding.root)
+  await writeFile(path.join(f.binding.root, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+  const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)
+  const launch = await armWhatsAppStorageApproval(f.binding, preview, true)
+  const sources = await readApprovedWhatsAppSources(f.binding, launch)
+  const controller = new AbortController()
+  const result = await executeStorageMigration({ binding: f.binding, sources, hooks: {
+    ...f.hooks, signal: controller.signal,
+    assertQuiescent: async () => { controller.abort() },
+  } })
+  expect(result.state).toBe('blocked')
+  expect(await readApprovedStorageTransaction(f.binding, launch.id)).toBeUndefined()
+  await cancelColdStorageApproval(f.binding, launch.id)
+  expect(await Bun.file(path.join(f.directory, 'creds.json')).exists()).toBe(true)
+  expect(await readFile(f.config, 'utf8')).toBe(f.configBytes)
+})
+
+test('a late account file prevents acceptance and recovery finishes the same unchanged snapshot', async () => {
+  const f = await fixture()
+  const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)
+  const sources = await readApprovedWhatsAppSources(f.binding, await armWhatsAppStorageApproval(f.binding, preview))
+  const result = await executeStorageMigration({ binding: f.binding, sources, hooks: f.hooks })
+  expect(result.state).toBe('validation-required')
+  const added = path.join(f.directory, 'session-late.json')
+  await writeFile(added, '{}')
+  const blocked = await completeStorageMigration(f.binding, result.id!, f.hooks)
+  expect(blocked.state).toBe('blocked')
+  expect(blocked.issues.join()).toContain('Approved WhatsApp directory contents changed')
+  expect(await readFile(f.config, 'utf8')).toBe(f.configBytes)
+  expect(await Bun.file(path.join(f.directory, 'creds.json')).exists()).toBe(true)
+  expect(await Bun.file(added).exists()).toBe(true)
+  await rm(added)
+  expect((await recoverStorageMigration(f.binding, f.hooks)).state).toBe('validation-required')
+  expect((await completeStorageMigration(f.binding, result.id!, f.hooks)).state).toBe('ready')
+  expect((await recoverStorageMigration(f.binding, f.hooks)).state).toBe('ready')
+})
+
+test('a target file added after approval prevents the transaction from starting', async () => {
+  const f = await fixture()
+  const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)
+  const launch = await armWhatsAppStorageApproval(f.binding, preview)
+  const sources = await readApprovedWhatsAppSources(f.binding, launch)
+  const target = path.join(f.binding.root, preview.account.destination)
+  await mkdir(target, { recursive: true })
+  await writeFile(path.join(target, 'session-other.json'), '{}')
+  const result = await executeStorageMigration({ binding: f.binding, sources, hooks: f.hooks })
+  expect(result.state).toBe('blocked')
+  expect(result.issues.join()).toContain('Conflicting WhatsApp sign-in directories')
+  expect(await readApprovedStorageTransaction(f.binding, launch.id)).toBeUndefined()
+  expect(await readdir(target)).toEqual(['session-other.json'])
+  expect(await Bun.file(path.join(f.directory, 'creds.json')).exists()).toBe(true)
+  expect(await readFile(f.config, 'utf8')).toBe(f.configBytes)
+})
+
+test('a file added to the target after publication prevents acceptance', async () => {
+  const f = await fixture()
+  const preview = await previewWhatsAppAdoption(f.binding, f.directory, f.config)
+  const sources = await readApprovedWhatsAppSources(f.binding, await armWhatsAppStorageApproval(f.binding, preview))
+  const result = await executeStorageMigration({ binding: f.binding, sources, hooks: f.hooks })
+  expect(result.state).toBe('validation-required')
+  const added = path.join(f.binding.root, preview.account.destination, 'session-late.json')
+  await writeFile(added, '{}')
+  const blocked = await completeStorageMigration(f.binding, result.id!, f.hooks)
+  expect(blocked.state).toBe('blocked')
+  expect(blocked.issues.join()).toContain('WhatsApp sign-in copy is incomplete or contains unapproved files')
+  expect(await readFile(added, 'utf8')).toBe('{}')
+  expect(await readFile(f.config, 'utf8')).toBe(f.configBytes)
+  expect(await Bun.file(path.join(f.directory, 'creds.json')).exists()).toBe(true)
+})

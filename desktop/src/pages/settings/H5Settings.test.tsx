@@ -136,8 +136,12 @@ it('activates and deletes providers through the existing API without connection 
 it('changes browser appearance without writing connected computer settings', async () => {
   useUIStore.setState({ activeSettingsTab: 'general', followSystemTheme: true })
   const update = vi.spyOn(settingsApi, 'updateUser')
+  const select = vi.spyOn(useSettingsStore.getState(), 'setTheme')
+  const follow = vi.spyOn(useUIStore.getState(), 'setFollowSystemTheme')
   render(<H5Settings />)
   fireEvent.change(screen.getByLabelText('Appearance'), { target: { value: 'ink-blue' } })
+  expect(select).toHaveBeenCalledExactlyOnceWith('ink-blue', false)
+  expect(follow).not.toHaveBeenCalled()
   expect(useUIStore.getState().theme).toBe('ink-blue')
   expect(useUIStore.getState().followSystemTheme).toBe(false)
   expect(update).not.toHaveBeenCalled()

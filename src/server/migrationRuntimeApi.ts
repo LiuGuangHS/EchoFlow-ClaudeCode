@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { isLocalAccessAuthorized } from './localAccessAuth.js'
 import { isLoopbackHost } from './h5AccessPolicy.js'
 import { getClaudeConfigHomeDir } from '../utils/envUtils.js'
+import { getEchoFlowInternalDir } from '../utils/echoFlowConfigRoot.js'
 import { stripBOM } from '../utils/jsonRead.js'
 import { getGlobalClaudeFile } from '../utils/env.js'
 import { sessionService } from './services/sessionService.js'
@@ -43,7 +44,7 @@ export async function handleMigrationRuntimeRequest(
     if (request.method === 'GET' && pathname.endsWith('/validate')) {
       const root = getClaudeConfigHomeDir()
       if (!(await stat(root)).isDirectory()) throw new Error('Data directory is unavailable')
-      for (const configFile of [join(root, 'settings.json'), join(root, 'cc-haha', 'settings.json'), getGlobalClaudeFile()]) {
+      for (const configFile of [join(root, 'settings.json'), join(getEchoFlowInternalDir(root), 'settings.json'), getGlobalClaudeFile()]) {
         try {
           const config = JSON.parse(stripBOM(await readFile(configFile, 'utf8')))
           if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Invalid migrated configuration')

@@ -7,7 +7,7 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import * as os from 'os'
+import { getEchoFlowConfigDir } from '../../utils/echoFlowConfigRoot.js'
 import * as crypto from 'crypto'
 import { ApiError } from '../middleware/errorHandler.js'
 
@@ -102,7 +102,7 @@ export type AdapterFileConfig = {
 }
 
 function getConfigPath(): string {
-  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+  const configDir = getEchoFlowConfigDir()
   return path.join(configDir, 'adapters.json')
 }
 

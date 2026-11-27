@@ -102,6 +102,7 @@ export function PermissionDialog({ sessionId, requestId, toolName, input, descri
         input={input}
         description={description}
         isPending={isPending}
+        submitting={pendingPermission?.submitting === true}
         markerWhenPending={markerWhenPending}
       />
     )
@@ -217,6 +218,7 @@ export function PermissionDialog({ sessionId, requestId, toolName, input, descri
           variant="primary"
           size="base"
           aria-label={`${t('permission.allow')}: ${permissionContext}`}
+          disabled={pendingPermission?.submitting}
           onClick={() => targetSessionId && respondToPermission(targetSessionId, requestId, true)}
         >
           {t('permission.allow')}
@@ -225,6 +227,7 @@ export function PermissionDialog({ sessionId, requestId, toolName, input, descri
           variant="secondary"
           size="base"
           aria-label={`${t('permission.allowForSession')}: ${permissionContext}`}
+          disabled={pendingPermission?.submitting}
           onClick={() => targetSessionId && respondToPermission(targetSessionId, requestId, true, { rule: 'always' })}
         >
           {t('permission.allowForSession')}
@@ -234,6 +237,7 @@ export function PermissionDialog({ sessionId, requestId, toolName, input, descri
           variant="ghost"
           size="base"
           aria-label={`${t('permission.deny')}: ${permissionContext}`}
+          disabled={pendingPermission?.submitting}
           onClick={() => targetSessionId && respondToPermission(targetSessionId, requestId, false)}
         >
           {t('permission.deny')}
@@ -249,6 +253,7 @@ function ExitPlanModePermissionDialog({
   input,
   description,
   isPending,
+  submitting,
   markerWhenPending,
 }: {
   sessionId?: string | null
@@ -256,6 +261,7 @@ function ExitPlanModePermissionDialog({
   input: unknown
   description?: string
   isPending: boolean
+  submitting: boolean
   markerWhenPending: boolean
 }) {
   const respondToPermission = useChatStore((s) => s.respondToPermission)
@@ -294,16 +300,7 @@ function ExitPlanModePermissionDialog({
 
   const approve = (options?: { permissionUpdates?: PermissionUpdate[] }) => {
     if (!sessionId) return
-    if (executionRuntime) {
-      // Local echo so the composer pill reflects the switch immediately; the
-      // server already received the override inside the permission_response,
-      // so deliberately do NOT also send set_runtime_config.
-      useSessionRuntimeStore.getState().setSelection(sessionId, {
-        providerId: executionRuntime.providerId,
-        modelId: executionRuntime.modelId,
-      })
-    }
-    respondToPermission(sessionId, requestId, true, {
+    const sent = respondToPermission(sessionId, requestId, true, {
       ...options,
       ...(executionRuntime
         ? {
@@ -314,6 +311,13 @@ function ExitPlanModePermissionDialog({
           }
         : {}),
     })
+    if (sent && executionRuntime) {
+      // Echo only after transport send, not server acceptance; do not also send set_runtime_config.
+      useSessionRuntimeStore.getState().setSelection(sessionId, {
+        providerId: executionRuntime.providerId,
+        modelId: executionRuntime.modelId,
+      })
+    }
   }
 
   // Without an explicit mode the CLI resumes with whatever the session had
@@ -405,6 +409,7 @@ function ExitPlanModePermissionDialog({
         <Button
           variant="primary"
           size="base"
+          disabled={submitting}
           onClick={() => approve(permissionUpdates.length ? { permissionUpdates } : undefined)}
         >
           {t('permission.planApprove')}
@@ -412,6 +417,7 @@ function ExitPlanModePermissionDialog({
         <Button
           variant="secondary"
           size="base"
+          disabled={submitting}
           onClick={() => approveWithMode('acceptEdits')}
         >
           {t('permission.planApproveAcceptEdits')}
@@ -419,6 +425,7 @@ function ExitPlanModePermissionDialog({
         <Button
           variant="danger-ghost"
           size="base"
+          disabled={submitting}
           onClick={() => approveWithMode('bypassPermissions')}
         >
           {t('permission.planApproveBypass')}
@@ -427,6 +434,7 @@ function ExitPlanModePermissionDialog({
         <Button
           variant="ghost"
           size="base"
+          disabled={submitting}
           onClick={() => sessionId && respondToPermission(sessionId, requestId, false, trimmedFeedback ? { denyMessage: trimmedFeedback } : undefined)}
         >
           {t('permission.planKeepPlanning')}

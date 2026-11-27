@@ -101,6 +101,23 @@ describe('bundled Cloudflare connector', () => {
 })
 
 describe('Quick Tunnel readiness', () => {
+  it('keeps default connector scratch and its private home inside the selected complete root', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'cloudflare-selected-root-'))
+    directories.push(root)
+    const scoped = fixture({ temporaryDirectory: undefined, env: { CLAUDE_CONFIG_DIR: root, PATH: '/fixture/bin' } })
+    const pending = scoped.start()
+    await scoped.spawned()
+    const [, , options] = scoped.spawnFn.mock.calls[0] as unknown as [string, string[], { cwd: string, env: NodeJS.ProcessEnv }]
+    expect(path.dirname(options.cwd)).toBe(path.join(root, 'echoflow-code', 'tmp'))
+    expect(options.env.HOME).toBe(options.cwd)
+    expect(options.env.USERPROFILE).toBe(options.cwd)
+    scoped.child.stdout.write('https://fixture-address.trycloudflare.com\n')
+    scoped.child.stderr.write('{"message":"Registered tunnel connection","connIndex":0}\n')
+    const tunnel = await pending
+    await tunnel.stop()
+    expect(existsSync(options.cwd)).toBe(false)
+  })
+
   it('waits for both the actual public address and an edge connection before reporting ready', async () => {
     const f = fixture()
     const onPhase = vi.fn()

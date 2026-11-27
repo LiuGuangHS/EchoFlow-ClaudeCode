@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSandboxedTestEnvironment } from '../../scripts/pr/test-environment.js'
+import { ensureEchoFlowConfigRoot } from '../utils/echoFlowConfigRoot.js'
 
 function completion() {
   const events = [
@@ -51,12 +52,13 @@ async function runSideChat(options: { rows: Row[]; resumeAt?: string; resumeHook
     ANTHROPIC_MODEL: 'claude-sonnet-4-5',
   })
   try {
+    await ensureEchoFlowConfigRoot(env.CLAUDE_CONFIG_DIR!)
     const parentId = crypto.randomUUID()
-    const transcriptDir = join(home, '.claude', 'projects', 'fixture')
+    const transcriptDir = join(env.CLAUDE_CONFIG_DIR!, 'projects', 'fixture')
     await mkdir(transcriptDir, { recursive: true })
     if (options.resumeHook) {
       const output = JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'RESUME-HOOK-CONTEXT' } })
-      await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({
+      await writeFile(join(env.CLAUDE_CONFIG_DIR!, 'settings.json'), JSON.stringify({
         hooks: { SessionStart: [{ matcher: 'resume', hooks: [{ type: 'command', command: `printf '%s' '${output}'` }] }] },
       }))
     }

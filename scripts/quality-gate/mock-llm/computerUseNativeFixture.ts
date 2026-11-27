@@ -8,6 +8,7 @@ import { join, relative, isAbsolute } from 'node:path'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { buildPlatformComputerUseTools } from '../../../src/vendor/computer-use-mcp/mcpServer'
+import { getEchoFlowInternalDir } from '../../../src/utils/echoFlowConfigRoot'
 
 const configDir = process.env.CLAUDE_CONFIG_DIR
 const log = process.env.MOCK_COMPUTER_USE_FIXTURE_LOG
@@ -38,7 +39,7 @@ mock.module(import.meta.resolve('../../../src/utils/computerUse/mcpServer.ts'), 
     appendFileSync(log, JSON.stringify({ event: 'connect', pid: process.pid }) + '\n')
     const server = new Server({ name: 'computer-use-native-fixture', version: '1' }, { capabilities: { tools: {} } })
     server.setRequestHandler(ListToolsRequestSchema, async () => {
-      const config = JSON.parse(readFileSync(join(configDir, 'cc-haha', 'computer-use-config.json'), 'utf8'))
+      const config = JSON.parse(readFileSync(join(getEchoFlowInternalDir(configDir), 'computer-use-config.json'), 'utf8'))
       return {
         tools: config.enabled
           ? buildPlatformComputerUseTools({

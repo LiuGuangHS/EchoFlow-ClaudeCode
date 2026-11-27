@@ -18,6 +18,7 @@ import { getClaudeConfigHomeDir, isEnvTruthy } from '../envUtils.js'
 import { errorMessage, isFsInaccessible } from '../errors.js'
 import { formatFileSize } from '../format.js'
 import { expandTilde } from '../permissions/pathValidation.js'
+import { resolveManagedStoragePath } from '../managedStoragePath.js'
 
 const PLUGINS_DIR = 'plugins'
 const COWORK_PLUGINS_DIR = 'cowork_plugins'
@@ -57,9 +58,9 @@ export function getPluginsDirectory(): string {
   // cwd of every project (gh-30794 / CC-212).
   const envOverride = process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR
   if (envOverride) {
-    return expandTilde(envOverride)
+    return resolveManagedStoragePath(expandTilde(envOverride), 'CLAUDE_CODE_PLUGIN_CACHE_DIR')
   }
-  return join(getClaudeConfigHomeDir(), getPluginsDirectoryName())
+  return resolveManagedStoragePath(join(getClaudeConfigHomeDir(), getPluginsDirectoryName()), 'plugin directory')
 }
 
 /**

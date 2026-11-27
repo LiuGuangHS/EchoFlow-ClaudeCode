@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { readStoredSiteCredentialWith, type SiteRestoreDeps } from './echoFlowSiteRestore'
+import { readSiteRestoreIdentity, readStoredSiteCredentialWith, type SiteRestoreDeps } from './echoFlowSiteRestore'
 
 const originalFetch = globalThis.fetch
 
@@ -18,6 +18,16 @@ function makeDeps(overrides: Partial<SiteRestoreDeps> = {}): SiteRestoreDeps {
 }
 
 describe('site credential restoration', () => {
+  it.each([null, { userId: '5' }, { userId: '5', live: true }, { userId: '', live: false }])(
+    'skips a missing or already usable account %j', account => {
+      expect(readSiteRestoreIdentity(account)).toBeNull()
+    },
+  )
+
+  it('uses only the identity of a saved account waiting for its browser credential', () => {
+    expect(readSiteRestoreIdentity({ userId: '5', live: false, username: 'site-user' }))
+      .toEqual({ userId: '5', username: 'site-user' })
+  })
   it('replays the stored cookie under the sign-in identity without any network round trip', async () => {
     // The gateway account endpoint needs New-Api-User, i.e. the very identity
     // being restored; the restore itself must stay local and let the later

@@ -7,8 +7,11 @@
 
 import { adapterService, type AdapterFileConfig, type PairedUser } from '../services/adapterService.js'
 import * as crypto from 'node:crypto'
+import { lstatSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
-import * as os from 'node:os'
+import { getEchoFlowConfigDir } from '../../utils/echoFlowConfigRoot.js'
+import { relocateManagedStoragePath, resolveManagedStoragePath } from '../../utils/managedStoragePath.js'
+import { expandTilde } from '../../utils/permissions/pathValidation.js'
 import * as path from 'node:path'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 import {
@@ -51,7 +54,7 @@ const whatsappLoginDirs = new Map<string, {
 }>()
 
 function getAdapterConfigDir(): string {
-  return path.resolve(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'))
+  return getEchoFlowConfigDir()
 }
 
 function getManagedWhatsAppRoot(): string {
@@ -68,10 +71,30 @@ function isManagedWhatsAppAuthDir(candidate: string): boolean {
   return path.dirname(resolved) === root && path.basename(resolved).length > 0
 }
 
+function isDirectoryOrMissing(candidate: string): boolean {
+  try {
+    return lstatSync(candidate).isDirectory()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true
+    throw error
+  }
+}
+
+function isSafeManagedWhatsAppAuthDir(candidate: string): boolean {
+  // Neither the WhatsApp namespace nor an account directory may redirect elsewhere.
+  return isManagedWhatsAppAuthDir(candidate)
+    && isDirectoryOrMissing(getManagedWhatsAppRoot())
+    && isDirectoryOrMissing(candidate)
+}
+
+function assertSafeManagedWhatsAppAuthDirs(...directories: string[]): void {
+  if (!directories.every(isSafeManagedWhatsAppAuthDir)) {
+    throw ApiError.internal('WhatsApp authentication directory is invalid')
+  }
+}
+
 async function removeManagedWhatsAppDir(candidate: string): Promise<void> {
-  if (!isManagedWhatsAppAuthDir(candidate)) return
-  const stat = await fs.lstat(candidate).catch(() => null)
-  if (stat?.isSymbolicLink()) return
+  if (!isSafeManagedWhatsAppAuthDir(candidate)) return
   await fs.rm(candidate, { recursive: true, force: true })
 }
 
@@ -86,13 +109,14 @@ async function cleanupExpiredWhatsAppStaging(): Promise<void> {
 
 export async function cleanupStaleWhatsAppLoginDirectories(): Promise<void> {
   const root = getManagedWhatsAppRoot()
+  if (!isDirectoryOrMissing(root)) return
   const entries = await fs.readdir(root).catch(() => [])
   const now = Date.now()
   for (const entry of entries) {
     if (!entry.startsWith('.login-')) continue
     const fullPath = path.join(root, entry)
     const stat = await fs.lstat(fullPath).catch(() => null)
-    if (!stat || stat.isSymbolicLink()) continue
+    if (!stat?.isDirectory()) continue
     if (now - stat.mtimeMs > WHATSAPP_STAGING_TTL_MS) {
       await removeManagedWhatsAppDir(fullPath)
     }
@@ -102,13 +126,15 @@ export async function cleanupStaleWhatsAppLoginDirectories(): Promise<void> {
 cleanupStaleWhatsAppLoginDirectories().catch(() => {})
 
 async function promoteWhatsAppAuth(stagingDir: string, targetDir: string): Promise<void> {
-  if (!isManagedWhatsAppAuthDir(stagingDir) || !isManagedWhatsAppAuthDir(targetDir)) {
-    throw ApiError.internal('WhatsApp authentication directory is invalid')
-  }
+  assertSafeManagedWhatsAppAuthDirs(stagingDir, targetDir)
   const root = getManagedWhatsAppRoot()
   await fs.mkdir(root, { recursive: true, mode: 0o700 })
   const backupDir = path.join(root, `.backup-${crypto.randomUUID()}`)
-  const targetExists = await fs.lstat(targetDir).then((stat) => !stat.isSymbolicLink()).catch(() => false)
+  const targetExists = await fs.lstat(targetDir).then(() => true, (error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return false
+    throw error
+  })
+  assertSafeManagedWhatsAppAuthDirs(stagingDir, targetDir)
   if (targetExists) await fs.rename(targetDir, backupDir)
   try {
     await fs.rename(stagingDir, targetDir)
@@ -843,6 +869,7 @@ async function handleWhatsAppAdaptersApi(req: Request, tail: string[]): Promise<
       ? configuredTarget
       : getDefaultManagedWhatsAppAuthDir()
     const stagingDir = path.join(getManagedWhatsAppRoot(), `.login-${crypto.randomUUID()}`)
+    assertSafeManagedWhatsAppAuthDirs(stagingDir, targetDir)
     try {
       const result = await startWhatsAppLoginWithQr({
         authDir: stagingDir,
@@ -903,9 +930,14 @@ async function handleWhatsAppAdaptersApi(req: Request, tail: string[]): Promise<
   }
 
   if (req.method === 'POST' && tail[0] === 'unbind') {
-    const config = loadConfig()
-    if (isManagedWhatsAppAuthDir(config.whatsapp.authDir)) {
-      await logoutWhatsAppAuth(config.whatsapp.authDir)
+    const config = await adapterService.getRawConfig()
+    const configuredAuthDir = process.env.WHATSAPP_AUTH_DIR || config.whatsapp?.authDir || getDefaultManagedWhatsAppAuthDir()
+    const authDir = path.resolve(expandTilde(readString(configuredAuthDir, 'whatsapp.authDir', MAX_PATH_LENGTH).trim() || getDefaultManagedWhatsAppAuthDir()))
+    // Resolve the recorded move before deciding whether it is safe to inspect the directory.
+    const relocatedAuthDir = relocateManagedStoragePath(authDir, 'whatsapp.authDir')
+    if (isManagedWhatsAppAuthDir(relocatedAuthDir)) {
+      assertSafeManagedWhatsAppAuthDirs(relocatedAuthDir)
+      await logoutWhatsAppAuth(resolveManagedStoragePath(relocatedAuthDir, 'whatsapp.authDir'))
     }
     await adapterService.updateConfig({
       whatsapp: {

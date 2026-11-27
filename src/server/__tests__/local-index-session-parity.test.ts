@@ -179,6 +179,7 @@ describe('SessionService local-index routing parity', () => {
     return {
       transcriptPath: filePath,
       id,
+      legacyArchived: false,
       title,
       createdAt: '2026-07-15T00:00:00.000Z',
       modifiedAt: '2026-07-15T00:01:00.000Z',
@@ -412,7 +413,8 @@ describe('SessionService local-index routing parity', () => {
       const projectPage = await service.listSessions({ project: '/tmp/degraded-one' })
       expect(projectPage.sessions.map(session => session.title)).toEqual(['File B', 'Indexed A'])
       expect(projectPage.total).toBe(2)
-      expect(gateway.lastListOptions?.project).toBe(projectOne)
+      // Classify duplicate identities across all projects before applying the requested project.
+      expect(gateway.lastListOptions).toEqual({ limit: 500, offset: 0 })
     })
 
     it('falls back to the file list when any failure is not tied to a transcript', async () => {
@@ -527,6 +529,8 @@ describe('SessionService local-index routing parity', () => {
       project: sanitizePath(project),
       limit: 2,
       offset: 3,
+      archived: undefined,
+      archive: { archived: false, ids: [], ordinaryIds: [], migrationComplete: false },
     })
     expect(result.total).toBe(9)
     expect(result.sessions.map((session) => session.title)).toEqual([
@@ -990,6 +994,7 @@ describe('SessionService local-index routing parity', () => {
     await started
     await writer.renameSession(SESSION_A, 'Renamed during old request')
     releaseSummary({
+      legacyArchived: false,
       title: 'Old in-flight title',
       createdAt: '2026-07-15T00:00:00.000Z',
       modifiedAt: '2026-07-15T00:00:00.000Z',

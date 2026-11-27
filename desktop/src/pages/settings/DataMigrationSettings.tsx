@@ -27,10 +27,9 @@ function isActive(status: MigrationStatus | null): boolean {
 type DataMigrationSettingsProps = {
   environmentControlled: boolean
   disabled?: boolean
-  onBusyChange?: (busy: boolean) => void
 }
 
-export function DataMigrationSettings({ environmentControlled, disabled = false, onBusyChange }: DataMigrationSettingsProps) {
+export function DataMigrationSettings({ environmentControlled, disabled = false }: DataMigrationSettingsProps) {
   const t = useTranslation()
   const host = getDesktopHost()
   const [preview, setPreview] = useState<MigrationPreview | null>(null)
@@ -45,10 +44,7 @@ export function DataMigrationSettings({ environmentControlled, disabled = false,
   statusRef.current = status
   const active = isActive(status)
   const busy = preparing || starting || active
-
-  useEffect(() => {
-    onBusyChange?.(busy)
-  }, [busy, onBusyChange])
+  const blocked = environmentControlled || disabled || !host.capabilities.dialogs
 
   useEffect(() => {
     if (!host.isDesktop || !host.capabilities.appMode) return
@@ -97,7 +93,7 @@ export function DataMigrationSettings({ environmentControlled, disabled = false,
   if (!host.isDesktop || !host.capabilities.appMode) return null
 
   const chooseTarget = async () => {
-    if (environmentControlled || disabled || busy) return
+    if (blocked || busy || preview) return
     setError(null)
     setPreparing(true)
     try {
@@ -105,11 +101,31 @@ export function DataMigrationSettings({ environmentControlled, disabled = false,
         directory: true,
         multiple: false,
         title: t('settings.general.migration.chooseTitle'),
+      }).catch(() => {
+        setError(t('settings.general.storagePickerError'))
+        return null
       })
       if (typeof selected !== 'string') return
       setPreview(await host.appMode.migration.prepare(selected))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('settings.general.migration.error'))
+    } finally {
+      setPreparing(false)
+    }
+  }
+
+  const chooseAdoption = async (kind: 'openai-oauth' | 'im-adapters' | 'whatsapp-auth') => {
+    if (blocked || busy || preview) return
+    setError(null)
+    setPreparing(true)
+    try {
+      if (kind === 'whatsapp-auth') await host.appMode.migration.prepareWhatsAppAdoption()
+      else if (kind === 'im-adapters') await host.appMode.migration.prepareImAdoption()
+      else await host.appMode.migration.prepareOpenAiOauth()
+    } catch (cause) {
+      setError(kind === 'whatsapp-auth'
+        ? t('settings.general.migration.whatsAppAdoptionError')
+        : cause instanceof Error ? cause.message : t('settings.general.migration.error'))
     } finally {
       setPreparing(false)
     }
@@ -165,7 +181,7 @@ export function DataMigrationSettings({ environmentControlled, disabled = false,
     try {
       await host.shell.openPath(directory)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('settings.general.migration.error'))
+      setError(cause instanceof Error ? cause.message : t('settings.general.storageOpenError'))
     }
   }
 
@@ -192,18 +208,27 @@ export function DataMigrationSettings({ environmentControlled, disabled = false,
           <div className="text-[13px] font-medium leading-5 text-[var(--color-text-primary)]">{t('settings.general.migration.title')}</div>
           <p className="mt-0.5 text-xs leading-[1.5] text-[var(--color-text-tertiary)]">{t('settings.general.migration.description')}</p>
         </div>
-        <Button
-          type="button"
-          size="base"
-          variant="secondary"
-          className="shrink-0 self-start sm:self-auto"
-          disabled={environmentControlled || disabled || busy || !!preview}
-          loading={preparing}
-          icon={<FolderInput size={14} strokeWidth={1.75} aria-hidden="true" />}
-          onClick={() => void chooseTarget()}
-        >
-          {t('settings.general.migration.choose')}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="base"
+            variant="secondary"
+            disabled={blocked || busy || !!preview}
+            icon={<FolderInput size={14} strokeWidth={1.75} aria-hidden="true" />}
+            onClick={() => void chooseTarget()}
+          >
+            {t('settings.general.migration.choose')}
+          </Button>
+          <Button type="button" size="base" variant="secondary" disabled={blocked || busy || !!preview} onClick={() => void chooseAdoption('openai-oauth')}>
+            {t('settings.general.migration.chooseOpenAiOauth')}
+          </Button>
+          <Button type="button" size="base" variant="secondary" disabled={blocked || busy || !!preview} onClick={() => void chooseAdoption('im-adapters')}>
+            {t('settings.general.migration.chooseImAdoption')}
+          </Button>
+          <Button type="button" size="base" variant="secondary" disabled={blocked || busy || !!preview} onClick={() => void chooseAdoption('whatsapp-auth')}>
+            {t('settings.general.migration.chooseWhatsAppAdoption')}
+          </Button>
+        </div>
       </div>
       {environmentControlled && (
         <p className="mt-2 text-xs leading-[1.5] text-[var(--color-text-tertiary)]">{t('settings.general.migration.environment')}</p>
@@ -216,12 +241,10 @@ export function DataMigrationSettings({ environmentControlled, disabled = false,
           {directories(status.sourceDir, status.targetDir)}
           {status.stage === 'completed' && (
             <>
-              <p className="text-xs leading-[1.5] text-[var(--color-text-secondary)]">{t('settings.general.migration.retained')}</p>
               <p className="text-xs leading-[1.5] text-[var(--color-text-tertiary)]">{t('settings.general.migration.cli')}</p>
-              <div className="flex flex-wrap gap-2">
-                <Button size="base" variant="secondary" onClick={() => void openPath(status.sourceDir)}>{t('settings.general.migration.openSource')}</Button>
+              {host.capabilities.shell && (
                 <Button size="base" variant="secondary" onClick={() => void openPath(status.targetDir)}>{t('settings.general.migration.openTarget')}</Button>
-              </div>
+              )}
             </>
           )}
         </div>
@@ -242,7 +265,10 @@ export function DataMigrationSettings({ environmentControlled, disabled = false,
             {preview.activeTasks > 0 && <p>{t('settings.general.migration.activeTasks', { count: preview.activeTasks })}</p>}
             <p>{t('settings.general.migration.stopWarning')}</p>
             <p>{t('settings.general.migration.externalWarning')}</p>
-            <p>{t('settings.general.migration.retained')}</p>
+            {preview.retainedSharedImDownloads && (
+              <p className="break-words">{t('settings.general.migration.retainedSharedImDownloads', { path: preview.retainedSharedImDownloads })}</p>
+            )}
+            <p>{t('settings.general.migration.cleanup')}</p>
           </div>
         )}
       />

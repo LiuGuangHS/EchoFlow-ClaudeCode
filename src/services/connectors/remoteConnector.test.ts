@@ -46,6 +46,20 @@ describe('remote connector plugin integration', () => {
     expect(JSON.stringify(buildRemotePlugin(r))).not.toContain('fake-pat')
     for (const key of ['bad\nheader', 'bad\rheader', '${USER_SECRET}', '']) expect(() => saveRemoteApiKey(r, key, f.dependencies)).toThrow()
   })
+  test.each(['echoflow-connectors', 'haha-connectors'])('the %s identity never borrows or deletes the other alias credential slot', async marketplace => {
+    const r = { ...recipe({ type: 'api-key', in: 'header', name: 'Authorization' }), pluginId: `office-maps-fixture@${marketplace}` }
+    const otherId = `office-maps-fixture@${marketplace === 'echoflow-connectors' ? 'haha-connectors' : 'echoflow-connectors'}`
+    const f = fixture()
+    f.options[otherId] = { apiKey: 'fake-other-alias-secret' }
+    const bridge = createRemoteConnectorBridge(r, f.dependencies)
+    expect(bridge.isConfigured()).toBe(false)
+    saveRemoteApiKey(r, 'fake-selected-secret', f.dependencies)
+    await bridge.check(signal())
+    expect(f.calls.at(-1)?.config).toMatchObject({ headers: { Authorization: 'fake-selected-secret' }, pluginSource: r.pluginId })
+    await bridge.removeCredentials()
+    expect(f.options[r.pluginId]).toBeUndefined()
+    expect(f.options[otherId]).toEqual({ apiKey: 'fake-other-alias-secret' })
+  })
   test('OAuth uses the plugin loader identity and only cleans its own slots', async () => {
     const r = recipe({ type: 'oauth', clientId: 'public-client' })
     const f = fixture()

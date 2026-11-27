@@ -50,8 +50,14 @@ const CONTAINERS: Record<string, Classification> = {
   nonAgentStopRequestedSessions: { kind: 'cleared' },
   authoritativeStoppedTaskIds: { kind: 'cleared' },
   backgroundTaskCleanupTimers: { kind: 'cleared' },
+  cliRuntimeOverrides: { kind: 'cleared' },
+  deferredCliRuntimeRestarts: { kind: 'cleared' },
+  rejectedCliRuntimeConfigs: { kind: 'cleared' },
+  planApprovalTransitions: { kind: 'cleared' },
   deferredPermissionModes: { kind: 'cleared' },
   deferredRuntimeRestarts: { kind: 'cleared' },
+  executingInputUuids: { kind: 'cleared' },
+  imReplyReceipts: { kind: 'cleared' },
   interruptedSessionChats: { kind: 'cleared' },
   lastResolvedStartupWorkDirs: { kind: 'cleared' },
   legacyQueuedSessionChats: { kind: 'cleared' },
@@ -88,6 +94,10 @@ const CONTAINERS: Record<string, Classification> = {
   interruptedTurnResultMessages: {
     kind: 'not-session-state',
     reason: 'WeakMap keyed by the CLI message object, so entries die with the message.',
+  },
+  resultInputs: {
+    kind: 'not-session-state',
+    reason: 'WeakMap keyed by the terminal CLI message, which shares ownership across output callbacks.',
   },
   scheduledTurnResults: {
     kind: 'not-session-state',

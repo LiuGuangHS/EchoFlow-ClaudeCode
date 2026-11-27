@@ -1,19 +1,15 @@
 import * as fs from 'fs/promises'
 import { migrateScheduledTasks } from './scheduledTaskMigrations.js'
-import * as os from 'os'
 import * as path from 'path'
 import { randomBytes } from 'node:crypto'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir, ensureEchoFlowConfigRoot } from './echoFlowConfigRoot.js'
 import { normalizeLegacyDeepSeekManagedEnv } from '../../utils/providerManagedEnvCompat.js'
-import { isOpenAIOfficialProviderId } from './openaiOfficialProvider.js'
-import { isGrokOfficialProviderId } from './grokOfficialProvider.js'
-import {
-  isDeepSeekAccountProviderId,
-  migrateLegacyDeepSeekAccountModels,
-} from './deepseekAccountProvider.js'
+import { migrateLegacyDeepSeekAccountModels } from './deepseekAccountModelMigration.js'
 import {
   BUILT_IN_PROVIDER_IDS,
   DEEPSEEK_ACCOUNT_PROVIDER_ID,
+  GROK_OFFICIAL_PROVIDER_ID,
+  OPENAI_OFFICIAL_PROVIDER_ID,
   PROVIDER_DEEPSEEK_ACCOUNT_MODEL_IDS_SCHEMA_VERSION,
   PROVIDER_ECHOFLOW_CREDENTIAL_SOURCE_SCHEMA_VERSION,
   PROVIDER_IMAGE_PROTOCOL_SCHEMA_VERSION,
@@ -155,7 +151,16 @@ async function quarantineMalformedFile(filePath: string): Promise<void> {
   await fs.rename(filePath, invalidPath)
 }
 
+class UnsupportedStorageSchemaError extends Error {}
+
+function assertSupportedSchema(value: unknown, maximum: number): void {
+  if (isRecord(value) && value.schemaVersion !== undefined && (!Number.isSafeInteger(value.schemaVersion) || (value.schemaVersion as number) < 0 || (value.schemaVersion as number) > maximum)) {
+    throw new UnsupportedStorageSchemaError('Unsupported persistent storage schema; upgrade the application before writing this data')
+  }
+}
+
 function migrateProvidersIndex(value: unknown): JsonObject {
+  assertSupportedSchema(value, CURRENT_PROVIDER_INDEX_SCHEMA_VERSION)
   if (!isRecord(value) || !Array.isArray(value.providers)) {
     return {
       schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
@@ -217,9 +222,9 @@ function migrateProvidersIndex(value: unknown): JsonObject {
         : null
   const activeId = rawActiveId && (
     providers.some((provider) => provider.id === rawActiveId) ||
-    isOpenAIOfficialProviderId(rawActiveId) ||
-    isGrokOfficialProviderId(rawActiveId) ||
-    isDeepSeekAccountProviderId(rawActiveId)
+    rawActiveId === OPENAI_OFFICIAL_PROVIDER_ID ||
+    rawActiveId === GROK_OFFICIAL_PROVIDER_ID ||
+    rawActiveId === DEEPSEEK_ACCOUNT_PROVIDER_ID
   )
     ? rawActiveId
     : null
@@ -235,6 +240,7 @@ function migrateProvidersIndex(value: unknown): JsonObject {
 }
 
 function migrateManagedSettings(value: unknown): JsonObject {
+  assertSupportedSchema(value, 1)
   if (!isRecord(value)) return {}
   if (value.env !== undefined && !isRecord(value.env)) {
     return { ...value, env: {} }
@@ -263,6 +269,7 @@ async function migrateJsonEntry(
     await writeJsonFile(filePath, migrated)
     report.migratedEntries.push(entryName)
   } catch (error) {
+    if (error instanceof UnsupportedStorageSchemaError) throw error
     if (error instanceof SyntaxError) {
       try {
         await quarantineMalformedFile(filePath)
@@ -279,59 +286,17 @@ async function migrateJsonEntry(
   }
 }
 
-async function copyLegacyEchoFlowEntries(configDir: string, report: MigrationReport): Promise<void> {
-  const sourceDir = getEchoFlowInternalDir(path.join(os.homedir(), '.claude'))
-  const targetDir = getEchoFlowInternalDir(configDir)
-  if (path.resolve(sourceDir) === path.resolve(targetDir)) return
-
-  for (const name of ['providers.json', 'settings.json']) {
-    const sourcePath = path.join(sourceDir, name)
-    const targetPath = path.join(targetDir, name)
-    try {
-      const source = await readJsonFile(sourcePath)
-      if (source.missing) continue
-      if (!isRecord(source.value) || (name === 'providers.json' && !Array.isArray(source.value.providers))) {
-        report.failures.push(`legacy echoflow-code/${name}: invalid object`)
-        continue
-      }
-      let target
-      try {
-        target = await readJsonFile(targetPath)
-      } catch (error) {
-        if (!(error instanceof SyntaxError)) throw error
-        await backupFile(targetPath, 'bak-before-migration')
-        await writeJsonFile(targetPath, source.value)
-        report.migratedEntries.push(`legacy echoflow-code/${name}`)
-        continue
-      }
-      if (!target.missing && (!isRecord(target.value) || (name === 'providers.json' && !Array.isArray(target.value.providers)))) {
-        await backupFile(targetPath, 'bak-before-migration')
-        await writeJsonFile(targetPath, source.value)
-        report.migratedEntries.push(`legacy echoflow-code/${name}`)
-        continue
-      }
-      if (!target.missing) {
-        const normalize = name === 'providers.json' ? migrateProvidersIndex : migrateManagedSettings
-        if (stableStringify(normalize(target.value)) !== stableStringify(normalize(source.value))) {
-          report.failures.push(`legacy echoflow-code/${name}: conflict; existing target retained`)
-        }
-        continue
-      }
-      await fs.mkdir(targetDir, { recursive: true })
-      // Exclusive copy keeps a concurrently created target authoritative and the source untouched.
-      await fs.copyFile(sourcePath, targetPath, (await import('node:fs')).constants.COPYFILE_EXCL)
-      report.migratedEntries.push(`legacy echoflow-code/${name}`)
-    } catch (error) {
-      report.failures.push(`legacy echoflow-code/${name}: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
+export function upgradePersistentStorageValue(relative: string, value: unknown): unknown {
+  if (relative === path.join('echoflow-code', 'providers.json')) return migrateProvidersIndex(value)
+  if (relative === path.join('echoflow-code', 'settings.json')) return migrateManagedSettings(value)
+  if (relative === 'scheduled_tasks.json') return migrateScheduledTasks(value)
+  return value
 }
 
 async function runPersistentStorageMigrations(configDir: string): Promise<MigrationReport> {
   const report: MigrationReport = { migratedEntries: [], failures: [] }
   const ccHahaDir = getEchoFlowInternalDir(configDir)
   await ensureEchoFlowConfigRoot(configDir)
-  await copyLegacyEchoFlowEntries(configDir, report)
 
   // Task definitions are user-authored data: never quarantine/reset malformed JSON.
   const tasksPath = path.join(configDir, 'scheduled_tasks.json')

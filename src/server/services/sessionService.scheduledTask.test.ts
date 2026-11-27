@@ -41,7 +41,7 @@ test('scheduled provenance survives transcript history and SDK replay while lega
   expect(page.messages.find(message => message.id === 'scheduled')).toMatchObject({ content: 'Check saved task', scheduledTask })
   expect(page.messages.find(message => message.id === 'legacy')).toMatchObject({ content })
   expect(page.messages.find(message => message.id === 'legacy')?.scheduledTask).toBeUndefined()
-  expect(translateCliMessage({ ...records[2], isReplay: true }, id)).toContainEqual({ type: 'user_message_replay', content: 'Check saved task', scheduledTask })
+  expect(translateCliMessage({ ...records[2], isReplay: true }, id)).toContainEqual({ type: 'user_message_replay', messageUuid: 'scheduled', content: 'Check saved task', scheduledTask })
   const ordinary = translateCliMessage({ ...records[1], isReplay: true }, id)
   expect(ordinary.some(message => message.type === 'user_message_replay' && message.scheduledTask)).toBe(false)
 })

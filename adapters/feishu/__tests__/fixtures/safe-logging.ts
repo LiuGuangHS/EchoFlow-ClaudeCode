@@ -2,14 +2,15 @@
 // a socket, and the parent starts this child with a disposable user-state root.
 import * as Lark from '@larksuiteoapi/node-sdk'
 import { createRequire } from 'node:module'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { ensureEchoFlowConfigRoot } from '../../../../src/utils/echoFlowConfigRoot.js'
 import { enqueue } from '../../../common/chat-queue.js'
 
 const require = createRequire(import.meta.url)
 const { AxiosError } = createRequire(require.resolve('@larksuiteoapi/node-sdk'))('axios')
 const configDir = process.env.CLAUDE_CONFIG_DIR!
-await mkdir(configDir, { recursive: true })
+await ensureEchoFlowConfigRoot(configDir)
 await writeFile(join(configDir, 'adapters.json'), JSON.stringify({
   feishu: { allowedUsers: ['fixture-user'], defaultWorkDir: process.env.HOME },
 }))

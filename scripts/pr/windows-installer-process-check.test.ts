@@ -13,6 +13,34 @@ function decodeFileWrites(nsh: string): string {
     .join('')
 }
 
+describe('Windows installer storage recovery wiring', () => {
+  test('adopts through the packaged shared transaction instead of selecting an independent recovered snapshot', () => {
+    const helper = readFileSync('desktop/build/recover-legacy-install-data.ps1', 'utf8')
+    const recovery = helper.slice(helper.indexOf('function Invoke-LegacyRecovery {'), helper.indexOf('function Assert-SelfTest {'))
+    expect(recovery).toContain('Invoke-InstallerStorageRecovery')
+    expect(recovery).not.toContain('Copy-VerifiedTree')
+    expect(recovery).not.toContain('Write-AppModeAtomically')
+    const hook = readFileSync('desktop/build/installer.nsh', 'utf8')
+    expect(hook).not.toContain('-RecoveryRoot "$3\\${ECHOFLOW_PRODUCT_NAME} Data\\Recovered"')
+    expect(hook).toContain('-RecoveryBridge "$PLUGINSDIR\\installer-storage-recovery.exe"')
+    expect(hook.indexOf('File /oname=$PLUGINSDIR\\installer-storage-recovery.exe')).toBeLessThan(hook.indexOf('-RecoveryBridge'))
+    expect(helper).not.toContain('function Copy-VerifiedTree')
+    expect(helper).not.toContain('function Write-AppModeAtomically')
+    expect(helper).not.toContain('app-mode.pre-recovery.')
+  })
+
+  test('packages the recovery runtime only for Windows and checks it in packaged smoke', () => {
+    const build = readFileSync('desktop/scripts/build-sidecars.ts', 'utf8')
+    expect(build).toMatch(/if \(bunTarget\.startsWith\('bun-windows-'\)\) \{\s+await compileExecutable\(\{\s+entrypoint: path\.join\(desktopRoot, 'sidecars\/installerStorageRecovery\.ts'\)/)
+    const config = JSON.parse(readFileSync('desktop/package.json', 'utf8'))
+    expect(config.build.files).toContain('!src-tauri/binaries/installer-storage-recovery-*')
+    expect(config.build.win.extraResources).toContainEqual({ from: 'src-tauri/binaries', to: 'installer-recovery', filter: ['installer-storage-recovery-*.exe'] })
+    const smoke = readFileSync('desktop/scripts/windows-installer-smoke.ps1', 'utf8')
+    expect(smoke).toContain('Packaged installer storage recovery runtime is missing')
+    expect(smoke).toContain("'-RecoveryBridge'")
+  })
+})
+
 describe('Windows installer process matching', () => {
   test.skipIf(process.platform !== 'win32')('handles blocked helper writes and old-uninstaller results in native NSIS', () => {
     const compiler = process.env.CC_HAHA_TEST_MAKENSIS ?? path.join(
@@ -60,6 +88,7 @@ OutFile "${executable}"
 !define APP_FILENAME "isolated-test"
 !define PRODUCT_FILENAME "isolated-test"
 !define BUILD_RESOURCES_DIR "${path.resolve('desktop/build')}"
+!define ECHOFLOW_INSTALLER_RECOVERY_BINARY "${process.execPath}"
 !include "${path.resolve('desktop/build/installer.nsh')}"
 LoadLanguageFile "${'${NSISDIR}'}\Contrib\Language files\English.nlf"
 LangString uninstallFailed 1033 "Uninstall failed"
@@ -189,6 +218,7 @@ OutFile "${executable}"
 !define APP_FILENAME "isolated-test"
 !define PRODUCT_FILENAME "isolated-test"
 !define BUILD_RESOURCES_DIR "${path.resolve('desktop/build')}"
+!define ECHOFLOW_INSTALLER_RECOVERY_BINARY "${process.execPath}"
 !include "${path.resolve('desktop/build/installer.nsh')}"
 !include "allowOnlyOneInstallerInstance.nsh"
 LoadLanguageFile "${'${NSISDIR}'}\Contrib\Language files\English.nlf"
@@ -235,7 +265,7 @@ SectionEnd
     expect(installerHook).toContain('!macro CcHahaFindInstallProcess')
     expect(installerHook).toContain('!macro CcHahaKillInstallProcess')
     expect(installerHook).toContain('-InstallerPid "$pid"')
-    expect(installerHook).toContain('-InstallerParentPid "$1"')
+    expect(installerHook).not.toContain('-InstallerParentPid')
     // The USERNAME filter makes tasklist look up every process owner, which can
     // block forever and froze setup and the silent uninstaller.
     expect(installerHook).not.toContain('USERNAME eq')
@@ -276,7 +306,7 @@ SectionEnd
     )
     expect(processHelper).toContain('[StringComparison]::OrdinalIgnoreCase')
     expect(processHelper).toContain('$process.ProcessId -eq $InstallerPid')
-    expect(processHelper).not.toContain('$process.ProcessId -eq $InstallerParentPid')
+    expect(processHelper).not.toContain('$InstallerParentPid')
     expect(processHelper).toContain('Matched protected install process:')
     expect(processHelper).toContain('Blocked unknown-path application process:')
     expect(processHelper).toContain('$unknownPathMatches.Add($process)')
@@ -363,7 +393,7 @@ SectionEnd
     expect(installerSmoke).toContain("$siblingDir = \"$installDir Tools\"")
     expect(installerSmoke).toContain("$siblingProbe = Join-Path $siblingDir 'EchoFlow Code.exe'")
     expect(installerSmoke).toContain('Sibling-prefix process remains running')
-    expect(installerSmoke).toContain('Install-directory parent process detection')
+    expect(installerSmoke).toContain('Install-directory process detection')
     expect(installerSmoke).toContain('Install-directory process was not terminated')
     expect(installerSmoke).toContain("$bundledHelperProbe = Join-Path $siblingDir 'OpenConsole.exe'")
     expect(installerSmoke).toContain('No-CLR external bundled-helper process reinstall')

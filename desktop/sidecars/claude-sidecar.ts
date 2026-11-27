@@ -97,8 +97,9 @@ const ADAPTERS: ReadonlyArray<{
     label: 'WhatsApp',
     missingCredentials: 'no QR-linked WhatsApp account found',
     isConfigured: async (config) => {
+      const authDir = config.whatsapp.authDir
       const { hasWhatsAppAuth } = await import('../../adapters/whatsapp/session.ts')
-      return hasWhatsAppAuth(config.whatsapp.authDir)
+      return hasWhatsAppAuth(authDir)
     },
     start: () => import('../../adapters/whatsapp/index.ts'),
   },
@@ -143,6 +144,10 @@ if (mode === 'adapters') {
   process.env.CALLER_DIR ||= process.cwd()
   process.argv = [process.argv[0]!, process.argv[1]!, ...args]
 
+  if (mode === 'server') {
+    const { initializeProcessStorage } = await import('../../src/services/storageStartup')
+    await initializeProcessStorage()
+  }
   await import('../../preload.ts')
 
   if (mode === 'server') {
@@ -191,6 +196,8 @@ async function runAdapters(rawArgs: string[]): Promise<void> {
   }
   process.env.CALLER_DIR ||= process.cwd()
 
+  const { initializeProcessStorage, releaseProcessStorage } = await import('../../src/services/storageStartup')
+  await initializeProcessStorage()
   await import('../../preload.ts')
 
   // 在 import adapter 之前先用同一份 loadConfig() 检查凭据。adapter 的
@@ -203,10 +210,15 @@ async function runAdapters(rawArgs: string[]): Promise<void> {
   let started = 0
   for (const adapter of ADAPTERS) {
     if (!enabled.has(adapter.flag)) continue
-    if (!(await adapter.isConfigured(config))) {
-      console.warn(
-        `[claude-sidecar] ${adapter.flag} requested but ${adapter.missingCredentials} in env or ~/.claude/adapters.json — skipping`,
-      )
+    try {
+      if (!(await adapter.isConfigured(config))) {
+        console.warn(
+          `[claude-sidecar] ${adapter.flag} requested but ${adapter.missingCredentials} in env or <storage-root>/adapters.json — skipping`,
+        )
+        continue
+      }
+    } catch (error) {
+      console.warn(`[claude-sidecar] ${adapter.flag} skipped: ${error instanceof Error ? error.message : error}`)
       continue
     }
     console.log(`[claude-sidecar] starting ${adapter.label} adapter`)
@@ -215,6 +227,7 @@ async function runAdapters(rawArgs: string[]): Promise<void> {
   }
 
   if (started === 0) {
+    await releaseProcessStorage()
     if (process.env.CC_HAHA_MIGRATION_CONTROL === '1') {
       // No platform module was imported, so this process owns no adapter writes.
       // Publish that fact before exit: the host may already be requesting drain.
@@ -222,7 +235,7 @@ async function runAdapters(rawArgs: string[]): Promise<void> {
       return
     }
     console.error(
-      '[claude-sidecar] no adapter could be started — check credentials in env or ~/.claude/adapters.json',
+      '[claude-sidecar] no adapter could be started — check credentials in env or <storage-root>/adapters.json',
     )
     process.exit(1)
   }

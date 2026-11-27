@@ -3,6 +3,7 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { getEchoFlowInternalDir } from '../../../src/utils/echoFlowConfigRoot'
 import { applyUserStateGuard, createQualityGateSandbox } from '../sandbox'
 import type { LaneResult } from '../types'
 import { loadCassette } from '../replay/cassette'
@@ -40,6 +41,15 @@ import {
 const FIXTURE = 'scripts/quality-gate/agent-flow/fixtures/workspace'
 const REPLAY_PROVIDER_ID = 'desktop-replay-provider'
 
+export function seedDesktopUiReplayProvider(configDir: string, providerConfig: Record<string, unknown>, baseUrl: string) {
+  const internalDir = getEchoFlowInternalDir(configDir)
+  mkdirSync(internalDir, { recursive: true })
+  writeFileSync(join(internalDir, 'providers.json'), `${JSON.stringify({
+    activeId: REPLAY_PROVIDER_ID,
+    providers: [{ ...providerConfig, id: REPLAY_PROVIDER_ID, name: 'Replay (isolated)', apiKey: 'replay-fake-key', baseUrl }],
+  }, null, 2)}\n`)
+}
+
 export async function executeReplayDesktopSmoke(rootDir: string, artifactDir: string): Promise<LaneResult> {
   const resultId = 'desktop-ui-replay'
   const resultTitle = 'Desktop UI against recorded DeepSeek traffic'
@@ -72,11 +82,7 @@ export async function executeReplayDesktopSmoke(rootDir: string, artifactDir: st
     seedProviders: false,
     envOverrides: { CC_HAHA_DISABLE_TERMINAL_SHELL_ENV: '1', CI: '' },
   })
-  mkdirSync(join(sandbox.configDir, 'cc-haha'), { recursive: true })
-  writeFileSync(join(sandbox.configDir, 'cc-haha', 'providers.json'), `${JSON.stringify({
-    activeId: REPLAY_PROVIDER_ID,
-    providers: [{ ...cassette.providerConfig, id: REPLAY_PROVIDER_ID, name: 'Replay (isolated)', apiKey: 'replay-fake-key', baseUrl: replay.url }],
-  }, null, 2)}\n`)
+  seedDesktopUiReplayProvider(sandbox.configDir, cassette.providerConfig, replay.url)
 
   const server = Bun.spawn(['bun', 'run', 'src/server/index.ts', '--host', '127.0.0.1', '--port', String(serverPort)], {
     cwd: rootDir,

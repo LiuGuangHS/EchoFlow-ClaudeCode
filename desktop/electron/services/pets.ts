@@ -2,6 +2,7 @@ import { constants, type Dirent } from 'node:fs'
 import { lstat, mkdir, mkdtemp, open, opendir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { getEchoFlowInternalDir, resolveStorageBinding } from '../../../src/utils/echoFlowConfigRoot'
 
 export const CUSTOM_PET_SPRITESHEET_WIDTH = 1536
 export const CUSTOM_PET_SPRITESHEET_HEIGHT = 2288
@@ -238,24 +239,12 @@ function normalizeLimit(value: number | undefined, fallback: number): number {
     : fallback
 }
 
-function resolveHomePath(input: string, homeDir: string): string {
-  if (input === '~') return homeDir
-  if (input.startsWith(`~${path.sep}`) || input.startsWith('~/') || input.startsWith('~\\')) {
-    return path.join(homeDir, input.slice(2))
-  }
-  return input
-}
-
 export function resolveCustomPetsRoot(options: CustomPetsRootOptions = {}): string {
   if (options.root) return path.resolve(options.root)
 
   const env = options.env ?? process.env
   const homeDir = path.resolve(options.homeDir ?? os.homedir())
-  const configuredRoot = env.CLAUDE_CONFIG_DIR?.trim()
-  const claudeConfigDir = configuredRoot
-    ? path.resolve(resolveHomePath(configuredRoot, homeDir))
-    : path.join(homeDir, '.claude')
-  return path.join(claudeConfigDir, 'cc-haha', 'pets')
+  return path.join(getEchoFlowInternalDir(resolveStorageBinding({ env, homeDir }).root), 'pets')
 }
 
 export async function ensureCustomPetsRoot(options: CustomPetsRootOptions = {}): Promise<string> {

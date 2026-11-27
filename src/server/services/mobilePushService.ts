@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import path from 'node:path'
-import os from 'node:os'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import type { PushTransport, MobilePushPlatform, MobilePushProvider, PushDelivery, PulledNotification } from './mobilePushTransport.js'
 import type { MobileSessionActivity } from './mobileSessionActivity.js'
 
@@ -106,7 +106,7 @@ export class MobilePushService {
   private expoError?: string
   private readonly file: string
   constructor(private deps: { transport: PushTransport; pull?: (token: string, ack: string | undefined, signal: AbortSignal) => Promise<PulledNotification[]>; activities(): MobileActivity[] | Promise<MobileActivity[]>; summary(id: string): Promise<{ title?: string } | null>; directory?: string; now?: () => number }) {
-    this.file = path.join(deps.directory ?? path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'cc-haha'), 'mobile-push.json')
+    this.file = path.join(deps.directory ?? getEchoFlowInternalDir(), 'mobile-push.json')
   }
   private signature(activity: MobileActivity) { return `${activity.activityState}:${activity.requestId ?? ''}:${Boolean(activity.stalled)}:${activity.terminalOutcome ?? ''}:${activity.completedAt ?? ''}` }
   private now() { return this.deps.now?.() ?? Date.now() }

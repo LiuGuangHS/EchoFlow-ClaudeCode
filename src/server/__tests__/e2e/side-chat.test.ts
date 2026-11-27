@@ -27,7 +27,7 @@ test('temporary side chat forks a fixed boundary, supports independent multi-tur
   try {
     const workDir = join(home, 'project')
     await mkdir(workDir)
-    const runtime = await import('../../index.js')
+    const runtime = await import('../../serverRuntime.js')
     const { sessionService } = await import('../../services/sessionService.js')
     const { conversationService } = await import('../../services/conversationService.js')
     shutdown = runtime.stopServerRuntimeForShutdown

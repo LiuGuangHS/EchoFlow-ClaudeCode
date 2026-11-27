@@ -50,7 +50,7 @@ order: 6
 | 自动做梦 | 默认关闭。会话积累足够后，可在后台整理 auto-memory；会产生额外模型调用和 token 消耗。 |
 | Agent Trace | 默认开启。新会话的原始请求、响应与状态事件写入本机 traces 目录，出错时在会话「轨迹」里点开助手行，看「原始请求」页；关闭后不再产生新记录，旧记录仍可查看。 |
 
-需要单独存放 Agent Trace 时，在启动应用前设置 `CC_HAHA_TRACE_DIR` 为可写的绝对目录，例如 Windows 的 `D:\HahaTraces` 或 macOS/Linux 的 `/data/haha-traces`，然后完全退出并重新启动应用。JSONL 文件直接写入该目录，辅助索引写入其 `cc-haha/db` 子目录；其他配置仍使用原位置。变量为空或未设置时使用原来的配置目录下的 `cc-haha/traces`。切换不会搬移、合并或删除旧文件，只有当前目录的记录会显示；移除变量并重启即可重新查看默认目录。无效路径会报错，不会自动改回默认目录写入。
+在采用统一数据根的版本中，Agent Trace 默认将 JSONL 文件写入 `<data-root>/echoflow-code/traces`，辅助索引位于 `<data-root>/echoflow-code/db`。`CC_HAHA_TRACE_DIR` 可以指定数据根内的绝对目录；根外路径仅用于查找旧数据，迁移成功后使用根内的目标目录。未迁移的根外路径会明确报错，不会静默切到空目录。v0.7.7 等旧版本默认使用配置目录下的 `cc-haha/traces`，并允许该变量直接指定根外写入目录。
 
 ### 网络、联网搜索和提醒
 
@@ -63,7 +63,7 @@ order: 6
 ### 数据保留与存放：改前先确认结果
 
 - **会话记录**默认保留 365 天，可设置 0–3650 天。缩短时间会立即删除更早记录，设置为 0 会删除已有全部记录并停止记录会话内容；界面会先预览并再次确认。这里不能用来代替备份。
-- **数据存储位置**默认是 `~/.claude`（Windows 为 `%USERPROFILE%\\.claude`）。便携模式可以指定一个不在应用安装目录内的绝对路径。切换后，配置、任务、会话、技能和插件将从新目录读取，重启应用才生效；两个目录不会自动合并或迁移。若启动时设置了 `CLAUDE_CONFIG_DIR`，需先移除该环境变量才能在界面里切换。
+- **数据存储位置**使用唯一数据根：Windows 默认 `%LOCALAPPDATA%/EchoFlow Code`，macOS 默认 `~/Library/Application Support/EchoFlow Code`，Linux 默认 `${XDG_DATA_HOME:-~/.local/share}/echoflow-code`。便携模式或 `CLAUDE_CONFIG_DIR` 选择的是完整数据根，不能让桌面 profile、CLI、IM 和日志各自使用不同目录；根目录不能位于应用安装目录内。根变更需完全退出并重启。旧目录先经过归属、停写、内容和恢复检查；目标已有数据时不能直接覆盖同名冲突。只有新根验证通过且旧源安全清理后才算迁移完成，备份和迁移记录也保存在新根内部。共享的其他 Claude 数据及系统凭据库不会被整体接管或删除。
 
 本文的产品截图统一使用「纯白」主题，避免不同配色影响界面对比。
 
@@ -77,7 +77,7 @@ order: 6
 
 ## 终端
 
-内嵌一个真实的宿主机 Shell，用来装插件、技能、MCP 这类需要命令行的东西。桌面端已经内置 `claude-haha` 命令，文档里写 `claude <参数>` 的地方都可以换成 `claude-haha <参数>`。
+内嵌一个真实的宿主机 Shell，用来装插件、技能、MCP 这类需要命令行的东西。桌面端已经内置 `echoflow-code` 命令，文档里写 `claude <参数>` 的地方都可以换成 `echoflow-code <参数>`。
 
 Windows 用户可以在这里指定启动 Shell（系统默认 / PowerShell 7 / Windows PowerShell / 命令提示符 / 自定义可执行文件），以及一个 Bash 路径——工具调用 `grep`、`sed` 这类 Unix 命令时会用到，通常指向 Git Bash。
 
@@ -101,7 +101,7 @@ Windows 用户可以在这里指定启动 Shell（系统默认 / PowerShell 7 / 
 
 ## 记忆
 
-查看和编辑 Claude 为每个项目写的 Markdown 记忆文件。左边选项目，中间选文件，右边编辑或预览渲染结果。这些文件在 `~/.claude/projects/<project>/memory/`，CLI 运行时会加载它们。
+查看和编辑 Claude 为每个项目写的 Markdown 记忆文件。左边选项目，中间选文件，右边编辑或预览渲染结果。这些文件在 `<data-root>/projects/<project>/memory/`，CLI 运行时会加载它们；数据根位置见[环境变量](../cli/env.md#本地运行与隐私)。
 
 会话里也能直接用 `/memory` 跳到这里。想知道记忆是怎么写入和召回的，看[记忆系统](../internals/memory.md)。
 

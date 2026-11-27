@@ -17,8 +17,8 @@ export function isSessionMetadataTextTruncated(entry: object): boolean {
 const rootFields = new Set([
   'type', 'subtype', 'uuid', 'parentUuid', 'parent_tool_use_id', 'isSidechain', 'isMeta',
   'additionalDirectories', 'cwd', 'timestamp', 'workDir', 'repository', 'worktreeSession', 'permissionMode', 'agentProfile',
-  'runtimeProviderId', 'runtimeModelId', 'effortLevel', 'customTitle', 'aiTitle',
-  'entrypoint', 'message', 'content', 'version',
+  'cliRuntimeId', 'runtimeProviderId', 'runtimeModelId', 'effortLevel', 'customTitle', 'aiTitle',
+  'entrypoint', 'message', 'content', 'version', 'archived',
 ])
 const blockFields = new Set(['type', 'name', 'id', 'tool_use_id', 'text'])
 
@@ -95,6 +95,7 @@ export async function streamSessionMetadata(
     let nextOffset = firstOffset
     let parts: Buffer[] = []
     let length = 0
+    let hasContent = false
     let projection: ReturnType<typeof createProjection> | undefined
     let parseError: Error | undefined
     let projectionError: unknown
@@ -123,20 +124,21 @@ export async function streamSessionMetadata(
           entry = projection!.result()
           projectedRecords++
         }
-      } else if (length) {
+      } else if (hasContent) {
         try {
           entry = JSON.parse((parts.length === 1 ? parts[0]! : Buffer.concat(parts, length)).toString('utf8'))
         } catch (error) {
           parseError = error as Error
         }
       }
-      if (parseError) {
+      if (parseError || hasContent && !(entry && typeof entry === 'object' && !Array.isArray(entry))) {
         omittedRecords++
         options.onSkipped?.()
       }
       else if (entry && typeof entry === 'object' && !Array.isArray(entry)) onEntry(entry as Record<string, unknown>, completeLine, lineStart)
       parts = []
       length = 0
+      hasContent = false
       projection = undefined
       parseError = undefined
       projectionError = undefined
@@ -153,6 +155,7 @@ export async function streamSessionMetadata(
         const found = chunk.indexOf(10, start)
         const end = found >= 0 && found < bytesRead ? found : bytesRead
         const part = chunk.subarray(start, end)
+        if (!hasContent) hasContent = part.some(byte => byte !== 0x20 && byte !== 0x09 && byte !== 0x0d)
         length += part.length
         if (!active && length > HISTORY_SEMANTIC_RECORD_BYTES) {
           projection = createProjection()

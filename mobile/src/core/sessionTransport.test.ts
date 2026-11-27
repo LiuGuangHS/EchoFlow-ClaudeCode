@@ -290,6 +290,44 @@ describe('session synchronization', () => {
     h.transport.dispose()
   })
 
+  test('partial legacy snapshots preserve the absent category and require both categories before ready', async () => {
+    const h = harness()
+    try {
+      await flush()
+      const socket = h.sockets[0]
+      socket.open()
+      await flush()
+      socket.receive({ type: 'connected', sessionId: 'session' })
+      socket.receive({ type: 'session_state', turnState: 'running' })
+      socket.receive({ type: 'permission_request', requestId: 'r', toolName: 'Read', input: {} })
+      socket.onmessage?.({ data: JSON.stringify({ type: 'permission_requests_snapshot', toolRequestIds: ['r'], turnActive: true }) })
+      expect(h.transport.connection).toBe('syncing')
+      socket.onmessage?.({ data: JSON.stringify({ type: 'permission_requests_snapshot', computerUseRequestIds: [], turnActive: true }) })
+      expect(h.transport.connection).toBe('ready')
+      expect(h.transport.state.permissions.map(p => p.requestId)).toEqual(['r'])
+      socket.onmessage?.({ data: JSON.stringify({ type: 'permission_requests_snapshot', toolRequestIds: [1], computerUseRequestIds: [], turnActive: true }) })
+      expect(h.transport.state.permissions.map(p => p.requestId)).toEqual(['r'])
+      socket.receive({ type: 'permission_requests_snapshot', toolRequestIds: [], computerUseRequestIds: [], turnActive: true })
+      expect(h.transport.state.permissions).toEqual([])
+    } finally { h.transport.dispose() }
+  })
+
+  test('incomplete legacy snapshots use the existing bounded sync failure', async () => {
+    const h = harness()
+    try {
+      await flush()
+      const socket = h.sockets[0]
+      socket.open()
+      await flush()
+      socket.receive({ type: 'connected', sessionId: 'session' })
+      socket.receive({ type: 'session_state', turnState: 'idle' })
+      socket.onmessage?.({ data: JSON.stringify({ type: 'permission_requests_snapshot', toolRequestIds: [], turnActive: false }) })
+      h.timers.advance(15000)
+      expect(h.errors.some(error => error.message === '会话同步超时')).toBe(true)
+      expect(h.transport.connection).not.toBe('ready')
+    } finally { h.transport.dispose() }
+  })
+
   test('history plus open socket alone cannot mark connection ready', async () => {
     const h = harness()
     await flush()
@@ -778,6 +816,18 @@ describe('transport lifecycle and outbound commands', () => {
       })
     ).toBe(true)
     expect(h.transport.state.permissions).toHaveLength(1)
+    h.transport.dispose()
+  })
+
+  test('correlated approval rejection preserves pending and requests a same-connection resync', async () => {
+    const h = harness()
+    const socket = await h.ready()
+    socket.receive({ type: 'permission_request', requestId: 'rejected', toolName: 'ExitPlanMode', input: {} })
+    expect(h.transport.send({ type: 'permission_response', requestId: 'rejected', allowed: true })).toBe(true)
+    socket.receive({ type: 'error', code: 'APPROVAL_REJECTED', message: 'not submitted', requestId: 'rejected', permissionType: 'tool' })
+    expect(h.transport.state.permissions.map(p => p.requestId)).toEqual(['rejected'])
+    expect(h.transport.state.error).toMatchObject({ requestId: 'rejected', permissionType: 'tool' })
+    expect(socket.sent.at(-1)).toMatchObject({ type: 'sync_state' })
     h.transport.dispose()
   })
 

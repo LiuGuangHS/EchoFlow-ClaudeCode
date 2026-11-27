@@ -1,6 +1,5 @@
 import { feature } from 'bun:bundle'
 import { access } from 'fs/promises'
-import { tmpdir as osTmpdir } from 'os'
 import { join as nativeJoin } from 'path'
 import { join as posixJoin } from 'path/posix'
 import { rearrangePipeCommand } from '../bash/bashPipeCommand.js'
@@ -12,6 +11,7 @@ import {
   rewriteWindowsNullRedirect,
   shouldAddStdinRedirect,
 } from '../bash/shellQuoting.js'
+import { ensurePrivateStorageTempRoot } from '../cachePaths.js'
 import { logForDebugging } from '../debug.js'
 import { getPlatform } from '../platform.js'
 import { getSessionEnvironmentScript } from '../sessionEnvironment.js'
@@ -135,7 +135,7 @@ export async function createBashShellProvider(
       // Stash sandboxTmpDir for use in getEnvironmentOverrides
       currentSandboxTmpDir = opts.sandboxTmpDir
 
-      const tmpdir = osTmpdir()
+      const tmpdir = opts.useSandbox ? opts.sandboxTmpDir! : ensurePrivateStorageTempRoot()
       const isWindows = getPlatform() === 'windows'
       const shellTmpdir = isWindows ? windowsPathToPosixPath(tmpdir) : tmpdir
 

@@ -7,6 +7,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { ProviderService } from '../services/providerService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { readActiveProviderManagedEnv } from '../services/providerRuntimeEnv.js'
 import { handleProvidersApi } from '../api/providers.js'
 import { handleProxyRequest } from '../proxy/handler.js'
@@ -703,7 +704,7 @@ describe('ProviderService', () => {
         const env = settings.env as Record<string, string>
         expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBe('1')
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBe(
-          path.join(tmpDir, 'cc-haha', 'openai-oauth.json'),
+          path.join(getEchoFlowInternalDir(tmpDir), 'openai-oauth.json'),
         )
         expect(env.ANTHROPIC_MODEL).toBe('gpt-6-sol')
         expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-6-luna')
@@ -750,7 +751,7 @@ describe('ProviderService', () => {
         const env = settings.env as Record<string, string>
         expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBe('1')
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBe(
-          path.join(tmpDir, 'cc-haha', 'openai-oauth.json'),
+          path.join(getEchoFlowInternalDir(tmpDir), 'openai-oauth.json'),
         )
         expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
         expect(env.ANTHROPIC_API_KEY).toBeUndefined()
@@ -758,9 +759,9 @@ describe('ProviderService', () => {
       })
 
       test('auth status reports ChatGPT Official from the desktop OpenAI token file', async () => {
-        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+        await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
         await fs.writeFile(
-          path.join(tmpDir, 'cc-haha', 'openai-oauth.json'),
+          path.join(getEchoFlowInternalDir(tmpDir), 'openai-oauth.json'),
           JSON.stringify({
             accessToken: 'openai-access',
             refreshToken: 'openai-refresh',
@@ -782,9 +783,9 @@ describe('ProviderService', () => {
       })
 
       test('auth status reports Claude Official from the desktop Claude token file', async () => {
-        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+        await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
         await fs.writeFile(
-          path.join(tmpDir, 'cc-haha', 'oauth.json'),
+          path.join(getEchoFlowInternalDir(tmpDir), 'oauth.json'),
           JSON.stringify({
             accessToken: 'claude-access',
             refreshToken: 'claude-refresh',
@@ -909,7 +910,7 @@ describe('ProviderService', () => {
         expect(config.activeId).toBe('grok-official')
         expect(env.CC_HAHA_GROK_OAUTH_PROVIDER).toBe('1')
         expect(env.GROK_OAUTH_FILE).toBe(
-          path.join(tmpDir, 'cc-haha', 'grok-oauth.json'),
+          path.join(getEchoFlowInternalDir(tmpDir), 'grok-oauth.json'),
         )
         expect(env.ANTHROPIC_MODEL).toBe('grok-4.7')
         expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('grok-4.7')
@@ -920,9 +921,9 @@ describe('ProviderService', () => {
       })
 
       test('auth status reports Grok Official from the isolated Grok token file', async () => {
-        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+        await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
         await fs.writeFile(
-          path.join(tmpDir, 'cc-haha', 'grok-oauth.json'),
+          path.join(getEchoFlowInternalDir(tmpDir), 'grok-oauth.json'),
           JSON.stringify({
             accessToken: 'grok-access',
             refreshToken: 'grok-refresh',
@@ -1017,7 +1018,7 @@ describe('ProviderService', () => {
         expect(config.activeId).toBe('deepseek-account')
         expect(env.CC_HAHA_DEEPSEEK_OAUTH_PROVIDER).toBe('1')
         expect(env.DEEPSEEK_OAUTH_FILE).toBe(
-          path.join(tmpDir, 'cc-haha', 'deepseek-oauth.json'),
+          path.join(getEchoFlowInternalDir(tmpDir), 'deepseek-oauth.json'),
         )
         expect(env.ANTHROPIC_BASE_URL).toBe('https://api.deepseek.com/anthropic')
         for (const key of [
@@ -1046,9 +1047,9 @@ describe('ProviderService', () => {
           activeProvider: 'DeepSeek Account',
         })
 
-        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+        await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
         await fs.writeFile(
-          path.join(tmpDir, 'cc-haha', 'deepseek-oauth.json'),
+          path.join(getEchoFlowInternalDir(tmpDir), 'deepseek-oauth.json'),
           JSON.stringify({
             token: 'dsh_test_account_token',
             issuer: 'https://platform.deepseek.com',
@@ -1845,8 +1846,8 @@ describe('ProviderService', () => {
     })
 
     async function writeGrant(file: string, value: Record<string, unknown>) {
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-      await fs.writeFile(path.join(tmpDir, 'cc-haha', file), JSON.stringify(value), 'utf-8')
+      await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+      await fs.writeFile(path.join(getEchoFlowInternalDir(tmpDir), file), JSON.stringify(value), 'utf-8')
     }
 
     async function writeOriginalSettingsAuth() {

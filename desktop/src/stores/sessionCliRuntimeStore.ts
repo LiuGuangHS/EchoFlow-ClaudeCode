@@ -1,6 +1,6 @@
 import { create } from 'zustand'
+import type { ClaudeCodeRuntimeId } from '../lib/desktopHost'
 
-type ClaudeCodeRuntimeId = 'bundled' | 'installed'
 type CliRuntimeRequestStatus = 'pending' | 'applied' | 'failed'
 
 type SessionCliRuntimeStore = {
@@ -12,7 +12,7 @@ type SessionCliRuntimeStore = {
   fail: (sessionId: string) => void
 }
 
-export const useSessionCliRuntimeStore = create<SessionCliRuntimeStore>((set) => ({
+export const useSessionCliRuntimeStore = create<SessionCliRuntimeStore>((set, get) => ({
   effectiveBySessionId: {},
   requestedBySessionId: {},
   statusBySessionId: {},
@@ -47,11 +47,13 @@ export const useSessionCliRuntimeStore = create<SessionCliRuntimeStore>((set) =>
       },
     })),
 
-  fail: (sessionId) =>
+  fail: (sessionId) => {
+    if (get().statusBySessionId[sessionId] !== 'pending') return
     set((state) => ({
       statusBySessionId: {
         ...state.statusBySessionId,
         [sessionId]: 'failed',
       },
-    })),
+    }))
+  },
 }))

@@ -12,7 +12,7 @@ for (const mode of ['on', 'off', 'shadow']) {
     process.env.CLAUDE_CONFIG_DIR = scope
     process.env.CC_HAHA_LOCAL_INDEX = mode
     clearTraceCaptureStateForTests()
-    const dir = join(scope, 'cc-haha', 'traces')
+    const dir = join(scope, 'echoflow-code', 'traces')
     const filePath = join(dir, 'fixture.jsonl')
     const line = (id: string) => JSON.stringify({ type: 'call', record: {
       id, sessionId: 'fixture', source: 'proxy', status: 'error',

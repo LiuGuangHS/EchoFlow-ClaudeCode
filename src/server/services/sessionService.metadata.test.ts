@@ -68,6 +68,27 @@ test('large bodies preserve system turn counts, isMeta exclusion, and explicit w
   expect(await new SessionService().getSessionLaunchInfo(sessionId)).toMatchObject({ transcriptMessageCount: 1, workDir: directory, worktreeSession: null })
 })
 
+test('cold launch retains a CLI runtime pin from oversized metadata without leaking it into summaries or lists', async () => {
+  await seed([
+    { type: 'session-meta', workDir: directory, cliRuntimeId: 'installed', unknownRuntimeField: { body } },
+    { type: 'user', uuid: 'fixture-user', cwd: directory, message: { role: 'user', content: 'Keep this conversation' } },
+  ])
+  const before = await readFile(file)
+  const service = new SessionService()
+  const launchInfo = await service.getSessionLaunchInfo(sessionId)
+  const summary = await service.getSessionSummary(sessionId)
+  const listed = (await service.listSessions()).sessions.find(session => session.id === sessionId)
+
+  expect(await readFile(file)).toEqual(before)
+  for (const result of [summary, listed]) {
+    expect(result).toMatchObject({ workDir: directory, messageCount: 1, title: 'Keep this conversation' })
+    expect(result).not.toHaveProperty('cliRuntimeId')
+    expect(result).not.toHaveProperty('unknownRuntimeField')
+  }
+  expect(launchInfo).not.toHaveProperty('unknownRuntimeField')
+  expect(launchInfo).toMatchObject({ filePath: file, workDir: directory, transcriptMessageCount: 1, cliRuntimeId: 'installed' })
+})
+
 test('actual over-budget launch metadata still blocks unsafe launch', async () => {
   await seed([{ type: 'session-meta', workDir: body }])
   await expect(new SessionService().getSessionLaunchInfo(sessionId)).rejects.toMatchObject({ code: 'SESSION_METADATA_TOO_LARGE' })

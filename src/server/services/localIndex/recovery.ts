@@ -9,6 +9,8 @@ import {
 } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 
+import { getEchoFlowInternalDir } from '../../../utils/echoFlowConfigRoot.js'
+
 export type LocalIndexErrorCode =
   | 'SQLITE_CORRUPT'
   | 'SQLITE_BUSY'
@@ -85,7 +87,7 @@ export function isConfirmedLocalIndexCorruption(error: unknown): boolean {
 }
 
 function assertManagedDatabasePath(scope: string, databasePath: string): void {
-  const expected = resolve(scope, 'cc-haha', 'db', 'index-v1.sqlite')
+  const expected = resolve(getEchoFlowInternalDir(scope), 'db', 'index-v1.sqlite')
   if (resolve(databasePath) !== expected) {
     throw new LocalIndexRecoveryError(LOCAL_INDEX_UNSAFE_PATH)
   }
@@ -109,7 +111,7 @@ async function prepareManagedBackupsRoot(
 ): Promise<string> {
   const normalizedScope = resolve(scope)
   await mkdir(normalizedScope, { recursive: true })
-  const ccHahaDir = join(normalizedScope, 'cc-haha')
+  const ccHahaDir = getEchoFlowInternalDir(normalizedScope)
   const databaseDir = join(ccHahaDir, 'db')
   const backupsRoot = join(databaseDir, 'backups')
   if (dirname(resolve(databasePath)) !== databaseDir) {

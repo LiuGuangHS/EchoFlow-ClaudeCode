@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { discoverDesktopStorage, initializeDesktopStorage } from '../../desktop/electron/services/desktopStorageStartup'
+import { assertWindowsMigrationInventory } from '../../src/server/migrationInventoryWindows'
+import { buildEchoFlowOwnershipMarker } from '../../src/utils/echoFlowConfigRoot'
 import { createSandboxedTestEnvironment } from './test-environment'
 
 describe('Windows installer recovery prerequisites', () => {
@@ -13,12 +16,12 @@ describe('Windows installer recovery prerequisites', () => {
     expect(hook).toContain('!include "${BUILD_RESOURCES_DIR}\\product-identity.generated.nsh"')
     for (const root of ['$R1', '$R2']) {
       for (const name of ['ECHOFLOW_PRODUCT_SLUG', 'ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME']) {
-        expect(fastPath).toContain(`Push "${root}\\\${${name}}"\n  Call CcHahaIsAbsentOrEmptyDirectory\n  Pop $R3\n  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done`)
+        expect(fastPath).toContain(`Push "${root}\\\${${name}}"\n  Push ""\n  Call CcHahaIsAbsentOrEmptyDirectory\n  Pop $R3\n  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done`)
       }
     }
     expect(hook).toContain('-DesktopPackageName "${ECHOFLOW_PRODUCT_SLUG}" -LegacyDesktopPackageName "${ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME}"')
     expect(helper).toContain('-ProfileNames @($DesktopPackageName, $LegacyDesktopPackageName)')
-    expect(helper).toContain('package profile pointer was not recovered')
+    expect(helper).toContain('package profile candidate was not handed to the bridge')
     expect(helper).toContain('package profile journal was bypassed')
   })
 
@@ -54,6 +57,8 @@ describe('Windows installer recovery prerequisites', () => {
     expect(helper).toContain('Unselected profile has an unresolved portable data directory')
     expect(recovery).toContain('-ProtectedInstallDirs $protectedRoots')
     expect(helper).toContain('Unselected profile migration history references an application install directory')
+    const bridge = helper.slice(helper.indexOf('function Invoke-InstallerStorageRecovery {'), helper.indexOf('function Resolve-UserDataDirectory {'))
+    expect(bridge).toMatch(/did not confirm a ready complete root'\s*}\s*foreach \(\$installDir in \$InstallDirs\) \{\s*if \(Test-PathMayBeDeleted -InstallDir \$installDir -Candidate \$receipt\.root\)/)
   })
 
   test('keeps terminal, pending, invalid and read-only journal fixtures in Windows SelfTest', () => {
@@ -81,12 +86,12 @@ describe('Windows installer recovery prerequisites', () => {
       'terminal journal changed historical or current state',
     ]) expect(selfTest).toContain(scenario)
     expect(helper).toContain('refusal modified journal, mode, source or staging')
-    expect(helper).toContain('refusal created a recovery copy')
+    expect(helper).toContain('refusal called the recovery bridge')
   })
 
   test('decodes BOM-less UTF-8 mode pointers and covers missing Unicode targets', () => {
     const helper = readFileSync('desktop/build/recover-legacy-install-data.ps1', 'utf8')
-    const reader = helper.slice(helper.indexOf('function Read-AppMode {'), helper.indexOf('function Test-LegacyPortableData {'))
+    const reader = helper.slice(helper.indexOf('function Read-AppMode {'), helper.indexOf('function Test-RetainedLegacyData {'))
     const writer = helper.slice(helper.indexOf('function Write-TestMode {'), helper.indexOf('function New-TestMigrationJournal {'))
     expect(reader).toContain('Get-Content -LiteralPath $modeFile -Raw -Encoding UTF8')
     expect(writer).toContain('New-Object Text.UTF8Encoding($false)')
@@ -101,7 +106,7 @@ describe('Windows installer recovery prerequisites', () => {
     expect(discovery).toContain('Test-SamePath -Left $currentSource -Right $legacySource')
     expect(discovery).toContain('Current portable selection conflicts with retained legacy data')
     expect(helper).toContain('retained-source-current-selection')
-    expect(helper).toContain('retry refused to override the current recovered selection')
+    expect(helper).toContain('retry refused to override the current root selection')
   })
 
   test('carries terminal history into legacy discovery without treating retained default data as authority', () => {
@@ -113,7 +118,31 @@ describe('Windows installer recovery prerequisites', () => {
     expect(recovery).toContain('-HasTerminalJournal:$hasTerminalJournal')
     expect(discovery).toMatch(/\$HasTerminalJournal[\s\S]*throw "Current selection conflicts with retained legacy data after migration/)
     expect(helper).toContain('terminal-retained-default-')
-    expect(helper).toContain('legacy default was not recovered')
+    expect(helper).toContain('legacy default was not handed to the shared bridge')
+  })
+
+  test('protects mode-less install data when the current profile selects default storage', () => {
+    const helper = readFileSync('desktop/build/recover-legacy-install-data.ps1', 'utf8')
+    const discovery = helper.slice(helper.indexOf('function Get-LegacyActiveSource {'), helper.indexOf('function Get-ExistingInstallDirs {'))
+    expect(discovery).toMatch(/\$SystemMode\.Mode -eq 'portable'\) \{ return \$legacyDir \}[\s\S]*if \(\$null -ne \$legacySource\)[\s\S]*throw "Current default selection conflicts with retained legacy data[\s\S]*return \$null/)
+    expect(discovery).toContain('Test-RetainedLegacyData -Dir $legacyDir')
+    const retained = helper.slice(helper.indexOf('function Test-RetainedLegacyData {'), helper.indexOf('function Resolve-LegacyConfiguredPath {'))
+    expect(retained).toContain('[IO.Directory]::EnumerateFileSystemEntries($Dir)')
+    expect(retained).toContain(".Equals('app-mode.json', [StringComparison]::OrdinalIgnoreCase)")
+    expect(discovery).toContain('Legacy default selection conflicts with retained install data')
+    expect(helper).toMatch(/adapter-sessions\.json.*Partitions[\s\S]*mode-less install data[\s\S]*Assert-TestRecoveryRefused[\s\S]*Current default selection conflicts with retained legacy data/)
+    expect(helper).toContain('default mode without retained data required recovery')
+  })
+
+  test('checks shared install data and its explicit portable target independently', () => {
+    const helper = readFileSync('desktop/build/recover-legacy-install-data.ps1', 'utf8')
+    const scan = helper.slice(helper.indexOf('function Assert-NoUndiscoveredLegacySources {'), helper.indexOf('function Assert-NoRunningApplication {'))
+    const recovery = helper.slice(helper.indexOf('function Invoke-LegacyRecovery {'), helper.indexOf('function Assert-SelfTest {'))
+    expect(scan).toMatch(/Test-RetainedLegacyData -Dir \$modeDir[\s\S]*\$mode\.Mode -eq 'portable'[\s\S]*Resolve-LegacyConfiguredPath[\s\S]*foreach \(\$candidate in \$candidates\)/)
+    expect(recovery).toContain('-ScanDirs $existingSharedInstallDirs -InstallDirs $existingInstallDirs')
+    expect(helper).toMatch(/custom shared data protection[\s\S]*adapter-sessions\.json.*Partitions.*data-migration-v1\.json[\s\S]*Assert-TestRecoveryRefused/)
+    expect(helper).toContain('control-only self pointer unexpectedly required recovery')
+    expect(helper).toMatch(/other portable target[\s\S]*Assert-TestRecoveryRefused/)
   })
 
   test('requires a valid explicit completed-journal selection before accepting startup', () => {
@@ -135,18 +164,18 @@ describe('Windows installer recovery prerequisites', () => {
     expect(fastPath).toMatch(/cc_haha_profile_mode_missing:[\s\S]*StrCmp \$R1 2 0 cc_haha_skip_recovery_done[\s\S]*IntOp \$R5 \$R5 & 0x410[\s\S]*StrCmp \$R5 16 0 cc_haha_skip_recovery_done/)
   })
 
-  test('reports elevated profile cases as identity-only rather than profile refusal coverage', () => {
+  test('reports elevated installer refusal separately from profile branch coverage', () => {
     const smoke = readFileSync('desktop/scripts/windows-installer-smoke.ps1', 'utf8')
     expect(smoke).toContain('UNEXERCISED: packaged profile-specific success and refusal branches')
-    expect(smoke).toContain('Elevated identity-only refusal without CLR')
-    expect(smoke).toMatch(/if \(Test-IsProcessElevated\) \{\s*Invoke-ProcessExpectFailure[^\n]*identity-only[\s\S]*\} elseif \(\$scenario -like 'default-\*'\)/)
+    expect(smoke).toContain('Elevated installer refusal without CLR')
+    expect(smoke).toMatch(/if \(Test-IsProcessElevated\) \{\s*Invoke-ProcessExpectFailure[^\n]*installer refusal[\s\S]*\} elseif \(\$scenario -like 'default-\*'\)/)
   })
 
   test('persists bounded smoke diagnostics and reports coverage even after failures', () => {
     const smoke = readFileSync('desktop/scripts/windows-installer-smoke.ps1', 'utf8')
     expect(smoke).toContain('windows-installer-smoke-$Arch')
     expect(smoke).toContain("Join-Path $evidenceDir 'diagnostics.log'")
-    expect(smoke).toContain("status = 'unexercised'; reason = 'Elevated runner refuses at identity gate")
+    expect(smoke).toContain("status = 'unexercised'; reason = 'Elevated runner cannot qualify the profile-specific branches.")
     expect(smoke).toContain("$results[$script:activeCheck] = [ordered]@{ status = 'passed'")
     expect(smoke).toContain('$completedCases += 1')
     expect(smoke).not.toContain('no-CLR default reinstall, and fail-closed portable reinstall smoke passed')
@@ -185,10 +214,10 @@ foreach ($scenario in @('elevated', 'early-failure', 'cleanup-failure')) {
   $failure = ''
   $cleanupFailure = ''
   if ($scenario -eq 'elevated') {
-    foreach ($name in @('native-helper-regressions', 'packaged-smoke', 'elevated-identity-no-clr', 'cleanup')) {
+    foreach ($name in @('native-helper-regressions', 'packaged-smoke', 'elevated-refusal-no-clr', 'cleanup')) {
       $results[$name] = @{ status = 'passed'; reason = 'Fixture assertions completed'; evidence = 'Fixture evidence' }
     }
-    $results['packaged-profile-no-clr'].reason = 'Elevated identity gate; profile branches unexercised'
+    $results['packaged-profile-no-clr'].reason = 'Elevated installer refusal; profile branches unexercised'
   } else {
     $failure = "original | failure\nsecond line"
     $results['native-helper-regressions'] = @{ status = 'failed'; reason = $failure; evidence = 'Fixture failure' }
@@ -245,7 +274,7 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
       expect(elevated.status).toBe('passed')
       expect(elevated.coverage).toBe('unexercised')
       expect(elevated.checks['packaged-profile-no-clr'].status).toBe('unexercised')
-      expect(elevated.checks['elevated-identity-no-clr'].status).toBe('passed')
+      expect(elevated.checks['elevated-refusal-no-clr'].status).toBe('passed')
       const early = report('early-failure')
       expect(early.status).toBe('failed')
       expect(early.coverage).toBe('failed')
@@ -286,7 +315,7 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
   test('terminal acceptance still precedes shared-install and process safety checks', () => {
     const helper = readFileSync('desktop/build/recover-legacy-install-data.ps1', 'utf8')
     const recovery = helper.slice(helper.indexOf('function Invoke-LegacyRecovery {'), helper.indexOf('function Assert-SelfTest {'))
-    expect(recovery).toMatch(/Assert-MigrationJournalAllowsRecovery[\s\S]*Get-UnsafeLegacySource[\s\S]*Assert-NoUndiscoveredLegacySources[\s\S]*untrusted-elevated[\s\S]*Assert-NoRunningApplication[\s\S]*Copy-VerifiedTree[\s\S]*Assert-NoRunningApplication[\s\S]*Write-AppModeAtomically/)
+    expect(recovery).toMatch(/Assert-MigrationJournalAllowsRecovery[\s\S]*Get-UnsafeLegacySource[\s\S]*Assert-NoUndiscoveredLegacySources[\s\S]*untrusted-elevated[\s\S]*Assert-NoRunningApplication[\s\S]*Invoke-InstallerStorageRecovery[\s\S]*Assert-NoRunningApplication/)
     const journalGate = helper.slice(helper.indexOf('function Assert-MigrationJournalAllowsRecovery {'), helper.indexOf('function Invoke-LegacyRecovery {'))
     expect(journalGate).not.toMatch(/Remove-Item|Copy-VerifiedTree|Write-AppModeAtomically|Assert-TreeManifestsEqual/)
     expect(helper).toContain('terminal journal bypassed process uncertainty protection')
@@ -378,6 +407,7 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
     expect(fastPath).toContain('Push "$R3\\${ECHOFLOW_PRODUCT_NAME}\\app-mode.json"')
     expect(fastPath.match(/Call CcHahaIsStrictDefaultMode/g)).toHaveLength(1)
     expect(fastPath).not.toContain('IfFileExists "$R2\\${ECHOFLOW_PRODUCT_NAME}\\app-mode.json" cc_haha_skip_recovery_done')
+    expect(fastPath).toContain('Push "$R2\\${ECHOFLOW_PRODUCT_NAME}\\${ECHOFLOW_PRODUCT_SLUG}\\migrations"\n  Push "writers"\n  Call CcHahaIsAbsentOrEmptyDirectory\n  Pop $R3\n  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done')
     expect(installerHook).toMatch(
       /Call CcHahaCanSkipLegacyRecovery[\s\S]*No legacy data candidates found for the registered per-user installation[\s\S]*UAC_AsUser_Call Function CcHahaRecoverLegacy/,
     )
@@ -408,6 +438,7 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
       'portable', 'broken', 'crlf', 'bom', 'final-newline', 'extra-field', 'uppercase', 'truncated', 'locked-mode',
       'journal', 'other-journal', 'journal-directory', 'legacy-data', 'elevated', 'inner-uac',
       'different-install', 'machine-install', 'machine-uninstaller', 'config-env', 'managed-env',
+      'local-transaction', 'local-empty-writers', 'local-writer-receipt', 'local-linked-writers', 'local-writers-file',
       ...aliasScenarios,
     ]
     const executable = path.join(root, 'probe.exe')
@@ -417,6 +448,7 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
     try {
       for (const kind of ['Local', 'Roaming']) {
         for (const scenario of scenarios) {
+          if (kind === 'Roaming' && scenario.startsWith('local-')) continue
           const name = `${kind}-${scenario}`
           const fixture = path.join(root, name)
           const selected = path.join(fixture, kind, 'EchoFlow Code')
@@ -458,6 +490,27 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
           if (['journal', 'implicit-default-journal'].includes(scenario)) writeFileSync(path.join(selected, 'data-migration-v1.json'), '{"version":1,"status":{"stage":"completed"}}')
           if (scenario === 'other-journal') writeFileSync(path.join(other, 'data-migration-v1.json'), '{}')
           if (scenario === 'journal-directory') mkdirSync(path.join(selected, 'data-migration-v1.json'))
+          if (scenario.startsWith('local-')) {
+            const directory = path.join(fixture, 'Local', identity.name, identity.slug, 'migrations')
+            mkdirSync(directory, { recursive: true })
+            const writers = path.join(directory, 'writers')
+            if (scenario === 'local-linked-writers') {
+              symlinkSync(install, writers, 'junction')
+            } else if (scenario === 'local-writers-file') {
+              writeFileSync(writers, 'not a directory')
+            } else {
+              mkdirSync(writers)
+              if (scenario !== 'local-empty-writers') {
+                const token = '12345678-1234-1234-1234-123456789abc'
+                writeFileSync(path.join(writers, `424242-${token}.json`), JSON.stringify({ version: 1, host: 'fixture', pid: 424242, token }))
+              }
+            }
+            if (scenario === 'local-transaction') {
+              const transaction = path.join(directory, '11111111-2222-4333-8444-555555555555')
+              mkdirSync(transaction)
+              writeFileSync(path.join(transaction, 'journal.json'), '{"state":"cleanup-required"}')
+            }
+          }
           if (['legacy-data', 'implicit-default-legacy'].includes(scenario)) {
             mkdirSync(path.join(install, 'CLAUDE_CONFIG_DIR'))
             writeFileSync(path.join(install, 'CLAUDE_CONFIG_DIR', 'settings.json'), 'must survive')
@@ -474,10 +527,10 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
               if (state === 'default' || state === 'portable') writeFileSync(path.join(alias, 'app-mode.json'), defaultMode.replace('default', state))
             }
           }
-          const succeeds = ['default', 'empty-other', 'absent-mode', 'implicit-default', 'implicit-default-empty-other'].includes(scenario)
+          const succeeds = ['default', 'empty-other', 'absent-mode', 'implicit-default', 'implicit-default-empty-other', 'local-empty-writers', 'local-writer-receipt'].includes(scenario)
             || (scenario.startsWith('alias-') && scenario.endsWith('-empty'))
           const errorFlag = scenarios.indexOf(scenario) % 2
-          expected.push(`${name}|${Number(succeeds)}|${errorFlag}|r0|r1|r2|r3|r4|r5|r6`)
+          expected.push(`${name}|${Number(succeeds)}|${errorFlag}|r0|r1|r2|r3|r4|r5|r6|r7|stack-sentinel`)
           sections.push(String.raw`
   System::Call 'kernel32::SetEnvironmentVariable(w "APPDATA", w "${path.join(fixture, 'Roaming')}")'
   System::Call 'kernel32::SetEnvironmentVariable(w "LOCALAPPDATA", w "${path.join(fixture, 'Local')}")'
@@ -496,12 +549,15 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
   StrCpy $R4 r4
   StrCpy $R5 r5
   StrCpy $R6 r6
+  StrCpy $R7 r7
+  Push stack-sentinel
   ${errorFlag ? 'SetErrors' : 'ClearErrors'}
   Call CcHahaCanSkipLegacyRecovery
   Pop $0
   StrCpy $1 0
   IfErrors 0 +2
     StrCpy $1 1
+  Pop $3
   ${scenario === 'locked-mode' ? "System::Call 'kernel32::CloseHandle(p $lockedHandle)'" : ''}
   ${hasModeFile ? `System::Call 'kernel32::CreateFileW(w "${modeFile}", i 0x80000000, i 0, p 0, i 3, i 0, p 0) p.s'
   Pop $2
@@ -509,7 +565,7 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
     SetErrorLevel 97
     Quit
   System::Call 'kernel32::CloseHandle(p r2)'` : ''}
-  FileWrite $traceHandle "${name}|$0|$1|$R0|$R1|$R2|$R3|$R4|$R5|$R6$\n"
+  FileWrite $traceHandle "${name}|$0|$1|$R0|$R1|$R2|$R3|$R4|$R5|$R6|$R7|$3$\n"
 `)
         }
       }
@@ -547,15 +603,85 @@ SectionEnd
     }
   }, 90_000)
 
-  test('keeps legacy-profile startup and relaunch evidence separate from external config overrides', () => {
+  test('launches the fresh install twice at the isolated default storage root before seeding a legacy profile', () => {
     const smoke = readFileSync('desktop/scripts/windows-installer-smoke.ps1', 'utf8')
-    expect(smoke).toContain("foreach ($launch in @('startup', 'relaunch'))")
-    expect(smoke).toContain('-ExpectedPortableDir $legacyPortable')
-    expect(smoke).toMatch(/if \(\$ExpectedPortableDir\) \{\s*Remove-Item Env:CLAUDE_CONFIG_DIR/)
-    expect(smoke).toContain('Legacy-package profile reinstall')
-    expect(smoke).toContain('created competing state')
+    const launch = smoke.match(/function Invoke-InstalledApplicationSmoke \{[\s\S]*?^\}/m)?.[0] ?? ''
+    expect(launch).toMatch(/Join-Path \$(?:localAppData|env:LOCALAPPDATA) (?:'EchoFlow Code'|\$productIdentity\.name)/)
+    expect(launch).toMatch(/\$serverStateFile = Join-Path \$configDir 'desktop-server-state\.json'/)
+    expect(launch).toMatch(/Remove-Item Env:CLAUDE_CONFIG_DIR[^\r\n]*[\s\S]*Start-Process -FilePath \$FilePath/)
+    expect(launch).not.toMatch(/\$env:CLAUDE_CONFIG_DIR\s*=/i)
+    expect(smoke).toMatch(/\$localAppData = Join-Path \$testRoot 'AppData\\Local'[\s\S]*\$env:LOCALAPPDATA = \$localAppData[\s\S]*-Stage 'Fresh install'[^\r\n]*[\s\S]*?Invoke-InstalledApplicationSmoke[\s\S]*?-IsolatedUserProfile \$userProfile\r?\n[\s\S]*?WriteAllText\(\$legacyModeFile,/)
+    const fresh = smoke.match(/-Stage 'Fresh install'[\s\S]*?(?=\r?\n  Invoke-LegacyRecoveryDiagnostic\b)/)?.[0] ?? ''
+    expect(fresh.match(/Invoke-InstalledApplicationSmoke\b/g)).toHaveLength(2)
+    expect(fresh).toMatch(/Invoke-InstalledApplicationSmoke[\s\S]*WriteAllText\(\$freshSentinel,[\s\S]*Invoke-InstalledApplicationSmoke[\s\S]*ReadAllText\(\$freshSentinel\)[\s\S]*Move-Item/)
+  })
+
+  test('exercises the packaged installer recovery bridge with an install-contained source', () => {
+    const smoke = readFileSync('desktop/scripts/windows-installer-smoke.ps1', 'utf8')
+    const diagnostic = smoke.match(/function Invoke-LegacyRecoveryDiagnostic \{[\s\S]*?^\}/m)?.[0] ?? ''
+    expect(diagnostic).toMatch(/Join-Path \$installDir 'resources\\installer-recovery\\installer-storage-recovery-x86_64-pc-windows-msvc\.exe'/)
+    const staged = diagnostic.match(/\$(\w+) = Join-Path \$testRoot '[^'\\]+'\s*\r?\n[^]*?Copy-Item -LiteralPath \$\w+ -Destination \$\1\b/)
+    expect(staged?.[1], 'copy the packaged executable to a fixture path outside the protected install').toBeDefined()
+    expect(diagnostic).toMatch(new RegExp(`'-RecoveryBridge',\\s+\\$${staged?.[1]}\\b`))
+    expect(diagnostic).toMatch(/Join-Path \$\w+ 'CLAUDE_CONFIG_DIR'[\s\S]*settings\.json[\s\S]*\$output = @\(& \$windowsPowerShell @arguments/)
+    expect(diagnostic).toMatch(/\$exitCode -ne 20/)
+    expect(diagnostic).toContain('Installer storage recovery stopped: Storage migration blocked: Windows native')
+    expect(diagnostic).toMatch(/Get-FileHash[\s\S]*\$exitCode -ne 20[\s\S]*Get-FileHash/)
+    expect(smoke).toMatch(/^  Invoke-LegacyRecoveryDiagnostic\b/m)
+  })
+
+  test('reports legacy startup separately and verifies packaged reinstall preserves the profile', () => {
+    const smoke = readFileSync('desktop/scripts/windows-installer-smoke.ps1', 'utf8')
+    expect(smoke).toMatch(/\$freshStorage = Join-Path \$localAppData \$productIdentity\.name[\s\S]*?Move-Item -LiteralPath \$freshStorage[\s\S]*?Invoke-LegacyRecoveryDiagnostic\s+[\s\S]*?\[IO\.File\]::WriteAllText\(\$legacyModeFile,/)
+    expect(smoke).toMatch(/-Stage 'Legacy-package profile reinstall'[^\r\n]*[\s\S]*?Get-FileHash -LiteralPath \$legacyModeFile[\s\S]*?created competing state/)
+    expect(smoke).toMatch(/\$results\['legacy-profile-startup'\] = \[ordered\]@\{ status = 'unexercised'; reason = 'Windows native per-PID inventory/)
     expect(smoke).toContain("@($windowLog, $serverStateFile)")
     expect(smoke).toContain("'legacy-profile', 'package-profile'")
+  })
+
+  test.each(['unmarked', 'owned'] as const)('legacy portable startup and retry preserve the original %s selection', async (ownership) => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'echoflow-legacy-portable-')))
+    const env = { APPDATA: path.join(root, 'Roaming'), LOCALAPPDATA: path.join(root, 'Local') }
+    const identity = JSON.parse(readFileSync('product.json', 'utf8'))
+    const legacy = path.join(env.APPDATA, identity.legacyDesktopPackageName)
+    const portable = path.join(root, 'legacy portable data')
+    const modeFile = path.join(legacy, 'app-mode.json')
+    const mode = JSON.stringify({ mode: 'portable', portable_dir: portable })
+    const sentinel = path.join(portable, 'profile-sentinel.txt')
+    const defaultRoot = path.join(env.LOCALAPPDATA, identity.name)
+    const app = {
+      getPath: (name: 'userData' | 'exe' | 'home') =>
+        ({ userData: path.join(env.APPDATA, identity.name), exe: path.join(root, 'install', `${identity.name}.exe`), home: root })[name],
+      commandLine: { hasSwitch: () => false, getSwitchValue: () => '' },
+    }
+    try {
+      mkdirSync(legacy, { recursive: true })
+      mkdirSync(portable)
+      writeFileSync(modeFile, mode)
+      writeFileSync(sentinel, 'legacy-profile-must-survive')
+      if (ownership === 'owned') writeFileSync(path.join(portable, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+      const refusal = ownership === 'owned'
+        ? 'Storage migration blocked: Windows native per-PID completeness evidence is required'
+        : `Unproven or future storage ownership: ${portable}`
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const launch = discoverDesktopStorage(app, env, 'win32', root)
+        expect(launch.binding.root).toBe(portable)
+        await expect(initializeDesktopStorage(launch, {
+          platform: 'win32',
+          assertQuiescent: roots => {
+            expect(roots).toEqual([portable, legacy])
+            return assertWindowsMigrationInventory({ version: 1, roots, ownedPids: [process.pid], ownerPatterns: [] })
+          },
+        }, async () => { throw new Error('Unexpected restricted startup') })).rejects.toThrow(refusal)
+        expect(readdirSync(legacy)).toEqual(['app-mode.json'])
+        expect(readFileSync(modeFile, 'utf8')).toBe(mode)
+        expect(readFileSync(sentinel, 'utf8')).toBe('legacy-profile-must-survive')
+        expect(existsSync(defaultRoot)).toBe(false)
+        expect(existsSync(path.join(portable, 'desktop-server-state.json'))).toBe(false)
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   test('keeps no-CLR default and portable upgrade cases in Windows smoke', () => {
@@ -566,9 +692,9 @@ SectionEnd
 
     expect(installerSmoke).toContain("$env:COMPLUS_Version = 'v0.0.0-test-invalid-clr'")
     expect(installerSmoke).toContain('Test-IsProcessElevated')
-    expect(installerSmoke).toContain('Elevated identity-only refusal without CLR')
+    expect(installerSmoke).toContain('Elevated installer refusal without CLR')
     expect(installerSmoke).toMatch(
-      /Elevated identity-only refusal without CLR' -ExpectedExitCode 20/,
+      /Elevated installer refusal without CLR' -ExpectedExitCode 20/,
     )
     expect(installerSmoke).toContain('Trusted-user default-mode reinstall without CLR')
     expect(installerSmoke).toContain('Portable reinstall without CLR')

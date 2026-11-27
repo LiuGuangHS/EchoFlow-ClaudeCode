@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { openLocalIndexDatabase, type LocalIndexDatabase } from './database.js'
 import { createSessionIndex, type SessionIndex } from './sessionIndex.js'
+import { getEchoFlowInternalDir } from '../../../utils/echoFlowConfigRoot.js'
 
 let directory: string
 let database: LocalIndexDatabase
@@ -11,7 +12,7 @@ let index: SessionIndex
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'metadata-search-'))
-  database = openLocalIndexDatabase({ scope: directory, path: join(directory, 'cc-haha/db/index-v1.sqlite') })
+  database = openLocalIndexDatabase({ scope: directory, path: join(getEchoFlowInternalDir(directory), 'db', 'index-v1.sqlite') })
   index = createSessionIndex(database)
 })
 

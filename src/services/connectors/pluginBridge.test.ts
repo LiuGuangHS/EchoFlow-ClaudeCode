@@ -15,7 +15,7 @@ import { loadPluginMcpServers, extractMcpServersFromPlugins } from '../../utils/
 import type { ConnectorDefinition, ConnectorInstallation } from './types.js'
 
 const definition: ConnectorDefinition = {
-  id: 'feishu', pluginId: 'office-feishu@haha-connectors', packageName: '@larksuite/cli',
+  id: 'feishu', pluginId: 'office-feishu@echoflow-connectors', packageName: '@larksuite/cli',
   version: '1.0.95', homepage: 'https://github.com/larksuite/cli',
   credentialMode: 'shared', platforms: ['darwin-arm64', 'win32-x64'],
 }
@@ -69,7 +69,7 @@ describe('managed connector plugin bridge', () => {
       { source: 'skills/upstream-fixture/SKILL.md', target: 'skills/upstream-fixture/SKILL.md', integrity: `sha256-${createHash('sha256').update(text).digest('hex')}` },
       { source: 'skills/upstream-fixture/references/example.md', target: 'skills/upstream-fixture/references/example.md', integrity: `sha256-${createHash('sha256').update(reference).digest('hex')}` },
     ] }
-    const def: ConnectorDefinition = { ...definition, id: recipe.id, pluginId: `office-${recipe.id}@haha-connectors`, version: recipe.version, transport: 'skills', collection: 'tools', credentialMode: 'isolated' }
+    const def: ConnectorDefinition = { ...definition, id: recipe.id, pluginId: `office-${recipe.id}@echoflow-connectors`, version: recipe.version, transport: 'skills', collection: 'tools', credentialMode: 'isolated' }
     SKILL_RECIPES.push(recipe)
     try {
       const adapter = createSkillBundleAdapter(def, join(directory, 'connectors'), recipe, async urls => urls[0]!.endsWith('SKILL.md') ? text : reference)
@@ -92,7 +92,7 @@ describe('managed connector plugin bridge', () => {
   })
 
   it('retains both plugins when preparations share the local marketplace', async () => {
-    const second = { ...definition, id: 'dingtalk' as const, pluginId: 'office-dingtalk@haha-connectors' }
+    const second = { ...definition, id: 'dingtalk' as const, pluginId: 'office-dingtalk@echoflow-connectors' }
     await Promise.all([installConnectorPlugin(definition, installation), installConnectorPlugin(second, installation)])
     await setConnectorPluginEnabled(definition, true)
     await setConnectorPluginEnabled(second, true)
@@ -103,7 +103,7 @@ describe('managed connector plugin bridge', () => {
   it('refuses a marketplace collision instead of overwriting a user source', async () => {
     await mkdir(join(directory, 'plugins'), { recursive: true })
     const file = join(directory, 'plugins', 'known_marketplaces.json')
-    const existing = { 'haha-connectors': { source: { source: 'directory', path: '/some/user/source' }, installLocation: '/some/user/source', lastUpdated: new Date(0).toISOString() } }
+    const existing = { 'echoflow-connectors': { source: { source: 'directory', path: '/some/user/source' }, installLocation: '/some/user/source', lastUpdated: new Date(0).toISOString() } }
     await writeFile(file, JSON.stringify(existing))
     await expect(installConnectorPlugin(definition, installation)).rejects.toThrow('already used')
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual(existing)

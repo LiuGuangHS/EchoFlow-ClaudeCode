@@ -2,6 +2,7 @@ import { lstat, readdir, stat } from 'node:fs/promises'
 import { migrationMaintenance } from '../../migrationMaintenance.js'
 import { basename, join, relative, resolve, sep } from 'node:path'
 import { getClaudeConfigHomeDir } from '../../../utils/envUtils.js'
+import { readSessionArchiveSnapshot } from '../../../utils/sessionArchiveStore.js'
 import {
   getLocalIndexDatabasePath,
   resolveLocalIndexMode,
@@ -25,6 +26,7 @@ import {
 } from './sessionIndex.js'
 import {
   createSessionProjector,
+  LEGACY_ARCHIVE_PARSER_VERSION,
   LOCAL_INDEX_SOURCE_LIMIT,
   SESSION_SUMMARY_PARSER_VERSION,
   type SessionProjector,
@@ -512,6 +514,7 @@ export function createLocalIndexCoordinator(
   // Whether committed rows describe a complete snapshot: rows existed at
   // startup, or a discovery generation has finished.
   let servableSnapshot = false
+  let sessionDiscoveryComplete = false
   // Per-path failures recorded by the discovery generation that is still
   // running. Its unattributed failures are only recorded at its end, together
   // with `fullSweepFailureCode`.
@@ -1028,6 +1031,7 @@ export function createLocalIndexCoordinator(
         fullSweepFailureCode = genericFailureCode ?? 'LOCAL_INDEX_DISCOVERY_INCOMPLETE'
       }
       fullSweepFailureFromPreviousRun = false
+      sessionDiscoveryComplete = complete
       if (activeSweepFailures === sweepFailures) activeSweepFailures = null
       if (narrate || reprojected > 0) {
         log(
@@ -1297,7 +1301,16 @@ export function createLocalIndexCoordinator(
       activeSweepFailures = null
       const hasCommittedRows = activeIndex.countSources() > 0
       servableSnapshot = hasCommittedRows
-      status = initialBuildingStatus(mode, persisted, hasCommittedRows)
+      sessionDiscoveryComplete = false
+      let archiveRebuildPending = existingSources.some(source => source.parserVersion < LEGACY_ARCHIVE_PARSER_VERSION)
+      if (archiveRebuildPending) {
+        try {
+          archiveRebuildPending = !readSessionArchiveSnapshot(resolvedScope).migrationComplete
+        } catch {
+          // A damaged archive store cannot stand in for missing projection data.
+        }
+      }
+      status = initialBuildingStatus(mode, persisted, hasCommittedRows && !archiveRebuildPending)
       log(`ready to reconcile (${existingSources.length} indexed sources)`)
       logPendingParserRebuild(existingSources)
       if (outstandingReconciliationFailures() > 0) {
@@ -1567,6 +1580,10 @@ export function createLocalIndexCoordinator(
       }
     },
 
+    hasCompletedSessionDiscovery(): boolean {
+      return indexReadAllowed() && started && sessionDiscoveryComplete
+    },
+
     getSourceScopedFailurePaths(): readonly string[] | null {
       if (
         !indexReadAllowed() ||
@@ -1623,6 +1640,17 @@ export function createLocalIndexCoordinator(
       try {
         return index.aggregateActivity(range, queryNow)
       } catch {
+        return null
+      }
+    },
+
+    getSessionReadRevision(): string | null {
+      if (!indexReadAllowed() || !index?.getSessionReadRevision) return null
+      try {
+        const revision = index.getSessionReadRevision()
+        return revision === null ? null : `${generation}:${revision}`
+      } catch (error) {
+        markDegraded(error, 'LOCAL_INDEX_READ_FAILED')
         return null
       }
     },

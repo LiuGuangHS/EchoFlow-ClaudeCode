@@ -50,7 +50,7 @@ General covers four areas: appearance and replies, how the agent works, network 
 | Auto-dream | Off by default. After enough sessions have accumulated, it can organize auto-memory in the background, using additional model calls and tokens. |
 | Agent Trace | On by default. New sessions write raw request, response, and status events to a local traces directory. To investigate a failure, open an assistant line in the session's **Trajectory** and switch to its **Raw request** tab; turning it off stops new records, while old ones remain readable. |
 
-To store Agent Trace separately, set `CC_HAHA_TRACE_DIR` to a writable absolute directory before launching the app, such as `D:\HahaTraces` on Windows or `/data/haha-traces` on macOS/Linux, then fully quit and restart the app. JSONL files go directly in that directory; its `cc-haha/db` subdirectory holds the auxiliary index. Other configuration stays in its original location. An empty or unset variable uses the original `cc-haha/traces` under the configuration directory. Switching does not move, merge, or delete existing files, and only records in the current directory appear. Remove the variable and restart to view the default directory again. Invalid paths report an error instead of falling back to writes in the default directory.
+In versions that use one data root, Agent Trace writes JSONL files to `<data-root>/echoflow-code/traces` by default, with auxiliary indexes in `<data-root>/echoflow-code/db`. `CC_HAHA_TRACE_DIR` can select an absolute directory inside the data root. An external path identifies legacy data; after migration, Trace uses the destination inside the root. An external path that has not been migrated produces an error instead of silently switching to an empty directory. Older releases such as v0.7.7 default to `cc-haha/traces` inside the config directory and allow the variable to write directly to a directory outside it.
 
 ### Network, web search, and notifications
 
@@ -63,7 +63,7 @@ To store Agent Trace separately, set `CC_HAHA_TRACE_DIR` to a writable absolute 
 ### Local data: check the effect before changing it
 
 - **Session retention** defaults to 365 days and accepts 0–3650 days. Reducing it immediately removes older records; setting 0 removes all existing records and stops recording session contents. The UI previews and confirms the change. This is not a backup system.
-- **Data Storage Location** defaults to `~/.claude` (`%USERPROFILE%\\.claude` on Windows). Portable mode takes an absolute path outside the app installation folder. After an app restart, sessions, configuration, tasks, skills, and plugins are read from the new location. The two directories are not merged or migrated automatically. If `CLAUDE_CONFIG_DIR` is set at launch, remove that environment variable before switching locations in the UI.
+- **Data Storage Location** uses one data root: `%LOCALAPPDATA%/EchoFlow Code` on Windows, `~/Library/Application Support/EchoFlow Code` on macOS, or `${XDG_DATA_HOME:-~/.local/share}/echoflow-code` on Linux. Portable mode or `CLAUDE_CONFIG_DIR` selects the complete root; Desktop profiles, CLI, IM, and logs cannot use separate locations. The root must be outside the app installation directory. Changing roots requires a full quit and restart. Old directories undergo ownership, quiescence, content, and recovery checks; existing target data must not be overwritten on same-name conflicts. Migration is complete only after the new root passes validation and the old sources are safely cleaned up. Backups and migration records stay inside the new root. Other shared Claude data and the OS credential store are not taken over or deleted wholesale.
 
 Product screenshots in this guide consistently use the **Pure White** theme so the interface can be compared without palette changes.
 
@@ -77,7 +77,7 @@ Talk to Claude from WeChat, DingTalk, WhatsApp, Telegram, Feishu, WeCom, QQ, or 
 
 ## Terminal
 
-A real host shell embedded in the app, for installing plugins, skills, MCP servers, and anything else that needs a command line. The desktop app bundles `claude-haha`, so anywhere the docs say `claude <args>` you can run `claude-haha <args>`.
+A real host shell embedded in the app, for installing plugins, skills, MCP servers, and anything else that needs a command line. The desktop app bundles `echoflow-code`, so anywhere the docs say `claude <args>` you can run `echoflow-code <args>`.
 
 On Windows you can also choose the startup shell (system default, PowerShell 7, Windows PowerShell, Command Prompt, or a custom executable) and set a Bash path — used when a tool calls Unix commands like `grep` or `sed`, usually pointing at Git Bash.
 
@@ -101,7 +101,7 @@ Every skill available on this machine, grouped by source, with the prose and sou
 
 ## Memory
 
-View and edit the Markdown memory files Claude keeps per project. Pick a project on the left, a file in the middle, then edit or preview the rendered output. The files live in `~/.claude/projects/<project>/memory/` and are loaded by the CLI at runtime.
+View and edit the Markdown memory files Claude keeps per project. Pick a project on the left, a file in the middle, then edit or preview the rendered output. The files live in `<data-root>/projects/<project>/memory/` and are loaded by the CLI at runtime. See [Environment Variables](../cli/env.md#local-runtime-and-privacy) for the data root location.
 
 `/memory` in any session jumps straight here. For how memory is written and recalled, see [Memory system](../internals/memory.md).
 

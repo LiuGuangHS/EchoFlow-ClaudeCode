@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
 import * as fs from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 import {
   activeProviderNeedsProxy,
@@ -92,7 +93,7 @@ describe('providerRuntimeEnv', () => {
 
     expect(env).toMatchObject({
       CC_HAHA_GROK_OAUTH_PROVIDER: '1',
-      GROK_OAUTH_FILE: path.join(tmpDir, 'cc-haha', 'grok-oauth.json'),
+      GROK_OAUTH_FILE: path.join(getEchoFlowInternalDir(tmpDir), 'grok-oauth.json'),
       CC_HAHA_IMAGE_PROVIDER_KIND: 'grok_oauth',
       CC_HAHA_IMAGE_PROVIDER_ID: 'grok-official',
       CC_HAHA_IMAGE_MODEL: 'grok-imagine-image-quality',
@@ -129,7 +130,7 @@ describe('providerRuntimeEnv', () => {
 
     expect(env).toMatchObject({
       CC_HAHA_DEEPSEEK_OAUTH_PROVIDER: '1',
-      DEEPSEEK_OAUTH_FILE: path.join(tmpDir, 'cc-haha', 'deepseek-oauth.json'),
+      DEEPSEEK_OAUTH_FILE: path.join(getEchoFlowInternalDir(tmpDir), 'deepseek-oauth.json'),
       ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
       ANTHROPIC_API_KEY: 'deepseek-oauth-dummy-key',
       ANTHROPIC_MODEL: 'deepseek-flash[1m]',

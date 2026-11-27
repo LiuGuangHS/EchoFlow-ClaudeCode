@@ -1,5 +1,6 @@
 import type { LocalIndexDatabase, LocalIndexReadOperation } from './database.js'
 import { createActivityIndex, type ActivityIndex } from './activityIndex.js'
+import { SESSION_READ_REVISION_KEY } from './migrations.js'
 import type {
   ClaudeCodeStats,
   StatsDateRange,
@@ -15,6 +16,7 @@ import type {
 
 export type IndexedSessionRow = {
   transcriptPath: string
+  legacyArchived?: boolean | null
   id: string
   title: string
   createdAt: string
@@ -59,12 +61,14 @@ export type SessionEntryLocatorPage = {
 }
 
 export interface SessionIndexReader {
+  getSessionReadRevision?(): string | null
   getSessionSuggestionMetadata?(sessionIds: string[]): IndexedSessionRow[] | null
   searchSessionMetadata?(query: string, options?: { limit?: number; offset?: number }): SessionIndexPage | null
   listSessions(options?: {
     project?: string
     limit?: number
     offset?: number
+    archive?: { ids: readonly string[]; archived: boolean; ordinaryIds?: readonly string[]; migrationComplete?: boolean }
   }): SessionIndexPage
   findSessionFiles(sessionId: string): SessionFileMatch[]
   getSession?(sessionId: string): IndexedSessionRow | null
@@ -79,6 +83,8 @@ export interface LocalIndexGateway extends SessionIndexReader {
   getMode(): LocalIndexMode
   getPublicStatus(): LocalIndexStatus
   isSessionScopeReady(): boolean
+  /** Whether transcript discovery has completed since this index was opened. */
+  hasCompletedSessionDiscovery?(): boolean
   isActivityScopeReady?(): boolean
   getActivityStats?(range: StatsDateRange, now?: Date): ClaudeCodeStats | null
   rebuild(): Promise<LocalIndexStatus>
@@ -152,6 +158,7 @@ type SessionRow = {
   openai_fast_mode: number | null
   repository_json: string | null
   worktree_session_json: string | null
+  legacy_archived: number | null
 }
 
 type SourceRow = {
@@ -235,6 +242,11 @@ function searchUnicodeSessionMetadata(operation: LocalIndexReadOperation, needle
   return { sessions: ordered.slice(offset, offset + limit).map(sessionFromRow), total: ordered.length }
 }
 
+const LEGACY_ARCHIVE_SQL = `(CASE WHEN NOT EXISTS (
+  SELECT 1 FROM sessions AS copy WHERE copy.session_id = sessions.session_id
+    AND copy.is_team_worker = 0 AND copy.legacy_archived IS NOT sessions.legacy_archived
+) THEN legacy_archived ELSE NULL END)`
+
 function sessionFromRow(row: SessionRow): IndexedSessionRow {
   const repository = parseStoredJson<PersistedRepositorySession>(row.repository_json)
   const worktreeSession = row.worktree_session_json === 'null'
@@ -242,6 +254,7 @@ function sessionFromRow(row: SessionRow): IndexedSessionRow {
     : parseStoredJson<PersistedWorktreeSession>(row.worktree_session_json)
   return {
     transcriptPath: row.transcript_path,
+    legacyArchived: row.legacy_archived == null ? null : row.legacy_archived === 1,
     id: row.session_id,
     title: row.title,
     createdAt: row.created_at,
@@ -317,41 +330,47 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
   const activityIndex = createActivityIndex(database)
   return {
     ...activityIndex,
+    getSessionReadRevision() {
+      return database.read(operation => operation.get<{ value: string }>(
+        'SELECT value FROM schema_meta WHERE key = ?', SESSION_READ_REVISION_KEY,
+      )?.value ?? null)
+    },
     listSessions(options): SessionIndexPage {
       const limit = boundedInteger(options?.limit, 50)
       const offset = boundedInteger(options?.offset, 0)
-      const project = options?.project
+      const conditions = ['is_team_worker = 0']
+      const bindings: string[] = []
+      if (options?.project !== undefined) {
+        conditions.push('project_path = ?')
+        bindings.push(options.project)
+      }
+      if (options?.archive) {
+        // Bound JSON arrays avoid SQLite's variable limit. Older direct callers
+        // supply an exhaustive archive set; browsing supplies completion explicitly.
+        conditions.push(`(CASE
+          WHEN session_id IN (SELECT value FROM json_each(?)) THEN 1
+          WHEN session_id IN (SELECT value FROM json_each(?)) THEN 0
+          WHEN ${options.archive.migrationComplete !== false ? '1' : '0'} THEN 0
+          ELSE ${LEGACY_ARCHIVE_SQL} END) = ${options.archive.archived ? 1 : 0}`)
+        bindings.push(JSON.stringify(options.archive.ids), JSON.stringify(options.archive.ordinaryIds ?? []))
+      }
+      const where = conditions.join(' AND ')
 
       return database.read(operation => {
-        const total = project === undefined
-          ? operation.get<{ total: number }>('SELECT COUNT(*) AS total FROM sessions WHERE is_team_worker = 0')?.total ?? 0
-          : operation.get<{ total: number }>(
-            'SELECT COUNT(*) AS total FROM sessions WHERE is_team_worker = 0 AND project_path = ?',
-            project,
-          )?.total ?? 0
-        const rows = project === undefined
-          ? operation.all<SessionRow>(`
-              SELECT transcript_path, session_id, project_path, title, created_at,
-                modified_at, message_count, work_dir, permission_mode, agent_profile,
-                runtime_provider_id, runtime_provider_present,
-                runtime_model_id, effort_level, openai_fast_mode,
-                repository_json, worktree_session_json
-              FROM sessions
-              WHERE is_team_worker = 0
-              ORDER BY modified_at_ms DESC, session_id ASC, transcript_path ASC
-              LIMIT ? OFFSET ?
-            `, limit, offset)
-          : operation.all<SessionRow>(`
-              SELECT transcript_path, session_id, project_path, title, created_at,
-                modified_at, message_count, work_dir, permission_mode, agent_profile,
-                runtime_provider_id, runtime_provider_present,
-                runtime_model_id, effort_level, openai_fast_mode,
-                repository_json, worktree_session_json
-              FROM sessions
-              WHERE is_team_worker = 0 AND project_path = ?
-              ORDER BY modified_at_ms DESC, session_id ASC, transcript_path ASC
-              LIMIT ? OFFSET ?
-            `, project, limit, offset)
+        const total = operation.get<{ total: number }>(
+          `SELECT COUNT(*) AS total FROM sessions WHERE ${where}`, ...bindings,
+        )?.total ?? 0
+        const rows = operation.all<SessionRow>(`
+          SELECT transcript_path, session_id, project_path, title, created_at,
+            modified_at, message_count, work_dir, permission_mode, agent_profile,
+            runtime_provider_id, runtime_provider_present,
+            runtime_model_id, effort_level, openai_fast_mode,
+            repository_json, worktree_session_json, legacy_archived
+          FROM sessions
+          WHERE ${where}
+          ORDER BY modified_at_ms DESC, session_id ASC, transcript_path ASC
+          LIMIT ? OFFSET ?
+        `, ...bindings, limit, offset)
 
         return { sessions: rows.map(sessionFromRow), total }
       })
@@ -364,7 +383,7 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
         SELECT transcript_path, session_id, project_path, title, created_at,
           modified_at, message_count, work_dir, permission_mode, agent_profile,
           runtime_provider_id, runtime_provider_present, runtime_model_id,
-          effort_level, openai_fast_mode, repository_json, worktree_session_json
+          effort_level, openai_fast_mode, repository_json, worktree_session_json, legacy_archived
         FROM sessions WHERE session_id IN (${ids.map(() => '?').join(',')})
         ORDER BY modified_at_ms DESC, session_id ASC, transcript_path ASC
         LIMIT 100
@@ -393,7 +412,7 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
           SELECT transcript_path, session_id, project_path, title, created_at,
             modified_at, message_count, work_dir, permission_mode, agent_profile,
             runtime_provider_id, runtime_provider_present, runtime_model_id,
-            effort_level, openai_fast_mode, repository_json, worktree_session_json
+            effort_level, openai_fast_mode, repository_json, worktree_session_json, legacy_archived
           FROM sessions WHERE ${where}
           ORDER BY CASE
             WHEN ? = '' THEN 0
@@ -431,7 +450,7 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
             modified_at, message_count, work_dir, permission_mode, agent_profile,
             runtime_provider_id, runtime_provider_present,
             runtime_model_id, effort_level, openai_fast_mode,
-            repository_json, worktree_session_json
+            repository_json, worktree_session_json, ${LEGACY_ARCHIVE_SQL} AS legacy_archived
           FROM sessions
           WHERE session_id = ?
           ORDER BY modified_at_ms DESC, transcript_path ASC
@@ -530,7 +549,7 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
             sessions.permission_mode, sessions.agent_profile, sessions.runtime_provider_id,
             sessions.runtime_provider_present,
             sessions.runtime_model_id, sessions.effort_level, sessions.openai_fast_mode,
-            sessions.repository_json, sessions.worktree_session_json,
+            sessions.repository_json, sessions.worktree_session_json, sessions.legacy_archived,
             source_files.indexed_bytes, source_files.size_bytes
           FROM sessions
           JOIN source_files ON source_files.path = sessions.transcript_path
@@ -547,6 +566,7 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
           )
         return {
           summary: {
+            legacyArchived: row.legacy_archived == null ? null : row.legacy_archived === 1,
             title: row.title,
             createdAt: row.created_at,
             modifiedAt: row.modified_at,

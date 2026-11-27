@@ -10,6 +10,7 @@ import { DiagnosticsService, diagnosticsService, getOpenLogDirCommand } from '..
 import { createSandboxedTestEnvironment } from '../../../scripts/pr/test-environment.js'
 import { appendHostDiagnostic } from '../../../desktop/electron/services/sidecarManager.js'
 import { createFeishuLogger } from '../../../adapters/feishu/logger.js'
+import { buildEchoFlowOwnershipMarker } from '../../utils/echoFlowConfigRoot.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -136,7 +137,7 @@ describe('DiagnosticsService', () => {
       },
     })
 
-    const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'diagnostics.jsonl'), 'utf-8')
+    const raw = await fs.readFile(path.join(tmpDir, 'echoflow-code', 'diagnostics', 'diagnostics.jsonl'), 'utf-8')
     expect(raw).toContain('cli_start_failed')
     expect(raw).toContain('[REDACTED]')
     expect(raw).toContain('https://[REDACTED]@example.com:8443/api')
@@ -145,7 +146,7 @@ describe('DiagnosticsService', () => {
     expect(raw).not.toContain('p%40ss')
     expect(raw).not.toContain(os.homedir())
 
-    const runtime = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'runtime-errors.log'), 'utf-8')
+    const runtime = await fs.readFile(path.join(tmpDir, 'echoflow-code', 'diagnostics', 'runtime-errors.log'), 'utf-8')
     expect(runtime).toContain('cli_start_failed')
     expect(runtime).toContain('"nested"')
     expect(runtime).toContain('[REDACTED]')
@@ -175,7 +176,7 @@ describe('DiagnosticsService', () => {
     const service = new DiagnosticsService()
     const unrelatedDir = path.join(tmpDir, 'unrelated-diagnostics-target')
     const unrelatedFile = path.join(unrelatedDir, 'diagnostics.jsonl')
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
     await fs.mkdir(unrelatedDir, { mode: 0o755 })
     await fs.writeFile(unrelatedFile, 'unrelated\n', { mode: 0o644 })
     await fs.symlink(unrelatedDir, service.getLogDir(), 'dir')
@@ -211,13 +212,13 @@ describe('DiagnosticsService', () => {
     const service = new DiagnosticsService()
     await service.recordEvent({ type: 'some_unclassified_event', summary: 'no severity given' })
 
-    const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'diagnostics.jsonl'), 'utf-8')
+    const raw = await fs.readFile(path.join(tmpDir, 'echoflow-code', 'diagnostics', 'diagnostics.jsonl'), 'utf-8')
     const event = JSON.parse(raw.trim().split('\n').at(-1)!)
     expect(event.severity).toBe('info')
 
     // info events stay out of the warning/error runtime log
     await expect(
-      fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'runtime-errors.log'), 'utf-8'),
+      fs.readFile(path.join(tmpDir, 'echoflow-code', 'diagnostics', 'runtime-errors.log'), 'utf-8'),
     ).rejects.toThrow()
   })
 
@@ -388,7 +389,7 @@ describe('DiagnosticsService', () => {
     const service = new DiagnosticsService()
     const bundle = await service.exportBundle()
     expect(bundle.fileName).toMatch(/^echoflow-code-diagnostics-.*\.tar\.gz$/)
-    expect(bundle.path).toBe(path.join(tmpDir, 'cc-haha', 'diagnostics', 'exports', bundle.fileName))
+    expect(bundle.path).toBe(path.join(tmpDir, 'echoflow-code', 'diagnostics', 'exports', bundle.fileName))
     const archive = await fs.readFile(bundle.path)
     expect(readTarEntry(archive, 'README.txt').split('\n')[0]).toBe('EchoFlow Code diagnostics bundle')
     expect(readTarEntry(archive, 'recent-errors.md').split('\n')[0]).toBe('# EchoFlow Code recent diagnostics')
@@ -396,9 +397,9 @@ describe('DiagnosticsService', () => {
 
   test('exports a single diagnostics tarball without provider secrets', async () => {
     const service = new DiagnosticsService()
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'providers.json'),
+      path.join(tmpDir, 'echoflow-code', 'providers.json'),
       JSON.stringify({
         activeId: 'provider-1',
         providers: [{
@@ -421,7 +422,7 @@ describe('DiagnosticsService', () => {
       details: { accessToken: 'provider-secret' },
     })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'diagnostics', 'cli-diagnostics.jsonl'),
+      path.join(tmpDir, 'echoflow-code', 'diagnostics', 'cli-diagnostics.jsonl'),
       '{"event":"cli_streaming_idle_timeout","data":{"authorization":"Bearer provider-secret"}}\n',
       'utf-8',
     )
@@ -501,9 +502,9 @@ describe('DiagnosticsService', () => {
 
   test('redacts secret-bearing provider metadata from the exported summary', async () => {
     const service = new DiagnosticsService()
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'providers.json'),
+      path.join(tmpDir, 'echoflow-code', 'providers.json'),
       JSON.stringify({
         activeId: 'provider-sk-proj-ACTIVESECRET',
         providers: [{
@@ -538,9 +539,9 @@ describe('DiagnosticsService', () => {
       `ghr_${'C'.repeat(36)}`,
       'xoxb-1234567890-1234567890-abcdefghijkl',
     ]
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'providers.json'),
+      path.join(tmpDir, 'echoflow-code', 'providers.json'),
       JSON.stringify({
         activeId: secrets[0],
         providers: [{
@@ -1036,10 +1037,13 @@ describe('DiagnosticsService', () => {
     // This spawns a *real* server, not the in-process test runner. Strip the
     // inherited NODE_ENV=test so it installs console/process capture the way a
     // production server does (capture is intentionally skipped under test).
-    const env = createSandboxedTestEnvironment(tmpDir, {
-      CLAUDE_CONFIG_DIR: tmpDir,
+    const storageRoot = path.join(tmpDir, 'storage')
+    const env = createSandboxedTestEnvironment(path.join(tmpDir, 'home'), {
+      CLAUDE_CONFIG_DIR: storageRoot,
     })
     delete env.NODE_ENV
+    await fs.mkdir(storageRoot)
+    await fs.writeFile(path.join(storageRoot, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
     const server = Bun.spawn(serverArgs, {
       cwd: process.cwd(),
       env,
@@ -1071,7 +1075,7 @@ describe('DiagnosticsService', () => {
       expect(stderr).toContain('[Server] Uncaught exception:')
       expect(stderr).toContain(`Failed to start server. Is port ${port} in use?`)
 
-      const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'diagnostics.jsonl'), 'utf-8')
+        const raw = await fs.readFile(path.join(storageRoot, 'echoflow-code', 'diagnostics', 'diagnostics.jsonl'), 'utf-8')
       expect(raw).toContain('server_uncaught_exception')
       expect(raw).toContain(`Failed to start server. Is port ${port} in use?`)
     } finally {
@@ -1154,7 +1158,7 @@ describe('diagnostics API', () => {
     const statusRes = await handleDiagnosticsApi(statusReq.req, statusReq.url, statusReq.segments)
     expect(statusRes.status).toBe(200)
     const status = await statusRes.json() as { logDir: string; cliDiagnosticsPath: string; recentErrorCount: number }
-    expect(status.logDir).toContain(path.join('cc-haha', 'diagnostics'))
+    expect(status.logDir).toContain(path.join('echoflow-code', 'diagnostics'))
     expect(status.cliDiagnosticsPath).toContain('cli-diagnostics.jsonl')
     expect(status.recentErrorCount).toBe(1)
 
@@ -1227,9 +1231,9 @@ describe('diagnostics API', () => {
   })
 
   test('returns a deterministic share-safe GitHub issue report', async () => {
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'providers.json'),
+      path.join(tmpDir, 'echoflow-code', 'providers.json'),
       JSON.stringify({
         activeId: 'provider-issue-report',
         providers: [{

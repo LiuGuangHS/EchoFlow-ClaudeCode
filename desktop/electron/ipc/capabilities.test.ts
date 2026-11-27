@@ -9,6 +9,33 @@ import {
 } from './capabilities'
 
 describe('Electron IPC capabilities', () => {
+  it('validates the login attempt and only accepts settings geometry, not site data', () => {
+    const { echoFlowLoginOpen: open, echoFlowLoginSetBounds: resize, echoFlowLoginCancel: cancel } = ELECTRON_IPC_CHANNELS
+    const attemptId = 'inline-1'
+    const bounds = { x: 21.5, y: 40, width: 650, height: 420 }
+    const payload = { endpoint: 'dedicated', attemptId, bounds }
+    expect(validateElectronIpcPayload(open, payload)).toBe(true)
+    expect(validateElectronIpcPayload(open, { ...payload, endpoint: 'main', bounds: null })).toBe(true)
+    expect(validateElectronIpcPayload(resize, { attemptId, bounds: null })).toBe(true)
+    expect(validateElectronIpcPayload(cancel, { attemptId })).toBe(true)
+    for (const invalid of [{ endpoint: 'other' }, { attemptId: '../other' }, { url: 'https://example.test' }, { bounds: { ...bounds, x: Infinity } }, { bounds: { ...bounds, width: -1 } }]) {
+      expect(validateElectronIpcPayload(open, { ...payload, ...invalid })).toBe(false)
+    }
+    expect(validateElectronIpcPayload(cancel, { attemptId, bounds })).toBe(false)
+    for (const channel of [open, resize, cancel]) expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
+  })
+
+  it('limits restore settlement IPC to the desktop and an optional login endpoint', () => {
+    const channel = ELECTRON_IPC_CHANNELS.echoFlowWhenRestored
+    for (const payload of [undefined, { endpoint: 'main' }, { endpoint: 'dedicated' }]) {
+      expect(validateElectronIpcPayload(channel, payload)).toBe(true)
+    }
+    for (const payload of [null, 'main', {}, { endpoint: 'other' }, { endpoint: 'main', userId: 'fixture' }]) {
+      expect(validateElectronIpcPayload(channel, payload)).toBe(false)
+    }
+    expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
+  })
+
   it('only lets native navigation be drained without renderer-supplied destinations', () => {
     const channel = ELECTRON_IPC_CHANNELS.windowTakeNativeMenuNavigation
     expect(validateElectronIpcPayload(channel, undefined)).toBe(true)
@@ -39,7 +66,14 @@ describe('Electron IPC capabilities', () => {
     }
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.migrationStatus, undefined)).toBe(true)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.migrationStatus, {})).toBe(false)
-    for (const channel of [ELECTRON_IPC_CHANNELS.migrationPrepare, ELECTRON_IPC_CHANNELS.migrationStart, ELECTRON_IPC_CHANNELS.migrationStatus, ELECTRON_IPC_CHANNELS.migrationCancel]) {
+    const adoptionChannels = [ELECTRON_IPC_CHANNELS.migrationOpenAiOauth, ELECTRON_IPC_CHANNELS.migrationImAdoption, ELECTRON_IPC_CHANNELS.migrationWhatsAppAdoption]
+    for (const channel of adoptionChannels) {
+      expect(validateElectronIpcPayload(channel, undefined)).toBe(true)
+      for (const payload of [{}, { file: '/tmp/untrusted.json' }, { approved: true }]) {
+        expect(validateElectronIpcPayload(channel, payload)).toBe(false)
+      }
+    }
+    for (const channel of [ELECTRON_IPC_CHANNELS.migrationPrepare, ...adoptionChannels, ELECTRON_IPC_CHANNELS.migrationStart, ELECTRON_IPC_CHANNELS.migrationStatus, ELECTRON_IPC_CHANNELS.migrationCancel]) {
       expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
     }
   })

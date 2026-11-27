@@ -20,11 +20,18 @@ type OpenTargetPreferences = {
 
 const DEFAULT_PREFERENCES: OpenTargetPreferences = { version: 1, editorTargetId: null }
 
+function parseOpenTargetPreferences(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null
+  try {
+    const value: unknown = JSON.parse(raw)
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+  } catch { return null }
+}
+
 export function readOpenTargetPreferences(): OpenTargetPreferences {
   try {
-    const raw = localStorage.getItem(OPEN_TARGET_PREFERENCES_STORAGE_KEY)
-    if (!raw) return DEFAULT_PREFERENCES
-    const parsed = JSON.parse(raw) as Partial<OpenTargetPreferences>
+    const parsed = parseOpenTargetPreferences(localStorage.getItem(OPEN_TARGET_PREFERENCES_STORAGE_KEY))
+    if (parsed?.version !== undefined && parsed.version !== 1) return DEFAULT_PREFERENCES
     return {
       version: 1,
       editorTargetId: typeof parsed?.editorTargetId === 'string' ? parsed.editorTargetId : null,
@@ -38,7 +45,9 @@ export function readOpenTargetPreferences(): OpenTargetPreferences {
 
 function writeOpenTargetPreferences(preferences: OpenTargetPreferences): void {
   try {
-    localStorage.setItem(OPEN_TARGET_PREFERENCES_STORAGE_KEY, JSON.stringify(preferences))
+    const stored = parseOpenTargetPreferences(localStorage.getItem(OPEN_TARGET_PREFERENCES_STORAGE_KEY))
+    if (stored?.version !== undefined && stored.version !== 1) return
+    localStorage.setItem(OPEN_TARGET_PREFERENCES_STORAGE_KEY, JSON.stringify({ ...stored, ...preferences }))
   } catch { /* localStorage unavailable */ }
 }
 
@@ -131,3 +140,8 @@ export const useOpenTargetStore = create<OpenTargetState>((set, get) => ({
     }
   },
 }))
+
+/** Called after persistence migrations, before the app renders. */
+export function initializeOpenTargetPreferences(): void {
+  useOpenTargetStore.setState({ editorTargetId: readOpenTargetPreferences().editorTargetId })
+}

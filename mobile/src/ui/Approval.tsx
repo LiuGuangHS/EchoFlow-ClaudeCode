@@ -44,7 +44,7 @@ export function PlanPreview({ request }: { request: PermissionRequest }) {
 
 /**
  * “需要你决定”：普通工具审批、提问、计划三种底座。提交后保持“已提交”直到电脑回执；
- * 连接重建或服务端报错时恢复可操作，以便重试。
+ * 只有对应请求明确未被接受时才恢复可操作，不重放接受状态不明的决定。
  */
 export function Approval({
   request,
@@ -71,17 +71,18 @@ export function Approval({
   workDir?: string
 }) {
   const input = requestInput(request)
+  const rejection = serverError?.requestId === request.requestId &&
+    serverError.permissionType === 'tool' && serverError.approvalOutcome === 'rejected'
+    ? serverError : undefined
   const [submission, setSubmission] = useState({
-    ready,
-    serverError,
+    requestId: request.requestId,
+    rejection,
     sent: false,
   })
-  const sent =
-    submission.ready === ready &&
-    submission.serverError === serverError &&
-    submission.sent
-  if (submission.ready !== ready || submission.serverError !== serverError)
-    setSubmission({ ready, serverError, sent: false })
+  const reset = submission.requestId !== request.requestId ||
+    (rejection !== undefined && submission.rejection !== rejection)
+  const sent = !reset && submission.sent
+  if (reset) setSubmission({ requestId: request.requestId, rejection, sent: false })
 
   function respond(
     options: Omit<Parameters<typeof decisionResponse>[0], 'requestId' | 'toolName' | 'input'>
@@ -94,7 +95,7 @@ export function Approval({
         ...options,
       })
     )
-    if (accepted) setSubmission({ ready, serverError, sent: true })
+    if (accepted) setSubmission({ requestId: request.requestId, rejection, sent: true })
     return accepted
   }
 

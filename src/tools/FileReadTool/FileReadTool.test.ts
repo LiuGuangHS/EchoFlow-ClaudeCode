@@ -7,6 +7,7 @@ import type { ToolUseContext } from '../../Tool.js'
 import { getEmptyToolPermissionContext } from '../../Tool.js'
 import { decodeShellOutput } from '../../utils/shell/outputEncoding.js'
 import { getToolResultsDir } from '../../utils/toolResultStorage.js'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import { FileReadTool, readImageWithTokenBudget } from './FileReadTool.js'
 import { getImageCreator, getImageProcessor } from './imageProcessor.js'
 import * as imageResizer from '../../utils/imageResizer.js'
@@ -59,9 +60,9 @@ test('uses the relocated managed upload for permissions and reading, preserving 
     const oldPath = join(oldRoot, 'uploads', 'session', 'fixture.txt')
     const newPath = join(current, 'uploads', 'session', 'fixture.txt')
     await mkdir(join(current, 'uploads/session'), { recursive: true })
-    await mkdir(join(current, 'cc-haha'))
+    await mkdir(getEchoFlowInternalDir(current))
     await writeFile(newPath, 'copied upload')
-    await writeFile(join(current, 'cc-haha/storage-relocations.json'), JSON.stringify({ version: 1, previousRoots: [oldRoot] }))
+    await writeFile(join(getEchoFlowInternalDir(current), 'storage-relocations.json'), JSON.stringify({ version: 1, previousRoots: [oldRoot] }))
     expect(FileReadTool.getPath({ file_path: oldPath })).toBe(newPath)
     const result = await FileReadTool.call({ file_path: oldPath }, makeToolUseContext())
     expect(result.data).toMatchObject({ type: 'text', file: { content: 'copied upload' } })

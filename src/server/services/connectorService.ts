@@ -11,6 +11,7 @@ export class ConnectorServiceError extends Error {
 }
 
 type Bridge = {
+  resolveConnectorPluginDefinition?(def: ConnectorDefinition): Promise<ConnectorDefinition>
   installConnectorPlugin(def: ConnectorDefinition, installation: ConnectorInstallation): Promise<void>
   setConnectorPluginEnabled(def: ConnectorDefinition, enabled: boolean): Promise<void>
   removeConnectorPlugin(def: ConnectorDefinition): Promise<void>
@@ -36,7 +37,7 @@ export class ConnectorService {
   private definition(id: string): ConnectorDefinition {
     const definition = this.deps.definitions.find(item => item.id === id)
     if (!definition) throw ConnectorServiceError.notFound('Unknown connector')
-    return definition
+    return { ...definition, pluginId: this.persistence.get(id).pluginId ?? definition.pluginId }
   }
 
   get(id: string): ConnectorDto {
@@ -99,7 +100,7 @@ export class ConnectorService {
       // Persistence errors can also occur in catch/finally. Consume the promise
       // and retain the in-memory non-ready state installed by patch().
       try {
-        await this.deps.bridge.setConnectorPluginEnabled(def, false)
+        await this.deps.bridge.setConnectorPluginEnabled(this.definition(id), false)
         await this.deps.bridge.reloadConnectorSessions(options.sessionId)
       } catch { /* runtime remains explicitly non-ready */ }
       this.operations.delete(id)
@@ -115,6 +116,7 @@ export class ConnectorService {
     // the only safe route back.
     let published = false
     const bridge = this.deps.bridge
+    let identityResolved = false
     const signal = controller.signal
     const assertActive = () => { if (signal.aborted) throw new Error('Operation cancelled') }
     const progress = (phase: string, authUrl?: string) => {
@@ -125,6 +127,10 @@ export class ConnectorService {
       }
     }
     try {
+      if (bridge.resolveConnectorPluginDefinition) def = await bridge.resolveConnectorPluginDefinition(def)
+      identityResolved = true
+      assertActive()
+      this.patch(id, { pluginId: def.pluginId })
       adapter = this.deps.createAdapter(action === 'prepare' ? def : this.installedDefinition(def, previous), this.deps.root)
       if (action === 'authenticate' || action === 'check') {
         // Detach old session tools before changing credentials or checking a
@@ -213,7 +219,7 @@ export class ConnectorService {
           await bridge.removeConnectorPlugin(def)
           const installation = this.persistence.get(id).installation
           if (installation) await adapter.remove(installation)
-          this.patch(id, { installed: false, installedVersion: undefined, installation: undefined, sharedCredentialsAcknowledged: false, connection: 'disconnected', status: 'not-installed', accountLabel: undefined, lastCheckedAt: undefined })
+          this.patch(id, { pluginId: undefined, installed: false, installedVersion: undefined, installation: undefined, sharedCredentialsAcknowledged: false, connection: 'disconnected', status: 'not-installed', accountLabel: undefined, lastCheckedAt: undefined })
         }
       }
     } catch {
@@ -223,7 +229,7 @@ export class ConnectorService {
       const persistenceFailed = this.storageFailures.has(id)
       const failedPhase = persistenceFailed ? 'persistence' : this.get(id).operation?.phase ?? action
       // Never surface CLI output here: it can contain tokens or credential material.
-      const rollbackNeeded = action === 'prepare' && !!previous.installed && !!previous.installation
+      const rollbackNeeded = identityResolved && action === 'prepare' && !!previous.installed && !!previous.installation
       let restored = false
       if (rollbackNeeded) {
         try {
@@ -235,7 +241,7 @@ export class ConnectorService {
         } catch { /* failed rollback must remain disabled */ }
       }
       let cleanupFailed = false
-      if (!restored) {
+      if (identityResolved && !restored) {
         // A first install that never published has no settings entry to clear:
         // writing enabled=false here would leave a permanent plugin-not-found
         // tombstone in enabledPlugins (the plugin is not in any marketplace),

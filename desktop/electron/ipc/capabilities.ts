@@ -200,6 +200,17 @@ const boundsPayload: Validator = value =>
   && Number.isFinite(value.width)
   && Number.isFinite(value.height)
 
+const echoFlowAttemptId = (value: unknown) =>
+  typeof value === 'string' && value.length > 0 && value.length <= 80 && /^[a-zA-Z0-9-]+$/.test(value)
+
+const echoFlowLoginBounds = (value: unknown) => value === null || (
+  isRecord(value)
+  && hasOnlyKeys(value, ['x', 'y', 'width', 'height'])
+  && boundsPayload(value)
+  && Number(value.width) >= 0 && Number(value.height) >= 0
+  && Object.values(value).every(coordinate => Math.abs(Number(coordinate)) <= 100_000)
+)
+
 const petInteractiveRegions: Validator = value =>
   Array.isArray(value)
   && value.length > 0
@@ -442,15 +453,26 @@ export const ELECTRON_IPC_VALIDATORS = {
   [ELECTRON_IPC_CHANNELS.appModePrepareRestart]: noPayload,
   [ELECTRON_IPC_CHANNELS.appModeRestart]: noPayload,
   [ELECTRON_IPC_CHANNELS.migrationPrepare]: migrationPrepare,
+  [ELECTRON_IPC_CHANNELS.migrationOpenAiOauth]: noPayload,
+  [ELECTRON_IPC_CHANNELS.migrationImAdoption]: noPayload,
+  [ELECTRON_IPC_CHANNELS.migrationWhatsAppAdoption]: noPayload,
   [ELECTRON_IPC_CHANNELS.migrationStart]: migrationIdentity,
   [ELECTRON_IPC_CHANNELS.migrationStatus]: noPayload,
   [ELECTRON_IPC_CHANNELS.migrationCancel]: migrationIdentity,
   [ELECTRON_IPC_CHANNELS.adaptersRestartSidecar]: noPayload,
   [ELECTRON_IPC_CHANNELS.zoomSet]: zoomPayload,
   [ELECTRON_IPC_CHANNELS.appearanceSetApplied]: appliedAppearance,
-  [ELECTRON_IPC_CHANNELS.echoFlowLoginOpen]: echoFlowLoginEndpoint,
+  [ELECTRON_IPC_CHANNELS.echoFlowLoginOpen]: value => isRecord(value)
+    && hasOnlyKeys(value, ['endpoint', 'attemptId', 'bounds'])
+    && (value.endpoint === 'main' || value.endpoint === 'dedicated')
+    && echoFlowAttemptId(value.attemptId) && echoFlowLoginBounds(value.bounds),
+  [ELECTRON_IPC_CHANNELS.echoFlowLoginSetBounds]: value => isRecord(value)
+    && hasOnlyKeys(value, ['attemptId', 'bounds'])
+    && echoFlowAttemptId(value.attemptId) && echoFlowLoginBounds(value.bounds),
+  [ELECTRON_IPC_CHANNELS.echoFlowLoginCancel]: value => isRecord(value)
+    && hasOnlyKeys(value, ['attemptId']) && echoFlowAttemptId(value.attemptId),
   [ELECTRON_IPC_CHANNELS.echoFlowSignOut]: echoFlowLoginEndpoint,
-  [ELECTRON_IPC_CHANNELS.echoFlowWhenRestored]: noPayload,
+  [ELECTRON_IPC_CHANNELS.echoFlowWhenRestored]: echoFlowLoginEndpoint,
   [ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode]: noPayload,
   [ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode]: noPayload,
   [ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode]: claudeCodeRuntimeId,

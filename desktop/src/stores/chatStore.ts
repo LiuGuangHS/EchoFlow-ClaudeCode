@@ -17,6 +17,8 @@ import { useSessionStore } from './sessionStore'
 import { useCLITaskStore, type CLITaskSnapshot } from './cliTaskStore'
 import { useWorkflowStore } from './workflowStore'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
+import { useSessionCliRuntimeStore } from './sessionCliRuntimeStore'
+import type { ClaudeCodeRuntimeId } from '../lib/desktopHost'
 import { useProviderStore } from './providerStore'
 import { reconcileRuntimeSelection, resolveActiveProviderRuntimeSelection } from '../lib/runtimeSelection'
 import { useSettingsStore } from './settingsStore'
@@ -146,6 +148,9 @@ export type PendingPermission = {
   input: unknown
   description?: string
   displayName?: string
+  autoAnswerDeadline?: number | null
+  /** Local send state, never proof of owner acceptance. */
+  submitting?: boolean
 }
 
 type PendingPermissions = Record<string, PendingPermission>
@@ -153,6 +158,7 @@ type PendingPermissions = Record<string, PendingPermission>
 type PendingComputerUsePermission = {
   requestId: string
   request: ComputerUsePermissionRequest
+  submitting?: boolean
 }
 
 type PendingComputerUsePermissions = Record<string, PendingComputerUsePermission>
@@ -464,6 +470,7 @@ type ChatStore = {
     attachments?: AttachmentRef[],
     options?: { sessionReferences?: Array<{ sessionId: string }>; displayContent?: string; displayAttachments?: AttachmentRef[]; hideDisplayContent?: boolean },
   ) => void
+  /** True only when this call sent a response; server acceptance is still pending. */
   respondToPermission: (
     sessionId: string,
     requestId: string,
@@ -476,7 +483,7 @@ type ChatStore = {
       /** Execution-model switch applied together with an ExitPlanMode approval. */
       runtimeOverride?: RuntimeSelection
     },
-  ) => void
+  ) => boolean
   recordAskUserQuestionActivity: (sessionId: string, requestId: string) => void
   respondToComputerUsePermission: (
     sessionId: string,
@@ -484,6 +491,7 @@ type ChatStore = {
     response: ComputerUsePermissionResponse,
   ) => void
   setSessionRuntime: (sessionId: string, selection: RuntimeSelection) => void
+  setSessionCliRuntime: (sessionId: string, runtimeId: ClaudeCodeRuntimeId) => void
   setSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void
   stopGeneration: (sessionId: string) => void
   stopBackgroundTask: (sessionId: string, taskId: string) => void
@@ -3309,6 +3317,10 @@ export const useChatStore = create<ChatStore>((setState, get) => {
     wsManager.onConnectionState(sessionId, (connectionState) => {
       const currentSession = get().sessions[sessionId]
       if (!currentSession) return
+      if (connectionState === 'reconnecting' || connectionState === 'disconnected') {
+        // The receipt may have been lost. Do not replay the selection on the next socket.
+        useSessionCliRuntimeStore.getState().fail(sessionId)
+      }
       const currentBoundary = terminalReconnectHistoryBoundaries.get(sessionId)
       const hasCurrentReconnectBoundary =
         currentBoundary?.lifecycleGeneration === currentHistoryLifecycle(sessionId)
@@ -3712,6 +3724,8 @@ export const useChatStore = create<ChatStore>((setState, get) => {
   },
 
   respondToPermission: (sessionId, requestId, allowed, options) => {
+    const pending = getPendingPermission(get().sessions[sessionId], requestId)
+    if (!pending || pending.submitting) return false
     wsManager.send(sessionId, {
       type: 'permission_response',
       requestId,
@@ -3725,19 +3739,15 @@ export const useChatStore = create<ChatStore>((setState, get) => {
     set((s) => ({
       sessions: updateSessionIn(s.sessions, sessionId, (session) => {
         const pendingPermissions = getPendingPermissionRecord(session)
-        delete pendingPermissions[requestId]
-        const remainingPermissions = Object.values(pendingPermissions)
-
+        pendingPermissions[requestId] = { ...pending, submitting: true }
         return {
           pendingPermissions,
-          pendingPermission: remainingPermissions[remainingPermissions.length - 1] ?? null,
-          chatState: remainingPermissions.length > 0 ||
-            Object.keys(getPendingComputerUsePermissionRecord(session)).length > 0
-            ? 'permission_pending'
-            : allowed ? 'tool_executing' : 'idle',
+          pendingPermission: session.pendingPermission?.requestId === requestId
+            ? pendingPermissions[requestId] : session.pendingPermission,
         }
       }),
     }))
+    return true
   },
 
   recordAskUserQuestionActivity: (sessionId, requestId) => {
@@ -3745,6 +3755,10 @@ export const useChatStore = create<ChatStore>((setState, get) => {
   },
 
   respondToComputerUsePermission: (sessionId, requestId, response) => {
+    const session = get().sessions[sessionId]
+    if (!session) return
+    const pending = getPendingComputerUsePermissionRecord(session)[requestId]
+    if (!pending || pending.submitting) return
     wsManager.send(sessionId, {
       type: 'computer_use_permission_response',
       requestId,
@@ -3753,19 +3767,13 @@ export const useChatStore = create<ChatStore>((setState, get) => {
     set((s) => ({
       sessions: updateSessionIn(s.sessions, sessionId, (session) => {
         const pendingComputerUsePermissions = getPendingComputerUsePermissionRecord(session)
-        delete pendingComputerUsePermissions[requestId]
-        const remainingPermissions = Object.values(pendingComputerUsePermissions)
-
+        pendingComputerUsePermissions[requestId] = { ...pending, submitting: true }
         return {
           pendingComputerUsePermissions,
           pendingComputerUsePermission: getCurrentComputerUsePermission(
             pendingComputerUsePermissions,
             session.pendingComputerUsePermission,
           ),
-          chatState: Object.keys(getPendingPermissionRecord(session)).length > 0 ||
-            remainingPermissions.length > 0
-            ? 'permission_pending'
-            : response.userConsented === false ? 'idle' : 'tool_executing',
         }
       }),
     }))
@@ -3780,6 +3788,22 @@ export const useChatStore = create<ChatStore>((setState, get) => {
       type: 'set_runtime_config',
       ...reconciled,
     })
+  },
+
+  setSessionCliRuntime: (sessionId, runtimeId) => {
+    const runtime = useSessionCliRuntimeStore.getState()
+    if (
+      get().sessions[sessionId]?.connectionState !== 'connected' ||
+      !wsManager.isConnected(sessionId) ||
+      runtime.statusBySessionId[sessionId] === 'pending'
+    ) return
+
+    runtime.request(sessionId, runtimeId)
+    try {
+      wsManager.send(sessionId, { type: 'set_cli_runtime', cliRuntimeId: runtimeId })
+    } catch {
+      runtime.fail(sessionId)
+    }
   },
 
   setSessionPermissionMode: (sessionId, mode) => {
@@ -5211,6 +5235,12 @@ export const useChatStore = create<ChatStore>((setState, get) => {
         )
         break
 
+      case 'cli_runtime_applied':
+        if (msg.cliRuntimeId === 'bundled' || msg.cliRuntimeId === 'installed') {
+          useSessionCliRuntimeStore.getState().apply(sessionId, msg.cliRuntimeId)
+        }
+        break
+
       case 'runtime_config_applied': {
         const selected = useSessionRuntimeStore.getState().selections[sessionId]
         const matchesSelection = (runtime: { providerId: string | null; modelId: string; effortLevel?: string; openAIFastMode?: boolean }) =>
@@ -5632,11 +5662,13 @@ export const useChatStore = create<ChatStore>((setState, get) => {
         })
         update((s) => {
           const pendingPermission: PendingPermission = {
+            ...getPendingPermissionRecord(s)[msg.requestId],
             requestId: msg.requestId,
             toolName: msg.toolName,
             toolUseId: msg.toolUseId,
             input: msg.input,
             description: msg.description,
+            ...(msg.autoAnswerDeadline !== undefined ? { autoAnswerDeadline: msg.autoAnswerDeadline } : {}),
             ...(msg.displayName ? { displayName: msg.displayName } : {}),
           }
           const pendingPermissions = {
@@ -5696,6 +5728,7 @@ export const useChatStore = create<ChatStore>((setState, get) => {
         })
         update((session) => {
           const pendingComputerUsePermission = {
+            ...getPendingComputerUsePermissionRecord(session)[msg.requestId],
             requestId: msg.requestId,
             request: msg.request,
           }
@@ -5758,16 +5791,19 @@ export const useChatStore = create<ChatStore>((setState, get) => {
         break
 
       case 'permission_requests_snapshot':
+        if (typeof msg.turnActive !== 'boolean' ||
+          [msg.toolRequestIds, msg.computerUseRequestIds].some(ids => ids !== undefined &&
+            (!Array.isArray(ids) || ids.some(id => typeof id !== 'string' || !id)))) break
         update((session) => {
-          const toolRequestIds = new Set(msg.toolRequestIds)
+          const toolRequestIds = msg.toolRequestIds === undefined ? undefined : new Set(msg.toolRequestIds)
           const pendingPermissions = Object.fromEntries(
             Object.entries(getPendingPermissionRecord(session))
-              .filter(([requestId]) => toolRequestIds.has(requestId)),
+              .filter(([requestId]) => toolRequestIds === undefined || toolRequestIds.has(requestId)),
           )
-          const computerUseRequestIds = new Set(msg.computerUseRequestIds)
+          const computerUseRequestIds = msg.computerUseRequestIds === undefined ? undefined : new Set(msg.computerUseRequestIds)
           const pendingComputerUsePermissions = Object.fromEntries(
             Object.entries(getPendingComputerUsePermissionRecord(session))
-              .filter(([requestId]) => computerUseRequestIds.has(requestId)),
+              .filter(([requestId]) => computerUseRequestIds === undefined || computerUseRequestIds.has(requestId)),
           )
           const remainingPermissions = Object.values(pendingPermissions)
           const remainingComputerUsePermissions = Object.values(pendingComputerUsePermissions)
@@ -5896,6 +5932,14 @@ export const useChatStore = create<ChatStore>((setState, get) => {
       }
 
       case 'error': {
+        const cliRuntime = useSessionCliRuntimeStore.getState()
+        const cliSelectionRejected = msg.code === 'CLI_RUNTIME_INVALID' || msg.code === 'CLI_RUNTIME_CHANGE_FAILED' || (
+          cliRuntime.statusBySessionId[sessionId] === 'pending' && !msg.requestId &&
+          (msg.code === 'SIDE_CHAT_RUNTIME_RESTART_UNAVAILABLE' || msg.code === 'MIGRATION_IN_PROGRESS')
+        )
+        if (cliSelectionRejected || msg.code === 'CLI_RESTART_FAILED') {
+          cliRuntime.fail(sessionId)
+        }
         if (msg.code === 'RUNTIME_CONFIG_INVALID' || msg.code === 'CLI_RESTART_FAILED') {
           // Let a fresh server snapshot reconcile a rejected optimistic choice.
           useSessionRuntimeStore.getState().settleSelection(sessionId)
@@ -5908,8 +5952,27 @@ export const useChatStore = create<ChatStore>((setState, get) => {
           ...(msg.businessErrorCode ? { businessErrorCode: msg.businessErrorCode } : {}),
           timestamp: Date.now(),
         }
-        if (msg.code === 'RUNTIME_CONFIG_INVALID') {
-          // Validation rejects the selection before changing the runtime. It
+        if (msg.requestId && (msg.permissionType === 'tool' || msg.permissionType === 'computer_use')) {
+          update((session) => {
+            const pendingPermissions = getPendingPermissionRecord(session)
+            const pendingComputerUsePermissions = getPendingComputerUsePermissionRecord(session)
+            const requests = msg.permissionType === 'tool' ? pendingPermissions : pendingComputerUsePermissions
+            const pending = requests[msg.requestId!]
+            if (pending && msg.approvalOutcome === 'rejected') requests[msg.requestId!] = { ...pending, submitting: false }
+            const remaining = Object.values(pendingPermissions)
+            return {
+              pendingPermissions,
+              pendingPermission: remaining[remaining.length - 1] ?? null,
+              pendingComputerUsePermissions,
+              pendingComputerUsePermission: getCurrentComputerUsePermission(pendingComputerUsePermissions, session.pendingComputerUsePermission),
+              messages: [...session.messages, errorMessage],
+            }
+          })
+          wsManager.send(sessionId, { type: 'sync_state' })
+          break
+        }
+        if (msg.code === 'RUNTIME_CONFIG_INVALID' || cliSelectionRejected) {
+          // Rejection happens without ending the current runtime. It
           // neither ends the active turn nor invalidates an in-flight history load.
           update((s) => ({ messages: [...s.messages, errorMessage] }))
           break

@@ -13,6 +13,7 @@ import * as path from 'node:path'
 import { handleLocalFile, reconstructAbsolutePath } from '../localFile'
 import { handleFilesystemRoute } from '../filesystem'
 import { isAllowedFilesystemPath } from '../filesystem'
+import { getEchoFlowInternalDir } from '../../services/echoFlowConfigRoot.js'
 
 // Deterministic 256-byte payload (bytes 0..255) so range slices are checkable.
 const VIDEO_BYTES = Uint8Array.from({ length: 256 }, (_, i) => i)
@@ -58,9 +59,9 @@ test('serves copied attachments from their historical path after the original ro
   const original = path.join(SANDBOX_ROOTS, 'missing-original')
   const suffix = path.join('uploads', 'session', 'image.png')
   mkdirSync(path.join(current, 'uploads', 'session'), { recursive: true })
-  mkdirSync(path.join(current, 'cc-haha'), { recursive: true })
+  mkdirSync(getEchoFlowInternalDir(current), { recursive: true })
   writeFileSync(path.join(current, suffix), VIDEO_BYTES)
-  writeFileSync(path.join(current, 'cc-haha/storage-relocations.json'), JSON.stringify({ version: 1, previousRoots: [original] }))
+  writeFileSync(path.join(getEchoFlowInternalDir(current), 'storage-relocations.json'), JSON.stringify({ version: 1, previousRoots: [original] }))
   process.env.CLAUDE_CONFIG_DIR = current
   try {
     expect(isAllowedFilesystemPath(current)).toBe(true)

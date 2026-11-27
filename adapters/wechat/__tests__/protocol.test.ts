@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { buildClientVersion, extractWechatText, sendWechatText, sendWechatTyping } from '../protocol.js'
+import { buildClientVersion, extractWechatText, getWechatUpdates, sendWechatText, sendWechatTyping } from '../protocol.js'
 import { collectWechatMediaCandidates } from '../media.js'
 
 const originalFetch = globalThis.fetch
@@ -76,6 +76,23 @@ describe('WeChat protocol helpers', () => {
         mimeType: 'application/pdf',
       },
     ])
+  })
+
+  it('distinguishes poll cancellation from a normal long-poll timeout', async () => {
+    globalThis.fetch = ((_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      return new Promise<Response>((_, reject) => {
+        const signal = init!.signal!
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    }) as typeof fetch
+    const params = { baseUrl: 'http://127.0.0.1', token: 'fixture-token', getUpdatesBuf: 'cursor', timeoutMs: 25 }
+    const stop = new AbortController()
+    const cancelled = getWechatUpdates({ ...params, signal: stop.signal })
+    stop.abort()
+    await expect(cancelled).rejects.toBe(stop.signal.reason)
+    await expect(getWechatUpdates({ ...params, signal: new AbortController().signal })).resolves.toEqual({
+      ret: 0, msgs: [], get_updates_buf: 'cursor',
+    })
   })
 
   it('throws when sendmessage returns a non-zero WeChat ret code', async () => {

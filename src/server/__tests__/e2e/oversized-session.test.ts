@@ -20,7 +20,7 @@ test('an existing session with a large image opens checkpoint metadata and resum
   try {
     const workDir = join(home, 'project')
     await mkdir(workDir)
-    const runtime = await import('../../index.js')
+    const runtime = await import('../../serverRuntime.js')
     const { sessionService } = await import('../../services/sessionService.js')
     shutdown = runtime.stopServerRuntimeForShutdown
     server = runtime.startServer(0, '127.0.0.1')

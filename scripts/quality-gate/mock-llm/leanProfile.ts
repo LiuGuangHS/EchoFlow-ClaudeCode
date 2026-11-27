@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createQualityGateSandbox } from '../sandbox'
+import { ensureEchoFlowConfigRoot } from '../../../src/utils/echoFlowConfigRoot'
 import { startMockLlmServer } from './server'
 import type { MockReply, MockRequest } from './scriptedModel'
 import { runLeanSkillProvenanceScenario } from './leanSkillProvenance'
@@ -209,7 +210,7 @@ export async function runLeanProfileScenario(rootDir: string, artifactDir: strin
     const leanStart = agentRequests.length
     // Both captures begin with the same empty persisted state and unchanged project.
     rmSync(sandbox.configDir, { recursive: true, force: true })
-    mkdirSync(sandbox.configDir, { recursive: true })
+    await ensureEchoFlowConfigRoot(sandbox.configDir)
     writeFileSync(join(sandbox.configDir, 'settings.json'), JSON.stringify(webSearchFixtureSettings))
     writeFileSync(join(workDir, 'value.txt'), 'before\n')
     await invoke('lean')

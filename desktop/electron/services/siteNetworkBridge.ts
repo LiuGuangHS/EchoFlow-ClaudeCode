@@ -20,7 +20,7 @@ export type SiteNetworkBridge = {
 export type SiteNetworkFetch = (url: string, init: RequestInit) => Promise<Response>
 
 const MAX_REQUEST_BYTES = 256 * 1024
-const FORWARD_TIMEOUT_MS = 20_000
+export const SITE_NETWORK_FORWARD_TIMEOUT_MS = 20_000
 
 type BridgePayload = {
   url?: unknown
@@ -111,8 +111,9 @@ export async function startSiteNetworkBridge(options: {
         method,
         headers,
         credentials: 'include',
+        redirect: 'error',
         ...(typeof payload.body === 'string' ? { body: payload.body } : {}),
-        signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS),
+        signal: AbortSignal.timeout(SITE_NETWORK_FORWARD_TIMEOUT_MS),
       })
       reply(200, { status: forwarded.status, body: await forwarded.text() })
     } catch {

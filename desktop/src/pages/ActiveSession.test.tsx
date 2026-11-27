@@ -127,8 +127,11 @@ vi.mock('./TerminalSettings', () => ({
 }))
 
 import { ActiveSession } from './ActiveSession'
+import { wsManager } from '../api/websocket'
+import { getDesktopHost } from '../lib/desktopHost'
 import { installFakeBrowserGuests, isBrowserPageShown } from '../test/fakeBrowserGuests'
 import { createDefaultSessionState, useChatStore } from '../stores/chatStore'
+import { useSessionCliRuntimeStore } from '../stores/sessionCliRuntimeStore'
 import { useCLITaskStore } from '../stores/cliTaskStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -185,6 +188,7 @@ afterEach(() => {
   useTabStore.setState({ tabs: [], activeTabId: null })
   useSessionStore.setState({ sessions: [], activeSessionId: null, isLoading: false, error: null })
   useChatStore.setState({ sessions: {} })
+  useSessionCliRuntimeStore.setState(useSessionCliRuntimeStore.getInitialState(), true)
   useSettingsStore.setState({ locale: 'en' })
   useTeamStore.getState().stopMemberPolling()
   useTeamStore.setState(useTeamStore.getInitialState(), true)
@@ -3036,6 +3040,38 @@ describe('ActiveSession header', () => {
       },
     })
   }
+
+  it('switches the active session CLI only after a server receipt', async () => {
+    const sessionId = 'cli-runtime-session'
+    mountSessionWithLongTitle(sessionId)
+    const host = getDesktopHost()
+    const getClaudeCode = vi.fn(async () => ({ defaultRuntimeId: 'installed', hasInstalledRuntime: true }))
+    vi.stubGlobal('desktopHost', { ...host, isDesktop: true, runtime: { ...host.runtime, getClaudeCode } })
+    const send = vi.spyOn(wsManager, 'send').mockImplementation(() => {})
+    vi.spyOn(wsManager, 'isConnected').mockReturnValue(true)
+    render(<ActiveSession />)
+    await waitFor(() => expect(getClaudeCode).toHaveBeenCalled())
+
+    const control = screen.getByRole('button', { name: 'CLI runtime' })
+    expect(control).toHaveTextContent(/^CLI runtime$/)
+    fireEvent.click(control)
+    const installed = screen.getByRole('option', { name: 'Claude Code on this computer' })
+    expect(installed).toHaveAttribute('aria-selected', 'false')
+    fireEvent.click(installed)
+    expect(send).toHaveBeenCalledWith(sessionId, { type: 'set_cli_runtime', cliRuntimeId: 'installed' })
+    expect(control).toBeDisabled()
+
+    act(() => useChatStore.getState().handleServerMessage('another-session', {
+      type: 'cli_runtime_applied', cliRuntimeId: 'installed',
+    }))
+    expect(control).toBeDisabled()
+
+    act(() => useChatStore.getState().handleServerMessage(sessionId, {
+      type: 'cli_runtime_applied', cliRuntimeId: 'installed',
+    }))
+    expect(control).toBeEnabled()
+    expect(control).toHaveTextContent('Claude Code on this computer')
+  })
 
   it('keeps a long title on one truncated line and hovers the full text', () => {
     const sessionId = 'long-title-session'

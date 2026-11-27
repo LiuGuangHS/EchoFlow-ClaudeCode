@@ -27,6 +27,8 @@ import { updateSessionSlashCommands } from '../ws/handler.js'
 import { reduceTranscript } from '../services/localIndex/transcriptReducer.js'
 import { openLocalIndexDatabase } from '../services/localIndex/database.js'
 import { readSessionEntriesByLocator } from '../services/localIndex/sessionEntries.js'
+import { ECHOFLOW_INTERNAL_DIR } from '../../utils/echoFlowConfigRoot.js'
+import { ensureSessionArchivesMigrated } from '../../utils/sessionArchiveStore.js'
 import {
   createSessionIndex,
   type LocalIndexGateway,
@@ -903,7 +905,10 @@ describe('SessionService', () => {
     const fallbackTime = new Date('2026-07-03T03:00:00.000Z')
     await fs.utimes(filePath, fallbackTime, fallbackTime)
 
-    const result = await service.listSessions({ project: '/tmp/incomplete-summary' })
+    const project = '/tmp/incomplete-summary'
+    expect(await service.listSessions({ project })).toEqual({ sessions: [], total: 0 })
+    await service.setSessionArchived(sessionId, false)
+    const result = await service.listSessions({ project })
 
     expect(result.sessions).toHaveLength(1)
     expect(result.sessions[0]).toMatchObject({
@@ -1022,6 +1027,7 @@ describe('SessionService', () => {
     expect(scanned).toEqual(reduced.summary)
     expect(scanned).toEqual({
       agentProfile: 'standard',
+      legacyArchived: null,
       title: 'Canonical parity title',
       createdAt: '2026-07-01T01:00:00.000Z',
       modifiedAt: '2026-07-01T02:05:00.000Z',
@@ -1250,6 +1256,7 @@ describe('SessionService', () => {
         [makeUserEntry(`Bounded cache ${index}`)],
       )
     }
+    await ensureSessionArchivesMigrated(tmpDir)
     const boundedService = new SessionService(undefined, {
       now: () => now,
       sessionListCacheMaxEntries: 2,
@@ -1367,8 +1374,8 @@ describe('SessionService', () => {
         [firstConfigDir, '24300000-bbbb-cccc-dddd-eeeeeeeeeeee'],
         [secondConfigDir, '24300001-bbbb-cccc-dddd-eeeeeeeeeeee'],
       ] as const) {
-        await fs.mkdir(path.join(configDir, 'cc-haha'), { recursive: true })
-        await fs.writeFile(path.join(configDir, 'cc-haha', 'session-archives.json'), JSON.stringify({
+        await fs.mkdir(path.join(configDir, ECHOFLOW_INTERNAL_DIR), { recursive: true })
+        await fs.writeFile(path.join(configDir, ECHOFLOW_INTERNAL_DIR, 'session-archives.json'), JSON.stringify({
           schemaVersion: 1, sessions: { [id]: { archived: true } },
         }))
       }

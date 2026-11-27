@@ -1,5 +1,7 @@
 export const ELECTRON_IPC_CHANNELS = {
   echoFlowLoginOpen: 'desktop:echoflow:login-open',
+  echoFlowLoginSetBounds: 'desktop:echoflow:login-set-bounds',
+  echoFlowLoginCancel: 'desktop:echoflow:login-cancel',
   echoFlowSignOut: 'desktop:echoflow:sign-out',
   echoFlowWhenRestored: 'desktop:echoflow:when-restored',
   configImportTake: 'desktop:config-import:take',
@@ -108,6 +110,9 @@ export const ELECTRON_IPC_CHANNELS = {
   appModePrepareRestart: 'desktop:app-mode:prepare-restart',
   appModeRestart: 'desktop:app-mode:restart',
   migrationPrepare: 'desktop:app-mode:migration:prepare',
+  migrationOpenAiOauth: 'desktop:app-mode:migration:openai-oauth',
+  migrationImAdoption: 'desktop:app-mode:migration:im-adapters',
+  migrationWhatsAppAdoption: 'desktop:app-mode:migration:whatsapp-auth',
   migrationStart: 'desktop:app-mode:migration:start',
   migrationStatus: 'desktop:app-mode:migration:status',
   migrationCancel: 'desktop:app-mode:migration:cancel',

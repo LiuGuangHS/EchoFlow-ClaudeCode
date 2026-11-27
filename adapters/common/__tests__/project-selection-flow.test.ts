@@ -74,7 +74,7 @@ function createProjectController(
 describe('IM project selection flow', () => {
   it('keeps both adapter entrypoints wired to the tested controller', () => {
     for (const platform of ['dingtalk', 'feishu']) {
-      const source = fs.readFileSync(path.join(ADAPTERS_DIR, platform, 'index.ts'), 'utf8')
+      const source = fs.readFileSync(path.join(ADAPTERS_DIR, platform, 'runtime.ts'), 'utf8')
       expect(source).toContain('projectSelectionController.listProjects(chatId)')
       expect(source).toContain('projectSelectionController.handleInput(chatId,')
     }

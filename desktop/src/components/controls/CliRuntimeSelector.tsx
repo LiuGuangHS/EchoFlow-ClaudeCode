@@ -1,8 +1,8 @@
 import { Dropdown } from '../ui/Dropdown'
 import { Button } from '../ui/Button'
 import { useTranslation } from '@/i18n'
+import type { ClaudeCodeRuntimeId } from '@/lib/desktopHost'
 
-type ClaudeCodeRuntimeId = 'bundled' | 'installed'
 type CliRuntimeStatus = 'pending' | 'applied' | 'failed'
 
 type CliRuntimeSelectorProps = {
@@ -10,6 +10,7 @@ type CliRuntimeSelectorProps = {
   requestedRuntime: ClaudeCodeRuntimeId | undefined
   status: CliRuntimeStatus | undefined
   hasInstalledRuntime: boolean
+  disabled?: boolean
   onChange: (runtimeId: ClaudeCodeRuntimeId) => void
 }
 
@@ -18,15 +19,13 @@ export function CliRuntimeSelector({
   requestedRuntime,
   status,
   hasInstalledRuntime,
+  disabled,
   onChange,
 }: CliRuntimeSelectorProps) {
   const t = useTranslation()
-  // A failed switch is rolled back server-side, which re-acks the runtime that
-  // is actually running. The store keeps the rejected request so a stale ack
-  // cannot confirm it, so the selector has to show the effective runtime while
-  // the failure is on screen — otherwise the dropdown sits on a choice that is
-  // not what the session is running.
-  const value = (status === 'failed' ? effectiveRuntime : undefined) ?? requestedRuntime ?? effectiveRuntime ?? 'bundled'
+  // The local default and an unacknowledged request do not establish the session runtime.
+  const value = (status === 'pending' ? requestedRuntime : undefined) ?? effectiveRuntime ?? ''
+  const label = t('settings.runtime.cliLabel')
   const items = [
     { value: 'bundled' as const, label: t('settings.runtime.managed') },
     ...(hasInstalledRuntime ? [{ value: 'installed' as const, label: t('settings.runtime.external') }] : []),
@@ -35,26 +34,28 @@ export function CliRuntimeSelector({
     ? t('settings.runtime.applying')
     : status === 'failed'
       ? t('settings.runtime.changeFailed')
-      : value === 'installed' ? t('settings.runtime.external') : t('settings.runtime.managed')
+      : value === 'installed' ? t('settings.runtime.external') : value === 'bundled' ? t('settings.runtime.managed') : label
 
   return (
     <div className="flex items-center gap-2">
-      <Dropdown<ClaudeCodeRuntimeId>
+      <Dropdown<ClaudeCodeRuntimeId | ''>
         items={items}
         value={value}
-        onChange={onChange}
+        onChange={(next) => { if (next) onChange(next) }}
+        portal
         trigger={(
           <Button
             type="button"
             size="sm"
             variant="secondary"
-            aria-label={t('settings.runtime.cliLabel')}
-            disabled={status === 'pending'}
+            aria-label={label}
+            disabled={disabled || status === 'pending'}
           >
             {statusLabel}
           </Button>
         )}
       />
+      <span aria-live="polite" className="sr-only">{statusLabel === label ? '' : statusLabel}</span>
     </div>
   )
 }

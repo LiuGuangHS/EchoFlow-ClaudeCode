@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import os from 'node:os'
+import { getEchoFlowInternalDir, resolveStorageBinding } from '../../../src/utils/echoFlowConfigRoot'
 import path from 'node:path'
 import { resolveHostTriple } from './sidecarManager'
 import { startCloudflareProxyTransport } from './cloudflareProxy'
@@ -204,7 +204,11 @@ export async function startCloudflareTunnel(
   }
   if (options.signal?.aborted) throw aborted()
 
-  const directory = await mkdtemp(path.join(dependencies.temporaryDirectory ?? os.tmpdir(), 'cc-haha-cloudflared-'))
+  const temporaryRoot = dependencies.temporaryDirectory ?? path.join(
+    getEchoFlowInternalDir(resolveStorageBinding({ env: dependencies.env ?? process.env }).root), 'tmp',
+  )
+  await mkdir(temporaryRoot, { recursive: true, mode: 0o700 })
+  const directory = await mkdtemp(path.join(temporaryRoot, 'echoflow-cloudflared-'))
   let transport: Awaited<ReturnType<typeof startCloudflareProxyTransport>> | undefined
   let child: ChildProcess | undefined
   let cleanupPromise: Promise<void> | undefined

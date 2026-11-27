@@ -120,6 +120,7 @@ export function MobileApprovalDock({ sessionId }: { sessionId: string }) {
               variant="secondary"
               size="lg"
               block
+              disabled={current.submitting}
               onClick={() => respondToPermission(sessionId, current.requestId, false)}
             >
               {t('permission.deny')}
@@ -128,6 +129,7 @@ export function MobileApprovalDock({ sessionId }: { sessionId: string }) {
               variant="primary"
               size="lg"
               block
+              disabled={current.submitting}
               onClick={() => respondToPermission(sessionId, current.requestId, true)}
             >
               {t('permission.allow')}
@@ -140,6 +142,7 @@ export function MobileApprovalDock({ sessionId }: { sessionId: string }) {
             <Button
               variant="ghost"
               size="md"
+              disabled={current.submitting}
               onClick={() => respondToPermission(sessionId, current.requestId, true, { rule: 'always' })}
             >
               {t('permission.allowForSession')}
@@ -161,7 +164,7 @@ export function MobileApprovalDock({ sessionId }: { sessionId: string }) {
                 variant="accent"
                 size="lg"
                 shape="circle"
-                disabled={!reason.trim()}
+                disabled={current.submitting || !reason.trim()}
                 aria-label={t('mobile.approval.denyWithReason')}
                 className="h-11 w-11 shrink-0"
                 icon={<ArrowUp size={18} strokeWidth={2} aria-hidden="true" />}

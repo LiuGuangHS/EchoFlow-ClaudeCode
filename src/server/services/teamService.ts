@@ -2,16 +2,16 @@ import { readLegacyTranscriptFiles } from './legacyTranscriptBudget.js'
 /**
  * TeamService — 读取 CLI 生成的 Agent Teams 配置
  *
- * Team 配置存储在 ~/.claude/teams/{name}/config.json
+ * Team 配置存储在 <storage-root>/teams/{name}/config.json
  * 成员 transcript 存储为 JSONL 文件:
- *   - 有 sessionId 的成员: ~/.claude/projects/{project}/{sessionId}.jsonl
- *   - in-process 成员 (无 sessionId): ~/.claude/projects/{project}/{leadSessionId}/subagents/agent-*.jsonl
+ *   - 有 sessionId 的成员: <storage-root>/projects/{project}/{sessionId}.jsonl
+ *   - in-process 成员 (无 sessionId): <storage-root>/projects/{project}/{leadSessionId}/subagents/agent-*.jsonl
  * 成员发现: config.json + inboxes/ 目录 (解决并发写入丢失成员的问题)
  */
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import * as os from 'os'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import * as crypto from 'node:crypto'
 import { ApiError } from '../middleware/errorHandler.js'
 import { readTeamTranscriptProjection } from './teamTranscriptProjection.js'
@@ -1486,7 +1486,7 @@ export class TeamService {
   }
 
   private getConfigDir(): string {
-    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    return getEchoFlowConfigDir()
   }
 
   private getTeamsDir(): string {
@@ -1498,47 +1498,23 @@ export class TeamService {
   }
 
   private getWorkbenchArchiveDir(): string {
-    return path.join(this.getConfigDir(), 'cc-haha', 'agent-teams')
-  }
-
-  private getLegacyWorkbenchArchiveDir(): string {
-    return path.join(this.getConfigDir(), 'echoflow-code', 'agent-teams')
+    return path.join(getEchoFlowInternalDir(), 'agent-teams')
   }
 
   private getWorkbenchArchivePath(sessionId: string): string {
     return path.join(this.getWorkbenchArchiveDir(), `${hash(sessionId)}.json`)
   }
 
-  private getLegacyWorkbenchArchivePath(sessionId: string): string {
-    return path.join(this.getLegacyWorkbenchArchiveDir(), `${hash(sessionId)}.json`)
-  }
-
   private async resolveWorkbenchArchivePath(
     sessionId: string,
-    forWrite = false,
   ): Promise<{ path: string; contents?: Buffer }> {
-    const currentPath = this.getWorkbenchArchivePath(sessionId)
-    const legacyPath = this.getLegacyWorkbenchArchivePath(sessionId)
-    const readIfPresent = async (filePath: string): Promise<Buffer | null> => {
-      try {
-        return await fs.readFile(filePath)
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-        throw error
-      }
+    const filePath = this.getWorkbenchArchivePath(sessionId)
+    try {
+      return { path: filePath, contents: await fs.readFile(filePath) }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { path: filePath }
+      throw error
     }
-    const [current, legacy] = await Promise.all([
-      readIfPresent(currentPath),
-      readIfPresent(legacyPath),
-    ])
-    if (current && legacy && (forWrite || !current.equals(legacy))) {
-      throw new Error('Conflicting current and legacy Team workbench archives')
-    }
-    return current
-      ? { path: currentPath, contents: current }
-      : legacy
-        ? { path: legacyPath, contents: legacy }
-        : { path: currentPath }
   }
 
   // ── List all teams ──────────────────────────────────────────────────────
@@ -2398,7 +2374,7 @@ export class TeamService {
     filePath: string,
     document: TeamWorkbenchArchiveDocument,
   ): Promise<void> {
-    filePath = (await this.resolveWorkbenchArchivePath(document.sessionId, true)).path
+    filePath = (await this.resolveWorkbenchArchivePath(document.sessionId)).path
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     const temporaryPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${crypto.randomBytes(6).toString('hex')}`
     try {
@@ -2765,7 +2741,7 @@ export class TeamService {
     return lastWrites
   }
 
-  /** Search ~/.claude/projects/ for a JSONL file matching the sessionId. */
+  /** Search <storage-root>/projects/ for a JSONL file matching the sessionId. */
   private async findTranscriptFile(
     sessionId: string,
   ): Promise<string | null> {
@@ -2798,7 +2774,7 @@ export class TeamService {
 
   /**
    * Search subagents directory for a specific member's transcript.
-   * Path: ~/.claude/projects/{project}/{leadSessionId}/subagents/agent-*.jsonl
+   * Path: <storage-root>/projects/{project}/{leadSessionId}/subagents/agent-*.jsonl
    *
    * Matches only persisted agent identity. Prompt text can legitimately mention
    * several teammates and cannot distinguish one execution transcript from another.

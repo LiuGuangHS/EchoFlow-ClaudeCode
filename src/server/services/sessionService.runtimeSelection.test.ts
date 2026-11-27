@@ -142,6 +142,74 @@ test('a memory-only runtime replacement overrides old persisted effort without c
   expect(await readFile(filePath, 'utf8')).toBe(original)
 })
 
+test('v0.7.4 CLI runtime pins survive cold readers and transcript clearing without leaking into session lists', async () => {
+  const filePath = await seedLegacySelection()
+  const records = (await readFile(filePath, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+  records[0].cliRuntimeId = 'installed'
+  records[0].unknownRuntimeField = { keep: true }
+  await writeFile(filePath, records.map(record => JSON.stringify(record)).join('\n') + '\n')
+
+  for (const reader of [service, new SessionService()]) {
+    expect(await reader.getSessionLaunchInfo(sessionId)).toMatchObject({ cliRuntimeId: 'installed' })
+    const listed = (await reader.listSessions()).sessions.find(session => session.id === sessionId)
+    expect(listed).toBeDefined()
+    expect(Object.hasOwn(listed!, 'cliRuntimeId')).toBe(false)
+  }
+  // The metadata writer must not append a duplicate just to acknowledge a recovered choice.
+  const before = await readFile(filePath, 'utf8')
+  const metadata = { workDir: directory, cliRuntimeId: 'installed' as const }
+  await service.appendSessionMetadata(sessionId, metadata)
+  expect(await readFile(filePath, 'utf8')).toBe(before)
+  await service.appendSessionMetadata(sessionId, { workDir: directory, permissionMode: 'plan' })
+  expect(await new SessionService().getSessionLaunchInfo(sessionId)).toMatchObject({ cliRuntimeId: 'installed' })
+  expect(await readFile(filePath, 'utf8')).toContain('unknownRuntimeField')
+
+  await service.clearSessionTranscript(sessionId, directory)
+  expect(await new SessionService().getSessionLaunchInfo(sessionId)).toMatchObject({ cliRuntimeId: 'installed' })
+})
+
+test('invalid historical CLI runtime metadata is ignored and the latest valid pin is preserved on restart', async () => {
+  const filePath = await seedLegacySelection()
+  const entries = ['invalid', 'installed', 'invalid', 'bundled', null].map(cliRuntimeId => ({
+    type: 'session-meta', workDir: directory, cliRuntimeId,
+  }))
+  // Prefixes establish that invalid metadata is never promoted to an executable choice.
+  const original = await readFile(filePath, 'utf8')
+  for (const [index, expected] of [undefined, 'installed', 'installed', 'bundled', 'bundled'].entries()) {
+    await writeFile(filePath, original + entries.slice(0, index + 1).map(entry => JSON.stringify(entry)).join('\n') + '\n')
+    const launchInfo = await new SessionService().getSessionLaunchInfo(sessionId)
+    if (expected) expect(launchInfo).toMatchObject({ cliRuntimeId: expected })
+    else expect(launchInfo).not.toHaveProperty('cliRuntimeId')
+  }
+})
+
+test.each([
+  ['unpinned', undefined, 'installed'],
+  ['pinned', 'bundled', 'bundled'],
+] as const)('cold launch preserves CLI runtime precedence for a %s worktree conversation before metadata transfer', async (_label, conversationRuntimeId, expectedRuntimeId) => {
+  const workDir = join(directory, '.claude', 'worktrees', 'fixture')
+  const projectDir = sanitizePath(workDir)
+  const transcriptDir = join(directory, 'projects', projectDir)
+  const placeholderDir = join(directory, 'projects', sanitizePath(directory))
+  await mkdir(transcriptDir, { recursive: true })
+  await mkdir(placeholderDir, { recursive: true })
+  const filePath = join(transcriptDir, `${sessionId}.jsonl`)
+  const placeholderPath = join(placeholderDir, `${sessionId}.jsonl`)
+  const conversation = [
+    { type: 'session-meta', workDir, ...(conversationRuntimeId ? { cliRuntimeId: conversationRuntimeId } : {}) },
+    { type: 'user', uuid: 'worktree-message', cwd: workDir, message: { role: 'user', content: 'Keep this conversation' } },
+  ].map(entry => JSON.stringify(entry)).join('\n') + '\n'
+  const placeholder = JSON.stringify({ type: 'session-meta', workDir: directory, cliRuntimeId: 'installed' }) + '\n'
+  await writeFile(filePath, conversation)
+  await writeFile(placeholderPath, placeholder)
+
+  const launchInfo = await new SessionService().getSessionLaunchInfo(sessionId)
+  expect(launchInfo).toMatchObject({ filePath, projectDir, workDir, transcriptMessageCount: 1 })
+  expect(await readFile(filePath, 'utf8')).toBe(conversation)
+  expect(await readFile(placeholderPath, 'utf8')).toBe(placeholder)
+  expect(launchInfo?.cliRuntimeId).toBe(expectedRuntimeId)
+})
+
 test('a side conversation clears inherited effort when its runtime selection changes', async () => {
   await seedLegacySelection()
   const launchInfo = (await service.getSessionLaunchInfo(sessionId))!

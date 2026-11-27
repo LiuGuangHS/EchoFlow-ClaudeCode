@@ -2,7 +2,8 @@ import { feature } from 'bun:bundle'
 import { randomBytes } from 'crypto'
 import ignore from 'ignore'
 import memoize from 'lodash-es/memoize.js'
-import { homedir, tmpdir } from 'os'
+import { chmodSync, lstatSync, mkdirSync } from 'node:fs'
+import { homedir } from 'os'
 import { join, normalize, posix, sep } from 'path'
 import { hasAutoMemPathOverride, isAutoMemPath } from 'src/memdir/paths.js'
 import { isAgentMemoryPath } from 'src/tools/AgentTool/agentMemory.js'
@@ -16,7 +17,9 @@ import { getOriginalCwd, getSessionId } from '../../bootstrap/state.js'
 import { checkStatsigFeatureGate_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
 import type { AnyObject, Tool, ToolPermissionContext } from '../../Tool.js'
 import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
+import { ensurePrivateStorageTempRoot } from '../cachePaths.js'
 import { getCwd } from '../cwd.js'
+import { getEchoFlowConfigDir } from '../echoFlowConfigRoot.js'
 import { getClaudeConfigHomeDir } from '../envUtils.js'
 import {
   getFsImplementation,
@@ -299,64 +302,30 @@ export function isScratchpadEnabled(): boolean {
   return checkStatsigFeatureGate_CACHED_MAY_BE_STALE('tengu_scratch')
 }
 
-/**
- * Returns the user-specific Claude temp directory name.
- * On Unix: 'claude-{uid}' to prevent multi-user permission conflicts
- * On Windows: 'claude' (tmpdir() is already per-user)
- */
-export function getClaudeTempDirName(): string {
-  if (getPlatform() === 'windows') {
-    return 'claude'
-  }
-  // Use UID to create per-user directories, preventing permission conflicts
-  // when multiple users share the same /tmp directory
-  const uid = process.getuid?.() ?? 0
-  return `claude-${uid}`
-}
-
-/**
- * Returns the Claude temp directory path with symlinks resolved.
- * Uses TMPDIR env var if set, otherwise:
- * - On Unix: /tmp/claude-{uid}/ (resolved to /private/tmp/claude-{uid}/ on macOS)
- * - On Windows: {tmpdir}/claude/ (e.g., C:\Users\{user}\AppData\Local\Temp\claude\)
- * This is a per-user temporary directory used by Claude Code for all temp files.
- *
- * NOTE: We resolve symlinks to ensure this path matches the resolved paths used
- * in permission checks. On macOS, /tmp is a symlink to /private/tmp, so without
- * resolution, paths like /tmp/claude-{uid}/... wouldn't match /private/tmp/claude-{uid}/...
- */
-// Memoized: called per-tool from permission checks (yoloClassifier, sandbox-adapter)
-// and per-turn from BashTool prompt. Inputs (CLAUDE_CODE_TMPDIR env + platform) are
-// fixed at startup, and the realpath of the system tmp dir does not change mid-session.
+/** Shell/project scratch, resolved to match real paths used in permission checks. */
+// CLAUDE_CODE_TMPDIR no longer selects product storage; keep the sandbox grant off other staging files.
 export const getClaudeTempDir = memoize(function getClaudeTempDir(): string {
-  const baseTmpDir =
-    process.env.CLAUDE_CODE_TMPDIR ||
-    (getPlatform() === 'windows' ? tmpdir() : '/tmp')
-
-  // Resolve symlinks in the base temp directory (e.g., /tmp -> /private/tmp on macOS)
-  // This ensures the path matches resolved paths in permission checks
-  const fs = getFsImplementation()
-  let resolvedBaseTmpDir = baseTmpDir
+  const directory = join(ensurePrivateStorageTempRoot(), 'shell')
   try {
-    resolvedBaseTmpDir = fs.realpathSync(baseTmpDir)
-  } catch {
-    // If resolution fails, use the original path
+    mkdirSync(directory, { mode: 0o700 })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
   }
-
-  return join(resolvedBaseTmpDir, getClaudeTempDirName()) + sep
-})
+  if (!lstatSync(directory).isDirectory()) throw new Error('Shell temporary directory must be a directory, not a link or special entry')
+  chmodSync(directory, 0o700)
+  return getFsImplementation().realpathSync(directory) + sep
+}, () => getEchoFlowConfigDir())
 
 /**
  * Root for bundled-skill file extraction (see bundledSkills.ts).
  *
  * SECURITY: The per-process random nonce is the load-bearing defense here.
- * Every other path component (uid, VERSION, skill name, file keys) is public
- * knowledge, so without it a local attacker can pre-create the tree on a
- * shared /tmp — sticky bit prevents deletion, not creation — and either
- * symlink an intermediate directory (O_NOFOLLOW only checks the final
- * component) or own a parent dir and swap file contents post-write for prompt
- * injection via the read allowlist. diskOutput.ts gets the same property from
- * the session-ID UUID in its path.
+ * Every other path component (VERSION, skill name, file keys) is public
+ * knowledge, and sandboxed commands can write within shell scratch. Without
+ * the nonce they could pre-create the extraction tree, symlink an intermediate
+ * directory (O_NOFOLLOW only checks the final component), or swap file contents
+ * post-write for prompt injection via the read allowlist. diskOutput.ts gets
+ * the same property from the session-ID UUID in its path.
  *
  * Memoized so the extraction writes and the permission check agree on the
  * path for the life of the process. Version-scoped so stale extractions from
@@ -371,7 +340,7 @@ export const getBundledSkillsRoot = memoize(
 
 /**
  * Returns the project temp directory path with trailing separator.
- * Path format: /tmp/claude-{uid}/{sanitized-cwd}/
+ * Path format: {R}/echoflow-code/tmp/shell/{sanitized-cwd}/
  */
 export function getProjectTempDir(): string {
   return join(getClaudeTempDir(), sanitizePath(getOriginalCwd())) + sep
@@ -379,7 +348,7 @@ export function getProjectTempDir(): string {
 
 /**
  * Returns the scratchpad directory path for the current session.
- * Path format: /tmp/claude-{uid}/{sanitized-cwd}/{sessionId}/scratchpad/
+ * Path format: {R}/echoflow-code/tmp/shell/{sanitized-cwd}/{sessionId}/scratchpad/
  */
 export function getScratchpadDir(): string {
   return join(getProjectTempDir(), getSessionId(), 'scratchpad')
@@ -1708,7 +1677,7 @@ export function checkReadableInternalPath(
     }
   }
 
-  // Project temp directory (/tmp/claude/{sanitized-cwd}/)
+  // Project temp directory ({R}/echoflow-code/tmp/shell/{sanitized-cwd}/)
   // Intentionally allows reading files from all sessions in this project, not just the current session.
   // This enables cross-session file access within the same project's temp space.
   const projectTempDir = getProjectTempDir()
@@ -1781,7 +1750,7 @@ export function checkReadableInternalPath(
 
   // Bundled skill reference files extracted on first invocation.
   // SECURITY: See getBundledSkillsRoot() — the per-process nonce in the path
-  // is the load-bearing defense; uid/VERSION alone are public knowledge and
+  // is the load-bearing defense; VERSION alone is public knowledge and
   // squattable. We always write-before-read on invocation, so content under
   // this subtree is harness-controlled.
   const bundledSkillsRoot = getBundledSkillsRoot() + sep

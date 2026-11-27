@@ -1,5 +1,6 @@
+import '@testing-library/jest-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 const { sendMock } = vi.hoisted(() => ({
   sendMock: vi.fn(),
@@ -132,6 +133,19 @@ describe('plan mode permission UI', () => {
         { id: 'claude-haiku-4-5', name: 'Haiku 4.5', description: '', context: '' },
       ],
     })
+  })
+
+  it('keeps the plan actionable only after correlated rejection, not transport send', () => {
+    render(<PermissionDialog sessionId="session-1" requestId="perm-plan" toolName="ExitPlanMode" input={{ plan: PLAN }} />)
+    const approve = screen.getByRole('button', { name: 'Approve plan' })
+    fireEvent.click(approve)
+    expect(approve).toBeDisabled()
+    expect(screen.queryByText('Responded')).toBeNull()
+    act(() => useChatStore.getState().handleServerMessage('session-1', {
+      type: 'error', code: 'RUNTIME_CONFIG_INVALID', message: 'invalid model', requestId: 'perm-plan', permissionType: 'tool', approvalOutcome: 'rejected',
+    }))
+    expect(approve).not.toBeDisabled()
+    expect(useChatStore.getState().sessions['session-1']?.messages).toContainEqual(expect.objectContaining({ type: 'error', message: 'invalid model' }))
   })
 
   it('renders ExitPlanMode as a plan preview instead of raw tool input', () => {
@@ -397,6 +411,13 @@ describe('plan mode permission UI', () => {
     })
     expect(screen.getByTestId('plan-execution-model').textContent).toContain('Sonnet 5')
 
+    const persistedBeforeSend = localStorage.getItem('cc-haha-session-runtime')
+    sendMock.mockImplementationOnce(() => {
+      expect(useSessionRuntimeStore.getState().selections['session-1']).toEqual({
+        providerId: 'deepseek', modelId: 'deepseek-v4-pro',
+      })
+      expect(localStorage.getItem('cc-haha-session-runtime')).toBe(persistedBeforeSend)
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Approve plan' }))
 
     expect(sendMock).toHaveBeenCalledWith('session-1', {
@@ -420,6 +441,63 @@ describe('plan mode permission UI', () => {
       id: 'session-1', runtimeProviderId: 'deepseek', runtimeModelId: 'deepseek-v4-flash',
     } as never])
     expect(useSessionRuntimeStore.getState().selections['session-1']?.modelId).toBe('deepseek-v4-flash')
+  })
+
+  it.each(['offline', 'missing', 'submitting'] as const)('does not echo or persist the staged runtime when approval is %s', async (outcome) => {
+    const originalRespond = useChatStore.getState().respondToPermission
+    const planningRuntime = { providerId: 'deepseek', modelId: 'deepseek-v4-pro' }
+    useSessionRuntimeStore.getState().setSelection('session-1', planningRuntime)
+    const persisted = localStorage.getItem('cc-haha-session-runtime')
+    const errors: string[] = []
+    const onError = (event: ErrorEvent) => {
+      errors.push(event.message)
+      event.preventDefault()
+    }
+    window.addEventListener('error', onError)
+    if (outcome === 'offline') {
+      sendMock.mockImplementationOnce(() => { throw new Error('Approval requires a connected session') })
+    } else {
+      // The rendered button can become stale before the store action runs.
+      useChatStore.setState({ respondToPermission: (...args) => {
+        useChatStore.setState((state) => {
+          const session = state.sessions['session-1']!
+          const pending = { ...session.pendingPermission!, submitting: true }
+          const pendingPermissions: NonNullable<typeof session.pendingPermissions> = outcome === 'missing' ? {} : { 'perm-plan': pending }
+          return { sessions: { ...state.sessions, 'session-1': {
+            ...session,
+            pendingPermission: outcome === 'missing' ? null : pending,
+            pendingPermissions,
+          } } }
+        })
+        return originalRespond(...args)
+      } })
+    }
+    try {
+      render(<PermissionDialog sessionId="session-1" requestId="perm-plan" toolName="ExitPlanMode" input={{ plan: PLAN }} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Execution model' }))
+      await waitFor(() => expect(screen.getByTestId('model-selector-dropdown')).toBeTruthy())
+      fireEvent.click(screen.getByRole('button', { name: /^Sonnet 5(?![.\d])/ }))
+      await waitFor(() => expect(screen.getByTestId('plan-execution-model').textContent).toContain('applies on approve'))
+      fireEvent.click(screen.getByRole('button', { name: 'Approve plan' }))
+
+      expect([...new Set(errors)]).toEqual(outcome === 'offline' ? ['Approval requires a connected session'] : [])
+      expect(sendMock).toHaveBeenCalledTimes(outcome === 'offline' ? 1 : 0)
+      expect(useSessionRuntimeStore.getState().selections['session-1']).toEqual(planningRuntime)
+      expect(localStorage.getItem('cc-haha-session-runtime')).toBe(persisted)
+      const pending = useChatStore.getState().sessions['session-1']?.pendingPermission
+      if (outcome === 'offline') {
+        expect(pending?.requestId).toBe('perm-plan')
+        expect(pending?.submitting).toBeFalsy()
+        expect(screen.getByRole('button', { name: 'Approve plan' })).not.toBeDisabled()
+      } else if (outcome === 'submitting') {
+        expect(pending?.submitting).toBe(true)
+      } else {
+        expect(pending).toBeNull()
+      }
+    } finally {
+      window.removeEventListener('error', onError)
+      act(() => useChatStore.setState({ respondToPermission: originalRespond }))
+    }
   })
 
   it('keeps the approval plain when the user re-selects the current model', async () => {

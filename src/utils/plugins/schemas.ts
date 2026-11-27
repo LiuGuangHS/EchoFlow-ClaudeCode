@@ -1562,7 +1562,7 @@ export const PluginInstallationEntrySchema = lazySchema(() =>
       .string()
       .optional()
       .describe('Git commit SHA for git-based plugins'),
-  }),
+  }).passthrough(),
 )
 
 /**
@@ -1589,7 +1589,7 @@ export const InstalledPluginsFileSchemaV2 = lazySchema(() =>
     plugins: z
       .record(PluginIdSchema(), z.array(PluginInstallationEntrySchema()))
       .describe('Map of plugin IDs to arrays of installation entries'),
-  }),
+  }).passthrough(),
 )
 
 /**

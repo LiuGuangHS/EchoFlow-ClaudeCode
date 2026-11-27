@@ -100,6 +100,20 @@ describe('release desktop workflow', () => {
     return findUpdateFile(files, 'zip', processArch, ['pkg', 'dmg'])
   }
 
+  test('release runs never cancel in-progress publication while development builds remain latest-wins', () => {
+    const release = parse(readReleaseWorkflow())
+    expect(release.concurrency).toEqual({
+      group: 'release-desktop-${{ github.ref }}',
+      'cancel-in-progress': false,
+    })
+    expect(release.on.push.tags).toEqual(['v*.*.*'])
+    expect(release.on.workflow_call.inputs.official_release.type).toBe('boolean')
+    expect(release.on.workflow_dispatch.inputs.draft.default).toBe(true)
+    const development = parse(readFileSync('.github/workflows/build-desktop-dev.yml', 'utf8'))
+    expect(development.concurrency['cancel-in-progress']).toBe(true)
+    expect(development.concurrency.group).toStartWith('build-desktop-dev-')
+  })
+
   test('delivery summary always reports publication, site sync and native pipeline outcomes without claiming delivery', () => {
     const workflow = parse(readReleaseWorkflow())
     const job = workflow.jobs['delivery-summary']
@@ -276,8 +290,8 @@ describe('release desktop workflow', () => {
     }
   })
 
-  test('development builds freeze every workspace install while retaining cross-architecture desktop addons', () => {
-    const steps = parse(readFileSync('.github/workflows/build-desktop-dev.yml', 'utf8')).jobs.build.steps as Array<{
+  test.each(['build-desktop-dev', 'release-desktop'])('%s freezes every workspace install while retaining cross-architecture desktop addons', name => {
+    const steps = parse(readFileSync(`.github/workflows/${name}.yml`, 'utf8')).jobs.build.steps as Array<{
       run?: string
       'working-directory'?: string
     }>
@@ -288,6 +302,19 @@ describe('release desktop workflow', () => {
       expect(install).toBeLessThan(build)
       expect(steps[install].run).toBe(workspace === 'desktop' ? 'bun install --frozen-lockfile --cpu="*"' : 'bun install --frozen-lockfile')
     }
+  })
+
+  test('release publication freezes its root dependencies before using release helpers', () => {
+    const steps = parse(readReleaseWorkflow()).jobs['publish-release'].steps as Array<{
+      run?: string
+      'working-directory'?: string
+    }>
+    const installs = steps.filter(step => step.run?.startsWith('bun install'))
+    expect(installs).toHaveLength(1)
+    expect(installs[0]['working-directory']).toBeUndefined()
+    expect(installs[0].run).toBe('bun install --frozen-lockfile')
+    const helper = steps.findIndex(step => step.run?.includes('bun run scripts/'))
+    expect(helper).toBeGreaterThan(steps.indexOf(installs[0]))
   })
 
   test('desktop build workflows install the phone app before building the renderer', () => {
@@ -1073,7 +1100,7 @@ fi
         steps?: Array<{ uses?: string, with?: Record<string, unknown>, run?: string }>
       }>
     }).jobs
-    const lanes = ['verify-governance', 'verify-runtime', 'verify-desktop']
+    const lanes = ['verify-governance', 'verify-runtime', 'verify-desktop', 'verify-full-quality']
     const packageScripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts as Record<string, string>
 
     expect(jobs['publish-release'].needs).toEqual(['build', 'release-verify-gate', 'signing-preflight'])
@@ -1093,7 +1120,7 @@ fi
       'verify-runtime': ['check:server', 'check:agent-flow', 'check:adapters'],
       'verify-desktop': ['check:desktop', 'check:persistence-upgrade'],
     }
-    for (const lane of lanes) {
+    for (const [lane, expectedChecks] of Object.entries(laneChecks)) {
       const job = jobs[lane]
       expect(job, lane).toBeDefined()
       expect([job.needs].flat()).toEqual(['release-contract'])
@@ -1102,9 +1129,89 @@ fi
       for (const check of checks) {
         expect(packageScripts[check], lane + ' uses ' + check).toBeDefined()
       }
-      for (const expected of laneChecks[lane]) {
+      for (const expected of expectedChecks) {
         expect(checks, lane + ' runs ' + expected).toContain(expected)
       }
+    }
+  })
+
+  test('full quality checks the contracted commit with read-only access and deduplicates the release lanes', () => {
+    const { jobs } = parse(readReleaseWorkflow())
+    const contract = jobs['release-contract']
+    const full = parse(readFileSync('.github/workflows/nightly-quality.yml', 'utf8'))
+    expect(contract.outputs.release_sha).toBe('${{ steps.checkout.outputs.commit }}')
+    expect(contract.steps.find((step: { id?: string }) => step.id === 'checkout').with.ref).toBe('${{ inputs.release_sha || github.sha }}')
+    expect(jobs['verify-full-quality']).toEqual({
+      needs: 'release-contract', permissions: { contents: 'read' },
+      uses: './.github/workflows/nightly-quality.yml',
+      with: { release_sha: '${{ needs.release-contract.outputs.release_sha }}' },
+    })
+    expect(full.on.workflow_call.inputs.release_sha).toMatchObject({ type: 'string', required: true })
+    expect(full.on.workflow_call.inputs.skip_coverage).toBeUndefined()
+    for (const job of Object.values(full.jobs) as Array<{ steps: Array<{ uses?: string, with?: { ref?: string } }> }>) {
+      const checkout = job.steps.find(step => step.uses === 'actions/checkout@v5')
+      expect(checkout?.with?.ref).toBe('${{ inputs.release_sha || github.sha }}')
+    }
+    const covered = new Set<string>()
+    for (const lane of ['release-contract', 'verify-governance', 'verify-runtime', 'verify-desktop']) {
+      for (const step of jobs[lane].steps) if (step.run?.startsWith('bun run check:')) covered.add(step.run)
+    }
+    // check:policy runs the quarantine command and module graph tests itself.
+    const policy = JSON.parse(readFileSync('package.json', 'utf8')).scripts['check:policy']
+    expect(policy).toContain('&& bun run check:quarantine')
+    expect(policy).toContain('./scripts/pr/module-graph.test.ts ')
+    covered.add('bun run check:quarantine')
+    covered.add('bun test ./scripts/pr/module-graph.test.ts')
+    const manualOnly = Object.values(full.jobs).flatMap(job => (job as { steps: Array<{ if?: string, run?: string }> }).steps)
+      .filter(step => step.if?.includes('!inputs.release_sha')).map(step => step.run)
+    expect(manualOnly.sort()).toEqual([...covered].sort())
+  })
+
+  test('release coverage compares a recovered candidate to the preceding version in its own history', () => {
+    const steps = parse(readFileSync('.github/workflows/nightly-quality.yml', 'utf8')).jobs['full-deterministic'].steps
+    const resolve = steps.find((step: { id?: string }) => step.id === 'coverage-base')
+    const check = steps.find((step: { id?: string }) => step.id === 'coverage')
+    expect(check.env.COVERAGE_BASE_REF).toBe('${{ steps.coverage-base.outputs.sha }}')
+    expect(check.if).toContain("steps.coverage-base.outcome == 'success'")
+    expect(resolve.env.RELEASE_SHA).toBe('${{ inputs.release_sha }}')
+    const repo = mkdtempSync(join(tmpdir(), 'release-coverage-'))
+    const output = join(repo, 'output')
+    const env = { PATH: process.env.PATH, HOME: repo, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
+    const git = (...args: string[]) => {
+      const result = Bun.spawnSync(['git', ...args], { cwd: repo, env })
+      expect(result.exitCode, result.stderr.toString()).toBe(0)
+      return result.stdout.toString().trim()
+    }
+    const baseFor = (releaseSha: string) => {
+      writeFileSync(output, '')
+      const result = Bun.spawnSync(['bash', '-eo', 'pipefail', '-c', resolve.run], {
+        cwd: repo, env: { ...env, RELEASE_SHA: releaseSha, GITHUB_OUTPUT: output },
+      })
+      expect(result.exitCode, result.stderr.toString()).toBe(0)
+      return readFileSync(output, 'utf8').trim()
+    }
+    try {
+      git('init', '-b', 'main')
+      git('config', 'user.name', 'Fixture')
+      git('config', 'user.email', 'fixture@example.invalid')
+      git('commit', '-qm', 'initial', '--allow-empty')
+      const first = git('rev-parse', 'HEAD')
+      git('commit', '-qm', 'prior release', '--allow-empty')
+      const previous = git('rev-parse', 'HEAD')
+      expect(baseFor(previous)).toBe(`sha=${first}`)
+      git('tag', '-a', 'v1.0.0', '-m', 'previous release')
+      git('commit', '-qm', 'feature', '--allow-empty')
+      git('commit', '-qm', 'candidate', '--allow-empty')
+      const candidate = git('rev-parse', 'HEAD')
+      git('tag', 'v1.0.1')
+      git('commit', '-qm', 'new release', '--allow-empty')
+      git('tag', 'v1.0.2')
+      git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+      git('checkout', '--detach', candidate)
+      expect(baseFor(candidate)).toBe(`sha=${previous}`)
+      expect(baseFor('')).toBe('sha=origin/main')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
     }
   })
 
@@ -1425,12 +1532,18 @@ fi
     expect(recoveryHelper).toContain('function Assert-NoRunningApplication')
     expect(recoveryHelper).toContain('function Get-TreeManifest')
     expect(recoveryHelper).toContain('function Assert-TreeManifestsEqual')
-    expect(recoveryHelper).toContain('function Write-AppModeAtomically')
-    expect(recoveryHelper).toContain('[IO.File]::Replace')
+    expect(installerHook).toContain('File /oname=$PLUGINSDIR\\installer-storage-recovery.exe')
+    expect(installerHook).toContain('-RecoveryBridge "$PLUGINSDIR\\installer-storage-recovery.exe"')
+    expect(recoveryHelper).toContain('function Invoke-InstallerStorageRecovery')
+    expect(recoveryHelper).toContain("$arguments = @('--source', $Source, '--profile', $UserDataDir)")
+    expect(recoveryHelper).toContain("$arguments += @('--install-dir', $installDir)")
+    expect(recoveryHelper).toContain("$receipt.state -cne 'ready'")
+    expect(recoveryHelper).toContain('Shared installer storage root is inside an application install directory')
+    expect(recoveryHelper).not.toContain('function Write-AppModeAtomically')
     expect(recoveryHelper).not.toContain('Add-Type')
     expect(recoveryHelper).toContain('function Assert-NoReparsePointInPath')
-    expect(recoveryHelper).toContain('robocopy.exe')
-    expect(recoveryHelper).not.toMatch(/\/XC|\/XN|\/XO/)
+    expect(recoveryHelper).not.toContain('robocopy.exe')
+    expect(recoveryHelper).not.toContain('function Copy-VerifiedTree')
     expect(recoveryHelper).toContain('Multiple distinct legacy data sources')
     expect(recoveryHelper).toContain('Active CLAUDE_CONFIG_DIR is managed outside EchoFlow Code')
     expect(recoveryHelper).toContain('Test-LexicalPathAtOrBelow')
@@ -1443,7 +1556,9 @@ fi
     expect(recoveryHelper).toContain('External CLAUDE_CONFIG_DIR is active while install-contained legacy data still exists')
     expect(recoveryHelper).toMatch(/\$source = Get-UnsafeLegacySource[\s\S]*Assert-NoRunningApplication/)
     expect(recoveryHelper).not.toMatch(/InstallerIdentitySafety -eq 'untrusted-elevated' -and\s+@\(Get-ExistingInstallDirs/)
-    expect(recoveryHelper).toMatch(/Assert-TreeManifestsEqual[\s\S]*Assert-NoRunningApplication[\s\S]*Write-AppModeAtomically/)
+    const recovery = recoveryHelper.slice(recoveryHelper.indexOf('function Invoke-LegacyRecovery {'), recoveryHelper.indexOf('function Assert-SelfTest {'))
+    expect(recovery).toMatch(/Assert-MigrationJournalAllowsRecovery[\s\S]*Get-UnsafeLegacySource[\s\S]*Assert-NoUndiscoveredLegacySources[\s\S]*untrusted-elevated[\s\S]*Assert-NoRunningApplication[\s\S]*Invoke-InstallerStorageRecovery[\s\S]*Assert-NoRunningApplication/)
+    expect(recovery).not.toMatch(/Copy-Item|Remove-Item|Write-AppModeAtomically/)
     expect(recoveryHelper).toContain("AddSeconds(30)")
     expect(recoveryHelper).toContain('[Console]::Out.WriteLine("Legacy recovery error:')
     expect(recoveryHelper).toContain('reparse point')
@@ -1464,7 +1579,7 @@ fi
 
     expect(installerSmoke).toContain('Invoke-CheckedProcess')
     expect(installerSmoke).toContain('Invoke-LegacyRecoveryDiagnostic')
-    expect(installerSmoke).toContain('Direct legacy recovery diagnostic completed successfully')
+    expect(installerSmoke).toContain('Packaged installer recovery refused at the Windows native inventory gate and preserved the install-contained source')
     expect(installerSmoke).toContain("@('/S', '/currentuser'")
     expect(installerSmoke).toContain("@('--updated', '/S', '/currentuser'")
     expect(installerSmoke).toContain('$process.WaitForExit($TimeoutSeconds * 1000)')

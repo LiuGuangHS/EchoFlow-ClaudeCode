@@ -76,6 +76,14 @@ describe('MobileApprovalDock', () => {
     useTabStore.setState({ activeTabId: SESSION, tabs: [] })
   })
 
+  it('disables every decision path while the tool request is submitting', () => {
+    seed([{ ...bash, submitting: true }])
+    render(<MobileApprovalDock sessionId={SESSION} />)
+    for (const name of ['Allow', 'Deny', 'Allow for session']) expect(screen.getByRole('button', { name })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }))
+    expect(within(screen.getByTestId('mobile-approval-sheet')).getByRole('button', { name: /^Allow: / })).toBeDisabled()
+  })
+
   it('answers a tool request in one tap from where the composer was', () => {
     seed([bash])
     render(<MobileApprovalDock sessionId={SESSION} />)

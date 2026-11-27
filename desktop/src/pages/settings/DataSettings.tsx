@@ -1,33 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { FolderInput, Settings2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { Input } from '@/components/ui/Input'
 import { TextArea } from '@/components/ui/TextArea'
 import { Switch } from '@/components/ui/Switch'
-import { SettingsPageHeader } from '@/components/settings/SettingsSection'
+import { SettingsGroup, SettingsPageHeader, SettingsRow, SettingsSection } from '@/components/settings/SettingsSection'
 import { useTranslation } from '@/i18n'
 import { settingsApi } from '@/api/settings'
-import { getDesktopHost } from '@/lib/desktopHost'
 import { isDesktopRuntime } from '@/lib/desktopRuntime'
 import { isTouchH5Document } from '@/lib/touchH5'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useSettingsStore, DEFAULT_CLEANUP_PERIOD_DAYS, MAX_CLEANUP_PERIOD_DAYS } from '@/stores/settingsStore'
 import { normalizeLocalRedactionSettings } from '../../../../src/shared/localRedactionSettings'
 import { useUIStore } from '@/stores/uiStore'
-import type { AppMode } from '@/types/settings'
+import { DataMigrationSettings } from './DataMigrationSettings'
 
-/**
- * The Data & Storage settings panel — retention, local request redaction,
- * and the config directory the desktop runtime reads.
- *
- * Moved verbatim out of `GeneralSettings.tsx`: changing the retention period
- * deletes transcripts, and switching the data directory restarts the app.
- * Both are irreversible enough to deserve a page of their own rather than
- * sitting under a long list of preferences.
- */
 export function DataSettings() {
   const t = useTranslation()
   const addToast = useUIStore((s) => s.addToast)
@@ -39,14 +27,8 @@ export function DataSettings() {
     appMode,
     appModeRequiresRestart,
     fetchAppMode,
-    setAppMode: setAppModeAction,
   } = useSettingsStore()
-  const [modeSwitchConfirmOpen, setModeSwitchConfirmOpen] = useState(false)
-  const [pendingMode, setPendingMode] = useState<AppMode | null>(null)
-  const [pendingPortableDir, setPendingPortableDir] = useState<string | null>(null)
-  const [portableDirDraft, setPortableDirDraft] = useState('')
-  const [modeActionRunning, setModeActionRunning] = useState(false)
-  const [modeError, setModeError] = useState<string | null>(null)
+  const pageRef = useRef<HTMLDivElement>(null)
   const [retentionInput, setRetentionInput] = useState(String(cleanupPeriodDays ?? DEFAULT_CLEANUP_PERIOD_DAYS))
   const [retentionConfirmOpen, setRetentionConfirmOpen] = useState(false)
   const [retentionActionRunning, setRetentionActionRunning] = useState(false)
@@ -59,21 +41,22 @@ export function DataSettings() {
   const retentionPreviewRequestId = useRef(0)
 
   const activeConfigDir = appMode.activeConfigDir ?? (appMode.mode === 'portable' ? appMode.portableDir : null)
-  const configDirSource = appMode.configDirSource ?? (appMode.mode === 'portable' ? 'portable' : 'system')
-  const isEnvironmentConfigDir = configDirSource === 'environment'
+  const isEnvironmentConfigDir = appMode.configDirSource === 'environment'
+  const isDesktop = isDesktopRuntime()
 
   useEffect(() => {
     setRetentionInput(String(cleanupPeriodDays ?? DEFAULT_CLEANUP_PERIOD_DAYS))
   }, [cleanupPeriodDays])
 
   useEffect(() => {
-    if (!isDesktopRuntime()) return
+    if (!isDesktop) return
     void fetchAppMode()
-  }, [fetchAppMode])
+  }, [fetchAppMode, isDesktop])
 
   useEffect(() => {
-    setPortableDirDraft(appMode.portableDir ?? '')
-  }, [appMode.portableDir])
+    // An in-pane shortcut unmounts its focused trigger; rail navigation keeps focus.
+    if (document.activeElement === document.body) pageRef.current?.focus({ preventScroll: true })
+  }, [])
 
   const handleLocalRedactionChange = async (settings: Parameters<typeof setLocalRedaction>[0]) => {
     setLocalRedactionSaveError(null)
@@ -177,78 +160,28 @@ export function DataSettings() {
     }
   }
 
-  const openPortableDirPicker = async () => {
-    setModeError(null)
-    const host = getDesktopHost()
-    if (!host.capabilities.dialogs) {
-      setModeError(t('settings.general.storagePickerError'))
-      return
-    }
-    try {
-      const selected = await host.dialogs.open({
-        directory: true,
-        multiple: false,
-        title: t('settings.general.storageChooseDirTitle'),
-      })
-      if (typeof selected === 'string') {
-        setPortableDirDraft(selected)
-      }
-    } catch {
-      setModeError(t('settings.general.storagePickerError'))
-    }
-  }
-
-  const openModeSwitchConfirm = (mode: AppMode) => {
-    if (isEnvironmentConfigDir) {
-      setModeError(t('settings.general.storageEnvironmentSwitchBlocked'))
-      return
-    }
-
-    const portableDir = portableDirDraft.trim()
-    if (mode === 'portable' && !portableDir) {
-      setModeError(t('settings.general.storageNoDirError'))
-      return
-    }
-
-    setModeError(null)
-    setPendingMode(mode)
-    setPendingPortableDir(mode === 'portable' ? portableDir : null)
-    setModeSwitchConfirmOpen(true)
-  }
-
-  const closeModeSwitchConfirm = () => {
-    if (modeActionRunning) return
-    setModeSwitchConfirmOpen(false)
-    setPendingMode(null)
-    setPendingPortableDir(null)
-  }
-
-  const confirmModeSwitch = async () => {
-    if (!pendingMode) return
-
-    setModeActionRunning(true)
-    setModeError(null)
-    try {
-      await setAppModeAction(pendingMode, pendingPortableDir)
-      const host = getDesktopHost()
-      await host.appMode.prepareRestart()
-      await host.appMode.restart()
-    } catch (error) {
-      setModeError(
-        error instanceof Error
-          ? error.message
-          : t('settings.general.storageRestartError'),
-      )
-      setModeSwitchConfirmOpen(false)
-      setPendingMode(null)
-      setPendingPortableDir(null)
-      setModeActionRunning(false)
-    }
-  }
-
   return (
-    <div className="w-full min-w-0">
-      <SettingsPageHeader title={t('settings.tab.data')} />
+    <div ref={pageRef} role="region" aria-labelledby="data-settings-title" tabIndex={-1} className="w-full min-w-0">
+      <SettingsPageHeader titleId="data-settings-title" title={t('settings.tab.data')} />
+
+      {isDesktop && (
+        <SettingsSection title={t('settings.general.storageTitle')}>
+          <SettingsGroup>
+            {activeConfigDir && (
+              <SettingsRow
+                title={t('settings.general.storageActiveDir')}
+                description={<span className="break-all font-mono">{activeConfigDir}</span>}
+              />
+            )}
+            {appModeRequiresRestart && (
+              <p className="bg-[var(--color-warning-container)] px-4 py-3 text-xs text-[var(--color-on-warning-container)]">
+                {t('settings.general.storageRestartHint')}
+              </p>
+            )}
+            <DataMigrationSettings environmentControlled={isEnvironmentConfigDir} disabled={appModeRequiresRestart} />
+          </SettingsGroup>
+        </SettingsSection>
+      )}
 
       {/*
         Retention changes delete transcripts irreversibly and the server only
@@ -328,124 +261,6 @@ export function DataSettings() {
       </div>
       )}
 
-      {isDesktopRuntime() && (
-        <div className="mt-8 border-t border-[var(--color-border)] pt-8">
-          <h2 className="text-[18px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.storageTitle')}</h2>
-          <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.storageDescription')}</p>
-
-          <Card radius="xl" surface="low" padding="none" className="px-4 py-4">
-            <div className="flex flex-col gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  if (isEnvironmentConfigDir) {
-                    setModeError(t('settings.general.storageEnvironmentSwitchBlocked'))
-                    return
-                  }
-                  if (appMode.mode !== 'default') {
-                    openModeSwitchConfirm('default')
-                  }
-                }}
-                aria-pressed={appMode.mode === 'default' && !isEnvironmentConfigDir}
-                className={`flex items-start gap-3 rounded-[var(--radius-lg)] border px-3 py-3 text-left transition-all ${
-                  appMode.mode === 'default' && !isEnvironmentConfigDir
-                    ? 'border-[var(--color-brand)] bg-[var(--color-surface)] shadow-[var(--shadow-focus-ring)]'
-                    : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-focus)]'
-                }`}
-              >
-                <Settings2 size={20} strokeWidth={1.75} className="mt-0.5 shrink-0 text-[var(--color-text-secondary)]" aria-hidden="true" />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.general.storageSystemTitle')}</span>
-                  <span className="mt-1 block text-xs leading-5 text-[var(--color-text-tertiary)]">{t('settings.general.storageSystemDescription')}</span>
-                </span>
-              </button>
-
-              <div
-                className={`rounded-[var(--radius-lg)] border px-3 py-3 transition-all ${
-                  appMode.mode === 'portable' && !isEnvironmentConfigDir
-                    ? 'border-[var(--color-brand)] bg-[var(--color-surface)] shadow-[var(--shadow-focus-ring)]'
-                    : 'border-[var(--color-border)] bg-[var(--color-surface)]'
-                }`}
-              >
-                <div className="mb-3 flex items-start gap-3">
-                  <FolderInput size={20} strokeWidth={1.75} className="mt-0.5 shrink-0 text-[var(--color-text-secondary)]" aria-hidden="true" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.general.storagePortableTitle')}</div>
-                    <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">{t('settings.general.storagePortableDescription')}</div>
-                  </div>
-                </div>
-
-                <div className="flex items-end gap-2">
-                  <div className="min-w-0 flex-1">
-                    <Input
-                      id="portable-data-dir"
-                      label={t('settings.general.storagePortableDirLabel')}
-                      value={portableDirDraft}
-                      placeholder={t('settings.general.storagePortableDirPlaceholder')}
-                      onChange={(event) => {
-                        setPortableDirDraft(event.target.value)
-                        setModeError(null)
-                      }}
-                      className="w-full font-mono text-xs"
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="h-10 flex-shrink-0 px-3 whitespace-nowrap"
-                    onClick={() => void openPortableDirPicker()}
-                  >
-                    {t('settings.general.storageChooseDir')}
-                  </Button>
-                </div>
-
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    disabled={modeActionRunning || (appMode.mode === 'portable' && portableDirDraft.trim() === (appMode.portableDir ?? ''))}
-                    onClick={() => openModeSwitchConfirm('portable')}
-                  >
-                    {t('settings.general.storageApplyPortable')}
-                  </Button>
-                </div>
-              </div>
-            </div>
-
-            {activeConfigDir && (
-              <div className="mt-3 rounded-[var(--radius-lg)] border border-[var(--color-border-separator)] bg-[var(--color-surface)] px-3 py-2">
-                <div className="text-[11px] font-medium text-[var(--color-text-tertiary)]">{t('settings.general.storageActiveDir')}</div>
-                <div className="mt-1 break-all font-mono text-xs text-[var(--color-text-secondary)]">{activeConfigDir}</div>
-              </div>
-            )}
-
-            {isEnvironmentConfigDir && (
-              <div className="mt-3 rounded-[var(--radius-lg)] border border-[var(--color-warning)] bg-[var(--color-warning-container)] px-3 py-2 text-xs leading-5 text-[var(--color-on-warning-container)]">
-                {t('settings.general.storageEnvironmentHint')}
-              </div>
-            )}
-
-            {appModeRequiresRestart && (
-              <div className="mt-3 rounded-[var(--radius-lg)] border border-[var(--color-warning)] bg-[var(--color-warning-container)] px-3 py-2 text-xs leading-5 text-[var(--color-on-warning-container)]">
-                {t('settings.general.storageRestartHint')}
-              </div>
-            )}
-
-            <div className="mt-3 text-xs leading-5 text-[var(--color-text-tertiary)]">
-              {t('settings.general.storageMoveHint')}
-            </div>
-
-            {modeError && (
-              <div className="mt-3 text-xs text-[var(--color-error)]">
-                {modeError}
-              </div>
-            )}
-          </Card>
-        </div>
-      )}
-
-      {/* Confirm dialog for mode switch */}
       <div className="mt-8 border-t border-[var(--color-border)] pt-8">
         <h2 className="text-[18px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.localRedactionTitle')}</h2>
         <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.localRedactionDescription')}</p>
@@ -462,32 +277,6 @@ export function DataSettings() {
           )}
         </Card>
       </div>
-
-      <ConfirmDialog
-        open={modeSwitchConfirmOpen}
-        onClose={closeModeSwitchConfirm}
-        onConfirm={() => void confirmModeSwitch()}
-        title={t('settings.general.modeSwitchTitle')}
-        body={(
-          <div className="space-y-3 text-sm leading-6 text-[var(--color-text-secondary)]">
-            <p>
-              {pendingMode === 'portable'
-                ? t('settings.general.storageSwitchPortableBody')
-                : t('settings.general.storageSwitchDefaultBody')}
-            </p>
-            {pendingMode === 'portable' && pendingPortableDir && (
-              <div className="rounded-[var(--radius-lg)] bg-[var(--color-surface-container-low)] px-3 py-2 font-mono text-xs break-all text-[var(--color-text-secondary)]">
-                {pendingPortableDir}
-              </div>
-            )}
-            <p>{t('settings.general.storageSwitchRestartBody')}</p>
-          </div>
-        )}
-        confirmLabel={t('settings.general.modeSwitchConfirm')}
-        cancelLabel={t('common.cancel')}
-        confirmVariant="primary"
-        loading={modeActionRunning}
-      />
 
       <ConfirmDialog
         open={retentionConfirmOpen}

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtemp, realpath, rm, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -61,6 +61,32 @@ describe('@-mentioned images authorize ImageEdit', () => {
     )
 
     expect(isUserProvidedImage(await realpath(imagePath))).toBe(true)
+  })
+
+  test('lists an @-mentioned attachment directory after its original root is retired', async () => {
+    scratchDir = await mkdtemp(join(tmpdir(), 'at-mention-relocated-'))
+    const root = join(scratchDir, 'active')
+    const retired = join(scratchDir, 'retired')
+    const relativeDir = join('im-downloads', 'feishu', 'session')
+    const internal = join(root, 'echoflow-code')
+    const target = join(root, relativeDir)
+    await mkdir(internal, { recursive: true })
+    await mkdir(target, { recursive: true })
+    await writeFile(join(target, 'notes.txt'), 'attachment')
+    await writeFile(join(internal, 'storage-relocations.json'), JSON.stringify({
+      version: 2, previousRoots: [], mappings: [{ from: retired, to: '.' }],
+    }))
+    const previousRoot = process.env.CLAUDE_CONFIG_DIR
+    process.env.CLAUDE_CONFIG_DIR = root
+    try {
+      const result = await getAttachmentsForTesting.atMentionedFiles(
+        `@"${join(retired, relativeDir)}"`, makeToolUseContext(),
+      )
+      expect(result).toEqual([expect.objectContaining({ type: 'directory', path: target, content: 'notes.txt' })])
+    } finally {
+      if (previousRoot === undefined) delete process.env.CLAUDE_CONFIG_DIR
+      else process.env.CLAUDE_CONFIG_DIR = previousRoot
+    }
   })
 
   test('does not register an @-mentioned text file', async () => {

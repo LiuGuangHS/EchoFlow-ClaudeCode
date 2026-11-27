@@ -7,7 +7,6 @@
  */
 
 import { ProviderService } from './providerService.js'
-import { loadNetworkSettings } from './networkSettings.js'
 import { sessionService } from './sessionService.js'
 import { isOpenAIOfficialProviderId } from './openaiOfficialProvider.js'
 import { isDeepSeekAccountProviderId } from './deepseekAccountProvider.js'
@@ -135,7 +134,6 @@ export async function generateTitle(
 
   try {
     const providerService = new ProviderService()
-    const networkSettings = await loadNetworkSettings()
     if (providerId === null) return null
 
     let resolvedProvider = providerId
@@ -164,7 +162,6 @@ export async function generateTitle(
           user: buildTitleUserPrompt(trimmed, languagePreference, strictLanguage),
           maxTokens: TITLE_MAX_OUTPUT_TOKENS,
           sessionId,
-          networkSettings,
         })
         if (!result.ok || !result.text) return null
         return parseGeneratedTitleText(result.text)

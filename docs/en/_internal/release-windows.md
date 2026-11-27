@@ -42,30 +42,11 @@ Official releases are driven by `.github/workflows/release-please.yml` on every 
 
 ## Release workflow gates
 
-The actual gates in `.github/workflows/release-desktop.yml` are:
-
-1. `release-contract` runs `check:release-surface`; on a tag push it checks the tag against the `desktop/package.json` version and checks the release-note file and title.
-2. `signing-preflight` checks macOS signing/notarization and Windows SignPath configuration, and reports whether this build is signed.
-3. `verify-governance` runs `check:policy`.
-4. `verify-runtime` runs `check:server`, `check:agent-flow`, and `check:adapters`.
-5. `verify-desktop` runs `check:desktop` and `check:persistence-upgrade`.
-6. `release-verify-gate` succeeds only when all three `verify-*` jobs succeed; the build matrix also completes package smoke on six platforms before publishing.
-
-Do not substitute a locally successful installer for the workflow result. GitHub Release is the source of truth for public release assets.
+Quality jobs, publication dependencies, the shared release SHA, and platform evidence requirements are maintained in [Release Gate](../internals/contributing.md#release-gate). This runbook adds Windows operations rather than a second gate table. Do not substitute a locally successful installer for the workflow result. GitHub Release is the source of truth for public release assets.
 
 ## Signing and notarization
 
-macOS uses these GitHub Actions secrets:
-
-```text
-MACOS_CERTIFICATE
-MACOS_CERTIFICATE_PASSWORD
-APPLE_ID
-APPLE_APP_SPECIFIC_PASSWORD
-APPLE_TEAM_ID
-```
-
-`MACOS_CERTIFICATE` is the base64 content of a Developer ID Application `.p12`. The project does not ship a `.pkg`, so no Developer ID Installer certificate is needed. When macOS configuration is missing, the workflow marks artifacts unsigned and warns that Computer Use client attestation may be affected.
+Modes, credentials, and platform limitations are defined in [Signing Secrets](../internals/contributing.md#signing-secrets). macOS `macos_signing` defaults to `unsigned`; selecting `signed` fails on missing configuration instead of silently downgrading. Disclose unsigned mode's Computer Use and auto-update limitations. The certificate is the base64 content of a Developer ID Application `.p12`; no Developer ID Installer certificate is needed because the project does not ship a `.pkg`.
 
 Windows uses SignPath rather than the obsolete `WINDOWS_CERTIFICATE` / `WINDOWS_CERTIFICATE_PASSWORD` variables. The preflight reads:
 
@@ -79,7 +60,7 @@ SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG
 SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG
 ```
 
-When all Windows signing settings are absent, the current workflow may produce unsigned artifacts according to its documented rule; a partial configuration is an error and a non-draft release refuses to continue. A manual workflow can explicitly select `skip_windows_signing`, but the release record must state that artifacts are unsigned. SmartScreen on an unsigned Windows artifact does not itself mean installation or updater failure.
+Windows `windows_signing` and `WINDOWS_SIGNING_ENABLED` rules are also maintained in that shared section; the SignPath list here supports packaging preparation. State the signing mode in release records. SmartScreen on an unsigned Windows artifact does not itself mean installation or updater failure.
 
 ## Package Windows x64
 
@@ -127,7 +108,9 @@ bun run test:package-smoke --platform windows --package-kind release \
 sha256sum desktop/build-artifacts/windows-x64-validation/EchoFlow-Code-X.Y.Z-win-x64.exe
 ```
 
-`package-smoke` proves package structure, not Windows installation or launch. A maintainer must install the NSIS `.exe` on real Windows and check:
+`package-smoke` proves package structure, not Windows installation or launch. The workflow also runs compiled-sidecar and installer smoke on Windows x64; that does not establish Windows ARM64 or every real upgrade path. See [Release Gate](../internals/contributing.md#release-gate) for pre-publication acceptance of the same artifact on each target and its evidence requirements.
+
+A maintainer must install the NSIS `.exe` on real Windows and check:
 
 - the About version matches this release;
 - session creation, sidecar startup, and Provider Settings work;
@@ -162,4 +145,4 @@ These invariants must not change:
 2. mirrored yml files remain byte-for-byte identical to GitHub assets and are never re-serialized;
 3. `artifactName` stays `EchoFlow-Code-${version}-${os}-${arch}.${ext}` because the download manifest and installer checks depend on it.
 
-Every production release must be tested by upgrading from the previous stable version at least once: install the old version, push the tag and wait for the workflow, trigger the update from the old app, install and restart, then verify the version, providers, sessions, Skills, Agents, memories, custom data directory, and historical task state. On macOS focus on signing and launch policy; on Windows focus on `latest.yml`, the installer, and the blockmap; on Linux focus on AppImage auto-update.
+Follow [Verify One Real Update Path](../internals/contributing.md#verify-one-real-update-path) after official publication; this does not replace pre-publication package acceptance. On Windows, check `latest.yml`, the installer, and the blockmap, then data preservation after updating from the previous version. That section also defines other platforms' requirements and unsigned macOS manual-upgrade boundaries.

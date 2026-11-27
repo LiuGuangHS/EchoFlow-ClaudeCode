@@ -354,7 +354,7 @@ const mainWindowSource = mainSource.slice(
 
 describe('Electron workspace browser host wiring', () => {
   it('shares one persistent partition and denies OS permissions on it', () => {
-    expect(workspaceBrowserHostSource).toContain('session.fromPartition(WORKSPACE_BROWSER_PARTITION)')
+    expect(workspaceBrowserHostSource).toContain("session.fromPartition(resolveWorkspaceBrowserPartition(app.getPath('sessionData')))")
     expect(workspaceBrowserHostSource).toContain('configurePreviewSessionPermissions(browserSession)')
   })
 

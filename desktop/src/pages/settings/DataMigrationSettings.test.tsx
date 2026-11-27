@@ -17,6 +17,9 @@ const copying: MigrationStatus = {
 let host: DesktopHost
 let progressListener: ((status: MigrationStatus) => void) | undefined
 const prepare = vi.fn()
+const prepareOpenAiOauth = vi.fn()
+const prepareImAdoption = vi.fn()
+const prepareWhatsAppAdoption = vi.fn()
 const start = vi.fn()
 const status = vi.fn()
 const cancel = vi.fn()
@@ -47,7 +50,7 @@ beforeEach(() => {
     capabilities: { ...browserHost.capabilities, appMode: true, dialogs: true, shell: true },
     dialogs: { ...browserHost.dialogs, open },
     shell: { ...browserHost.shell, openPath },
-    appMode: { ...browserHost.appMode, set: setAppMode, migration: { prepare, start, status, cancel, onProgress } },
+    appMode: { ...browserHost.appMode, set: setAppMode, migration: { prepare, prepareOpenAiOauth, prepareImAdoption, prepareWhatsAppAdoption, start, status, cancel, onProgress } },
   }
   window.desktopHost = host
 })
@@ -66,8 +69,7 @@ async function chooseAndPreview() {
 
 describe('Data migration settings', () => {
   it('uses the native picker, previews exact paths and task impact, then starts only after confirmation', async () => {
-    const busy = vi.fn()
-    render(<DataMigrationSettings environmentControlled={false} onBusyChange={busy} />)
+    render(<DataMigrationSettings environmentControlled={false} />)
     const dialog = await chooseAndPreview()
     expect(open).toHaveBeenCalledWith({ directory: true, multiple: false, title: 'Choose a migration destination' })
     expect(prepare).toHaveBeenCalledWith(preview.targetDir)
@@ -82,8 +84,43 @@ describe('Data migration settings', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Migrate and Restart' }))
     await waitFor(() => expect(start).toHaveBeenCalledWith(preview.id))
     expect(screen.getByRole('dialog', { name: 'Data migration in progress' })).toBeInTheDocument()
-    expect(busy).toHaveBeenLastCalledWith(true)
+    expect(screen.getByRole('button', { name: 'Migrate Existing Data…' })).toBeDisabled()
     expect(setAppMode).not.toHaveBeenCalled()
+  })
+
+  it('opens desktop OAuth migration without sending a file path or approval from the renderer', async () => {
+    render(<DataMigrationSettings environmentControlled={false} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Move OpenAI sign-in…' }))
+    await waitFor(() => expect(prepareOpenAiOauth).toHaveBeenCalledWith())
+    expect(open).not.toHaveBeenCalled()
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('asks the host to choose and confirm IM files without renderer arguments', async () => {
+    render(<DataMigrationSettings environmentControlled={false} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Move IM data…' }))
+    await waitFor(() => expect(prepareImAdoption).toHaveBeenCalledWith())
+    expect(open).not.toHaveBeenCalled()
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('leaves WhatsApp selection and approval to the host and hides sensitive errors', async () => {
+    prepareWhatsAppAdoption.mockRejectedValue(new Error('session-15550100001.7.json'))
+    render(<DataMigrationSettings environmentControlled={false} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Move WhatsApp sign-in…' }))
+    await waitFor(() => expect(prepareWhatsAppAdoption).toHaveBeenCalledWith())
+    expect(await screen.findByRole('alert')).toHaveTextContent('The WhatsApp sign-in files could not be moved. Check the selected folder and saved account configuration.')
+    expect(screen.queryByText(/session-15550100001/)).not.toBeInTheDocument()
+    expect(open).not.toHaveBeenCalled()
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('explains when shared IM downloads will stay in the old directory', async () => {
+    const directory = '/fixture/home/.claude/im-downloads'
+    prepare.mockResolvedValue({ ...preview, retainedSharedImDownloads: directory })
+    render(<DataMigrationSettings environmentControlled={false} />)
+    const dialog = await chooseAndPreview()
+    expect(within(dialog).getByText(/cannot verify which files belong to EchoFlow/)).toHaveTextContent(directory)
   })
 
   it('allows cancellation of the preview without stopping tasks or changing the mode', async () => {
@@ -105,6 +142,14 @@ describe('Data migration settings', () => {
     expect(start).not.toHaveBeenCalled()
   })
 
+  it('shows a picker error without suggesting an unavailable manual input', async () => {
+    open.mockRejectedValue(new Error('dialog unavailable'))
+    render(<DataMigrationSettings environmentControlled={false} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Migrate Existing Data…' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not open the folder picker. Try again.')
+    expect(prepare).not.toHaveBeenCalled()
+  })
+
   it('shows preflight rejection and keeps migration and mode changes unstarted', async () => {
     prepare.mockRejectedValue(new Error('Target directory must be empty'))
     render(<DataMigrationSettings environmentControlled={false} />)
@@ -118,7 +163,7 @@ describe('Data migration settings', () => {
   it('disables migration for externally controlled roots and hides it in browsers', () => {
     const { unmount } = render(<DataMigrationSettings environmentControlled />)
     expect(screen.getByRole('button', { name: 'Migrate Existing Data…' })).toBeDisabled()
-    expect(screen.getByText(/Remove CLAUDE_CONFIG_DIR/)).toBeInTheDocument()
+    expect(screen.getByText(/Remove storage overrides such as CLAUDE_CONFIG_DIR/)).toBeInTheDocument()
     expect(open).not.toHaveBeenCalled()
     unmount()
     Reflect.deleteProperty(window, 'desktopHost')
@@ -143,8 +188,7 @@ describe('Data migration settings', () => {
 
   it('requests cancellation once and waits for the host terminal status before restoring controls', async () => {
     status.mockResolvedValue(copying)
-    const busy = vi.fn()
-    render(<DataMigrationSettings environmentControlled={false} onBusyChange={busy} />)
+    render(<DataMigrationSettings environmentControlled={false} />)
     const dialog = await screen.findByRole('dialog', { name: 'Data migration in progress' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel migration' }))
     await waitFor(() => expect(cancel).toHaveBeenCalledWith(copying.id))
@@ -153,7 +197,7 @@ describe('Data migration settings', () => {
     await act(async () => progressListener?.({ ...copying, stage: 'cancelled', cancellable: false }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByText(/Migration cancelled/)).toBeInTheDocument()
-    expect(busy).toHaveBeenLastCalledWith(false)
+    expect(screen.getByRole('button', { name: 'Migrate Existing Data…' })).toBeEnabled()
   })
 
   it('ignores a stale initial poll after a newer progress event', async () => {
@@ -191,15 +235,16 @@ describe('Data migration settings', () => {
     expect(status).toHaveBeenCalledTimes(2)
   })
 
-  it('recovers a completion receipt after restart and offers original/new folders and CLI guidance', async () => {
+  it('recovers a completion receipt without offering to open or manually clean the retired source', async () => {
     status.mockResolvedValue({ ...copying, stage: 'completed', cancellable: false })
     const { unmount } = render(<DataMigrationSettings environmentControlled={false} />)
     expect(await screen.findByText('Data migration completed')).toBeInTheDocument()
-    expect(screen.getByText(/before manually cleaning up/)).toBeInTheDocument()
+    expect(screen.getByText(preview.sourceDir)).toBeInTheDocument()
+    expect(screen.queryByText(/before manually cleaning up/)).not.toBeInTheDocument()
     expect(screen.getByText(/A separately launched CLI/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Open Original Directory' }))
+    expect(screen.queryByRole('button', { name: 'Open Original Directory' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Open New Directory' }))
-    await waitFor(() => expect(openPath.mock.calls).toEqual([[preview.sourceDir], [preview.targetDir]]))
+    await waitFor(() => expect(openPath.mock.calls).toEqual([[preview.targetDir]]))
     unmount()
     expect(unlisten).toHaveBeenCalledTimes(1)
   })
@@ -208,7 +253,7 @@ describe('Data migration settings', () => {
     status.mockResolvedValue({ ...copying, stage: 'failed', error: 'Source changed during copying', cancellable: false })
     render(<DataMigrationSettings environmentControlled={false} />)
     expect(await screen.findByRole('alert')).toHaveTextContent('Source changed during copying')
-    expect(screen.getByText('Migration failed. The original data directory is kept.')).toBeInTheDocument()
+    expect(screen.getByText('Data migration failed.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(setAppMode).not.toHaveBeenCalled()
   })

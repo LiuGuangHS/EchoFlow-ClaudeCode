@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'crypto'
+import { readFileSync, rmSync } from 'fs'
 import * as fs from 'fs/promises'
-import * as os from 'os'
+import { getEchoFlowInternalDir as getCcHahaDir } from '../../utils/echoFlowConfigRoot.js'
 import * as path from 'path'
 import { AuthCodeListener } from '../../services/oauth/auth-code-listener.js'
 import { generateCodeChallenge } from '../../services/oauth/crypto.js'
@@ -68,11 +69,6 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function getCcHahaDir(): string {
-  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-  return path.join(configDir, 'cc-haha')
-}
-
 export function getHahaDeepSeekOAuthFilePath(): string {
   return path.join(getCcHahaDir(), 'deepseek-oauth.json')
 }
@@ -100,9 +96,13 @@ export class HahaDeepSeekOAuthService {
   }
 
   async loadTokens(): Promise<DeepSeekOAuthTokens | null> {
+    return this.readStoredGrant()
+  }
+
+  private readStoredGrant(): DeepSeekOAuthTokens | null {
     try {
       return normalizeTokenFile(
-        JSON.parse(await fs.readFile(this.getOAuthFilePath(), 'utf-8')),
+        JSON.parse(readFileSync(this.getOAuthFilePath(), 'utf-8')),
       )
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
@@ -116,7 +116,7 @@ export class HahaDeepSeekOAuthService {
   }
 
   async deleteTokens(): Promise<void> {
-    await fs.rm(this.getOAuthFilePath(), { force: true })
+    rmSync(this.getOAuthFilePath(), { force: true })
   }
 
   async getStatus(): Promise<DeepSeekOAuthStatus> {
@@ -165,6 +165,7 @@ export class HahaDeepSeekOAuthService {
         timeoutMs: PROFILE_TIMEOUT_MS,
         ...(await this.getRequestOptions()),
       })
+      if (this.readStoredGrant()?.token !== tokens.token) return null
       this.statusCheck = {
         token: tokens.token,
         checkedAt: Date.now(),
@@ -176,14 +177,15 @@ export class HahaDeepSeekOAuthService {
           name: profile.name,
           contact: profile.contact,
         }
-        await this.saveTokensIfCurrent(filled)
+        await this.saveTokens(filled)
         return filled
       }
       return tokens
     } catch (error) {
+      if (this.readStoredGrant()?.token !== tokens.token) return null
       if ((error as { code?: string }).code === 'unauthorized') {
         this.statusCheck = null
-        await this.deleteTokensIfCurrent(tokens.token)
+        await this.deleteTokens()
         return null
       }
       this.statusCheck = {
@@ -193,19 +195,6 @@ export class HahaDeepSeekOAuthService {
       }
       return tokens
     }
-  }
-
-  // A login that completed while the check ran must survive the check's result.
-  private async saveTokensIfCurrent(tokens: DeepSeekOAuthTokens): Promise<void> {
-    const current = await this.loadTokens()
-    if (current?.token !== tokens.token) return
-    await this.saveTokens(tokens)
-  }
-
-  private async deleteTokensIfCurrent(token: string): Promise<void> {
-    const current = await this.loadTokens()
-    if (current?.token !== token) return
-    await this.deleteTokens()
   }
 
   async startSession(
@@ -376,7 +365,7 @@ export class HahaDeepSeekOAuthService {
    */
   async logout(): Promise<void> {
     this.dispose()
-    const tokens = await this.loadTokens()
+    const tokens = this.readStoredGrant()
     await this.deleteTokens()
     if (!tokens) return
     void this.revokeRemotely(tokens)

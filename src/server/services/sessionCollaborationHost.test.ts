@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test, spyOn, mock } from 'bun:test'
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { SessionCollaborationService, type CollaborationMessage } from './sessionCollaborationService.js'
 import { handleSessionCollaborationEvent, configureSessionCollaborationHost, getSessionCollaborationService, hasSessionCollaborationPowerActivity } from './sessionCollaborationHost.js'
 import { sessionService } from './sessionService.js'
@@ -9,6 +9,8 @@ import { admitSessionUserTurn, emitSessionTurnEvent } from './sessionTurnEvents.
 import { SearchService } from './searchService.js'
 import { ApiError } from '../middleware/errorHandler.js'
 import { migrationMaintenance } from '../migrationMaintenance.js'
+import { ensureEchoFlowConfigRoot, getEchoFlowInternalDir, resolveStorageBinding } from '../../utils/echoFlowConfigRoot.js'
+import { completeStorageMigration, executeStorageMigration } from '../../services/storageMigration.js'
 
 let directory: string
 beforeEach(async () => { directory = await mkdtemp(join(tmpdir(), 'collaboration-host-fixture-')) })
@@ -17,7 +19,7 @@ afterEach(async () => { await rm(directory, { recursive: true, force: true }) })
 async function saveReview(callerSessionId: string) {
   const runtime = { providerId: 'fixture-provider', modelId: 'fixture-model' }
   const seed = new SessionCollaborationService({
-    statePath: join(directory, 'cc-haha', 'session-collaboration', 'state.json'),
+    statePath: join(getEchoFlowInternalDir(directory), 'session-collaboration', 'state.json'),
     sessions: { exists: async () => true, list: async () => [], read: async () => [], create: async () => { throw new Error('Review must not create sessions') } },
     models: { list: async () => [], parentRuntime: async () => runtime, resolve: async () => runtime, validate: async value => value },
     runtime: { start: async () => { throw new Error('Recovery must not start work') }, enqueue: async () => {}, stop: async () => {} },
@@ -30,7 +32,7 @@ async function saveReview(callerSessionId: string) {
 test('collaboration startup stays read-only throughout migration validation', async () => {
   const previous = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = directory
-  const stateDirectory = join(directory, 'cc-haha', 'session-collaboration')
+  const stateDirectory = join(getEchoFlowInternalDir(directory), 'session-collaboration')
   await mkdir(stateDirectory, { recursive: true })
   const statePath = join(stateDirectory, 'state.json')
   const before = JSON.stringify({ version: 1, revision: 1, members: {
@@ -172,7 +174,7 @@ test('startup excludes a restored review with a missing caller without writing u
   const { sessionId } = await sessionService.createSession(directory)
   await saveReview(sessionId)
   await sessionService.deleteSession(sessionId)
-  const statePath = join(directory, 'cc-haha', 'session-collaboration', 'state.json')
+  const statePath = join(getEchoFlowInternalDir(directory), 'session-collaboration', 'state.json')
   const before = await readFile(statePath, 'utf8')
   const dispose = configureSessionCollaborationHost('127.0.0.1', 1234)
   try {
@@ -196,7 +198,7 @@ for (const target of ['projects', 'project'] as const) test.skipIf(process.platf
   const caller = await sessionService.findSessionFile(sessionId)
   expect(caller).not.toBeNull()
   await saveReview(sessionId)
-  const statePath = join(directory, 'cc-haha', 'session-collaboration', 'state.json')
+  const statePath = join(getEchoFlowInternalDir(directory), 'session-collaboration', 'state.json')
   const before = await readFile(statePath, 'utf8')
   const inaccessible = target === 'projects' ? join(directory, 'projects') : dirname(caller!.filePath)
   const originalMode = (await stat(inaccessible)).mode & 0o7777
@@ -283,7 +285,7 @@ test('host startup owns persisted review readiness before the first UI or sessio
 test('an unreadable collaboration store keeps startup power readiness unavailable', async () => {
   const previous = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = directory
-  const stateDirectory = join(directory, 'cc-haha', 'session-collaboration')
+  const stateDirectory = join(getEchoFlowInternalDir(directory), 'session-collaboration')
   await mkdir(stateDirectory, { recursive: true })
   await writeFile(join(stateDirectory, 'state.json'), '{broken')
   const error = spyOn(console, 'error').mockImplementation(() => {})
@@ -391,6 +393,111 @@ test('host rejects unavailable source workspace explicitly instead of silently c
     expect(create).not.toHaveBeenCalled()
   } finally {
     dispose()
+    mock.restore()
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previous
+  }
+})
+
+test('stale and duplicate host disposal preserves the replacement observer and admission ordering', async () => {
+  const previous = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = directory
+  let disposeA = () => {}
+  let disposeB = () => {}
+  let unblock!: () => void
+  let entered!: () => void
+  const gate = new Promise<void>(resolve => { unblock = resolve })
+  const started = new Promise<void>(resolve => { entered = resolve })
+  let pending: ReturnType<typeof admitSessionUserTurn> | undefined
+  try {
+    disposeA = configureSessionCollaborationHost('127.0.0.1', 1234)
+    const serviceA = await getSessionCollaborationService()
+    disposeB = configureSessionCollaborationHost('127.0.0.1', 1234)
+    const serviceB = await getSessionCollaborationService()
+    expect(serviceB).toBe(serviceA)
+    disposeA()
+    disposeA()
+    expect(await getSessionCollaborationService()).toBe(serviceB)
+
+    const originalStopped = serviceB.onStopped.bind(serviceB)
+    const stopped = spyOn(serviceB, 'onStopped').mockImplementation(async id => {
+      entered()
+      await gate
+      await originalStopped(id)
+    })
+    const admission = spyOn(serviceB, 'admitUserTurn')
+    emitSessionTurnEvent({ type: 'stopped', sessionId: 'worker' })
+    pending = admitSessionUserTurn('worker', () => true)
+    await started
+    expect(admission).not.toHaveBeenCalled()
+    unblock()
+    const lease = await pending
+    expect(stopped).toHaveBeenCalledTimes(1)
+    expect(admission).toHaveBeenCalledTimes(1)
+    expect((await serviceB.status()).members.find(member => member.sessionId === 'worker')).toMatchObject({ state: 'running', stopped: false })
+    await lease.release()
+    pending = undefined
+    expect((await serviceB.status()).members.find(member => member.sessionId === 'worker')).toMatchObject({ state: 'stopped', stopped: true })
+
+    disposeB()
+    emitSessionTurnEvent({ type: 'stopped', sessionId: 'after-disposal' })
+    expect(hasSessionCollaborationPowerActivity()).toBe(false)
+    await (await admitSessionUserTurn('after-disposal', () => true)).release()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(stopped).toHaveBeenCalledTimes(1)
+    expect(admission).toHaveBeenCalledTimes(1)
+  } finally {
+    unblock()
+    await pending?.then(lease => lease.release())
+    disposeB()
+    disposeA()
+    mock.restore()
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previous
+  }
+})
+
+test('disposed queued host events cannot reach a replacement and stale cleanup cannot clear it', async () => {
+  const previous = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = directory
+  let disposeA = () => {}
+  let disposeB = () => {}
+  let disposeC = () => {}
+  let pending: ReturnType<typeof admitSessionUserTurn> | undefined
+  try {
+    disposeA = configureSessionCollaborationHost('127.0.0.1', 1234)
+    const serviceA = await getSessionCollaborationService()
+    disposeB = configureSessionCollaborationHost('127.0.0.1', 1234)
+    expect(await getSessionCollaborationService()).toBe(serviceA)
+    const stopped = spyOn(SessionCollaborationService.prototype, 'onStopped')
+    emitSessionTurnEvent({ type: 'stopped', sessionId: 'obsolete-queued-event' })
+    disposeB()
+    disposeC = configureSessionCollaborationHost('127.0.0.1', 1234)
+    const serviceC = await getSessionCollaborationService()
+    expect(serviceC).not.toBe(serviceA)
+    disposeA()
+    disposeB()
+    expect(await getSessionCollaborationService()).toBe(serviceC)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(stopped).not.toHaveBeenCalled()
+    expect(hasSessionCollaborationPowerActivity()).toBe(false)
+
+    const admission = spyOn(serviceC, 'admitUserTurn')
+    emitSessionTurnEvent({ type: 'stopped', sessionId: 'current-worker' })
+    pending = admitSessionUserTurn('current-worker', () => true)
+    const lease = await pending
+    expect(stopped).toHaveBeenCalledTimes(1)
+    expect(stopped).toHaveBeenCalledWith('current-worker')
+    expect(admission).toHaveBeenCalledTimes(1)
+    expect((await serviceC.status()).members.map(member => member.sessionId)).toEqual(['current-worker'])
+    await lease.release()
+    pending = undefined
+    expect((await serviceC.status()).members[0]).toMatchObject({ state: 'stopped', stopped: true })
+  } finally {
+    await pending?.then(lease => lease.release())
+    disposeC()
+    disposeB()
+    disposeA()
     mock.restore()
     if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
     else process.env.CLAUDE_CONFIG_DIR = previous
@@ -575,21 +682,36 @@ function legacyMember(sessionId: string) {
   return { [sessionId]: { sessionId, rootSessionId: sessionId, parentSessionId: null, state: 'idle', stopped: false } }
 }
 
-test('adopts collaboration state recorded under the legacy directory', async () => {
+test('consumes collaboration state adopted by the shared storage transaction', async () => {
   const previous = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = directory
-  const legacy = join(directory, 'cc-haha', 'session-collaboration', 'state.json')
+  await ensureEchoFlowConfigRoot(directory)
+  const source = join(directory, 'cc-haha')
+  const legacy = join(source, 'session-collaboration', 'state.json')
   await mkdir(dirname(legacy), { recursive: true })
-  await writeFile(legacy, JSON.stringify({ revision: 7, members: legacyMember('worker'), messages: [] }))
+  const original = JSON.stringify({ revision: 7, members: legacyMember('worker'), messages: [] })
+  await writeFile(legacy, original)
   let dispose = () => {}
   try {
+    const binding = resolveStorageBinding({ env: {}, roots: [directory] })
+    const hooks = { platform: 'linux' as const, assertQuiescent: async (roots: readonly string[]) => {
+      expect(roots.every(root => root === directory || root.startsWith(directory + sep))).toBe(true)
+    } }
+    const migration = await executeStorageMigration({
+      binding, sources: [{ directory: source, markerRoot: directory, destination: 'echoflow-code' }], hooks,
+    })
+    expect(migration.state).toBe('validation-required')
+    expect(await readFile(legacy, 'utf8')).toBe(original)
+    const backup = join(binding.internalDir, 'migrations', migration.id!, 'sources', '0', 'session-collaboration', 'state.json')
+    expect(await readFile(backup, 'utf8')).toBe(original)
+    expect((await completeStorageMigration(binding, migration.id!, hooks)).state).toBe('ready')
+    await expect(stat(source)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(backup, 'utf8')).toBe(original)
     dispose = configureSessionCollaborationHost('127.0.0.1', 1234)
     const service = await getSessionCollaborationService()
     expect((await service.status()).revision).toBe(7)
-    const adopted = join(directory, 'echoflow-code', 'session-collaboration', 'state.json')
+    const adopted = join(getEchoFlowInternalDir(directory), 'session-collaboration', 'state.json')
     expect(await readFile(adopted, 'utf8')).toContain('"worker"')
-    // The old file stays in place: it is still a migration source.
-    expect(await readFile(legacy, 'utf8')).toContain('"worker"')
   } finally {
     dispose()
     if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR

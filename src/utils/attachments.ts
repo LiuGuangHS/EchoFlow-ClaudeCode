@@ -70,6 +70,7 @@ import type {
   Base64ImageSource,
 } from '@anthropic-ai/sdk/resources/messages.mjs'
 import { maybeResizeAndDownsampleImageBlock } from './imageResizer.js'
+import { resolveRelocatedAttachmentPath } from './storageRelocations.js'
 import { registerUserProvidedImage } from './userProvidedImages.js'
 import type { PastedContent } from './config.js'
 import type { ReadResourceResult } from '@modelcontextprotocol/sdk/types.js'
@@ -2060,13 +2061,11 @@ async function processAtMentionedFiles(
     files.map(async file => {
       try {
         const { filename, lineStart, lineEnd } = parseAtMentionedFileLines(file)
-        const absoluteFilename = expandPath(filename)
+        const originalFilename = expandPath(filename)
+        if (isFileReadDenied(originalFilename, appState.toolPermissionContext)) return null
 
-        if (
-          isFileReadDenied(absoluteFilename, appState.toolPermissionContext)
-        ) {
-          return null
-        }
+        const absoluteFilename = resolveRelocatedAttachmentPath(originalFilename)
+        if (absoluteFilename !== originalFilename && isFileReadDenied(absoluteFilename, appState.toolPermissionContext)) return null
 
         // Check if it's a directory
         try {

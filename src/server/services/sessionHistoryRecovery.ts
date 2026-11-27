@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { createPrivateStorageTempDirectory } from '../../utils/cachePaths.js'
 import { HISTORY_SEMANTIC_RECORD_BYTES, streamBoundedHistory, withHistoryReadBudget } from './boundedSessionHistory.js'
 import type { MessageEntry, SessionTaskNotification } from './sessionService.js'
 
@@ -35,11 +35,12 @@ export async function recoverBoundedSessionHistory(options: {
   notifications: (entry: Record<string, unknown>) => SessionTaskNotification[]
 }): Promise<SessionHistoryRecovery> {
   return withHistoryReadBudget(options.signal, async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'claude-history-recovery-'))
+    const directory = await createPrivateStorageTempDirectory('claude-history-recovery-')
     let database: Database | undefined
     try {
       database = new Database(join(directory, 'state.sqlite'))
-      database.exec('PRAGMA journal_mode=OFF; PRAGMA cache_size=-512; PRAGMA temp_store=FILE; CREATE TABLE usage_keys (id TEXT PRIMARY KEY, input INTEGER, output INTEGER, cache_read INTEGER, cache_creation INTEGER); CREATE TABLE parents (id TEXT PRIMARY KEY, owner TEXT); CREATE TABLE tools (id TEXT PRIMARY KEY, ordinal INTEGER, json TEXT, legacy INTEGER, name TEXT); CREATE TABLE evidence (id TEXT PRIMARY KEY, ordinal INTEGER, json TEXT, category TEXT); CREATE TABLE notices (id TEXT PRIMARY KEY, ordinal INTEGER, json TEXT); CREATE TABLE teammates (name TEXT PRIMARY KEY)')
+      // Persistent ordering indexes avoid whole-history sorts in SQLite's memory-only temp store.
+      database.exec('PRAGMA journal_mode=OFF; PRAGMA cache_size=-512; PRAGMA temp_store=MEMORY; CREATE TABLE usage_keys (id TEXT PRIMARY KEY, input INTEGER, output INTEGER, cache_read INTEGER, cache_creation INTEGER); CREATE TABLE parents (id TEXT PRIMARY KEY, owner TEXT); CREATE TABLE tools (id TEXT PRIMARY KEY, ordinal INTEGER, json TEXT, legacy INTEGER, name TEXT); CREATE TABLE evidence (id TEXT PRIMARY KEY, ordinal INTEGER, json TEXT, category TEXT); CREATE INDEX evidence_ordinal ON evidence (ordinal DESC); CREATE TABLE notices (id TEXT PRIMARY KEY, ordinal INTEGER, json TEXT); CREATE INDEX notices_ordinal ON notices (ordinal DESC); CREATE TABLE teammates (name TEXT PRIMARY KEY)')
       database.exec('BEGIN')
       const getUsageKey = database.query('SELECT input, output, cache_read, cache_creation FROM usage_keys WHERE id = ?')
       const saveUsageKey = database.query('INSERT OR REPLACE INTO usage_keys VALUES (?, ?, ?, ?, ?)')

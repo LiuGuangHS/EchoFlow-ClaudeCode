@@ -431,6 +431,7 @@ export type MigrationPreview = {
   files: number
   bytes: number
   activeTasks: number
+  retainedSharedImDownloads?: string
 }
 
 export type MigrationStatus = {
@@ -495,10 +496,12 @@ export type DesktopHost = {
   isDesktop: boolean
   capabilities: DesktopHostCapabilities
   echoFlow: {
-    openLogin(endpoint?: EchoFlowLoginEndpoint): Promise<'authenticated' | 'cancelled' | 'failed'>
+    openLogin(endpoint: EchoFlowLoginEndpoint, attemptId: string, bounds: PreviewBounds | null): Promise<'authenticated' | 'cancelled' | 'failed' | 'unknown'>
+    setLoginBounds(attemptId: string, bounds: PreviewBounds | null): Promise<void>
+    cancelLogin(attemptId: string): Promise<void>
     signOut(endpoint?: EchoFlowLoginEndpoint): Promise<void>
-    /** Resolves once the startup restore has settled, reporting whether it signed an account back in. */
-    whenAccountRestored(): Promise<boolean>
+    /** Waits for account work to settle and reports whether the account snapshot should be reread. */
+    whenAccountRestored(endpoint?: EchoFlowLoginEndpoint): Promise<boolean>
   }
   runtimeDiscovery: {
     list(options?: { includeWsl?: boolean }): Promise<RuntimeDiscoveryResult>
@@ -664,6 +667,9 @@ export type DesktopHost = {
     restart(): Promise<void>
     migration: {
       prepare(targetDir: string): Promise<MigrationPreview>
+      prepareOpenAiOauth(): Promise<void>
+      prepareImAdoption(): Promise<void>
+      prepareWhatsAppAdoption(): Promise<void>
       start(id: string): Promise<void>
       status(): Promise<MigrationStatus | null>
       cancel(id: string): Promise<void>

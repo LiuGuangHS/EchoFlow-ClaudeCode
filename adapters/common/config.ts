@@ -1,12 +1,14 @@
 /**
  * Adapter 配置加载
  *
- * 优先级：环境变量 > ~/.claude/adapters.json > 默认值
+ * 优先级：环境变量 > <selected root>/adapters.json > 默认值
  */
 
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { getEchoFlowConfigDir } from '../../src/utils/echoFlowConfigRoot.js'
+import { resolveManagedStoragePath } from '../../src/utils/managedStoragePath.js'
 
 export type PairedUser = {
   userId: string | number
@@ -129,8 +131,48 @@ export type AdapterPlatformConfig =
   | QQConfig
   | SlackConfig
 
+const platformSettings = {
+  telegram: ['botToken'],
+  feishu: ['appId', 'appSecret', 'encryptKey', 'verificationToken', 'domain'],
+  wechat: ['accountId', 'botToken', 'baseUrl', 'userId'],
+  dingtalk: ['clientId', 'clientSecret', 'endpoint', 'permissionCardTemplateId'],
+  whatsapp: ['accountJid', 'authDir'],
+  wecom: ['botId', 'secret'],
+  qq: ['appId', 'appSecret'],
+  slack: ['botToken', 'appToken'],
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** Check persisted fields before moving the original bytes. Readers still tolerate missing files. */
+export function validateStoredAdapterConfig(value: unknown): { whatsappAuthDir?: string; whatsappAccountJid?: string } {
+  const invalid = () => new Error('Invalid IM adapter configuration')
+  const string = (value: unknown) => typeof value === 'string' && !value.includes('\0')
+  const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value)
+  const user = (value: unknown) => string(value) || number(value)
+  const array = (value: unknown, test: (item: unknown) => boolean) => value === undefined || (Array.isArray(value) && value.every(test))
+  const strings = (record: Record<string, unknown>, keys: string[]) => keys.every(key => record[key] === undefined || string(record[key]))
+  if (!isRecord(value) || !strings(value, ['serverUrl', 'defaultProjectDir']) || !array(value.allowedProjectRoots, string)) throw invalid()
+  const pairing = value.pairing
+  if (pairing != null && (!isRecord(pairing) || (pairing.code != null && !string(pairing.code)) ||
+    ['expiresAt', 'createdAt'].some(key => pairing[key] != null && !number(pairing[key])))) throw invalid()
+  for (const [name, fields] of Object.entries(platformSettings)) {
+    const settings = value[name]
+    if (settings === undefined) continue
+    if (!isRecord(settings) || !strings(settings, [...fields, 'defaultWorkDir']) ||
+      !array(settings.allowedProjectRoots, string) || !array(settings.allowedUsers, user) ||
+      !array(settings.pairedUsers, item => isRecord(item) && user(item.userId) && string(item.displayName) && number(item.pairedAt))) throw invalid()
+    if (name === 'feishu' && ((settings.streamingCard !== undefined && typeof settings.streamingCard !== 'boolean') ||
+      (settings.domain !== undefined && !['feishu', 'lark'].includes(settings.domain as string)))) throw invalid()
+  }
+  const whatsapp = value.whatsapp as { authDir?: string; accountJid?: string } | undefined
+  return { whatsappAuthDir: whatsapp?.authDir, whatsappAccountJid: whatsapp?.accountJid }
+}
+
 function getConfigPath(): string {
-  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+  const configDir = getEchoFlowConfigDir()
   return path.join(configDir, 'adapters.json')
 }
 
@@ -157,9 +199,7 @@ export function loadConfig(): AdapterConfig {
   const slack = file.slack ?? {}
   const pairing = file.pairing ?? {}
   const fallbackWorkDir = resolveUserDefaultWorkDir()
-  const whatsappAuthDir = resolveConfiguredPath(
-    process.env.WHATSAPP_AUTH_DIR || wa.authDir || defaultWhatsAppAuthDir(),
-  )
+  const whatsappAuthDir = process.env.WHATSAPP_AUTH_DIR || wa.authDir || defaultWhatsAppAuthDir()
 
   return {
     serverUrl: process.env.ADAPTER_SERVER_URL || file.serverUrl || 'ws://127.0.0.1:3456',
@@ -213,7 +253,9 @@ export function loadConfig(): AdapterConfig {
     },
     whatsapp: {
       accountJid: process.env.WHATSAPP_ACCOUNT_JID || wa.accountJid || '',
-      authDir: whatsappAuthDir,
+      get authDir() {
+        return resolveManagedStoragePath(resolveWhatsAppAuthPath(whatsappAuthDir), 'WHATSAPP_AUTH_DIR / whatsapp.authDir')
+      },
       allowedUsers: wa.allowedUsers ?? [],
       pairedUsers: wa.pairedUsers ?? [],
       defaultWorkDir: wa.defaultWorkDir || fallbackWorkDir,
@@ -435,14 +477,13 @@ function resolveExistingDirectory(value: string | undefined): string | null {
   }
 }
 
-function defaultWhatsAppAuthDir(): string {
-  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-  return path.join(configDir, 'whatsapp-auth', 'default')
+function defaultWhatsAppAuthDir(root = getEchoFlowConfigDir()): string {
+  return path.join(root, 'whatsapp-auth', 'default')
 }
 
-function resolveConfiguredPath(value: string): string {
+export function resolveWhatsAppAuthPath(value: string, root?: string): string {
   const trimmed = value.trim()
-  if (!trimmed) return defaultWhatsAppAuthDir()
+  if (!trimmed) return defaultWhatsAppAuthDir(root)
   const expanded = trimmed === '~'
     ? os.homedir()
     : trimmed.startsWith('~/')

@@ -1,8 +1,28 @@
+import { lstatSync, readdirSync } from 'node:fs'
+import path from 'node:path'
 import {
+  LEGACY_WORKSPACE_BROWSER_PARTITION,
   WORKSPACE_BROWSER_INITIAL_SRC,
   WORKSPACE_BROWSER_PARTITION,
 } from '../../src/lib/workspace/browserGuestContract'
 import { isHttpUrl } from './navigationGuards'
+
+export function resolveWorkspaceBrowserPartition(profile: string): string {
+  const partitions = path.join(profile, 'Partitions')
+  const exists = (directory: string) => {
+    const stat = lstatSync(directory, { throwIfNoEntry: false })
+    if (stat && !stat.isDirectory()) throw new Error('Workspace browser profile must use ordinary directories')
+    return stat !== undefined
+  }
+  if (!exists(partitions)) return WORKSPACE_BROWSER_PARTITION
+  const currentPath = path.join(partitions, WORKSPACE_BROWSER_PARTITION.slice('persist:'.length))
+  const current = exists(currentPath)
+  const legacy = exists(path.join(partitions, LEGACY_WORKSPACE_BROWSER_PARTITION.slice('persist:'.length)))
+  // An empty current directory must not hide a legacy profile.
+  return legacy && (!current || readdirSync(currentPath).length === 0)
+    ? LEGACY_WORKSPACE_BROWSER_PARTITION
+    : WORKSPACE_BROWSER_PARTITION
+}
 
 /**
  * Attach boundary for workspace browser `<webview>` guests.
@@ -36,13 +56,14 @@ export type WorkspaceBrowserAttachParams = {
 export function applyWorkspaceBrowserAttachPolicy(
   webPreferences: Record<string, unknown>,
   params: WorkspaceBrowserAttachParams,
-  options: { preload: string },
+  options: { preload: string; session: unknown },
 ): boolean {
   if (params.partition !== WORKSPACE_BROWSER_PARTITION) return false
   if (params.src !== WORKSPACE_BROWSER_INITIAL_SRC) return false
   for (const key of STRIPPED_PREFERENCE_KEYS) delete webPreferences[key]
   Object.assign(webPreferences, {
     preload: options.preload,
+    session: options.session,
     contextIsolation: true,
     nodeIntegration: false,
     nodeIntegrationInSubFrames: false,
@@ -102,7 +123,7 @@ export type WorkspaceBrowserGuestHostLike = {
 
 export function installWorkspaceBrowserGuestPolicy(
   host: WorkspaceBrowserGuestHostLike,
-  options: { preload: string },
+  options: { preload: string; session: unknown },
 ): void {
   host.on('will-attach-webview', (
     event: AttachEvent,

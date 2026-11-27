@@ -10,7 +10,7 @@
     "email": "zhijun2003@users.noreply.github.com"
   },
   "type": "module",
-  "main": "electron-dist/main.cjs",
+  "main": "electron-dist/storage-validation.cjs",
   "build": {
     "appId": "com.echoflow.code.desktop",
     "productName": "EchoFlow Code",
@@ -41,6 +41,7 @@
       "node_modules/node-pty/**",
       "dist/m/assets/node_modules/**",
       "src-tauri/binaries/**",
+      "!src-tauri/binaries/installer-storage-recovery-*",
       "src-tauri/icons/**",
       "src-tauri/resources/preview-agent.js",
       "package.json"
@@ -74,6 +75,11 @@
         {
           "from": "src-tauri/icons/icon.ico",
           "to": "app-icon.ico"
+        },
+        {
+          "from": "src-tauri/binaries",
+          "to": "installer-recovery",
+          "filter": ["installer-storage-recovery-*.exe"]
         }
       ]
     },
@@ -104,7 +110,7 @@
     "build": "bun run build:preview-agent && node ./node_modules/typescript/bin/tsc -b && node ./node_modules/vite/bin/vite.js build && bun run build:h5-mobile",
     "build:h5-mobile": "bun ../mobile/scripts/export-h5.ts ./dist/m",
     "prepare:node-pty": "bun run ./scripts/prepare-node-pty.ts",
-    "build:electron": "bun run prepare:node-pty && bun build ./electron/main.ts --outfile ./electron-dist/main.cjs --target node --format cjs --external electron --external node-pty && bun build ./electron/preload.ts --outfile ./electron-dist/preload.cjs --target node --format cjs --external electron && bun build ./electron/pet-preload.ts --outfile ./electron-dist/pet-preload.cjs --target node --format cjs --external electron && bun build ./electron/preview-preload.ts --outfile ./electron-dist/preview-preload.cjs --target node --format cjs --external electron && bun build ./electron/p2p/hostPage.ts --outfile ./electron-dist/p2p-host.js --target browser --format iife",
+    "build:electron": "bun run prepare:node-pty && bun build ./electron/storageBootstrapWorker.ts --outfile ./electron-dist/storage-bootstrap.cjs --target node --format cjs --external electron && bun build ./electron/storageValidation.ts --outfile ./electron-dist/storage-validation.cjs --target node --format cjs --external electron && bun build ./electron/main.ts --outfile ./electron-dist/main.cjs --target node --format cjs --external electron --external node-pty && bun build ./electron/preload.ts --outfile ./electron-dist/preload.cjs --target node --format cjs --external electron && bun build ./electron/pet-preload.ts --outfile ./electron-dist/pet-preload.cjs --target node --format cjs --external electron && bun build ./electron/preview-preload.ts --outfile ./electron-dist/preview-preload.cjs --target node --format cjs --external electron && bun build ./electron/p2p/hostPage.ts --outfile ./electron-dist/p2p-host.js --target browser --format iife",
     "build:preview-agent": "bun run ./scripts/build-preview-agent.ts",
     "prepare:ripgrep": "bun run ./scripts/prepare-ripgrep.ts",
     "prepare:cloudflared": "bun run ./scripts/prepare-cloudflared.ts",

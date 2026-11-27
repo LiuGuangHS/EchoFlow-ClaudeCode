@@ -9,7 +9,7 @@ import { spawn } from 'child_process'
 import { createReadStream } from 'fs'
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import * as os from 'os'
+import { getEchoFlowConfigDir } from '../../utils/echoFlowConfigRoot.js'
 import { createInterface } from 'readline'
 import { StringDecoder } from 'string_decoder'
 import { ApiError } from '../middleware/errorHandler.js'
@@ -351,8 +351,7 @@ export class SearchService {
     const matchesPerSession =
       options?.matchesPerSession ?? SESSION_SEARCH_DEFAULT_MATCHES_PER_SESSION
 
-    const configDir =
-      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    const configDir = getEchoFlowConfigDir()
     const projectsDir = path.join(configDir, 'projects')
     if (options?.project !== undefined && !isDirectProjectName(options.project)) {
       throw ApiError.badRequest('Invalid project filter')

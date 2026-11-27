@@ -541,7 +541,7 @@ export const NodeFsOperations: FsOperations = {
 
   realpathSync(path: string) {
     using _ = slowLogging`fs.realpathSync(${path})`
-    return fs.realpathSync(path).normalize('NFC')
+    return fs.realpathSync(path)
   },
 
   mkdirSync(dirPath, options) {

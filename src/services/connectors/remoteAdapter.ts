@@ -2,6 +2,7 @@ import { mkdir, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { buildRemotePlugin, createRemoteConnectorBridge, saveRemoteApiKey, type RemoteConnectorRecipe } from './remoteConnector.js'
 import type { ConnectorAdapter, ConnectorDefinition, ConnectorInstallation } from './types.js'
+import { connectorPluginName } from './pluginIdentity.js'
 
 export type RemoteAdapterDependencies = {
   createBridge: typeof createRemoteConnectorBridge
@@ -12,8 +13,11 @@ const defaultDependencies: RemoteAdapterDependencies = { createBridge: createRem
 export function createRemoteConnectorAdapter(definition: ConnectorDefinition, rootDirectory: string, recipe: RemoteConnectorRecipe, dependencies: RemoteAdapterDependencies = defaultDependencies): ConnectorAdapter {
   // Validate the catalog identity before constructing any paths or touching
   // credentials. Only the application-owned plugin namespace is accepted.
+  connectorPluginName(definition)
   buildRemotePlugin(recipe)
-  if (definition.id !== recipe.id || definition.pluginId !== recipe.pluginId || definition.version !== recipe.version || !/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/.test(definition.version)) throw new Error('Invalid managed remote connector definition')
+  if (definition.id !== recipe.id || definition.version !== recipe.version || !/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/.test(definition.version)) throw new Error('Invalid managed remote connector definition')
+  // The bridge resolves ownership before adapter creation; credentials stay at that exact ID.
+  recipe = { ...recipe, pluginId: definition.pluginId }
   const directory = join(resolve(rootDirectory), 'remote', recipe.id, definition.version)
   const installation: ConnectorInstallation = { directory, command: '', args: [], env: {} }
   const bridge = dependencies.createBridge(recipe)

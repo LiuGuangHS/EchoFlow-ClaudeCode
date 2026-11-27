@@ -2,12 +2,14 @@
 
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { copyFile, cp, mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, cp, mkdir, mkdtemp, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path, { join as joinPath } from 'node:path'
 import { promisify } from 'node:util'
 
 import { describe, expect, it, vi } from 'vitest'
+import { buildEchoFlowOwnershipMarker } from '../../src/utils/echoFlowConfigRoot'
+import { createSandboxedTestEnvironment } from '../../scripts/pr/test-environment'
 import {
   ADAPTER_FLAGS,
   reserveLocalPort,
@@ -48,31 +50,12 @@ function controlledSidecarEnvironment(
   configDir: string,
   localAccessToken: string,
 ): NodeJS.ProcessEnv {
-  const inheritedKeys = [
-    'PATH',
-    'TMPDIR',
-    'TEMP',
-    'TMP',
-    'SystemRoot',
-    'WINDIR',
-    'ComSpec',
-    'PATHEXT',
-    'LD_LIBRARY_PATH',
-    'DYLD_LIBRARY_PATH',
-  ] as const
-  const env: NodeJS.ProcessEnv = {}
-  for (const key of inheritedKeys) {
-    if (process.env[key] !== undefined) env[key] = process.env[key]
-  }
-  return {
-    ...env,
-    HOME: homeDir,
+  return createSandboxedTestEnvironment(homeDir, {
     CLAUDE_CONFIG_DIR: configDir,
     CC_HAHA_LOCAL_ACCESS_TOKEN: localAccessToken,
-    NODE_ENV: 'test',
     NO_PROXY: '127.0.0.1,localhost,::1',
     no_proxy: '127.0.0.1,localhost,::1',
-  }
+  })
 }
 
 function startCompiledSidecar(options: {
@@ -608,6 +591,47 @@ const compiledSidecarSmokeStarts = Number.isInteger(configuredCompiledSidecarSta
   ? configuredCompiledSidecarStarts
   : 2
 
+describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar CLI mode', () => {
+  it('reports its version but refuses business commands on unowned storage through both launcher routes', async () => {
+    const repoRoot = path.resolve(import.meta.dirname, '../..')
+    const builtExecutable = resolveSidecarExecutable(path.join(repoRoot, 'desktop'), resolveHostTriple())
+    const fixture = await mkdtemp(joinPath(tmpdir(), 'echoflow-compiled-cli-smoke-'))
+    const run = promisify(execFile)
+    try {
+      const installed = joinPath(fixture, process.platform === 'win32' ? 'claude-haha.exe' : 'claude-haha')
+      const home = joinPath(fixture, 'home')
+      const config = joinPath(home, 'storage')
+      await copyFile(builtExecutable, installed)
+      await mkdir(config, { recursive: true })
+      const sentinel = joinPath(config, 'unowned.json')
+      await writeFile(sentinel, '{}')
+      const env = createSandboxedTestEnvironment(home, {
+        CLAUDE_CONFIG_DIR: config,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: '0',
+      })
+      const before = (await readdir(home, { recursive: true })).sort()
+      for (const flag of ['--version', '-v', '-V']) {
+        const explicit = await run(builtExecutable, ['cli', '--app-root', repoRoot, flag], { cwd: fixture, env, timeout: 10_000 })
+        const alias = await run(installed, [flag], { cwd: fixture, env, timeout: 10_000 })
+        expect(explicit.stdout.trim()).toMatch(/^\d+\.\d+\.\d+[^\s]* \(Claude Code\)$/)
+        expect(alias).toEqual(explicit)
+        expect(explicit.stderr).toBe('')
+        expect((await readdir(home, { recursive: true })).sort()).toEqual(before)
+        expect(readFileSync(sentinel, 'utf8')).toBe('{}')
+      }
+      for (const [executable, args] of [[builtExecutable, ['cli', '--app-root', repoRoot]], [installed, []]] as const) {
+        await expect(run(executable, [...args, '--help'], { cwd: fixture, env, timeout: 10_000 })).rejects.toMatchObject({
+          code: 1, stdout: '', stderr: expect.stringContaining('Unproven or future storage ownership'),
+        })
+        expect((await readdir(home, { recursive: true })).sort()).toEqual(before)
+        expect(readFileSync(sentinel, 'utf8')).toBe('{}')
+      }
+    } finally {
+      await rm(fixture, { recursive: true, force: true })
+    }
+  }, 65_000)
+})
+
 describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar local-index smoke', () => {
   it('uses SQLite by default, serves one indexed session, and reopens the database', async () => {
     const repoRoot = path.resolve(import.meta.dirname, '../..')
@@ -625,14 +649,14 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar local-index smok
       : builtExecutable
 
     const homeDir = joinPath(rootDir, '中文 用户目录')
-    const configDir = joinPath(homeDir, '.claude')
+    const configDir = joinPath(homeDir, 'storage')
     const projectDir = joinPath(configDir, 'projects', '-tmp-中文-compiled-sidecar-smoke')
     const sessionId = 'compiled-sidecar-smoke-session'
     const localAccessToken = 'compiled-sidecar-smoke-local-access-token'
     const authenticationProofs: CompiledSidecarAuthProof[] = []
     const databasePath = joinPath(
       configDir,
-      'cc-haha',
+      'echoflow-code',
       'db',
       'index-v1.sqlite',
     )
@@ -640,7 +664,7 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar local-index smok
 
     const startAndVerify = async (): Promise<void> => {
       const port = await reserveLocalPort('127.0.0.1')
-      activeProcess = startCompiledSidecar({
+      const serverProcess = activeProcess = startCompiledSidecar({
         executable,
         repoRoot,
         port,
@@ -657,14 +681,25 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar local-index smok
           onAuthProbe: proof => authenticationProofs.push(proof),
         })
         expect((await stat(databasePath)).isFile()).toBe(true)
+        const writers = joinPath(configDir, 'echoflow-code', 'migrations', 'writers')
+        const receipts = await readdir(writers)
+        const owned = receipts.map(name => JSON.parse(readFileSync(joinPath(writers, name), 'utf8'))).filter(receipt => receipt.pid === activeProcess!.child.pid)
+        expect(owned).toHaveLength(1)
+        expect(await stat(joinPath(configDir, 'cc-haha')).then(() => true, () => false)).toBe(false)
       } finally {
-        await terminateCompiledSidecar(activeProcess)
+        await terminateCompiledSidecar(serverProcess)
         activeProcess = undefined
+      }
+      // Windows child_process.kill terminates without dispatching SIGTERM.
+      if (process.platform !== 'win32') {
+        expect(await serverProcess.exited).toEqual({ code: 0, signal: null })
+        expect(await readdir(joinPath(configDir, 'echoflow-code', 'migrations', 'writers'))).toEqual([])
       }
     }
 
     try {
       await mkdir(projectDir, { recursive: true })
+      await writeFile(joinPath(configDir, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
       if (process.platform === 'win32') {
         await mkdir(unicodeInstallDir, { recursive: true })
         await copyFile(builtExecutable, executable)
@@ -795,7 +830,7 @@ describe.skipIf(!compiledSidecarSmokeEnabled || process.platform !== 'darwin')('
  * app while every other check stayed green — so this exercises the real binary.
  */
 describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar adapters mode', () => {
-  async function runAdaptersMode(args: string[]): Promise<{ code: number | null; output: string }> {
+  async function runAdaptersMode(args: string[], expectedCode: 1 | 2): Promise<string> {
     const desktopRoot = path.resolve(import.meta.dirname, '..')
     const repoRoot = path.resolve(import.meta.dirname, '../..')
     const executable = resolveSidecarExecutable(desktopRoot, resolveHostTriple())
@@ -804,14 +839,10 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar adapters mode', 
     // An isolated HOME/CLAUDE_CONFIG_DIR: the launcher reads adapters.json, and
     // this must never see the developer's real credentials.
     const rootDir = await mkdtemp(joinPath(tmpdir(), 'cc-haha-adapters-smoke-'))
+    const configDir = joinPath(rootDir, 'storage')
     try {
       const child = spawn(executable, ['adapters', '--app-root', repoRoot, ...args], {
-        env: {
-          ...process.env,
-          HOME: rootDir,
-          USERPROFILE: rootDir,
-          CLAUDE_CONFIG_DIR: joinPath(rootDir, '.claude'),
-        },
+        env: controlledSidecarEnvironment(rootDir, configDir, 'compiled-adapter-fixture-token'),
         stdio: ['ignore', 'pipe', 'pipe'],
       }) as ChildProcessWithoutNullStreams
 
@@ -822,14 +853,20 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar adapters mode', 
       const code = await new Promise<number | null>((resolve) => {
         child.on('exit', (exitCode) => resolve(exitCode))
       })
-      return { code, output }
+      expect(code, output).toBe(expectedCode)
+      if (expectedCode === 1) {
+        expect(await readdir(joinPath(configDir, 'echoflow-code', 'migrations', 'writers'))).toEqual([])
+      } else {
+        await expect(stat(configDir)).rejects.toMatchObject({ code: 'ENOENT' })
+      }
+      return output
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
   }
 
   it('recognises every adapter flag and skips the ones without credentials', async () => {
-    const { code, output } = await runAdaptersMode([...ADAPTER_FLAGS])
+    const output = await runAdaptersMode([...ADAPTER_FLAGS], 1)
 
     // Each flag must be reported by name: one the launcher does not know would
     // fall through to the "ignoring unknown arg" branch instead.
@@ -838,13 +875,11 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar adapters mode', 
     }
     expect(output).not.toContain('ignoring unknown arg')
     expect(output).toContain('no adapter could be started')
-    expect(code).toBe(1)
   }, 60_000)
 
   it('rejects an invocation with no adapter flag at all', async () => {
-    const { code, output } = await runAdaptersMode([])
+    const output = await runAdaptersMode([], 2)
 
     expect(output).toContain('must enable at least one of')
-    expect(code).toBe(2)
   }, 60_000)
 })

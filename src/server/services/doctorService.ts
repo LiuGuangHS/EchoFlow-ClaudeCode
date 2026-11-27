@@ -3,6 +3,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import type { Dirent } from 'node:fs'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import { AGENT_SKILLS_DIR, isAgentSkillsDirectoryEnabled } from '../../skills/skillRoots.js'
 import { ProvidersIndexSchema } from '../types/provider.js'
 import { diagnosticsService } from './diagnosticsService.js'
@@ -89,13 +90,11 @@ export class DoctorService {
   private readonly configDir: string
   private readonly homeDir: string
   private readonly projectRoot?: string
-  private readonly usesConfigDirOverride: boolean
 
   constructor(options: DoctorServiceOptions = {}) {
     this.configDir = options.configDir || getClaudeConfigHomeDir()
     this.homeDir = options.homeDir || inferHomeDir(this.configDir)
     this.projectRoot = options.projectRoot
-    this.usesConfigDirOverride = Boolean(options.configDir || process.env.CLAUDE_CONFIG_DIR)
   }
 
   async getReport(): Promise<DoctorReport> {
@@ -171,13 +170,13 @@ export class DoctorService {
         'cc-haha-providers',
         'Managed providers',
         'user',
-        path.join(this.configDir, 'cc-haha', 'providers.json'),
+        path.join(getEchoFlowInternalDir(this.configDir), 'providers.json'),
       ),
       this.jsonTarget(
         'cc-haha-settings',
         'Managed provider settings',
         'user',
-        path.join(this.configDir, 'cc-haha', 'settings.json'),
+        path.join(getEchoFlowInternalDir(this.configDir), 'settings.json'),
       ),
       this.jsonTarget('adapters', 'Adapters config', 'user', path.join(this.configDir, 'adapters.json')),
       this.jsonTarget(
@@ -207,24 +206,24 @@ export class DoctorService {
         path.join(this.configDir, 'cowork_plugins'),
       ),
       this.jsonTarget('user-mcp', 'User MCP config', 'user', this.getUserMcpConfigPath()),
-      this.jsonTarget('oauth', 'OAuth tokens', 'user', path.join(this.configDir, 'cc-haha', 'oauth.json')),
+      this.jsonTarget('oauth', 'OAuth tokens', 'user', path.join(getEchoFlowInternalDir(this.configDir), 'oauth.json')),
       this.jsonTarget(
         'openai-oauth',
         'OpenAI OAuth tokens',
         'user',
-        path.join(this.configDir, 'cc-haha', 'openai-oauth.json'),
+        path.join(getEchoFlowInternalDir(this.configDir), 'openai-oauth.json'),
       ),
       this.jsonTarget(
         'grok-oauth',
         'Grok OAuth tokens',
         'user',
-        path.join(this.configDir, 'cc-haha', 'grok-oauth.json'),
+        path.join(getEchoFlowInternalDir(this.configDir), 'grok-oauth.json'),
       ),
       this.jsonTarget(
         'deepseek-oauth',
         'DeepSeek account token',
         'user',
-        path.join(this.configDir, 'cc-haha', 'deepseek-oauth.json'),
+        path.join(getEchoFlowInternalDir(this.configDir), 'deepseek-oauth.json'),
       ),
     ]
 
@@ -427,7 +426,7 @@ export class DoctorService {
       return this.withAlias('<project>', filePath, this.projectRoot)
     }
     if (isWithinRoot(filePath, this.configDir)) {
-      return this.withAlias('~/.claude', filePath, this.configDir)
+      return this.withAlias('<storage-root>', filePath, this.configDir)
     }
     if (isWithinRoot(filePath, this.homeDir)) {
       return this.withAlias('~', filePath, this.homeDir)
@@ -439,7 +438,7 @@ export class DoctorService {
     let sanitized = diagnosticsService.sanitizeString(value)
     const replacements: Array<[string | undefined, string]> = [
       [this.projectRoot, '<project>'],
-      [this.configDir, '~/.claude'],
+      [this.configDir, '<storage-root>'],
       [this.homeDir, '~'],
     ]
 
@@ -451,10 +450,7 @@ export class DoctorService {
   }
 
   private getUserMcpConfigPath(): string {
-    if (this.usesConfigDirOverride) {
-      return path.join(this.configDir, '.claude.json')
-    }
-    return path.join(this.homeDir, '.claude.json')
+    return path.join(this.configDir, '.claude.json')
   }
 
   private async listJsonlFiles(rootDir: string): Promise<string[]> {

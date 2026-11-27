@@ -11,7 +11,7 @@ import { currentInboundPowerLease } from './inbound-power-activity.js'
 
 /** Attachment reference — mirrors src/server/ws/events.ts AttachmentRef.
  *  The server will either (a) write base64 `data` to
- *  ~/.claude/uploads/{sessionId}/ and convert to ImageBlockParam, or
+ *  <data-root>/uploads/{sessionId}/ and convert to ImageBlockParam, or
  *  (b) read `path` from disk and inject `@"path"` into the prompt. */
 export type AttachmentRef = {
   type: 'file' | 'image'
@@ -27,12 +27,48 @@ export type ServerMessage = {
   [key: string]: any
 }
 
+function validServerMessage(message: ServerMessage): boolean {
+  const id = (value: unknown): value is string => typeof value === 'string' && value.length > 0
+  const anchor = (value: unknown) => value === null || (id(value) && value.length <= 256)
+  switch (message.type) {
+    case 'input_committed':
+      return id(message.messageUuid) && anchor(message.replyAnchor)
+    case 'input_turn_start':
+    case 'input_turn_snapshot':
+      return Array.isArray(message.messageUuids) && message.messageUuids.every(id)
+    case 'user_message_replay':
+      return typeof message.content === 'string' && (message.messageUuid === undefined || id(message.messageUuid))
+    case 'permission_requests_snapshot':
+      return ['toolRequestIds', 'computerUseRequestIds'].every((key) =>
+        message[key] === undefined ||
+        (Array.isArray(message[key]) && message[key].every(id)),
+      ) && typeof message.turnActive === 'boolean'
+    case 'permission_request':
+      return id(message.requestId) && typeof message.toolName === 'string' &&
+        (message.autoAnswerDeadline === undefined || message.autoAnswerDeadline === null ||
+          (typeof message.autoAnswerDeadline === 'number' && Number.isFinite(message.autoAnswerDeadline)))
+    case 'computer_use_permission_request':
+      return id(message.requestId) && !!message.request && typeof message.request === 'object' && !Array.isArray(message.request)
+    case 'permission_resolved':
+      return id(message.requestId) && ['tool', 'computer_use'].includes(message.permissionType) &&
+        (message.allowed === undefined || typeof message.allowed === 'boolean')
+    case 'error':
+      return typeof message.message === 'string' && typeof message.code === 'string' &&
+        (message.replyAnchor === undefined || anchor(message.replyAnchor)) &&
+        (message.requestId === undefined || (id(message.requestId) && ['tool', 'computer_use'].includes(message.permissionType))) &&
+        (message.approvalOutcome === undefined || (message.requestId !== undefined && ['rejected', 'uncertain'].includes(message.approvalOutcome)))
+    default:
+      return true
+  }
+}
+
 /** Callback for server messages */
 export type MessageHandler = (msg: ServerMessage) => void
 
 type Session = {
   sessionId: string
   ws: WebSocket
+  replyOwner: string
   reconnectAttempts: number
   reconnectTimer: ReturnType<typeof setTimeout> | null
   /** Last traffic either way; heartbeats do not count. */
@@ -46,6 +82,7 @@ type Session = {
   cliRunning: boolean
   /** Approval requests still waiting for the user. */
   pendingRequests: Set<string>
+  pendingComputerUseRequests: Set<string>
 }
 
 const HEARTBEAT_INTERVAL_MS = 30_000
@@ -113,9 +150,11 @@ export class WsBridge {
     content: string,
     attachments?: AttachmentRef[],
     powerActivityLeaseId?: string,
+    replyAnchor?: string | null,
   ): boolean {
     const lease = currentInboundPowerLease(chatId)
     const payload: Record<string, unknown> = { type: 'user_message', content }
+    if (replyAnchor !== undefined) payload.replyAnchor = replyAnchor
     if (attachments && attachments.length > 0) {
       payload.attachments = attachments
     }
@@ -145,6 +184,11 @@ export class WsBridge {
     }
     if (rule) message.rule = rule
     return this.send(chatId, message)
+  }
+
+  /** Ask the bound owner for authoritative state without replaying a decision. */
+  requestSyncState(chatId: string): boolean {
+    return this.send(chatId, { type: 'sync_state' })
   }
 
   /** Stop the current generation. */
@@ -208,10 +252,14 @@ export class WsBridge {
     if (this.localAccessToken) {
       url.searchParams.set('token', this.localAccessToken)
     }
-    const ws = new WebSocket(url)
+    const prev = this.sessions.get(chatId)
+    const carried = prev?.sessionId === sessionId ? prev : undefined
+    const replyOwner = carried?.replyOwner ?? crypto.randomUUID()
+    const ws = new WebSocket(url, {
+      headers: this.localAccessToken ? { 'x-echoflow-reply-owner': replyOwner } : undefined,
+    })
 
     // Cancel any pending reconnect timer for this chatId
-    const prev = this.sessions.get(chatId)
     if (prev) {
       if (prev.reconnectTimer) clearTimeout(prev.reconnectTimer)
       this.closeSocket(prev.ws, 1000, 'session replaced')
@@ -219,16 +267,17 @@ export class WsBridge {
 
     // A reconnect to the same session is not new activity; its snapshot on
     // open refreshes the turn and approval state.
-    const carried = prev?.sessionId === sessionId ? prev : undefined
     const session: Session = {
       sessionId,
       ws,
+      replyOwner,
       reconnectAttempts: prev?.reconnectAttempts ?? 0,
       reconnectTimer: null,
       lastActivityAt: carried?.lastActivityAt ?? this.now(),
       turnActive: carried?.turnActive ?? false,
       cliRunning: false,
       pendingRequests: carried?.pendingRequests ?? new Set(),
+      pendingComputerUseRequests: carried?.pendingComputerUseRequests ?? new Set(),
     }
     this.sessions.set(chatId, session)
 
@@ -245,6 +294,7 @@ export class WsBridge {
         console.error('[WsBridge] Parse error:', err)
         return
       }
+      if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.type !== 'string' || !validServerMessage(msg)) return
       if (msg.type === 'pong') return
       if (this.sessions.get(chatId) !== session) return
       this.trackInbound(session, msg)
@@ -341,9 +391,6 @@ export class WsBridge {
     session.ws.send(JSON.stringify(message))
     session.lastActivityAt = this.now()
     if (message.type === 'user_message') session.turnActive = true
-    if (message.type === 'permission_response' && typeof message.requestId === 'string') {
-      session.pendingRequests.delete(message.requestId)
-    }
     return true
   }
 
@@ -355,24 +402,24 @@ export class WsBridge {
         break
       case 'message_complete':
         session.turnActive = false
-        session.pendingRequests.clear()
         break
       case 'error':
-        session.turnActive = false
+        if (msg.requestId === undefined) session.turnActive = false
         break
       case 'permission_request':
+        session.pendingRequests.add(msg.requestId)
+        break
       case 'computer_use_permission_request':
-        if (typeof msg.requestId === 'string') session.pendingRequests.add(msg.requestId)
+        session.pendingComputerUseRequests.add(msg.requestId)
         break
       case 'permission_resolved':
-        if (typeof msg.requestId === 'string') session.pendingRequests.delete(msg.requestId)
+        if (msg.permissionType === 'tool') session.pendingRequests.delete(msg.requestId)
+        else session.pendingComputerUseRequests.delete(msg.requestId)
         break
       case 'permission_requests_snapshot':
-        session.turnActive = msg.turnActive === true
-        session.pendingRequests = new Set(
-          [...(msg.toolRequestIds ?? []), ...(msg.computerUseRequestIds ?? [])]
-            .filter((id): id is string => typeof id === 'string'),
-        )
+        session.turnActive = msg.turnActive
+        if (msg.toolRequestIds !== undefined) session.pendingRequests = new Set(msg.toolRequestIds)
+        if (msg.computerUseRequestIds !== undefined) session.pendingComputerUseRequests = new Set(msg.computerUseRequestIds)
         break
       case 'system_notification':
         if (msg.subtype === 'session_state_changed') {
@@ -406,6 +453,7 @@ export class WsBridge {
         session.turnActive ||
         session.cliRunning ||
         session.pendingRequests.size > 0 ||
+        session.pendingComputerUseRequests.size > 0 ||
         now - session.lastActivityAt < this.idleReleaseMs
       ) continue
       console.log(`[WsBridge] Releasing idle session ${session.sessionId} (chat ${chatId})`)

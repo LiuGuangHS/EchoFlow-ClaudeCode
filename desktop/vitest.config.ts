@@ -11,7 +11,8 @@ export default defineConfig({
   },
   test: {
     // Packaged source snapshots are generated output, not the active test suite.
-    exclude: [...configDefaults.exclude, '**/build-artifacts/**', '**/artifacts/**'],
+    // Bun-native installer contracts run in check:persistence-upgrade.
+    exclude: [...configDefaults.exclude, '**/build-artifacts/**', '**/artifacts/**', 'sidecars/installerStorageRecovery.test.ts'],
     maxWorkers: 4,
     environment: 'jsdom',
     globals: true,

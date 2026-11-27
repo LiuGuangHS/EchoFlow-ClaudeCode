@@ -19,7 +19,6 @@ Function CcHahaUninstallerParent
   Exch $R0
   Push $R1
   Push $R2
-  Push $R3
 
   StrCpy $R2 0
 
@@ -59,7 +58,6 @@ Function CcHahaUninstallerParent
 
   cc_haha_uninstall_parent_done:
     StrCpy $R0 $R0 $R2
-    Pop $R3
     Pop $R2
     Pop $R1
     Exch $R0
@@ -150,8 +148,10 @@ Function CcHahaIsStrictDefaultMode
     Exch $R0
 FunctionEnd
 
-; No cache exclusions: access errors, links and any directory contents require PowerShell.
+; Push the directory, then a plain child directory name to ignore ("" to check all entries).
 Function CcHahaIsAbsentOrEmptyDirectory
+  Exch $R7
+  Exch 1
   Exch $R0
   Push $R1
   Push $R2
@@ -178,7 +178,12 @@ Function CcHahaIsAbsentOrEmptyDirectory
   cc_haha_empty_next:
     System::Call '*$R2(i, i, i, i, i, i, i, i, i, i, i, &w260 .R4)'
     StrCmp $R4 "." cc_haha_empty_advance
-    StrCmp $R4 ".." 0 cc_haha_empty_close
+    StrCmp $R4 ".." cc_haha_empty_advance
+    StrCmp $R7 "" cc_haha_empty_close
+    StrCmpS $R4 $R7 0 cc_haha_empty_close
+    System::Call 'kernel32::GetFileAttributesW(w "$R0\$R4") i.R3'
+    IntOp $R3 $R3 & 0x410 ; -1 on error, so only a plain directory matches
+    StrCmp $R3 16 0 cc_haha_empty_close
   cc_haha_empty_advance:
     System::Call 'kernel32::FindNextFileW(p R1, p R2) i.R4 ?e'
     Pop $R3
@@ -200,7 +205,7 @@ Function CcHahaIsAbsentOrEmptyDirectory
   cc_haha_empty_yes:
     StrCpy $R5 1
   cc_haha_empty_done:
-    StrCpy $R0 $R5
+    StrCpy $R7 $R5
     ClearErrors
     StrCmp $R6 0 +2
       SetErrors
@@ -210,7 +215,8 @@ Function CcHahaIsAbsentOrEmptyDirectory
     Pop $R3
     Pop $R2
     Pop $R1
-    Exch $R0
+    Pop $R0
+    Exch $R7
 FunctionEnd
 
 Function CcHahaCanSkipLegacyRecovery
@@ -249,18 +255,22 @@ Function CcHahaCanSkipLegacyRecovery
   ${EndIf}
   ; Package-name profiles must be empty before the branded-only no-CLR shortcut is safe.
   Push "$R1\${ECHOFLOW_PRODUCT_SLUG}"
+  Push ""
   Call CcHahaIsAbsentOrEmptyDirectory
   Pop $R3
   StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
   Push "$R2\${ECHOFLOW_PRODUCT_SLUG}"
+  Push ""
   Call CcHahaIsAbsentOrEmptyDirectory
   Pop $R3
   StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
   Push "$R1\${ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME}"
+  Push ""
   Call CcHahaIsAbsentOrEmptyDirectory
   Pop $R3
   StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
   Push "$R2\${ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME}"
+  Push ""
   Call CcHahaIsAbsentOrEmptyDirectory
   Pop $R3
   StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
@@ -279,6 +289,12 @@ Function CcHahaCanSkipLegacyRecovery
     StrCmp $R5 2 cc_haha_local_journal_absent
     StrCmp $R5 3 0 cc_haha_skip_recovery_done
   cc_haha_local_journal_absent:
+  ; Writer leases are not transaction journals, even when retained after exit.
+  Push "$R2\${ECHOFLOW_PRODUCT_NAME}\${ECHOFLOW_PRODUCT_SLUG}\migrations"
+  Push "writers"
+  Call CcHahaIsAbsentOrEmptyDirectory
+  Pop $R3
+  StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
   ReadEnvStr $R0 CLAUDE_CONFIG_DIR
   StrCmp $R0 "" cc_haha_no_config_override
   StrCpy $R0 "0"
@@ -290,15 +306,18 @@ Function CcHahaCanSkipLegacyRecovery
 
   IfFileExists "$ccHahaPerUserInstallLocation\CLAUDE_CONFIG_DIR\*.*" cc_haha_skip_recovery_done 0
   Push "$ccHahaPerUserInstallLocation\CLAUDE_CONFIG_DIR"
+  Push ""
   Call CcHahaIsAbsentOrEmptyDirectory
   Pop $R3
   StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
 
   Push "$R1\${ECHOFLOW_PRODUCT_NAME}"
+  Push ""
   Call CcHahaIsAbsentOrEmptyDirectory
   Pop $R3
   StrCmp $R3 "1" cc_haha_check_local_default
   Push "$R2\${ECHOFLOW_PRODUCT_NAME}"
+  Push ""
   Call CcHahaIsAbsentOrEmptyDirectory
   Pop $R3
   StrCmp $R3 "1" 0 cc_haha_skip_recovery_done
@@ -307,6 +326,7 @@ Function CcHahaCanSkipLegacyRecovery
 
   cc_haha_check_local_default:
     Push "$R2\${ECHOFLOW_PRODUCT_NAME}"
+    Push ""
     Call CcHahaIsAbsentOrEmptyDirectory
     Pop $R3
     StrCmp $R3 "1" cc_haha_no_profile_state
@@ -383,6 +403,15 @@ Function CcHahaRecoverLegacy
 
   InitPluginsDir
   File /oname=$PLUGINSDIR\recover-legacy-install-data.ps1 "${BUILD_RESOURCES_DIR}\recover-legacy-install-data.ps1"
+  ; Extract from this package, never the old installation the uninstaller may delete.
+  !ifndef ECHOFLOW_INSTALLER_RECOVERY_BINARY
+    !if defined(APP_ARM64) && !defined(APP_64)
+      !define ECHOFLOW_INSTALLER_RECOVERY_BINARY "${BUILD_RESOURCES_DIR}\..\src-tauri\binaries\installer-storage-recovery-aarch64-pc-windows-msvc.exe"
+    !else
+      !define ECHOFLOW_INSTALLER_RECOVERY_BINARY "${BUILD_RESOURCES_DIR}\..\src-tauri\binaries\installer-storage-recovery-x86_64-pc-windows-msvc.exe"
+    !endif
+  !endif
+  File /oname=$PLUGINSDIR\installer-storage-recovery.exe "${ECHOFLOW_INSTALLER_RECOVERY_BINARY}"
 
   ReadEnvStr $2 APPDATA
   ReadEnvStr $R2 LOCALAPPDATA
@@ -406,7 +435,7 @@ Function CcHahaRecoverLegacy
   ${EndIf}
 
   DetailPrint "Checking registered installations for legacy ${ECHOFLOW_PRODUCT_NAME} data..."
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\recover-legacy-install-data.ps1" -PerUserInstallDir "$4" -PerMachineInstallDir "$5" -CandidateInstallDir "$9" -UserDataDir "$2\${ECHOFLOW_PRODUCT_NAME}" -LocalUserDataDir "$R2\${ECHOFLOW_PRODUCT_NAME}" -DesktopPackageName "${ECHOFLOW_PRODUCT_SLUG}" -LegacyDesktopPackageName "${ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME}" -RecoveryRoot "$3\${ECHOFLOW_PRODUCT_NAME} Data\Recovered" -ProcessName "${PRODUCT_FILENAME}.exe" -ActiveConfigDir "$6" -ActiveConfigManaged "$7" -InstallerIdentitySafety "$8"'
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\recover-legacy-install-data.ps1" -PerUserInstallDir "$4" -PerMachineInstallDir "$5" -CandidateInstallDir "$9" -UserDataDir "$2\${ECHOFLOW_PRODUCT_NAME}" -LocalUserDataDir "$R2\${ECHOFLOW_PRODUCT_NAME}" -DesktopPackageName "${ECHOFLOW_PRODUCT_SLUG}" -LegacyDesktopPackageName "${ECHOFLOW_LEGACY_DESKTOP_PACKAGE_NAME}" -RecoveryBridge "$PLUGINSDIR\installer-storage-recovery.exe" -ProcessName "${PRODUCT_FILENAME}.exe" -ActiveConfigDir "$6" -ActiveConfigManaged "$7" -InstallerIdentitySafety "$8"'
   Pop $0
   Pop $1
 FunctionEnd
@@ -485,7 +514,7 @@ FunctionEnd
 
 !macro CcHahaFindInstallProcess _FILE _RETURN
   ${If} $IsPowerShellAvailable == 0
-    nsExec::ExecToStack '"$PowerShellPath" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\check-install-processes.ps1" -InstallDir "$INSTDIR" -ProcessName "${_FILE}" -Action Find -InstallerPid "$pid" -InstallerParentPid "$1"'
+    nsExec::ExecToStack '"$PowerShellPath" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\check-install-processes.ps1" -InstallDir "$INSTDIR" -ProcessName "${_FILE}" -Action Find -InstallerPid "$pid"'
     Pop ${_RETURN}
     Pop $ccHahaProcessDiagnostic
     ${If} $ccHahaProcessDiagnostic != ""
@@ -539,7 +568,7 @@ FunctionEnd
   ${EndIf}
 
   ${If} $IsPowerShellAvailable == 0
-    nsExec::ExecToStack '"$PowerShellPath" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\check-install-processes.ps1" -InstallDir "$INSTDIR" -ProcessName "${_FILE}" -Action "$0" -InstallerPid "$pid" -InstallerParentPid "$1"'
+    nsExec::ExecToStack '"$PowerShellPath" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\check-install-processes.ps1" -InstallDir "$INSTDIR" -ProcessName "${_FILE}" -Action "$0" -InstallerPid "$pid"'
     Pop $0
     Pop $ccHahaProcessDiagnostic
     ${If} $ccHahaProcessDiagnostic != ""

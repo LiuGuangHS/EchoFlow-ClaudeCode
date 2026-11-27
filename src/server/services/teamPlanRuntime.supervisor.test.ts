@@ -1,18 +1,21 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resetTerminalShellEnvironmentCacheForTests } from '../../utils/terminalShellEnvironment.js'
+
+type CliRuntime = 'bundled' | 'installed' | 'legacy'
 
 let home: string
 let originalEnv: NodeJS.ProcessEnv
 beforeEach(async () => {
   originalEnv = { ...process.env }
-  home = await mkdtemp(join(tmpdir(), 'team-supervisor-'))
+  home = await realpath(await mkdtemp(join(tmpdir(), 'team-supervisor-')))
   process.env.HOME = home
   process.env.CLAUDE_CONFIG_DIR = home
   process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
+  delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
   // The lead fixture's own model call lands mid-test, as it does on a loaded CI
   // runner. Assertions about members must not depend on when the lead speaks.
   process.env.FIXTURE_LEAD_MODEL_DELAY_MS = '300'
@@ -62,6 +65,7 @@ async function startHarness(memberNames: string[], options: {
   instructedAtLaunch?: string[]
   /** Hold the initial member reply while an independently delayed lead speaks. */
   initialMemberReply?: Promise<void>
+  cliRuntime?: CliRuntime
 } = {}) {
   const { conversationService: service } = await import('./conversationService.js')
   const { ProviderService } = await import('./providerService.js')
@@ -106,12 +110,30 @@ async function startHarness(memberNames: string[], options: {
   await writeTeamFileAsync(teamName, { name: teamName, createdAt, leadAgentId: `team-lead@${teamName}`, leadSessionId: parentId, members: [] } as any)
   const taskListId = getCanonicalTeamTaskListId(teamName)
   await withTaskListLifecycleLock(taskListId, () => beginTaskListLifecycle(taskListId, { teamName, createdAt, leadSessionId: parentId }))
+  const config = join(home, 'claude-code-runtime.json')
+  if (options.cliRuntime && options.cliRuntime !== 'legacy') process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = config
   // The lead is a fixture process too; it only needs to answer control requests.
-  await service.startSession(parentId, home, `ws://127.0.0.1:${bridge.port}/sdk/${parentId}?token=parent`, { providerId: provider.id, model: 'cheap', teamWorker: { parentSessionId: 'external', teamName: 'lead-fixture', memberId: 'lead', name: 'leader', systemPrompt: 'lead fixture' } })
-  const members = memberNames.map(name => ({ id: name, name, agentType: 'research', prompt: `Work as ${name}`, runtime: { providerId: provider.id, modelId: 'cheap' }, agentSnapshot: { systemPrompt: 'Read only', tools: ['Read'] } }))
+  await service.startSession(parentId, home, `ws://127.0.0.1:${bridge.port}/sdk/${parentId}?token=parent`, {
+    providerId: provider.id, model: 'cheap',
+    cliRuntimeId: options.cliRuntime === 'legacy' ? undefined : options.cliRuntime,
+    teamWorker: { parentSessionId: 'external', teamName: 'lead-fixture', memberId: 'lead', name: 'leader', systemPrompt: 'lead fixture' },
+  })
+  // A lead started via the legacy override can outlive a later global selection.
+  if (options.cliRuntime === 'legacy') process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = config
+  const leaderRuntime = { providerId: provider.id, modelId: 'cheap' }
+  const memberRuntime = options.cliRuntime
+    ? {
+        providerId: (await new ProviderService().addProvider({
+          presetId: 'custom', name: 'member', baseUrl: new URL('/member', upstream.url).href, apiKey: 'fake-member',
+          models: { main: 'member-model', sonnet: 'member-model', opus: 'member-model', haiku: 'member-model' },
+        })).id,
+        modelId: 'member-model', effortLevel: 'high',
+      }
+    : leaderRuntime
+  const members = memberNames.map(name => ({ id: name, name, agentType: 'research', prompt: `Work as ${name}`, runtime: memberRuntime, agentSnapshot: { systemPrompt: 'Read only', tools: ['Read'] } }))
   const tasks = options.tasks ?? memberNames.map(name => ({ id: `task-${name}`, subject: `Task for ${name}`, ownerId: name, dependencies: [] }))
   const planId = crypto.randomUUID()
-  const plan = { schemaVersion: 1, planId, sessionId: parentId, teamName, incarnationId: createHash('sha256').update(JSON.stringify([teamName, parentId, createdAt])).digest('hex'), revision: 2, state: 'launching', workDir: home, members, tasks, leaderRuntime: members[0]!.runtime, createdAt, updatedAt: createdAt, approvedSnapshot: { revision: 1, members, tasks, leaderRuntime: members[0]!.runtime, approvedAt: Date.now(), requestId: 'approve' } } as any
+  const plan = { schemaVersion: 1, planId, sessionId: parentId, teamName, incarnationId: createHash('sha256').update(JSON.stringify([teamName, parentId, createdAt])).digest('hex'), revision: 2, state: 'launching', workDir: home, members, tasks, leaderRuntime, createdAt, updatedAt: createdAt, approvedSnapshot: { revision: 1, members, tasks, leaderRuntime, approvedAt: Date.now(), requestId: 'approve' } } as any
   await writeFile(join(getTeamDir(teamName), 'plan.json'), JSON.stringify(plan))
   const { memberIds } = await launchTeamPlanRuntime(plan)
   // The service records the running state the way TeamPlanService does after launch.
@@ -181,9 +203,33 @@ async function messageMember(h: Harness, to: string, from: string, text: string)
   await writeToMailbox(to, { from, text, timestamp: new Date().toISOString() }, h.teamName)
 }
 
-test('a member whose process died restarts from its own transcript when the lead messages it', async () => {
-  const h = await startHarness(['reader'])
+// shortcut: executable worker fixtures use POSIX shebangs; add native .exe fixtures for Windows.
+const restartRuntimes = ['default', ...(process.platform === 'win32' ? [] : ['installed', 'bundled', 'legacy'] as const)] as const
+test.each(restartRuntimes)('a member restarts from its own transcript on the lead CLI (%s)', async runtime => {
+  const cliRuntime = runtime === 'default' ? undefined : runtime
+  const execPathDescriptor = Object.getOwnPropertyDescriptor(process, 'execPath')!
+  const capturePath = join(home, 'cli-launches.jsonl')
+  const executables = { bundled: join(home, 'claude-cli'), installed: join(home, 'installed-claude'), legacy: join(home, 'legacy-cli.ts') }
+  let cleanup: Harness['cleanup'] | undefined
   try {
+    if (cliRuntime) {
+      const worker = new URL('./__fixtures__/team-worker-cli.ts', import.meta.url).href
+      for (const executable of Object.values(executables)) {
+        await writeFile(executable, `#!${process.execPath}
+import { appendFile } from 'node:fs/promises'
+const args = process.argv.slice(2)
+const arg = name => args.includes(name) ? args[args.indexOf(name) + 1] : null
+await appendFile(${JSON.stringify(capturePath)}, JSON.stringify({ executable: process.argv[1], agent: arg('--agent-name'), model: arg('--model'), effort: arg('--effort'), providerPath: new URL(process.env.ANTHROPIC_BASE_URL).pathname }) + '\\n')
+await import(${JSON.stringify(worker)})
+`, { mode: 0o755 })
+      }
+      const defaultRuntimeId = cliRuntime === 'installed' ? 'bundled' : 'installed'
+      await writeFile(join(home, 'claude-code-runtime.json'), JSON.stringify({ schemaVersion: 1, defaultRuntimeId, installedPath: executables.installed }))
+      process.env.CLAUDE_CLI_PATH = executables.legacy
+      Object.defineProperty(process, 'execPath', { ...execPathDescriptor, value: join(home, 'claude-server') })
+    }
+    const h = await startHarness(['reader'], { cliRuntime })
+    cleanup = h.cleanup
     const sessionId = h.memberIds.reader!
     h.replies.push('FIXTURE_CRASH')
     await messageMember(h, 'reader', 'team-lead', 'Check one more file')
@@ -202,8 +248,19 @@ test('a member whose process died restarts from its own transcript when the lead
     expect(h.requests.at(-1)?.prompt).toContain('Please continue')
     await h.waitFor(async () => (await h.teamMember('reader'))?.terminated === false, 'restart to be recorded')
     expect(h.service.hasSession(sessionId)).toBe(true)
+    if (cliRuntime) {
+      const executable = executables[cliRuntime]
+      const member = { executable, agent: 'reader', model: 'member-model', effort: 'high', providerPath: '/member' }
+      const launches = (await readFile(capturePath, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+      expect(launches).toEqual([
+        { executable, agent: 'leader', model: 'cheap', effort: null, providerPath: '/' },
+        member,
+        member,
+      ])
+    }
   } finally {
-    await h.cleanup()
+    if (cliRuntime) Object.defineProperty(process, 'execPath', execPathDescriptor)
+    await cleanup?.()
   }
 }, 30_000)
 

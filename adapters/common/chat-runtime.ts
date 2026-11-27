@@ -11,11 +11,11 @@
  * an image — and keeps its transport, auth and media details to itself. The
  * runtime never imports a platform SDK, so it is testable with a fake port.
  *
- * The port, not the runtime, remembers per-chat reply context (a WeCom frame's
- * `req_id`, a QQ inbound `msgId`, a Slack `thread_ts`): those are platform
- * concepts with platform lifetimes.
+ * Platforms interpret reply anchors; the runtime carries them across queued
+ * inbound work and the corresponding server turn.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import * as path from 'node:path'
 import { enqueueInboundPowerActivity, type InboundPowerLease } from './inbound-power-activity.js'
 import { adapterMigrationLifecycle } from './migration-lifecycle.js'
@@ -30,14 +30,13 @@ import { MessageBuffer } from './message-buffer.js'
 import type { MessageDedup } from './message-dedup.js'
 import { isAllowedUser, tryPair, type ImPlatform } from './pairing.js'
 import {
-  formatPermissionDecisionStatus,
   formatPermissionInstructions,
   parsePermissionCommand,
   type PermissionDecision,
 } from './permission.js'
 import { restoreStoredSessionBinding, SESSION_RECONNECT_NOTICE, type SessionRestoreResult } from './session-recovery.js'
 import { SessionSelectionController } from './session-selection.js'
-import { syncImPermissionState } from './permission-sync.js'
+import { formatImPermissionSubmissionNotice, submitImPermissionDecision, syncImPermissionState } from './permission-sync.js'
 import type { SessionStore } from './session-store.js'
 import type { AttachmentRef, ServerMessage, WsBridge } from './ws-bridge.js'
 import { ImageBlockWatcher } from './attachment/image-block-watcher.js'
@@ -83,6 +82,13 @@ export interface ChatPort {
   clearChat?(chatId: string): void
 }
 
+const replyAnchor = new AsyncLocalStorage<string | null | undefined>()
+
+/** QQ message id or Slack thread timestamp for this asynchronous operation. */
+export function currentReplyAnchor(): string | undefined {
+  return replyAnchor.getStore() ?? undefined
+}
+
 /** One inbound user message, already normalized by the platform adapter. */
 export type InboundChatMessage = {
   chatId: string
@@ -90,6 +96,8 @@ export type InboundChatMessage = {
   displayName: string
   /** Stable per-message identity used for replay dedup. */
   dedupKey: string
+  /** Null explicitly targets the main conversation. */
+  replyAnchor?: string | null
   text: string
   attachments?: AttachmentRef[]
   /**
@@ -97,7 +105,7 @@ export type InboundChatMessage = {
    *
    * Called only after dedup and the pairing gate have passed, and from inside
    * the per-chat queue. Downloading before that lets an unpaired stranger make
-   * the adapter fetch bytes and write them under `~/.claude/im-downloads/`, and
+   * the adapter fetch bytes and write them under `<data-root>/im-downloads/`, and
    * lets a slow attachment overtake a text message sent after it.
    */
   loadAttachments?: () => Promise<AttachmentRef[]>
@@ -147,8 +155,11 @@ export class ImChatRuntime {
 
   private readonly runtimeStates = new Map<string, ChatRuntimeState>()
   private readonly buffers = new Map<string, MessageBuffer>()
+  private readonly committedAnchors = new Map<string, Map<string, string | null>>()
+  private readonly activeTurns = new Map<string, { ids: string[]; anchor?: string | null; awaitingSnapshot?: boolean }>()
   private readonly responses = new Map<string, ResponseStream>()
   private readonly pendingPermissions = new Map<string, Set<string>>()
+  private readonly submittingPermissions = new Map<string, Set<string>>()
   private readonly pendingProjectSelection = new Set<string>()
   private readonly imageWatchers = new Map<string, ImageBlockWatcher>()
   private readonly sessionSelection: SessionSelectionController
@@ -193,6 +204,10 @@ export class ImChatRuntime {
    * has been handled; adapters normally ignore it, tests await it.
    */
   handleInbound(message: InboundChatMessage): Promise<void> {
+    return replyAnchor.run(message.replyAnchor, () => this.admitInbound(message))
+  }
+
+  private admitInbound(message: InboundChatMessage): Promise<void> {
     const { chatId, dedupKey } = message
     if (!chatId || adapterMigrationLifecycle.isQuiescing) return Promise.resolve()
     if (dedupKey && !this.dedup.tryRecord(`${this.port.platform}:${dedupKey}`)) {
@@ -279,6 +294,7 @@ export class ImChatRuntime {
       effective,
       attachments.length > 0 ? attachments : undefined,
       lease?.id,
+      replyAnchor.getStore(),
     )
     // Socket send is not admission: the server releases this exact id only after
     // its own busy state takes over, including startup and rejection paths.
@@ -330,7 +346,7 @@ export class ImChatRuntime {
         return true
       }
       this.clearTransientChatState(chatId)
-      const sent = this.bridge.sendUserMessage(chatId, '/clear', undefined, lease?.id)
+      const sent = this.bridge.sendUserMessage(chatId, '/clear', undefined, lease?.id, replyAnchor.getStore())
       if (sent && lease) lease.transferred = true
       if (sent) this.getRuntimeState(chatId).state = 'thinking'
       await this.port.sendNotice(
@@ -346,33 +362,80 @@ export class ImChatRuntime {
     chatId: string,
     decision: PermissionDecision,
   ): Promise<void> {
-    const pending = this.pendingPermissions.get(chatId)
-    if (!pending?.has(decision.requestId)) {
-      await this.port.sendNotice(chatId, `未找到待确认的权限请求：${decision.requestId}`)
-      return
-    }
-    const sent = this.bridge.sendPermissionResponse(
-      chatId,
-      decision.requestId,
-      decision.allowed,
-      decision.rule,
+    const result = submitImPermissionDecision(
+      chatId, decision, this.pendingPermissions.get(chatId), this.submittingPermissions, this.bridge,
     )
-    if (sent) {
-      pending.delete(decision.requestId)
-      const runtime = this.getRuntimeState(chatId)
-      runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
-    }
-    await this.port.sendNotice(
-      chatId,
-      sent ? `${formatPermissionDecisionStatus(decision)}。` : '权限响应发送失败，请检查会话状态。',
-    )
+    await this.port.sendNotice(chatId, formatImPermissionSubmissionNotice(result, decision.requestId))
   }
 
   // ---------- server stream ----------
 
   async handleServerMessage(chatId: string, msg: ServerMessage): Promise<void> {
+    const active = this.activeTurns.get(chatId)
+    if (msg.type === 'input_committed') {
+      if (active?.ids.includes(msg.messageUuid)) return
+      let anchors = this.committedAnchors.get(chatId)
+      if (!anchors) this.committedAnchors.set(chatId, anchors = new Map())
+      anchors.set(msg.messageUuid, msg.replyAnchor)
+      return
+    }
+    if (msg.type === 'connected') {
+      if (active) active.awaitingSnapshot = true
+      return
+    }
+    if (msg.type === 'input_turn_start' || msg.type === 'input_turn_snapshot' || msg.type === 'user_message_replay') {
+      const ids: string[] = msg.type === 'user_message_replay'
+        ? (msg.messageUuid ? [msg.messageUuid] : []) : msg.messageUuids
+      // Merged turns replay each member, but the final input owns the reply.
+      if (active && msg.type === 'user_message_replay' && !active.awaitingSnapshot && active.ids.includes(msg.messageUuid)) return
+      if (active && msg.type === 'input_turn_snapshot' && ids.length > 0 &&
+          ids.length === active.ids.length && ids.every((id, i) => id === active.ids[i])) {
+        active.awaitingSnapshot = false
+        return
+      }
+      await this.finishReplyTurn(chatId)
+      const anchors = this.committedAnchors.get(chatId)
+      if (ids.length) this.activeTurns.set(chatId, { ids, anchor: anchors?.get(ids[ids.length - 1]!) })
+      for (const id of ids) anchors?.delete(id)
+      if (!anchors?.size) this.committedAnchors.delete(chatId)
+      return
+    }
+    // A legacy reconnect can replay permissions or output without any turn identity.
+    if (active?.awaitingSnapshot || (msg.type === 'permission_requests_snapshot' && msg.turnActive === false)) {
+      await this.finishReplyTurn(chatId)
+    }
+    // Rejecting another input during startup must not tear down the live response.
+    if (msg.type === 'error' && msg.replyAnchor !== undefined) {
+      await replyAnchor.run(msg.replyAnchor, () => this.handleServerError(chatId, msg))
+      return
+    }
+    const anchor = this.activeTurns.get(chatId)?.anchor
+    if (msg.type === 'message_complete') {
+      this.activeTurns.delete(chatId)
+      this.imageWatchers.delete(chatId)
+    }
+    await replyAnchor.run(anchor, () => this.routeServerMessage(chatId, msg))
+  }
+
+  private async finishReplyTurn(chatId: string): Promise<void> {
+    const anchor = this.activeTurns.get(chatId)?.anchor
+    this.activeTurns.delete(chatId)
+    this.imageWatchers.delete(chatId)
+    await replyAnchor.run(anchor, () => this.finishResponse(chatId))
+  }
+
+  private async routeServerMessage(chatId: string, msg: ServerMessage): Promise<void> {
     const runtime = this.getRuntimeState(chatId)
-    if (syncImPermissionState(chatId, msg, runtime, this.pendingPermissions)) return
+    const settled: string[] = []
+    if (syncImPermissionState(chatId, msg, runtime, this.pendingPermissions, {
+      submittingPermissions: this.submittingPermissions,
+      requestSyncState: (id) => this.bridge.requestSyncState(id),
+      onSettled: (id) => { settled.push(id) },
+    })) {
+      if (msg.type === 'error') await this.port.sendNotice(chatId, msg.message)
+      for (const id of settled) await this.port.sendNotice(chatId, `权限请求 ${id} 已不再等待确认。`)
+      return
+    }
 
     switch (msg.type) {
       case 'connected':
@@ -701,6 +764,8 @@ export class ImChatRuntime {
   }
 
   clearTransientChatState(chatId: string): void {
+    this.committedAnchors.delete(chatId)
+    this.activeTurns.delete(chatId)
     this.buffers.get(chatId)?.reset()
     this.buffers.delete(chatId)
     // Abandoning a turn still has to close its presentation. Dropping the
@@ -710,6 +775,7 @@ export class ImChatRuntime {
     // not a completion — so `finish()` only seals what the user already saw.
     this.closeResponse(chatId)
     this.pendingPermissions.delete(chatId)
+    this.submittingPermissions.delete(chatId)
     this.imageWatchers.delete(chatId)
     this.port.setBusy?.(chatId, false)
     this.port.clearChat?.(chatId)

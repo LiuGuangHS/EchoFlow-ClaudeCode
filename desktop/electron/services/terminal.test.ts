@@ -3,6 +3,8 @@ import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { buildEchoFlowOwnershipMarker, getDefaultEchoFlowConfigDir, resolveStorageBinding } from '../../../src/utils/echoFlowConfigRoot'
+import { initializeDesktopStorage } from './desktopStorageStartup'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ELECTRON_EVENT_CHANNELS } from '../ipc/channels'
 import {
@@ -108,16 +110,16 @@ describe('Electron terminal service', () => {
     expect(() => service.write(result.session_id, 'x', owner)).toThrow('not running')
   })
 
-  it('uses the custom terminal config path before the standard ~/.claude path', () => {
+  it('uses the complete selected root or the platform product default', () => {
     const app = { getPath: vi.fn(() => '/Users/test') }
 
     expect(terminalConfigPath(app, { CLAUDE_CONFIG_DIR: '/portable' }))
       .toBe(path.join('/portable', 'terminal-config.json'))
     expect(terminalConfigPath(app, {}))
-      .toBe(path.join('/Users/test', '.claude', 'terminal-config.json'))
+      .toBe(path.join(getDefaultEchoFlowConfigDir({ env: {}, homeDir: '/Users/test' }), 'terminal-config.json'))
   })
 
-  it('reads an old userData terminal config but writes future changes to ~/.claude', () => {
+  it('imports old terminal preferences before reading or writing only the complete root', async () => {
     const root = tempDir()
     const home = path.join(root, 'home')
     const userData = path.join(root, 'user-data')
@@ -126,21 +128,56 @@ describe('Electron terminal service', () => {
     fs.mkdirSync(userData, { recursive: true })
     fs.writeFileSync(legacyBash, '')
     fs.writeFileSync(newBash, '')
-    fs.writeFileSync(path.join(userData, 'terminal-config.json'), JSON.stringify({ bash_path: legacyBash }))
-    const service = new ElectronTerminalService({
-      app: { getPath: name => name === 'home' ? home : userData },
-      env: {},
-      isFile: filePath => filePath === legacyBash || filePath === newBash,
+    const oldBytes = JSON.stringify({ bash_path: legacyBash, future: 'preserve' })
+    fs.writeFileSync(path.join(userData, 'terminal-config.json'), oldBytes)
+    fs.writeFileSync(path.join(userData, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+    const options = {
+      app: { getPath: (name: string) => name === 'home' ? home : userData },
+      env: {}, isFile: (filePath: string) => filePath === legacyBash || filePath === newBash,
+    }
+    expect(new ElectronTerminalService(options).getBashPath()).toBeNull()
+    const binding = resolveStorageBinding({ env: {}, homeDir: home })
+    const lease = await initializeDesktopStorage({
+      binding, sources: [{ directory: userData, markerRoot: userData }], issues: [],
+    }, { assertQuiescent: async () => {}, platform: 'linux' }, async () => {
+      expect(fs.readFileSync(path.join(userData, 'terminal-config.json'), 'utf8')).toBe(oldBytes)
     })
+    try {
+      const service = new ElectronTerminalService(options)
+      expect(service.getBashPath()).toBe(legacyBash)
+      service.setBashPath(newBash)
+      expect(JSON.parse(fs.readFileSync(path.join(binding.root, 'terminal-config.json'), 'utf8'))).toEqual({
+        bash_path: newBash, future: 'preserve',
+      })
+      expect(fs.existsSync(userData)).toBe(false)
+    } finally { await lease.release() }
+  })
 
-    expect(service.getBashPath()).toBe(legacyBash)
-    service.setBashPath(newBash)
-    expect(JSON.parse(fs.readFileSync(path.join(home, '.claude', 'terminal-config.json'), 'utf8'))).toEqual({
-      bash_path: newBash,
-    })
-    expect(JSON.parse(fs.readFileSync(path.join(userData, 'terminal-config.json'), 'utf8'))).toEqual({
-      bash_path: legacyBash,
-    })
+  it.each(['primary', 'broken', 'empty', 'override', 'blank-override'] as const)('never reads retired terminal config for %s', scenario => {
+    const root = tempDir()
+    const home = path.join(root, 'home')
+    const userData = path.join(root, 'user-data')
+    const legacyBash = path.join(root, 'legacy-bash.exe')
+    const primaryBash = path.join(root, 'primary-bash.exe')
+    fs.mkdirSync(userData)
+    const legacyPath = path.join(userData, 'terminal-config.json')
+    const legacyContent = JSON.stringify({ bash_path: legacyBash })
+    fs.writeFileSync(legacyPath, legacyContent)
+    const app = { getPath: (name: string) => name === 'home' ? home : userData }
+    const env = scenario === 'override' ? { CLAUDE_CONFIG_DIR: path.join(root, 'custom') }
+      : scenario === 'blank-override' ? { CLAUDE_CONFIG_DIR: '   ' } : {}
+    if (scenario === 'primary' || scenario === 'broken' || scenario === 'empty') {
+      const primaryPath = terminalConfigPath(app, env)!
+      fs.mkdirSync(path.dirname(primaryPath), { recursive: true })
+      fs.writeFileSync(primaryPath, scenario === 'broken' ? '{broken' : JSON.stringify(scenario === 'empty' ? {} : { bash_path: primaryBash }))
+    }
+    if (scenario === 'blank-override') {
+      expect(() => terminalConfigPath(app, env)).toThrow('absolute directory')
+    } else {
+      const service = new ElectronTerminalService({ app, env, isFile: file => file === legacyBash || file === primaryBash })
+      expect(service.getBashPath()).toBe(scenario === 'primary' ? primaryBash : null)
+    }
+    expect(fs.readFileSync(legacyPath, 'utf8')).toBe(legacyContent)
   })
 
   it('persists the legacy bash path config and validates saved paths', () => {
@@ -178,11 +215,12 @@ describe('Electron terminal service', () => {
     expect(defaultShell('linux', { SHELL: '/bin/fish' }, null, () => false)).toBe('/bin/fish')
   })
 
-  it('reads desktop terminal settings from the Claude config directory', () => {
+  it('reads desktop terminal settings from the shared product-root resolver', () => {
     const dir = tempDir()
-    fs.mkdirSync(path.join(dir, '.claude'), { recursive: true })
+    const configRoot = getDefaultEchoFlowConfigDir({ env: {}, platform: 'win32', homeDir: dir })
+    fs.mkdirSync(configRoot, { recursive: true })
     fs.writeFileSync(
-      path.join(dir, '.claude', 'settings.json'),
+      path.join(configRoot, 'settings.json'),
       JSON.stringify({ desktopTerminal: { startupShell: 'cmd' } }),
     )
 
@@ -193,9 +231,9 @@ describe('Electron terminal service', () => {
     })
 
     expect(desktopTerminalSettingsPath({ HOME: ignoredHome, USERPROFILE: dir }, 'win32'))
-      .toBe(path.join(dir, '.claude', 'settings.json'))
+      .toBe(path.join(configRoot, 'settings.json'))
     expect(desktopTerminalSettingsPath({ HOME: dir }, 'darwin'))
-      .toBe(path.join(dir, '.claude', 'settings.json'))
+      .toBe(path.join(getDefaultEchoFlowConfigDir({ env: {}, platform: 'darwin', homeDir: dir }), 'settings.json'))
     expect(service.resolveShell()).toBe('cmd.exe')
   })
 

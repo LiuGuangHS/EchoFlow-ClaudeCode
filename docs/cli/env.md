@@ -58,12 +58,22 @@ AZURE_OPENAI_CODEX_DEPLOYMENT=your_codex_deployment
 
 | 变量 | 说明 |
 |------|------|
-| `CLAUDE_CONFIG_DIR` | 改用指定配置目录，而不是默认的 `~/.claude`；适合便携模式和隔离测试 |
-| `CC_HAHA_TRACE_DIR` | Agent Trace 的独立存储目录，必须是绝对路径；为空时仍使用配置目录下的 `cc-haha/traces`。详见 [设置](../desktop/settings.md) |
+| `CLAUDE_CONFIG_DIR` | 为桌面、CLI 和 IM 指定同一个绝对数据根目录；覆盖下表的平台默认目录。为空时使用默认值，适合便携模式和隔离测试 |
+| `CC_HAHA_TRACE_DIR` | 指定 Trace 的绝对目录。在采用统一数据根的版本中，默认使用 `<data-root>/echoflow-code/traces`，根外值须先迁移；v0.7.7 等旧版本允许直接写入根外目录。详见 [设置](../desktop/settings.md) |
 | `CLAUDE_CODE_FORCE_RECOVERY_CLI` | 设为 `1` 使用简化的 Recovery CLI |
 | `CLAUDE_CODE_SHELL_PREFIX` | 为 Bash 工具增加 Shell 前缀，例如 Windows 下的 `wsl -e bash -lc` |
 | `DISABLE_TELEMETRY` | 设为 `1` 禁用遥测 |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | 设为 `1` 禁用非必要网络请求 |
+
+本文的 `<data-root>` 表示唯一数据根。默认位置按平台选择：
+
+| 平台 | 默认数据根 |
+|---|---|
+| Windows | `%LOCALAPPDATA%/EchoFlow Code` |
+| macOS | `~/Library/Application Support/EchoFlow Code` |
+| Linux | `${XDG_DATA_HOME:-~/.local/share}/echoflow-code` |
+
+`CLAUDE_CONFIG_DIR` 覆盖的是完整数据根，不是其中的 `echoflow-code` 子目录。旧 `~/.claude` 和 `cc-haha` 路径只用于迁移兼容；项目里的 `.claude` 仍是工作区配置，不属于用户数据根。
 
 本地 Server 的 `SERVER_HOST`、`SERVER_PORT`、`SERVER_AUTH_REQUIRED` 等变量见 [本地 Server](../internals/server.md)。
 
@@ -74,16 +84,16 @@ AZURE_OPENAI_CODEX_DEPLOYMENT=your_codex_deployment
 桌面端把 Provider 索引保存到：
 
 ```text
-~/.claude/cc-haha/providers.json
+<data-root>/echoflow-code/providers.json
 ```
 
-应用管理的 Provider 环境写入隔离的 Haha 配置，不需要手工复制到 `~/.claude/settings.json`。当 CLI 读取到已激活的 Provider 时，会复用其认证、模型和协议设置；`openai_chat` 与 `openai_responses` Provider 会自动使用本机回环代理。
+应用管理的 Provider 环境写入同一数据根下的产品配置，不需要手工复制到共享的 `~/.claude/settings.json`。当 CLI 读取到已激活的 Provider 时，会复用其认证、模型和协议设置；`openai_chat` 与 `openai_responses` Provider 会自动使用本机回环代理。
 
 详细流程见 [第三方模型](../start/models.md)。
 
 ### `.env` 文件
 
-源码仓库中的 `bin/claude-haha` 会在项目根目录存在 `.env` 时加载它：
+源码仓库中的 `bin/echoflow-code` 会在项目根目录存在 `.env` 时加载它：
 
 ```bash
 cp .env.example .env
@@ -104,7 +114,7 @@ ANTHROPIC_DEFAULT_OPUS_MODEL=provider-model
 
 ### `settings.json`
 
-用户级设置位于 `~/.claude/settings.json`：
+EchoFlow 用户级设置位于 `<data-root>/settings.json`：
 
 ```json
 {
@@ -122,7 +132,7 @@ ANTHROPIC_DEFAULT_OPUS_MODEL=provider-model
 
 这里不存在可靠的“Shell > `.env` > settings”三段式规则：
 
-1. `bin/claude-haha` 先让 Bun 加载仓库 `.env`。
+1. `bin/echoflow-code` 先让 Bun 加载仓库 `.env`。
 2. CLI 初始化时合并已启用的用户、项目、本地、命令行和受管设置来源。
 3. 已激活的 Haha Provider 会覆盖普通 Claude 设置中的 Provider 路由变量，防止两个客户端互相污染。
 4. 桌面端 host 注入的运行时变量受到保护，不能被 `settings.json` 中的同名字段替换。

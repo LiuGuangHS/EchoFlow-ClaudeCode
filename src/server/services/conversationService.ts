@@ -12,7 +12,6 @@ import { SDKPromptSuggestionActivityMessageSchema } from '../../entrypoints/sdk/
  */
 
 import * as fs from 'node:fs'
-import * as os from 'node:os'
 import * as path from 'node:path'
 import { ProviderService } from './providerService.js'
 import { SettingsService } from './settingsService.js'
@@ -54,6 +53,11 @@ import {
   buildClaudeCliArgs,
   resolveClaudeCliLauncher,
 } from '../../utils/desktopBundledCli.js'
+import {
+  resolveClaudeCodeRuntimeId,
+  resolveClaudeCodeRuntimePath,
+  type ClaudeCodeRuntimeId,
+} from './claudeCodeRuntimeService.js'
 import {
   ASK_USER_QUESTION_CLARIFY_MESSAGE,
   ASK_USER_QUESTION_CLARIFY_WITH_QUESTIONS_PREFIX,
@@ -288,7 +292,10 @@ function networkRoutingFingerprint(
   })
 }
 
+type ResolvedCliRuntime = { cliRuntimeId?: ClaudeCodeRuntimeId; command: string[] }
+
 type SessionProcess = {
+  cliRuntime: ResolvedCliRuntime
   runtimeSelection?: SessionRuntimeSelection
   proc: ReturnType<typeof Bun.spawn>
   outputCallbacks: SessionOutputCallback[]
@@ -324,6 +331,8 @@ type SessionProcess = {
   officialOAuthToken: string | null
   officialOAuthRefreshPromise?: Promise<void>
   pendingPermissionRequests: Map<string, TrackedPermissionRequest>
+  // Keep submitted IDs until this owner retires: send can throw after consumption.
+  permissionResponseRequestIds?: Set<string>
   autoResolvedRequestIds?: Set<string>
   pendingControlRequests: Map<string, (reason: Error) => void>
   /** Last value sent with `set_prompt_suggestions`; the CLI starts disabled. */
@@ -378,6 +387,8 @@ export type SessionStartOptions = {
   openAIFastMode?: boolean
   thinking?: 'enabled' | 'adaptive' | 'disabled'
   providerId?: string | null
+  cliRuntimeId?: ClaudeCodeRuntimeId
+  persistCliRuntimeId?: boolean
   resumeInterruptedTurn?: boolean
 }
 
@@ -474,7 +485,7 @@ export class ConversationService {
   refreshAutoQuestionSettings(): void {
     for (const [sessionId, session] of this.sessions) {
       for (const [requestId, request] of session.pendingPermissionRequests) {
-        if (request.toolName !== 'AskUserQuestion' || request.autoAnswerCancelled) continue
+        if (request.toolName !== 'AskUserQuestion' || request.autoAnswerCancelled || session.permissionResponseRequestIds?.has(requestId)) continue
         this.clearAutoAnswerWait(request)
         request.autoAnswerGeneration = (request.autoAnswerGeneration ?? 0) + 1
         request.autoAnswerTimer = undefined
@@ -490,13 +501,13 @@ export class ConversationService {
     requestId: string,
     request: TrackedPermissionRequest,
   ): Promise<void> {
-    if (request.toolName !== 'AskUserQuestion') return
+    if (request.toolName !== 'AskUserQuestion' || session.permissionResponseRequestIds?.has(requestId)) return
     const generation = request.autoAnswerGeneration ?? 0
     try {
       const settings = normalizeAutoQuestionSettings(
         (await new SettingsService().getUserSettings()).autoQuestion,
       )
-      if (request.autoAnswerCancelled ||
+      if (request.autoAnswerCancelled || session.permissionResponseRequestIds?.has(requestId) ||
         (request.autoAnswerGeneration ?? 0) !== generation || this.sessions.get(sessionId) !== session ||
         session.pendingPermissionRequests.get(requestId) !== request) return
       request.autoAnswerCreatedAt ??= Date.now()
@@ -522,7 +533,7 @@ export class ConversationService {
     requestId: string,
     request: TrackedPermissionRequest,
   ): Promise<void> {
-    if (request.autoAnswerCancelled || this.sessions.get(sessionId) !== session ||
+    if (request.autoAnswerCancelled || session.permissionResponseRequestIds?.has(requestId) || this.sessions.get(sessionId) !== session ||
       session.pendingPermissionRequests.get(requestId) !== request) return
     const skip = (reason: string) => {
       console.info(`[ConversationService] Automatic answer left pending: session=${sessionId} request=${requestId} reason=${reason}`)
@@ -629,6 +640,7 @@ export class ConversationService {
     repository?: PreparedSessionWorkspace['repository'],
     agentProfile: 'standard' | 'lean' = 'standard',
     additionalDirectories: readonly string[] = [],
+    cliCommand?: readonly string[],
   ): string[] {
     const side = getSideChat(sessionId)
     const dangerousMode = process.env.CLAUDE_DANGEROUS_MODE === '1'
@@ -642,7 +654,7 @@ export class ConversationService {
           ]
         : []
 
-    return this.resolveCliArgs([
+    const args = [
       '--print',
       '--agent-profile', agentProfile,
       '--verbose',
@@ -681,7 +693,8 @@ export class ConversationService {
       '--replay-user-messages',
       ...this.getRuntimeArgs(options),
       ...this.getPermissionArgs(options?.permissionMode, dangerousMode),
-    ])
+    ]
+    return cliCommand ? [...cliCommand, ...args] : this.resolveCliArgs(args)
   }
 
   async startSession(
@@ -689,6 +702,16 @@ export class ConversationService {
     workDir: string,
     sdkUrl: string,
     options?: SessionStartOptions,
+  ): Promise<void> {
+    return this.startSessionWithRuntime(sessionId, workDir, sdkUrl, options)
+  }
+
+  private async startSessionWithRuntime(
+    sessionId: string,
+    workDir: string,
+    sdkUrl: string,
+    options?: SessionStartOptions,
+    resolvedRuntime?: ResolvedCliRuntime,
   ): Promise<void> {
     migrationMaintenance.assertAvailable()
     if (this.deletedSessions.has(sessionId)) {
@@ -705,13 +728,22 @@ export class ConversationService {
     if (isSideChatId(sessionId) && (!side || side.closed || side.started)) {
       throw new ConversationStartupError('This temporary side chat has expired. Open a new side chat.', 'SESSION_DELETED')
     }
-    if (options?.teamWorker && (await sessionService.getSessionLaunchInfo(options.teamWorker.parentSessionId))?.agentProfile === 'lean') {
+    const parentSessionId = options?.teamWorker?.parentSessionId
+    const parentLaunchInfo = parentSessionId ? await sessionService.getSessionLaunchInfo(parentSessionId) : null
+    if (parentLaunchInfo?.agentProfile === 'lean') {
       throw new ConversationStartupError('Agent teams are unavailable in lean sessions', 'LEAN_CAPABILITY_UNAVAILABLE')
     }
     const launchInfo = options?.teamWorker ? null : await sessionService.getSessionLaunchInfo(sessionId)
-    const additionalDirectories = (options?.teamWorker
-      ? (await sessionService.getSessionLaunchInfo(options.teamWorker.parentSessionId))?.additionalDirectories
-      : launchInfo?.additionalDirectories) ?? []
+    resolvedRuntime ??= parentSessionId ? this.sessions.get(parentSessionId)?.cliRuntime : undefined
+    if (!resolvedRuntime) {
+      const selected = resolveClaudeCodeRuntimeId(options?.cliRuntimeId ?? launchInfo?.cliRuntimeId ?? parentLaunchInfo?.cliRuntimeId)
+      // Resolve before launch mutations and keep the same command across stale-lock retries.
+      resolvedRuntime = {
+        cliRuntimeId: selected ?? (process.env.CLAUDE_CLI_PATH ? undefined : 'bundled'),
+        command: this.resolveCliArgs([], selected),
+      }
+    }
+    const additionalDirectories = (options?.teamWorker ? parentLaunchInfo : launchInfo)?.additionalDirectories ?? []
     if (launchInfo?.agentProfile === 'lean' && (options?.permissionMode ?? launchInfo.permissionMode) === 'plan') {
       throw new ConversationStartupError('Plan mode is unavailable in lean sessions. Choose another permission mode before continuing.', 'LEAN_CAPABILITY_UNAVAILABLE')
     }
@@ -752,13 +784,16 @@ export class ConversationService {
       )
       // Replacing the empty placeholder must not erase the session's runtime
       // choice before its first turn writes a real transcript.
-      if (launchInfo.runtimeModelId) {
+      if (launchInfo.runtimeModelId || launchInfo.cliRuntimeId) {
         await sessionService.appendSessionMetadata(sessionId, {
           workDir,
-          runtimeProviderId: launchInfo.runtimeProviderId,
-          runtimeModelId: launchInfo.runtimeModelId,
-          ...(launchInfo.effortLevel ? { effortLevel: launchInfo.effortLevel } : {}),
-          ...(launchInfo.openAIFastMode !== undefined ? { openAIFastMode: launchInfo.openAIFastMode } : {}),
+          ...(launchInfo.cliRuntimeId ? { cliRuntimeId: launchInfo.cliRuntimeId } : {}),
+          ...(launchInfo.runtimeModelId ? {
+            runtimeProviderId: launchInfo.runtimeProviderId,
+            runtimeModelId: launchInfo.runtimeModelId,
+            ...(launchInfo.effortLevel ? { effortLevel: launchInfo.effortLevel } : {}),
+            ...(launchInfo.openAIFastMode !== undefined ? { openAIFastMode: launchInfo.openAIFastMode } : {}),
+          } : {}),
         })
       }
     }
@@ -809,6 +844,7 @@ export class ConversationService {
       launchRepository,
       launchInfo?.agentProfile ?? 'standard',
       additionalDirectories,
+      resolvedRuntime.command,
     )
 
     console.log(
@@ -911,6 +947,7 @@ export class ConversationService {
     })
     const session: SessionProcess = {
       proc,
+      cliRuntime: resolvedRuntime,
       teamWorker: options?.teamWorker,
       outputCallbacks: [],
       workDir: launchWorkDir,
@@ -996,7 +1033,7 @@ export class ConversationService {
         console.log(
           `[ConversationService] Removed stale lock for ${sessionId}, retrying...`,
         )
-        return this.startSession(sessionId, workDir, sdkUrl, options)
+        return this.startSessionWithRuntime(sessionId, workDir, sdkUrl, options, resolvedRuntime)
       }
 
       console.error(
@@ -1027,7 +1064,8 @@ export class ConversationService {
     const shouldPersistRuntimeMetadata =
       options?.providerId !== undefined ||
       !!options?.model ||
-      !!options?.effort
+      !!options?.effort ||
+      options?.persistCliRuntimeId === true
     if (!options?.teamWorker && (shouldReplacePlaceholder || !launchInfo || shouldPersistRuntimeMetadata)) {
       // system/init can move a newly-created session into its worktree while
       // startup is still awaiting the SDK. Once that authoritative cwd is
@@ -1044,6 +1082,9 @@ export class ConversationService {
           : {}),
         ...(options?.model ? { runtimeModelId: options.model } : {}),
         ...(options?.effort ? { effortLevel: options.effort } : {}),
+        ...(options?.persistCliRuntimeId && options.cliRuntimeId
+          ? { cliRuntimeId: resolvedRuntime.cliRuntimeId }
+          : {}),
       })
       // Startup resumes once the SDK socket attaches, usually before init, so
       // init can move the session while this write is in flight. If it lands
@@ -1235,17 +1276,17 @@ export class ConversationService {
     permissionUpdates?: unknown[],
     automaticQuestionAnswer = false,
   ): boolean {
-    const child = [...this.sessions.entries()].find(([, entry]) => entry.teamWorker?.parentSessionId === sessionId && entry.pendingPermissionRequests.has(requestId))
+    const child = [...this.sessions.entries()].find(([, entry]) => entry.teamWorker?.parentSessionId === sessionId && (entry.pendingPermissionRequests.has(requestId) || entry.permissionResponseRequestIds?.has(requestId)))
     if (child) return this.respondToPermission(child[0], requestId, allowed, rule, updatedInput, denyMessage, permissionUpdates, automaticQuestionAnswer)
     const session = this.sessions.get(sessionId)
-    if (session?.autoResolvedRequestIds?.has(requestId)) return false
-    const pendingRequest = session?.pendingPermissionRequests.get(requestId)
-    this.clearAutoAnswerWait(pendingRequest)
-    if (session) {
-      if (session.pendingPermissionRequests.delete(requestId)) powerActivityClock.changed()
+    if (!session || session.autoResolvedRequestIds?.has(requestId)) return false
+    const pendingRequest = session.pendingPermissionRequests.get(requestId)
+    if (session.permissionResponseRequestIds?.has(requestId)) {
+      if (pendingRequest) throw new Error('Permission response outcome is uncertain; automatic resubmission is blocked')
+      return false
     }
 
-    return this.sendSdkMessage(sessionId, {
+    const payload = {
       type: 'control_response',
       response: {
         subtype: 'success',
@@ -1283,7 +1324,13 @@ export class ConversationService {
               message: buildDenyMessage(pendingRequest?.toolName, denyMessage),
             },
       },
-    })
+    }
+    session.permissionResponseRequestIds ??= new Set()
+    session.permissionResponseRequestIds.add(requestId)
+    this.clearAutoAnswerWait(pendingRequest)
+    const sent = this.sendSdkMessage(sessionId, payload)
+    if (sent && session.pendingPermissionRequests.delete(requestId)) powerActivityClock.changed()
+    return sent
   }
 
   async setPermissionMode(sessionId: string, mode: string, timeoutMs = 10_000): Promise<boolean> {
@@ -1379,6 +1426,10 @@ export class ConversationService {
     if (this.sessions.get(sessionId) !== session) return false
     session.runtimeSelection = { ...session.runtimeSelection, providerId: session.providerId ?? null, modelId: model }
     return true
+  }
+
+  getSessionCliRuntimeId(sessionId: string): ClaudeCodeRuntimeId | undefined {
+    return this.sessions.get(sessionId)?.cliRuntime.cliRuntimeId
   }
 
   /** The process's acknowledged runtime, unaffected by a queued next-turn selection. */
@@ -1752,6 +1803,12 @@ export class ConversationService {
         ) {
           this.recoverOfficialOAuthAfter401(sessionId, session)
         }
+        if (
+          msg?.type === 'control_request' &&
+          msg.request?.subtype === 'can_use_tool' &&
+          typeof msg.request_id === 'string' &&
+          session.permissionResponseRequestIds?.has(msg.request_id)
+        ) continue
         if (
           msg?.type === 'control_request' &&
           msg.request?.subtype === 'can_use_tool' &&
@@ -2842,9 +2899,10 @@ export class ConversationService {
     }
   }
 
-  private resolveCliArgs(baseArgs: string[]): string[] {
+  private resolveCliArgs(baseArgs: string[], cliRuntimeId?: ClaudeCodeRuntimeId): string[] {
+    const installedPath = resolveClaudeCodeRuntimePath(cliRuntimeId)
     const launcher = resolveClaudeCliLauncher({
-      cliPath: process.env.CLAUDE_CLI_PATH,
+      cliPath: cliRuntimeId === undefined ? process.env.CLAUDE_CLI_PATH : installedPath,
       execPath: process.execPath,
     })
 
@@ -3170,7 +3228,7 @@ export class ConversationService {
     }
 
     const uploadDir = path.join(
-      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
+      getEchoFlowConfigDir(),
       'uploads',
       sessionId,
     )

@@ -1,3 +1,5 @@
+import { copyLegacyPreference } from '../lib/legacyPreferenceMigration'
+
 export type Locale = 'en' | 'zh' | 'zh-TW' | 'jp' | 'kr'
 
 export const LOCALE_STORAGE_KEY = 'cc-haha-locale'
@@ -66,13 +68,12 @@ export function resolveSupportedLocale(languageTags: readonly string[]): Locale 
 }
 
 export function migrateLegacyLocalePreference(storage: Pick<Storage, 'getItem' | 'setItem'>): boolean {
-  // Schema 9 repairs the prefix rename, including already-upgraded schema 8.
-  if (Number(storage.getItem('cc-haha.persistence.schemaVersion') ?? 0) >= 9) return false
-  if (storage.getItem(LOCALE_STORAGE_KEY) !== null) return false
-  const legacy = storage.getItem('echoflow-code-locale')
-  if (!isLocale(legacy)) return false
-  storage.setItem(LOCALE_STORAGE_KEY, legacy)
-  return true
+  return copyLegacyPreference(storage, LOCALE_STORAGE_KEY, (version) => {
+    // Schema 9 repairs the prefix rename, including already-upgraded schema 8.
+    if (version >= 9) return null
+    const legacy = storage.getItem('echoflow-code-locale')
+    return isLocale(legacy) ? legacy : null
+  })
 }
 
 export function readStoredLocale(): Locale | null {

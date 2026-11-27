@@ -5,6 +5,7 @@ import { savePluginOptions, loadPluginOptions, deletePluginOptions, type PluginO
 import { resolvePluginMcpEnvironment } from '../../utils/plugins/mcpPluginIntegration.js'
 
 import type { RemoteConnectorRecipe } from './types.js'
+import { connectorPluginName } from './pluginIdentity.js'
 export type { RemoteConnectorRecipe } from './types.js'
 
 export type RemoteConnectorCheck = { authenticated: boolean, verification: 'remote', toolCount: number }
@@ -20,8 +21,8 @@ export type RemoteConnectorDependencies = {
 }
 
 function ownedName(recipe: RemoteConnectorRecipe): string {
-  if (!/^[a-z][a-z0-9-]*$/.test(recipe.id) || recipe.pluginId !== `office-${recipe.id}@haha-connectors`) throw new Error('Invalid managed remote connector identity')
-  return `office-${recipe.id}`
+  try { return connectorPluginName(recipe) }
+  catch { throw new Error('Invalid managed remote connector identity') }
 }
 
 function validateRecipe(recipe: RemoteConnectorRecipe): void {

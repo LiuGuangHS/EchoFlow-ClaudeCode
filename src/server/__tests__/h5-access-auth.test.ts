@@ -8,7 +8,7 @@ import {
   setCwdState,
   setOriginalCwd,
 } from '../../bootstrap/state.js'
-import { startServer, stopServerRuntimeForShutdown } from '../index.js'
+import { startServer, stopServerRuntimeForShutdown } from '../serverRuntime.js'
 import {
   clearFilesystemAccessRootsForTests,
   registerFilesystemAccessRoot,
@@ -16,6 +16,7 @@ import {
 import { H5AccessService } from '../services/h5AccessService.js'
 import { ProviderService } from '../services/providerService.js'
 import { sessionService } from '../services/sessionService.js'
+import { conversationService } from '../services/conversationService.js'
 import { hasPowerActivityLeases, releasePowerActivityLease } from '../services/powerActivityLease.js'
 
 let server: ReturnType<typeof Bun.serve> | undefined
@@ -348,6 +349,57 @@ describe('remote H5 auth and CORS integration', () => {
       expect(hasPowerActivityLeases()).toBe(false)
     } finally {
       releasePowerActivityLease(leaseId)
+    }
+  })
+
+  test('replays a committed IM receipt through the authenticated adapter WebSocket upgrade', async () => {
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'reply-owner-fixture'
+    const owner = crypto.randomUUID()
+    const sessionId = crypto.randomUUID()
+    const replyAnchor = 'fixture-thread'
+    const hasSession = spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    const send = spyOn(conversationService, 'sendMessage').mockImplementation(async (_session, _text, _files, options) => {
+      options?.onCommitted?.()
+      return true
+    })
+
+    function collectFrames(headers: Record<string, string>, submit = false) {
+      return new Promise<unknown[]>((resolve, reject) => {
+        const socket = new WebSocket(`${wsBaseUrl}/ws/${sessionId}`, { headers })
+        const frames: unknown[] = []
+        const timer = setTimeout(() => {
+          socket.close()
+          reject(new Error('Timed out waiting for the WebSocket fixture'))
+        }, 2_000)
+        if (submit) socket.onopen = () => socket.send(JSON.stringify({ type: 'user_message', content: 'fixture prompt', replyAnchor }))
+        socket.onerror = () => {
+          clearTimeout(timer)
+          socket.close()
+          reject(new Error('WebSocket fixture failed'))
+        }
+        socket.onmessage = event => {
+          const frame = JSON.parse(String(event.data))
+          frames.push(frame)
+          if (frame.type !== (submit ? 'input_committed' : 'permission_requests_snapshot')) return
+          clearTimeout(timer)
+          socket.close()
+          resolve(frames)
+        }
+      })
+    }
+
+    try {
+      const adapterHeaders = { Authorization: 'Bearer reply-owner-fixture', 'x-echoflow-reply-owner': owner }
+      const submitted = await collectFrames(adapterHeaders, true)
+      const receipt = { type: 'input_committed', messageUuid: send.mock.calls[0]?.[3]?.messageUuid, replyAnchor }
+      expect(submitted).toContainEqual(receipt)
+      expect(await collectFrames(adapterHeaders)).toContainEqual(receipt)
+      expect(await collectFrames({ ...adapterHeaders, 'x-echoflow-reply-owner': crypto.randomUUID() })).not.toContainEqual(receipt)
+      expect(await collectFrames({ 'x-echoflow-reply-owner': owner })).not.toContainEqual(receipt)
+      expect(send).toHaveBeenCalledTimes(1)
+    } finally {
+      send.mockRestore()
+      hasSession.mockRestore()
     }
   })
 

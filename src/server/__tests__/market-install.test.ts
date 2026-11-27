@@ -88,6 +88,28 @@ afterEach(async () => {
 })
 
 describe('installMarketSkill', () => {
+  it.each([false, true])('keeps installation staging inside the selected root and cleans it (checksum failure=%s)', async fail => {
+    stubClawhub([{ path: 'SKILL.md', content: SKILL_MD }], fail ? { corruptPath: 'SKILL.md' } : {})
+    const fetchFixture = globalThis.fetch
+    const temporary = path.join(tmpHome, '.claude', 'echoflow-code', 'tmp')
+    let staging: string | undefined
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (new URL(url).pathname.endsWith('/file')) {
+        const entries = await fs.readdir(temporary)
+        expect(entries).toHaveLength(1)
+        staging = path.join(temporary, entries[0]!)
+        if (process.platform !== 'win32') expect((await fs.stat(staging)).mode & 0o777).toBe(0o700)
+      }
+      return fetchFixture(input)
+    }) as typeof fetch
+    if (fail) await expect(installMarketSkill('clawhub', 'demo')).rejects.toThrow('Checksum mismatch')
+    else expect((await installMarketSkill('clawhub', 'demo')).skill.installState).toBe('installed')
+    expect(staging).toBeDefined()
+    expect(await fs.stat(staging!).catch(() => null)).toBeNull()
+    expect(await fs.readdir(temporary)).toEqual([])
+  })
+
   it('downloads, verifies and installs a skill with market meta', async () => {
     stubClawhub([
       { path: 'SKILL.md', content: SKILL_MD },

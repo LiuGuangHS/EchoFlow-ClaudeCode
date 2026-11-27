@@ -84,6 +84,32 @@ describe('copied storage metadata migration', () => {
       .toEqual({ version: 1, previousRoots: [older, source], futureField: { keep: true } })
   })
 
+  for (const scenario of ['missing marketplace', 'foreign marketplace', 'foreign cache'] as const) {
+    test(`does not regenerate legacy connector skills with ${scenario}`, async () => {
+      const { source, target, stage, put } = await fixture()
+      const directory = join(source, 'connectors/runtime/dingtalk/1.0.50-win32-x64')
+      const marketplace = join(source, scenario === 'foreign marketplace' ? 'unrelated-marketplace' : 'connectors/marketplace')
+      const cache = scenario === 'foreign cache' ? 'unrelated-cache' : 'plugins/cache/haha-connectors/office-dingtalk/1.0.50-connector.1'
+      await put('connectors/state.json', { connectors: { dingtalk: { installation: {
+        directory, command: join(directory, 'dws.exe'), args: [], env: {},
+      } } } })
+      if (scenario !== 'missing marketplace') {
+        await put('plugins/known_marketplaces.json', {
+          'haha-connectors': { source: { source: 'directory', path: marketplace }, installLocation: marketplace },
+        })
+      }
+      await put('plugins/installed_plugins.json', { version: 2, plugins: {
+        'office-dingtalk@haha-connectors': [{ installPath: join(source, cache), scope: 'user' }],
+      } })
+      const skill = join(cache, 'skills/office-dingtalk/SKILL.md')
+      await put(skill, 'unverified skill bytes')
+      await cp(source, stage, { recursive: true })
+      await relocateManagedData(source, target, stage)
+      expect(await readFile(join(stage, skill), 'utf8')).toBe('unverified skill bytes')
+      expect(await readFile(join(source, skill), 'utf8')).toBe('unverified skill bytes')
+    })
+  }
+
   test('supports old plugin V1/cowork fixtures even when the old source no longer exists', async () => {
     const { source, target, stage, put } = await fixture()
     await put('cowork_plugins/installed_plugins.json', { version: 1, plugins: { 'plugin@market': { installPath: join(source, 'cowork_plugins/cache/plugin'), version: '1' } } })

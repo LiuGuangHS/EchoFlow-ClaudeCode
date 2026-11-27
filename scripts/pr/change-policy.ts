@@ -20,6 +20,7 @@ export type ChangePolicyResult = {
   blocked: boolean
   blockingReason: string | null
   blockingReasons: string[]
+  requiredApprovalLabels: string[]
   cliCoreFiles: string[]
   /** Why CLI core changes were allowed: the override label, or a PR authored by a CODEOWNER. */
   cliCoreOverride: 'label' | 'codeowner-author' | null
@@ -35,6 +36,7 @@ export type ChangePolicyResult = {
     chatContract: boolean
     agentFlow: boolean
     agentE2e: boolean
+    harness: boolean
     persistence: boolean
     policy: boolean
     docs: boolean
@@ -144,6 +146,15 @@ const agentE2eHarnessPaths = [
   'bun.lock',
 ]
 
+const harnessExactPaths = new Set([
+  'scripts/harness-audit.js',
+  'scripts/harness-audit.test.ts',
+  'package.json',
+  'bun.lock',
+  '.github/workflows/pr-quality.yml',
+  '.github/workflows/nightly-quality.yml',
+])
+
 const agentFlowPrefixes = [
   'src/server/api/sessions',
   'src/server/services/conversationService',
@@ -166,6 +177,49 @@ const agentFlowPrefixes = [
 ]
 
 const persistencePrefixes = [
+  'src/utils/echoFlowConfigRoot',
+  'src/utils/envUtils',
+  'src/utils/env.ts',
+  'src/utils/storage',
+  'src/utils/managedStoragePath',
+  'src/utils/cachePaths',
+  'src/services/storageMigration',
+  'src/services/storageStartup',
+  'src/services/storageAdoption',
+  'src/server/serverRuntime',
+  'src/server/migrationInventory',
+  'scripts/quality-gate/sandbox',
+  'src/entrypoints/',
+  'src/localRecoveryCli',
+  'src/server/index',
+  'src/server/migrationRuntimeApi',
+  'src/services/api/traceCapture',
+  'src/services/openaiAuth/storage',
+  'src/server/services/storageConsumers',
+  'src/server/services/localIndex/',
+  'src/server/services/teamService',
+  'src/server/__tests__/teams',
+  'src/server/services/sessionCollaboration',
+  'src/server/services/doctorService',
+  'src/server/services/diagnosticsService',
+  'src/server/services/adapterService',
+  'src/server/services/taskService',
+  'src/server/services/scheduledTaskReceipts',
+  'src/server/services/mobilePush',
+  'src/server/services/voice/',
+  'src/server/services/haha',
+  'src/server/services/echoFlow',
+  'src/server/publicAccess',
+  'adapters/',
+  'bin/',
+  'desktop/electron/storageBootstrap',
+  'desktop/electron/storageValidation',
+  'desktop/electron/services/desktopStorage',
+  'desktop/electron/services/legacyStorageMigration',
+  'desktop/electron/services/dataMigration',
+  'desktop/electron/services/echoFlowDataRoot',
+  'desktop/electron/services/migrationCredentials',
+  'desktop/sidecars/installerStorageRecovery',
   'scripts/issue-router/',
   '.agents/workflows/issue-router.md',
   'src/server/services/persistentStorageMigrations',
@@ -363,7 +417,8 @@ export function evaluateChangePolicy(
   const dependentFiles = [...new Set(
     inputDependentFiles.map(normalizePath).filter((file) => file && !changedSet.has(file)),
   )].sort()
-  const selectionFiles = [...files, ...dependentFiles]
+  // Guidance selects policy, not product checks, even under a product prefix.
+  const selectionFiles = [...files, ...dependentFiles].filter(file => !isAgentInstructionPath(file))
   const areas = new Set<ChangeArea>()
 
   for (const file of files) {
@@ -377,27 +432,26 @@ export function evaluateChangePolicy(
   // The label asks a maintainer to approve a CLI core change. A CODEOWNER (read
   // from the base branch, never from the PR) is that maintainer already.
   const author = owners.author?.trim().toLowerCase()
+  const ownerAuthor = author && owners.codeOwners?.includes(author)
   const cliCoreOverride = labels.includes(ALLOW_CLI_CORE_LABEL)
     ? 'label'
-    : author && (owners.codeOwners ?? []).includes(author)
+    : ownerAuthor
       ? 'codeowner-author'
       : null
-  const hasCliCoreOverride = cliCoreOverride !== null
   const coveragePolicyFiles = files.filter((file) => coveragePolicyExactPaths.has(file))
-  const hasCoveragePolicyOverride = labels.includes(ALLOW_COVERAGE_BASELINE_LABEL)
   const missingTests = missingTestSignals(files)
-  const hasMissingTestsOverride = labels.includes(ALLOW_MISSING_TESTS_LABEL)
-  const blockingReasons: string[] = []
-
-  if (hasCliCoreChange && !hasCliCoreOverride) {
-    blockingReasons.push(`CLI core changes require the ${ALLOW_CLI_CORE_LABEL} label and maintainer approval.`)
+  const approvals = new Map<string, string>()
+  if (hasCliCoreChange && !ownerAuthor) {
+    approvals.set(ALLOW_CLI_CORE_LABEL, `CLI core changes require the ${ALLOW_CLI_CORE_LABEL} label and maintainer approval.`)
   }
-  if (missingTests.length > 0 && !hasMissingTestsOverride) {
-    blockingReasons.push(`Production code changes require matching tests or the ${ALLOW_MISSING_TESTS_LABEL} maintainer override.`)
+  if (missingTests.length > 0) {
+    approvals.set(ALLOW_MISSING_TESTS_LABEL, `Production code changes require matching tests or the ${ALLOW_MISSING_TESTS_LABEL} maintainer override.`)
   }
-  if (coveragePolicyFiles.length > 0 && !hasCoveragePolicyOverride) {
-    blockingReasons.push(`Coverage baseline or threshold changes require the ${ALLOW_COVERAGE_BASELINE_LABEL} label and maintainer approval.`)
+  if (coveragePolicyFiles.length > 0) {
+    approvals.set(ALLOW_COVERAGE_BASELINE_LABEL, `Coverage baseline or threshold changes require the ${ALLOW_COVERAGE_BASELINE_LABEL} label and maintainer approval.`)
   }
+  const requiredApprovalLabels = [...approvals.keys()]
+  const blockingReasons = Array.from(approvals).filter(([label]) => !labels.includes(label)).map(([, reason]) => reason)
   const blocked = blockingReasons.length > 0
 
   // Surface checks run when the diff touches a surface *or* when a changed file is
@@ -443,7 +497,7 @@ export function evaluateChangePolicy(
       file.startsWith('src/') ||
       file.startsWith('adapters/')
     )) ||
-    file.startsWith('scripts/quality-gate/coverage') ||
+    (file.startsWith('scripts/quality-gate/coverage') && !isAgentInstructionPath(file)) ||
     file === 'package.json' ||
     file === 'desktop/package.json' ||
     file === 'desktop/bun.lock'
@@ -459,6 +513,7 @@ export function evaluateChangePolicy(
     blocked,
     blockingReason: blockingReasons[0] ?? null,
     blockingReasons,
+    requiredApprovalLabels,
     cliCoreFiles,
     cliCoreOverride: hasCliCoreChange ? cliCoreOverride : null,
     coveragePolicyFiles,
@@ -480,6 +535,7 @@ export function evaluateChangePolicy(
       chatContract: touchesChatContract,
       agentFlow: touchesAgentFlow,
       agentE2e: touchesAgentE2e,
+      harness: selectionFiles.some((file) => file.startsWith('harness/') || harnessExactPaths.has(file)),
       persistence: touchesPersistence,
       policy: touchesPolicy,
       docs: touchesDocs,
@@ -558,7 +614,7 @@ function formatSummary(result: ChangePolicyResult) {
     'PR change policy',
     `  Areas: ${result.areas.length ? result.areas.join(', ') : 'none'}`,
     `  Labels: ${result.labels.length ? result.labels.join(', ') : 'none'}`,
-    `  Checks: desktop=${result.checks.desktop}, mobile=${result.checks.mobile}, server=${result.checks.server}, adapters=${result.checks.adapters}, desktopNative=${result.checks.desktopNative}, providerContract=${result.checks.providerContract}, chatContract=${result.checks.chatContract}, agentFlow=${result.checks.agentFlow}, agentE2e=${result.checks.agentE2e}, persistence=${result.checks.persistence}, policy=${result.checks.policy}, docs=${result.checks.docs}, coverage=${result.checks.coverage}`,
+    `  Checks: desktop=${result.checks.desktop}, mobile=${result.checks.mobile}, server=${result.checks.server}, adapters=${result.checks.adapters}, desktopNative=${result.checks.desktopNative}, providerContract=${result.checks.providerContract}, chatContract=${result.checks.chatContract}, agentFlow=${result.checks.agentFlow}, agentE2e=${result.checks.agentE2e}, harness=${result.checks.harness}, persistence=${result.checks.persistence}, policy=${result.checks.policy}, docs=${result.checks.docs}, coverage=${result.checks.coverage}`,
   ]
 
   if (result.cliCoreOverride) {
@@ -606,6 +662,7 @@ function writeGithubOutputs(result: ChangePolicyResult) {
     areas: result.areas.join(','),
     area_labels: result.areaLabels.join(','),
     blocked: String(result.blocked),
+    required_approval_labels: JSON.stringify(result.requiredApprovalLabels),
     blocking_reasons: result.blockingReasons.join(' | '),
     cli_core_override: result.cliCoreOverride ?? '',
     desktop_checks: String(result.checks.desktop),
@@ -617,6 +674,7 @@ function writeGithubOutputs(result: ChangePolicyResult) {
     chat_contract_checks: String(result.checks.chatContract),
     agent_flow_checks: String(result.checks.agentFlow),
     agent_e2e_checks: String(result.checks.agentE2e),
+    harness_checks: String(result.checks.harness),
     persistence_checks: String(result.checks.persistence),
     policy_checks: String(result.checks.policy),
     docs_checks: String(result.checks.docs),

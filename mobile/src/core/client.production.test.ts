@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { getEchoFlowInternalDir } from '../../../src/utils/echoFlowConfigRoot'
+import { ensureEchoFlowConfigRoot, getEchoFlowInternalDir } from '../../../src/utils/echoFlowConfigRoot'
 import {
   existsSync,
   mkdirSync,
@@ -97,10 +97,11 @@ test('LAN verify agrees with the production H5 handler in an isolated process', 
   }
 }, 20000)
 
-test('native LAN WebSocket empty Origin retains real-server authentication and browser CORS', () => {
+test('native LAN WebSocket empty Origin retains real-server authentication and browser CORS', async () => {
   const sandboxHome = mkdtempSync(join(tmpdir(), 'mobile-ws-origin-'))
   try {
     const env = createSandboxedTestEnvironment(sandboxHome)
+    await ensureEchoFlowConfigRoot(env.CLAUDE_CONFIG_DIR)
     const fakeToken = 'h5_mobile_socket_fixture_only'
     const managedDir = getEchoFlowInternalDir(env.CLAUDE_CONFIG_DIR)
     mkdirSync(managedDir, { recursive: true })

@@ -9,7 +9,7 @@ import * as os from 'os'
 import { createServer } from 'net'
 import { handleApiRequest } from '../router.js'
 import { echoFlowOpenAIOAuthService } from '../services/echoFlowOpenAIOAuthService.js'
-import { startServer, stopServerRuntimeForShutdown } from '../index.js'
+import { startServer, stopServerRuntimeForShutdown } from '../serverRuntime.js'
 import { ProviderService } from '../services/providerService.js'
 import { echoFlowOAuthService } from '../services/echoFlowOAuthService.js'
 import { hahaOAuthService } from '../services/hahaOAuthService.js'
@@ -53,11 +53,11 @@ function buildReq(
   return { req, url, segments }
 }
 
-async function getFreePort(): Promise<number> {
+async function getFreePort(portToBind = 0): Promise<number> {
   return await new Promise((resolve, reject) => {
     const server = createServer()
     server.on('error', reject)
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(portToBind, '127.0.0.1', () => {
       const address = server.address()
       if (!address || typeof address === 'string') {
         server.close(() => reject(new Error('Failed to allocate test port')))
@@ -187,6 +187,27 @@ describe('DELETE /api/echoflow-openai-oauth', () => {
   beforeEach(setup)
   afterEach(teardown)
 
+  test.each([
+    ['echoflow-openai-oauth', 'haha-openai-oauth'],
+    ['haha-openai-oauth', 'echoflow-openai-oauth'],
+  ])('logout through %s closes the pending login started through %s', async (logout, login) => {
+    const callbackPort = await getFreePort()
+    echoFlowOpenAIOAuthService.setCallbackPortForTests(callbackPort)
+    const start = buildReq('POST', `/api/${login}/start`, { serverPort: 54321 })
+    const loginResponse = await handleApiRequest(start.req, start.url)
+    expect(loginResponse.status).toBe(200)
+    const { state } = await loginResponse.json() as { state: string }
+    expect(echoFlowOpenAIOAuthService.getSession(state)).not.toBeNull()
+
+    const stop = buildReq('DELETE', `/api/${logout}`)
+    const logoutResponse = await handleApiRequest(stop.req, stop.url)
+    expect(logoutResponse.status).toBe(200)
+    expect(echoFlowOpenAIOAuthService.getSession(state) === null).toBe(true)
+    expect(await getFreePort(callbackPort)).toBe(callbackPort)
+    const restart = buildReq('POST', `/api/${login}/start`, { serverPort: 54321 })
+    expect((await handleApiRequest(restart.req, restart.url)).status).toBe(200)
+  })
+
   test('clears token file', async () => {
     await echoFlowOpenAIOAuthService.saveTokens({
       accessToken: 'a',
@@ -216,7 +237,10 @@ describe('GET /auth/callback', () => {
       { service: echoFlowOpenAIOAuthService, callback: '/auth/callback' },
       { service: hahaOpenAIOAuthService, callback: '/callback/openai' },
     ]
-    const spies = cases.map(({ service }, index) =>
+    expect(hahaOAuthService).toBe(echoFlowOAuthService)
+    expect(hahaOpenAIOAuthService).toBe(echoFlowOpenAIOAuthService)
+    const owners = [...new Set(cases.map(({ service }) => service))]
+    const spies = owners.map((service, index) =>
       spyOn(service, 'completeSession').mockImplementation(async (_code, state) => {
         expect(service.consumeSession(state)).not.toBeNull()
         throw new Error(`fixture-exchange-failed-${index}`)
@@ -225,21 +249,28 @@ describe('GET /auth/callback', () => {
     try {
       echoFlowOpenAIOAuthService.setCallbackPortForTests(await getFreePort())
       hahaOpenAIOAuthService.setCallbackPortForTests(await getFreePort())
-      for (const [index, { service, callback }] of cases.entries()) {
+      for (const { service, callback } of cases) {
+        const index = owners.indexOf(service)
         const session = await service.startSession({ serverPort: server.port! })
-        const url = `http://127.0.0.1:${server.port}${callback}?code=fixture-code&state=${session.state}`
-        const response = await fetch(url)
-        expect(response.status).toBe(200)
-        expect(await response.text()).toContain(`fixture-exchange-failed-${index}`)
-        expect(spies[index]).toHaveBeenCalledWith('fixture-code', session.state)
-        const replay = await fetch(url)
-        expect(replay.status).toBe(400)
+        try {
+          const url = `http://127.0.0.1:${server.port}${callback}?code=fixture-code&state=${session.state}`
+          const response = await fetch(url)
+          expect(response.status).toBe(200)
+          expect(await response.text()).toContain(`fixture-exchange-failed-${index}`)
+          expect(spies[index]).toHaveBeenCalledWith('fixture-code', session.state)
+          const replay = await fetch(url)
+          expect(replay.status).toBe(400)
+        } finally {
+          if ('authCodeListener' in session) session.authCodeListener?.close()
+        }
       }
       for (const callback of ['/callback', '/auth/callback', '/callback/openai']) {
         const unknown = await fetch(`http://127.0.0.1:${server.port}${callback}?code=fixture-code&state=unknown`)
         expect(unknown.status).toBe(400)
       }
-      for (const spy of spies) expect(spy).toHaveBeenCalledTimes(1)
+      for (const [index, spy] of spies.entries()) {
+        expect(spy).toHaveBeenCalledTimes(cases.filter(({ service }) => service === owners[index]).length)
+      }
     } finally {
       for (const spy of spies) spy.mockRestore()
       hahaOpenAIOAuthService.dispose()

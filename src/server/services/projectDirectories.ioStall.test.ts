@@ -8,6 +8,7 @@ import { handleSessionsApi } from '../api/sessions.js'
 import { getFsImplementation, setFsImplementation } from '../../utils/fsOperations.js'
 import { setProjectDirectoryWorkerFactoryForTests } from '../../services/mcp/projectDirectoryIo.js'
 import { DesktopUiPreferencesService } from './desktopUiPreferencesService.js'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 
 const originalFs = getFsImplementation()
 const fixtures: string[] = []
@@ -43,7 +44,7 @@ test.each([
     try {
       const service = new DesktopUiPreferencesService()
       await service.updateProjectDirectories({ workDir: project, additionalDirectories: [extra] })
-      const preferencesFile = join(process.env.CLAUDE_CONFIG_DIR, 'cc-haha', 'desktop-ui.json')
+      const preferencesFile = join(getEchoFlowInternalDir(), 'desktop-ui.json')
       const before = await readFile(preferencesFile, 'utf8')
       await setProjectDirectoryWorkerFactoryForTests(script => {
         const worker = new Worker(`

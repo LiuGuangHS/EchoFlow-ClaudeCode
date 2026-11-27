@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
 import { Database } from 'bun:sqlite'
-import { mkdtemp, open, rm, stat } from 'node:fs/promises'
+import { open, rm, stat } from 'node:fs/promises'
 import { rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createPrivateStorageTempDirectory } from '../../utils/cachePaths.js'
 import { withHistoryReadBudget } from './boundedSessionHistory.js'
 import { streamSessionMetadata } from './sessionMetadataReader.js'
 import { ApiError } from '../middleware/errorHandler.js'
@@ -72,11 +72,17 @@ export async function readHistoryContexts(options: {
         evicted.database.close()
         await rm(evicted.directory, { recursive: true, force: true })
       }
-      const directory = await mkdtemp(join(tmpdir(), 'claude-history-context-'))
-      const database = new Database(join(directory, 'context.sqlite'))
-      database.exec('PRAGMA journal_mode=OFF; PRAGMA cache_size=-512; PRAGMA temp_store=FILE; CREATE TABLE parents (id TEXT PRIMARY KEY, chain TEXT); CREATE TABLE context (offset INTEGER PRIMARY KEY, owner TEXT, unowned_sidechain INTEGER)')
-      state = { database, directory, identity, size: 0, mtime: '', offset: 0 }
-      cache.set(options.filePath, state)
+      const directory = await createPrivateStorageTempDirectory('claude-history-context-')
+      let database: Database | undefined
+      try {
+        database = new Database(join(directory, 'context.sqlite'))
+        database.exec('PRAGMA journal_mode=OFF; PRAGMA cache_size=-512; PRAGMA temp_store=MEMORY; CREATE TABLE parents (id TEXT PRIMARY KEY, chain TEXT); CREATE TABLE context (offset INTEGER PRIMARY KEY, owner TEXT, unowned_sidechain INTEGER)')
+        state = { database, directory, identity, size: 0, mtime: '', offset: 0 }
+        cache.set(options.filePath, state)
+      } catch (error) {
+        try { database?.close() } finally { await rm(directory, { recursive: true, force: true }) }
+        throw error
+      }
     }
     cache.delete(options.filePath)
     cache.set(options.filePath, state)

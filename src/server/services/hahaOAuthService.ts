@@ -9,8 +9,9 @@
  * 不复制粘贴 —— 保证跟 CLI 走同一套协议实现。
  */
 
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'fs'
 import * as fs from 'fs/promises'
-import * as os from 'os'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import * as path from 'path'
 import { logTokenRefreshFailure } from './oauthRefreshLog.js'
 import {
@@ -32,9 +33,10 @@ import type {
   OAuthTokenExchangeResponse,
   SubscriptionType,
 } from '../../services/oauth/types.js'
-import { CLAUDE_AI_PROFILE_SCOPE } from '../../constants/oauth.js'
+import { CLAUDE_AI_PROFILE_SCOPE, getOauthConfig } from '../../constants/oauth.js'
 import { getOauthProfileFromOauthToken } from '../../services/oauth/getOauthProfile.js'
-import { getNetworkProxyUrl, loadNetworkSettings } from './networkSettings.js'
+import { getNoProxy, shouldBypassProxy } from '../../utils/proxy.js'
+import { getNetworkProxyUrl, loadNetworkSettings, mergeLoopbackNoProxy } from './networkSettings.js'
 
 export type StoredOAuthTokens = {
   accessToken: string
@@ -90,6 +92,7 @@ async function fetchAccountUuid(
 export class HahaOAuthService {
   private sessions = new Map<string, OAuthSession>()
   private tokenRefreshes = new Map<string, Promise<StoredOAuthTokens | null>>()
+  private generation = 0
   private accountUuid: string | null = null
   private accountUuidRetryAt = 0
   private refreshFn: RefreshFn = refreshOAuthToken
@@ -120,9 +123,7 @@ export class HahaOAuthService {
   }
 
   private getOAuthFilePath(): string {
-    const configDir =
-      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-    return path.join(configDir, 'cc-haha', 'oauth.json')
+    return path.join(getEchoFlowInternalDir(), 'oauth.json')
   }
 
   async loadTokens(): Promise<StoredOAuthTokens | null> {
@@ -136,26 +137,36 @@ export class HahaOAuthService {
   }
 
   async saveTokens(tokens: StoredOAuthTokens): Promise<void> {
-    const filePath = this.getOAuthFilePath()
-    await fs.mkdir(path.dirname(filePath), { recursive: true })
-    // 写临时文件再 rename,防止写到一半被其他读者读到残缺 JSON。
-    // 单进程 desktop 下 pid 后缀足够隔离。
-    const tmp = `${filePath}.tmp.${process.pid}`
-    await fs.writeFile(tmp, JSON.stringify(tokens, null, 2), { mode: 0o600 })
-    await fs.rename(tmp, filePath)
+    this.writeTokens(tokens)
+    this.generation++
+    this.tokenRefreshes.clear()
+    this.forgetAccountUuid()
   }
 
-  async deleteTokens(): Promise<void> {
-    this.forgetAccountUuid()
+  private writeTokens(tokens: StoredOAuthTokens): void {
+    const filePath = this.getOAuthFilePath()
+    mkdirSync(path.dirname(filePath), { recursive: true })
+    const tmp = `${filePath}.tmp.${process.pid}`
     try {
-      await fs.unlink(this.getOAuthFilePath())
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+      writeFileSync(tmp, JSON.stringify(tokens, null, 2), { mode: 0o600 })
+      renameSync(tmp, filePath)
+    } finally {
+      rmSync(tmp, { force: true })
     }
   }
 
+  async deleteTokens(): Promise<void> {
+    this.generation++
+    this.sessions.clear()
+    this.tokenRefreshes.clear()
+    this.forgetAccountUuid()
+    rmSync(this.getOAuthFilePath(), { force: true })
+  }
+
   startSession({ serverPort }: { serverPort: number }): OAuthSession {
-    this.pruneExpiredSessions()
+    this.sessions.clear()
+    this.generation++
+    this.tokenRefreshes.clear()
 
     const codeVerifier = generateCodeVerifier()
     const codeChallenge = generateCodeChallenge(codeVerifier)
@@ -196,13 +207,6 @@ export class HahaOAuthService {
     return s
   }
 
-  private pruneExpiredSessions(): void {
-    const now = Date.now()
-    for (const [state, s] of this.sessions.entries()) {
-      if (now - s.createdAt > SESSION_TTL_MS) this.sessions.delete(state)
-    }
-  }
-
   async completeSession(
     authorizationCode: string,
     state: string,
@@ -212,6 +216,7 @@ export class HahaOAuthService {
       throw new Error('OAuth session not found or expired')
     }
 
+    const generation = this.generation
     const response = await this.exchangeWithCustomCallback(
       authorizationCode,
       state,
@@ -230,8 +235,7 @@ export class HahaOAuthService {
       scopes: parseScopes(response.scope),
       subscriptionType: profile.subscriptionType,
     }
-    // A new login may be a different account.
-    this.forgetAccountUuid()
+    if (generation !== this.generation) throw new Error('OAuth sign-in was cancelled')
     await this.saveTokens(tokens)
     return tokens
   }
@@ -249,8 +253,10 @@ export class HahaOAuthService {
   ): Promise<OAuthTokenExchangeResponse> {
     const networkSettings = await loadNetworkSettings()
     try {
+      const configuredProxy = getNetworkProxyUrl(networkSettings)
+      const bypass = shouldBypassProxy(getOauthConfig().TOKEN_URL, mergeLoopbackNoProxy(getNoProxy()))
       return await this.exchangeFn(code, state, verifier, port, false, undefined, {
-        proxyUrl: getNetworkProxyUrl(networkSettings),
+        proxyUrl: bypass ? null : configuredProxy,
       })
     } catch (err) {
       // axios only reports "Request failed with status code N"; the token
@@ -265,8 +271,9 @@ export class HahaOAuthService {
   }
 
   async ensureFreshTokens(): Promise<StoredOAuthTokens | null> {
+    const generation = this.generation
     const tokens = await this.loadTokens()
-    if (!tokens) return null
+    if (!tokens || generation !== this.generation) return null
 
     if (tokens.expiresAt === null) return tokens
 
@@ -288,8 +295,9 @@ export class HahaOAuthService {
   private async refreshRejectedToken(
     rejectedToken: string,
   ): Promise<StoredOAuthTokens | null> {
+    const generation = this.generation
     const tokens = await this.loadTokens()
-    if (!tokens) return null
+    if (!tokens || generation !== this.generation) return null
 
     // Another session may already have rotated the shared token while this
     // 401 event was in flight. Reuse that value instead of rotating again.
@@ -325,7 +333,8 @@ export class HahaOAuthService {
 
   private async refreshStoredTokens(
     tokens: StoredOAuthTokens,
-  ): Promise<StoredOAuthTokens> {
+  ): Promise<StoredOAuthTokens | null> {
+    const generation = this.generation
     if (!tokens.refreshToken) {
       throw new Error('Claude OAuth refresh token is unavailable')
     }
@@ -341,7 +350,8 @@ export class HahaOAuthService {
       scopes: refreshed.scopes,
       subscriptionType: refreshed.subscriptionType ?? tokens.subscriptionType,
     }
-    await this.saveTokens(updated)
+    if (generation !== this.generation) return null
+    this.writeTokens(updated)
     return updated
   }
 
@@ -362,7 +372,9 @@ export class HahaOAuthService {
 
     // A token issued before `user:profile` was requested is refused by the
     // profile endpoint; do not ask.
+    const generation = this.generation
     const stored = await this.loadTokens().catch(() => null)
+    if (generation !== this.generation || (stored && stored.accessToken !== accessToken)) return null
     if (stored && !stored.scopes.includes(CLAUDE_AI_PROFILE_SCOPE)) return null
 
     const lookup = (async () => {
@@ -371,6 +383,7 @@ export class HahaOAuthService {
         proxyUrl: getNetworkProxyUrl(networkSettings),
       })
       // A late answer still warms the cache for the next session.
+      if (generation !== this.generation) return null
       if (uuid) this.accountUuid = uuid
       return uuid
     })().catch(() => null)
@@ -379,7 +392,7 @@ export class HahaOAuthService {
       setTimeout(() => resolve(null), ACCOUNT_UUID_LOOKUP_TIMEOUT_MS).unref?.()
     })
     const uuid = await Promise.race([lookup, timeout])
-    if (!uuid) this.accountUuidRetryAt = Date.now() + ACCOUNT_UUID_RETRY_BACKOFF_MS
+    if (!uuid && generation === this.generation) this.accountUuidRetryAt = Date.now() + ACCOUNT_UUID_RETRY_BACKOFF_MS
     return uuid
   }
 

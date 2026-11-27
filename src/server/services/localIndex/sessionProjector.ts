@@ -48,7 +48,9 @@ import type {
 // 12: project the immutable conversation agent profile; legacy sessions use standard.
 // 13: a reply's usage is the per-field maximum over its content-block lines, not its first line;
 //     rebuild the persisted per-model tokens and dollars that under-counted zero-first replies.
-export const SESSION_SUMMARY_PARSER_VERSION = 13
+// 14: validated nullable legacy archive knowledge, including malformed and pending input.
+export const LEGACY_ARCHIVE_PARSER_VERSION = 14
+export const SESSION_SUMMARY_PARSER_VERSION = LEGACY_ARCHIVE_PARSER_VERSION
 
 export type SessionSourceCandidate = {
   path: string
@@ -169,7 +171,7 @@ const SKELETON_ROOT_SCALARS = new Set([
   'type', 'subtype', 'content', 'isMeta', 'isSidechain', 'entrypoint', 'timestamp',
   'cwd', 'workDir', 'permissionMode', 'agentProfile', 'runtimeProviderId', 'runtimeModelId',
   'effortLevel', 'openAIFastMode', 'customTitle', 'aiTitle', 'uuid', 'parentUuid', 'messageId',
-  'parent_tool_use_id', 'requestId', 'version', 'sessionId', 'timeSavedMs',
+  'parent_tool_use_id', 'requestId', 'version', 'sessionId', 'timeSavedMs', 'archived',
 ])
 const SKELETON_ROOT_SUBTREES = new Set(['repository', 'worktreeSession', 'forkedFrom'])
 const SKELETON_BLOCK_FIELDS = new Set(['type', 'name', 'id', 'tool_use_id', 'text', 'input'])
@@ -346,6 +348,7 @@ function sameReadSnapshot(left: SourceFingerprint, right: SourceFingerprint): bo
 function initialProjection(candidate: SessionSourceCandidate): TranscriptProjection {
   return {
     summary: {
+      legacyArchived: false,
       title: 'Untitled Session',
       createdAt: candidate.fallbackCreatedAt,
       modifiedAt: candidate.fallbackModifiedAt,
@@ -848,8 +851,8 @@ export function createSessionProjector(options: SessionProjectorOptions): Sessio
           transcript_path, session_id, project_path, title, created_at,
           modified_at, modified_at_ms, message_count, work_dir, repository_json,
           worktree_session_json, permission_mode, runtime_provider_id,
-          runtime_provider_present, runtime_model_id, effort_level, is_team_worker, openai_fast_mode, agent_profile
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          runtime_provider_present, runtime_model_id, effort_level, is_team_worker, openai_fast_mode, agent_profile, legacy_archived
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(transcript_path) DO UPDATE SET
           session_id = excluded.session_id,
           project_path = excluded.project_path,
@@ -868,7 +871,8 @@ export function createSessionProjector(options: SessionProjectorOptions): Sessio
           effort_level = excluded.effort_level,
           is_team_worker = excluded.is_team_worker,
           openai_fast_mode = excluded.openai_fast_mode,
-          agent_profile = excluded.agent_profile
+          agent_profile = excluded.agent_profile,
+          legacy_archived = excluded.legacy_archived
       `,
       bundle.candidate.path,
       bundle.candidate.sessionId,
@@ -890,7 +894,8 @@ export function createSessionProjector(options: SessionProjectorOptions): Sessio
       summary.effortLevel ?? null,
       summary.isTeamWorker ? 1 : 0,
       summary.openAIFastMode === undefined ? null : Number(summary.openAIFastMode),
-      summary.agentProfile ?? 'standard')
+      summary.agentProfile ?? 'standard',
+      parserVersion < LEGACY_ARCHIVE_PARSER_VERSION || summary.legacyArchived == null ? null : Number(summary.legacyArchived))
 
       writeBackfillState(
         writer,

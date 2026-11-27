@@ -55,6 +55,21 @@ describe('quality gate modes', () => {
     }
   })
 
+  test('PR and release execute the harness suite and required audit without reinstalling dependencies', () => {
+    for (const mode of ['pr', 'release'] as const) {
+      for (const [id, command] of [
+        ['harness-checks', ['bun', 'run', '--cwd', 'harness', 'test']],
+        ['harness-audit', ['bun', 'run', 'audit:harness']],
+      ] as const) {
+        const lane = lanesForMode(mode).find(candidate => candidate.id === id)
+        expect(lane, `${id} missing from ${mode}`).toBeDefined()
+        expect(lane?.command).toEqual([...command])
+        expect(lane?.impactRequiredCheck).toBe(command.join(' '))
+        expect(lane?.live).toBeUndefined()
+      }
+    }
+  })
+
   test('baseline mode includes live baseline cases but not native checks', () => {
     const lanes = lanesForMode('baseline').map((lane) => lane.id)
     expect(lanes).toContain('baseline-catalog')

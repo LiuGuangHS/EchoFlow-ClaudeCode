@@ -125,7 +125,7 @@ function sourceFromCandidate(item: SessionSourceCandidate): SessionSourceRecord 
     fileIdentity: null,
     fingerprint: 'test-fingerprint',
     indexedBytes: 1,
-    parserVersion: 1,
+    parserVersion: SESSION_SUMMARY_PARSER_VERSION,
     state: 'ready',
     lastErrorCode: null,
     updatedAtMs: item.modifiedAtMs,
@@ -371,7 +371,7 @@ describe('local index coordinator', () => {
   it('converges external append, create, and delete events through the serial writer pump', async () => {
     const root = await createTempDir('coordinator-watch-convergence')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const first = await createRealTranscript(configDir, '-repo', 'first', 'First')
     let watcherOptions!: ReconciliationWatcherOptions
     let watcherStops = 0
@@ -438,7 +438,7 @@ describe('local index coordinator', () => {
   it('keeps serving a ready snapshot while a watched batch reconciles', async () => {
     const root = await createTempDir('coordinator-stable-ready')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const first = await createRealTranscript(configDir, '-repo', 'first', 'First')
     let watcherOptions!: ReconciliationWatcherOptions
     let releaseProjection!: () => void
@@ -571,7 +571,7 @@ describe('local index coordinator', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => configDir,
-      resolveDatabasePath: () => join(configDir, 'cc-haha', 'db', 'index-v1.sqlite'),
+      resolveDatabasePath: () => join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite'),
       openDatabase: () => fakeDatabase(() => {}),
       createIndex: () => index,
       createProjector: () => projector,
@@ -635,7 +635,7 @@ describe('local index coordinator', () => {
   it('withholds activity readiness while main-source or full-sweep failures can leave stale rows', async () => {
     const root = await createTempDir('coordinator-activity-stale-gate')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const source = await createRealTranscript(
       configDir,
       '-repo',
@@ -735,7 +735,7 @@ describe('local index coordinator', () => {
   it('withholds persisted activity totals while a parser upgrade is waiting to rebuild', async () => {
     const root = await createTempDir('coordinator-activity-parser-upgrade')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const source = await createRealTranscript(
       configDir,
       '-repo',
@@ -805,7 +805,7 @@ describe('local index coordinator', () => {
 
     const root = await createTempDir('coordinator-activity-cost-upgrade')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const transcriptPath = join(configDir, 'projects', '-repo', 'cost-upgrade.jsonl')
     await mkdir(dirname(transcriptPath), { recursive: true })
     await writeFile(transcriptPath, [
@@ -1110,7 +1110,7 @@ describe('local index coordinator', () => {
   it('auto-recovers a corrupt header once and requires explicit rebuild for a future schema', async () => {
     const root = await createTempDir('coordinator-real-recovery')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const source = await createRealTranscript(configDir, '-repo', 'source', 'Canonical')
     const sourceBefore = await Bun.file(source.path).text()
     await mkdir(dirname(databasePath), { recursive: true })
@@ -1134,7 +1134,7 @@ describe('local index coordinator', () => {
     await waitFor(() => recovered.getPublicStatus().state === 'ready')
     await recovered.stop()
     expect(await Bun.file(source.path).text()).toBe(sourceBefore)
-    expect((await readdir(join(configDir, 'cc-haha', 'db', 'backups'))).length).toBe(1)
+    expect((await readdir(join(configDir, 'echoflow-code', 'db', 'backups'))).length).toBe(1)
 
     const { Database } = await import('bun:sqlite')
     const future = new Database(databasePath)
@@ -1146,11 +1146,11 @@ describe('local index coordinator', () => {
       state: 'degraded',
       lastErrorCode: 'SCHEMA_UNSUPPORTED',
     })
-    expect((await readdir(join(configDir, 'cc-haha', 'db', 'backups'))).length).toBe(1)
+    expect((await readdir(join(configDir, 'echoflow-code', 'db', 'backups'))).length).toBe(1)
 
     await unsupported.rebuild()
     await waitFor(() => unsupported.getPublicStatus().state === 'ready')
-    expect((await readdir(join(configDir, 'cc-haha', 'db', 'backups'))).length).toBe(2)
+    expect((await readdir(join(configDir, 'echoflow-code', 'db', 'backups'))).length).toBe(2)
     expect(await Bun.file(source.path).text()).toBe(sourceBefore)
     await unsupported.stop()
   })
@@ -1355,6 +1355,66 @@ describe('local index coordinator', () => {
     await coordinator.stop()
   })
 
+  it('serves known sessions while an upgraded index rebuilds legacy archive classifications', async () => {
+    const configDir = await createTempDir('coordinator-archive-upgrade')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
+    const source = await createRealTranscript(configDir, '-repo', 'ordinary', 'Ordinary')
+    const options = {
+      resolveMode: () => ({ mode: 'on' as const, warningCode: null }),
+      resolveScope: () => configDir,
+      resolveDatabasePath: () => databasePath,
+      createWatcher: idleWatcher,
+    }
+    const previous = createLocalIndexCoordinator({
+      ...options,
+      createProjector: options => createSessionProjector({ ...options, parserVersion: 13 }),
+    })
+    try {
+      await previous.start()
+      await waitFor(() => previous.getPublicStatus().state === 'ready')
+    } finally {
+      await previous.stop()
+    }
+    const legacy = new Database(databasePath)
+    try {
+      legacy.exec(`
+        DROP TRIGGER sessions_revision_insert;
+        DROP TRIGGER sessions_revision_update;
+        DROP TRIGGER sessions_revision_delete;
+        DELETE FROM schema_meta WHERE key = 'session-read-revision';
+        ALTER TABLE sessions DROP COLUMN legacy_archived;
+        PRAGMA user_version = 8;
+      `)
+    } finally {
+      legacy.close()
+    }
+
+    let reconcile!: () => void
+    const upgraded = createLocalIndexCoordinator({ ...options, schedule: operation => { reconcile = operation } })
+    const archive = { ids: [], archived: false, migrationComplete: false }
+    try {
+      await upgraded.start()
+      expect(upgraded.getPublicStatus().state).toBe('building')
+      expect(upgraded.listSessions({ archive }).total).toBe(0)
+      expect(upgraded.listSessions({ archive: { ...archive, ordinaryIds: [source.sessionId] } }).total).toBe(1)
+      reconcile()
+      await waitFor(() => upgraded.getPublicStatus().state === 'ready')
+      expect(upgraded.listSessions({ archive }).sessions.map(row => row.id)).toEqual([source.sessionId])
+      const revision = upgraded.getSessionReadRevision?.()
+      expect(revision).toEqual(expect.any(String))
+      await upgraded.stop()
+      expect(upgraded.getSessionReadRevision?.()).toBeNull()
+      await upgraded.start()
+      // The scheduled catch-up has not run. The reopened connection still
+      // serves the same catalog but has a new reader generation.
+      expect(upgraded.listSessions({ archive }).sessions.map(row => row.id)).toEqual([source.sessionId])
+      expect(upgraded.getSessionReadRevision?.()).toEqual(expect.any(String))
+      expect(upgraded.getSessionReadRevision?.()).not.toBe(revision)
+    } finally {
+      await upgraded.stop()
+    }
+  })
+
   it('retains committed rows across restart and resolves a changed config scope at start time', async () => {
     rememberEnvironment()
     const firstRoot = await createTempDir('coordinator-scope-a')
@@ -1405,7 +1465,7 @@ describe('local index coordinator', () => {
   it('resumes a killed backfill from committed source progress', async () => {
     const root = await createTempDir('coordinator-resume')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const candidates: SessionSourceCandidate[] = []
     for (let index = 0; index < 30; index += 1) {
       candidates.push(await createRealTranscript(
@@ -1551,14 +1611,22 @@ describe('local index coordinator', () => {
     }
   })
 
-  it('narrates the activity backfill only during the startup sweep', async () => {
+  it('runs a real activity backfill without invalidating session reads or narrating later sweeps', async () => {
     const root = await createTempDir('coordinator-activity-narration')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     await createRealTranscript(configDir, '-repo', 'activity-narration', 'Initial')
+    const subagent = join(configDir, 'projects', '-repo', 'activity-narration', 'subagents', 'agent-activity.jsonl')
+    await mkdir(dirname(subagent), { recursive: true })
+    await writeFile(subagent, `${JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: 'Subagent activity' },
+      timestamp: '2026-01-01T00:00:01.000Z',
+    })}\n`)
     rememberEnvironment()
     process.env.CLAUDE_CONFIG_DIR = configDir
     const lines: string[] = []
+    let revisionBeforeBackfill: string | null | undefined
     let watcherOptions!: ReconciliationWatcherOptions
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
@@ -1568,20 +1636,26 @@ describe('local index coordinator', () => {
         watcherOptions = options
         return idleWatcher()
       },
-      log: line => lines.push(line),
+      log: line => {
+        lines.push(line)
+        if (line.startsWith('activity backfill start')) revisionBeforeBackfill = coordinator.getSessionReadRevision?.()
+      },
     })
 
     try {
       await coordinator.start()
-      await waitFor(() => lines.some(line => line.startsWith('activity backfill complete')))
+      await waitFor(() => coordinator.isActivityScopeReady())
       expect(lines).toContainEqual(expect.stringMatching(/^activity backfill start \(\d+ known sources\)$/))
       expect(lines).toContainEqual(expect.stringMatching(
-        /^activity backfill complete: 1\/1 indexed, 0 degraded in \d+ ms$/,
+        /^activity backfill complete: 2\/2 indexed, 0 degraded in \d+ ms$/,
       ))
+      expect(revisionBeforeBackfill).toEqual(expect.any(String))
+      expect(coordinator.getSessionReadRevision?.()).toBe(revisionBeforeBackfill)
 
       lines.length = 0
       await watcherOptions.onBatch({ paths: [], fullSweep: true })
       expect(lines).toEqual([])
+      expect(coordinator.getSessionReadRevision?.()).toBe(revisionBeforeBackfill)
     } finally {
       await coordinator.stop()
     }
@@ -2095,8 +2169,8 @@ describe('local index coordinator', () => {
     const root = await createTempDir('coordinator-rebuild-scope')
     const firstScope = join(root, 'scope-a')
     const secondScope = join(root, 'scope-b')
-    const firstPath = join(firstScope, 'cc-haha', 'db', 'index-v1.sqlite')
-    const secondPath = join(secondScope, 'cc-haha', 'db', 'index-v1.sqlite')
+    const firstPath = join(firstScope, 'echoflow-code', 'db', 'index-v1.sqlite')
+    const secondPath = join(secondScope, 'echoflow-code', 'db', 'index-v1.sqlite')
     let currentScope = firstScope
     let currentPath = firstPath
     const coordinator = createLocalIndexCoordinator({
@@ -2189,7 +2263,7 @@ describe('local index coordinator', () => {
     'sanitizes an actual read-only database create failure as a disk write failure',
     async () => {
       const configDir = await createTempDir('readonly-create')
-      const databaseDir = join(configDir, 'cc-haha', 'db')
+      const databaseDir = join(configDir, 'echoflow-code', 'db')
       await mkdir(databaseDir, { recursive: true })
       await chmod(databaseDir, 0o500)
       const coordinator = createLocalIndexCoordinator({
@@ -2626,7 +2700,7 @@ describe('source-scoped index failures', () => {
   it('keeps the index ready when a stale-version transcript gained a record over the buffer threshold', async () => {
     const root = await createTempDir('coordinator-oversized-record')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const legacy = await createRealTranscript(configDir, '-repo', LEGACY, 'Legacy image session')
     await createRealTranscript(configDir, '-repo', HEALTHY, 'Healthy session')
     const previous = createLocalIndexCoordinator({
@@ -2701,7 +2775,7 @@ describe('source-scoped index failures', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => configDir,
-      resolveDatabasePath: () => join(configDir, 'cc-haha', 'db', 'index-v1.sqlite'),
+      resolveDatabasePath: () => join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite'),
       openDatabase: () => fakeDatabase(() => {}),
       createIndex: () => index,
       createProjector: () => fakeProjector(index, new Map([[LEGACY, failure]])),
@@ -2735,7 +2809,7 @@ describe('source-scoped index failures', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => configDir,
-      resolveDatabasePath: () => join(configDir, 'cc-haha', 'db', 'index-v1.sqlite'),
+      resolveDatabasePath: () => join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite'),
       openDatabase: () => fakeDatabase(() => {}),
       createIndex: () => index,
       createProjector: () => fakeProjector(index, failures, release.promise, gatedId),
@@ -2784,7 +2858,7 @@ describe('source-scoped index failures', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => configDir,
-      resolveDatabasePath: () => join(configDir, 'cc-haha', 'db', 'index-v1.sqlite'),
+      resolveDatabasePath: () => join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite'),
       openDatabase: () => fakeDatabase(() => {}),
       createIndex: () => index,
       createProjector: () => fakeProjector(index, new Map([[LEGACY, { code: 'LOCAL_INDEX_SOURCE_LIMIT' }]]), release.promise, LONG),
@@ -2827,7 +2901,7 @@ describe('source-scoped index failures', () => {
   it('remembers a transcript over its budget across restarts without rereading it on appends', async () => {
     const root = await createTempDir('coordinator-persisted-limit')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const record = `${JSON.stringify({ type: 'progress' })}\n`
     const longPath = join(configDir, 'projects', '-repo', `${LONG}.jsonl`)
     await mkdir(dirname(longPath), { recursive: true })
@@ -2916,7 +2990,7 @@ describe('source-scoped index failures', () => {
   it('serves the snapshot at startup while a previous run left only a transcript failure behind', async () => {
     const root = await createTempDir('coordinator-previous-run-degraded')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     await createRealTranscript(configDir, '-repo', HEALTHY, 'Healthy session')
     rememberEnvironment()
     process.env.CLAUDE_CONFIG_DIR = configDir

@@ -207,20 +207,21 @@ describe('useManageMCPConnections close lifecycle', () => {
     app.unmount()
   })
 
-  test('records the final automatic reconnect failure', async () => {
+  test.each(['failure', 'exception'] as const)('records the final automatic reconnect %s', async kind => {
     isDisabled = false
-    reconnectMcpServerImpl.mockImplementation(async () => ({
+    const failedClient = {
       name: 'test-server',
-      client: {
-        name: 'test-server',
-        type: 'failed',
-        config: { type: 'sse', url: 'https://example.com/mcp' },
-        error: 'reconnect failed',
-      },
-      tools: [],
-      commands: [],
-      resources: [],
-    }))
+      type: 'failed' as const,
+      config: { type: 'sse' as const, url: 'https://example.com/mcp' },
+      error: 'reconnect failed',
+    }
+    if (kind === 'exception') {
+      reconnectMcpServerImpl.mockRejectedValue(new Error('network failed'))
+    } else {
+      reconnectMcpServerImpl.mockImplementation(async () => ({
+        name: 'test-server', client: failedClient, tools: [], commands: [], resources: [],
+      }))
+    }
     const app = render(<Harness />, {
       stdout: new PassThrough(),
       stderr: new PassThrough(),
@@ -228,34 +229,67 @@ describe('useManageMCPConnections close lifecycle', () => {
       exitOnCtrlC: false,
       patchConsole: false,
     })
-    await Bun.sleep(0)
+    const nativeSetTimeout = globalThis.setTimeout
+    const nativeClearTimeout = globalThis.clearTimeout
+    const backoffs = [1000, 2000, 4000, 8000]
+    const scheduledDelays: number[] = []
+    const pending = new Map<ReturnType<typeof setTimeout>, { delay: number; run: () => void }>()
+    let timerSpy: ReturnType<typeof spyOn> | undefined
+    let clearSpy: ReturnType<typeof spyOn> | undefined
+    try {
+      await Bun.sleep(0)
+      const previous = state.mcp.clients[0] as ConnectedMCPServer
+      expect(closeHandler).toBeDefined()
+      // shortcut: match retry delays after mount; narrow capture if another timer shares them. Ink/state batch timers stay real.
+      timerSpy = spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+        if (delay === undefined || !backoffs.includes(delay)) return nativeSetTimeout(callback, delay, ...args)
+        const timer = nativeSetTimeout(() => {}, delay)
+        nativeClearTimeout(timer)
+        scheduledDelays.push(delay)
+        pending.set(timer, { delay, run: () => callback(...args) })
+        return timer
+      })
+      clearSpy = spyOn(globalThis, 'clearTimeout').mockImplementation(timer => {
+        pending.delete(timer as ReturnType<typeof setTimeout>)
+        nativeClearTimeout(timer)
+      })
 
-    closeHandler?.('test-server', (state.mcp.clients[0] as ConnectedMCPServer).client)
-    await Bun.sleep(15_100)
+      closeHandler?.('test-server', previous.client)
+      for (const [index, delay] of backoffs.entries()) {
+        await Bun.sleep(20)
+        expect(reconnectMcpServerImpl).toHaveBeenCalledTimes(index + 1)
+        expect(state.mcp.clients[0]).toMatchObject({
+          type: 'pending', reconnectAttempt: index + 1, maxReconnectAttempts: 5,
+        })
+        expect(scheduledDelays).toEqual(backoffs.slice(0, index + 1))
+        expect([...pending.values()].map(task => task.delay)).toEqual([delay])
+        // Yield without releasing the retry: neither another attempt nor failure may publish.
+        await Bun.sleep(0)
+        expect(reconnectMcpServerImpl).toHaveBeenCalledTimes(index + 1)
+        expect(state.mcp.clients[0]?.type).toBe('pending')
+        const [timer, task] = [...pending.entries()][0]!
+        pending.delete(timer)
+        task.run()
+      }
+      await Bun.sleep(20)
 
-    expect(reconnectMcpServerImpl).toHaveBeenCalledTimes(5)
-    expect(state.mcp.clients[0]?.type).toBe('failed')
-    app.unmount()
-  }, 20_000)
-
-  test('records the final automatic reconnect exception', async () => {
-    isDisabled = false
-    reconnectMcpServerImpl.mockRejectedValue(new Error('network failed'))
-    const app = render(<Harness />, {
-      stdout: new PassThrough(),
-      stderr: new PassThrough(),
-      stdin: new PassThrough(),
-      exitOnCtrlC: false,
-      patchConsole: false,
-    })
-    await Bun.sleep(0)
-
-    closeHandler?.('test-server', (state.mcp.clients[0] as ConnectedMCPServer).client)
-    await Bun.sleep(15_100)
-
-    expect(reconnectMcpServerImpl).toHaveBeenCalledTimes(5)
-    expect(state.mcp.clients[0]?.type).toBe('failed')
-    app.unmount()
+      expect(reconnectMcpServerImpl).toHaveBeenCalledTimes(5)
+      expect(scheduledDelays).toEqual(backoffs)
+      expect(pending.size).toBe(0)
+      expect(state.mcp.clients[0]).toEqual(kind === 'failure'
+        ? failedClient
+        : { ...previous, type: 'failed' })
+    } finally {
+      try {
+        app.unmount()
+      } finally {
+        pending.clear()
+        clearSpy?.mockRestore()
+        timerSpy?.mockRestore()
+      }
+    }
+    expect(globalThis.setTimeout).toBe(nativeSetTimeout)
+    expect(globalThis.clearTimeout).toBe(nativeClearTimeout)
   }, 20_000)
 
   test('unregisters the close handler on unmount', async () => {

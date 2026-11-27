@@ -4,11 +4,11 @@ import '@testing-library/jest-dom'
 
 import { DesktopSettings as Settings } from '../pages/Settings'
 import { useSettingsStore } from '../stores/settingsStore'
-import { useUIStore } from '../stores/uiStore'
+import { initializeTheme, teardownTheme, useUIStore } from '../stores/uiStore'
 import { useUpdateStore } from '../stores/updateStore'
 import type { ProviderModelsResult, SavedProvider } from '../types/provider'
 import type { ProviderPreset } from '../types/providerPreset'
-import type { AppMode, ChatSendBehavior, PermissionMode, ThemeMode, UpdateProxySettings } from '../types/settings'
+import type { ChatSendBehavior, PermissionMode, ThemeMode, UpdateProxySettings } from '../types/settings'
 import { browserHost } from '../lib/desktopHost/browserHost'
 import { settingsApi } from '../api/settings'
 
@@ -32,15 +32,6 @@ const desktopNotificationsMock = vi.hoisted(() => ({
 }))
 const clipboardMock = vi.hoisted(() => ({
   copyTextToClipboard: vi.fn(),
-}))
-const tauriCoreMock = vi.hoisted(() => ({
-  invoke: vi.fn(),
-}))
-const tauriDialogMock = vi.hoisted(() => ({
-  open: vi.fn(),
-}))
-const tauriProcessMock = vi.hoisted(() => ({
-  relaunch: vi.fn(),
 }))
 const providerStoreState = {
   providers: [] as SavedProvider[],
@@ -103,9 +94,6 @@ vi.mock('../api/providers', () => ({
 
 vi.mock('../lib/desktopNotifications', () => desktopNotificationsMock)
 vi.mock('@/lib/clipboard', () => clipboardMock)
-vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
-vi.mock('@tauri-apps/plugin-dialog', () => tauriDialogMock)
-vi.mock('@tauri-apps/plugin-process', () => tauriProcessMock)
 vi.mock('qrcode', () => ({
   default: {
     toDataURL: vi.fn().mockResolvedValue('data:image/png;base64,h5qr'),
@@ -184,18 +172,9 @@ function installElectronDesktopHost() {
       ...browserHost.app,
       getVersion: vi.fn().mockResolvedValue('0.3.2'),
     },
-    dialogs: {
-      ...browserHost.dialogs,
-      open: vi.fn((options) => tauriDialogMock.open(options)),
-    },
     shell: {
       ...browserHost.shell,
       open: vi.fn().mockResolvedValue(undefined),
-    },
-    appMode: {
-      ...browserHost.appMode,
-      prepareRestart: vi.fn(() => tauriCoreMock.invoke('prepare_for_app_mode_restart')),
-      restart: vi.fn(() => tauriProcessMock.relaunch()),
     },
   }
 }
@@ -216,12 +195,6 @@ describe('Settings > General tab', () => {
     desktopNotificationsMock.openDesktopNotificationSettings.mockResolvedValue(true)
     clipboardMock.copyTextToClipboard.mockReset()
     clipboardMock.copyTextToClipboard.mockResolvedValue(true)
-    tauriCoreMock.invoke.mockReset()
-    tauriCoreMock.invoke.mockResolvedValue(undefined)
-    tauriDialogMock.open.mockReset()
-    tauriDialogMock.open.mockResolvedValue('/Users/test/cc-haha-data')
-    tauriProcessMock.relaunch.mockReset()
-    tauriProcessMock.relaunch.mockResolvedValue(undefined)
     delete (window as unknown as { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
     delete (window as unknown as { __TAURI__?: object }).__TAURI__
     installElectronDesktopHost()
@@ -356,17 +329,7 @@ describe('Settings > General tab', () => {
       },
       appModeRequiresRestart: false,
       fetchAppMode: vi.fn().mockResolvedValue(undefined),
-      setAppMode: vi.fn().mockImplementation(async (mode: AppMode, portableDir?: string | null) => {
-        useSettingsStore.setState({
-          appMode: {
-            mode,
-            portableDir: mode === 'portable' ? portableDir ?? null : null,
-            activeConfigDir: mode === 'portable' ? portableDir ?? null : '/Users/test/.claude',
-            configDirSource: mode === 'portable' ? 'portable' : 'system',
-          },
-          appModeRequiresRestart: true,
-        })
-      }),
+      setAppMode: vi.fn().mockRejectedValue(new Error('Changing the complete data root requires cold profile migration')),
       enableH5Access: vi.fn().mockImplementation(async () => {
         const current = useSettingsStore.getState().h5Access
         useSettingsStore.setState({
@@ -586,25 +549,35 @@ describe('Settings > General tab', () => {
     // Going through the real transition, not a hand-set state: the OS turned
     // dark during the session, then the user releases the switch to freeze it.
     // The picker must point at the palette that is actually rendered.
-    useUIStore.setState({
-      followSystemTheme: true,
-      lightTheme: 'white',
-      darkTheme: 'ink-blue',
-      theme: 'white',
-    })
-    render(<Settings />)
-    fireEvent.click(screen.getByText('General'))
+    let prefersDark = false
+    let onChange: ((event: { matches: boolean }) => void) | undefined
+    vi.stubGlobal('matchMedia', () => ({
+      matches: prefersDark,
+      addEventListener: (_type: string, listener: typeof onChange) => { onChange = listener },
+      removeEventListener: () => { onChange = undefined },
+    }))
+    try {
+      useUIStore.getState().setTheme('white', false)
+      useUIStore.getState().setFollowSystemTheme(true)
+      useUIStore.getState().setTheme('ink-blue')
+      initializeTheme()
+      render(<Settings />)
+      fireEvent.click(screen.getByText('General'))
 
-    act(() => {
-      // Stand in for the OS flip the media-query listener would deliver.
-      useUIStore.setState({ theme: 'ink-blue' })
-    })
-    act(() => {
-      useUIStore.getState().setFollowSystemTheme(false)
-    })
+      act(() => {
+        prefersDark = true
+        onChange?.({ matches: true })
+      })
+      act(() => {
+        useUIStore.getState().setFollowSystemTheme(false)
+      })
 
-    expect(screen.getByRole('button', { name: 'Ink Blue' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: 'Pure White' })).toHaveAttribute('aria-pressed', 'false')
+      expect(screen.getByRole('button', { name: 'Ink Blue' })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByRole('button', { name: 'Pure White' })).toHaveAttribute('aria-pressed', 'false')
+    } finally {
+      teardownTheme()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('groups General settings into topic sections in a stable order', () => {
@@ -1022,170 +995,61 @@ describe('Settings > General tab', () => {
     }
   })
 
-  it('keeps data storage at the bottom of General settings', () => {
-    render(<Settings />)
-
-    fireEvent.click(screen.getByText('General'))
-
-    const webSearchHeading = screen.getByRole('heading', { name: 'WebSearch' })
-    const storageHeading = screen.getByRole('heading', { name: 'Data Storage Location' })
-
-    expect((webSearchHeading.compareDocumentPosition(storageHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
-    expect(screen.getByText(/Windows, upgrades recover verified legacy app-adjacent data/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Migrate Existing Data…' })).toBeInTheDocument()
-  })
-
-  it('blocks the existing directory-switch controls while a restored migration is running', async () => {
+  it('opens the active data directory and navigates to migration in Data & Storage', async () => {
     const host = window.desktopHost!
-    host.appMode = {
-      ...host.appMode,
-      migration: {
-        ...host.appMode.migration,
-        status: vi.fn().mockResolvedValue({
-          id: 'migration-fixture', sourceDir: '/fixture/original', targetDir: '/fixture/new',
-          stage: 'copying', files: 2, totalFiles: 4, bytes: 512, totalBytes: 1024, cancellable: true,
-        }),
-      },
+    const sourceDir = '/Users/test/.claude'
+    const targetDir = '/fixture/new'
+    const openPath = vi.spyOn(host.shell, 'openPath').mockResolvedValue(undefined)
+    const open = vi.spyOn(host.dialogs, 'open').mockResolvedValue(targetDir)
+    const prepare = vi.spyOn(host.appMode.migration, 'prepare').mockResolvedValue({
+      id: 'migration-fixture', sourceDir, targetDir, files: 1, bytes: 1024, activeTasks: 0,
+    })
+    const start = vi.spyOn(host.appMode.migration, 'start').mockResolvedValue(undefined)
+    try {
+      render(<Settings />)
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'General' })) })
+      const storage = within(screen.getByRole('heading', { name: 'Data Storage Location' }).closest('section')!)
+      expect(storage.getByText(sourceDir)).toBeVisible()
+      await act(async () => { fireEvent.click(storage.getByRole('button', { name: 'Open Data Directory' })) })
+      expect(openPath).toHaveBeenCalledWith(sourceDir)
+      expect(storage.queryByRole('button', { name: 'Migrate Existing Data…' })).not.toBeInTheDocument()
+      expect(storage.queryByRole('button', { name: /Use system directory|Use This Folder and Restart/ })).not.toBeInTheDocument()
+
+      const scroller = screen.getByTestId('settings-page-frame').parentElement!
+      scroller.scrollTop = 900
+      const shortcut = storage.getByRole('button', { name: 'Open Data & Storage Settings' })
+      shortcut.focus()
+      await act(async () => { fireEvent.click(shortcut) })
+      expect(scroller.scrollTop).toBe(0)
+      expect(screen.getByRole('button', { name: 'Data & Storage', current: 'page' })).toBeInTheDocument()
+      expect(screen.getByRole('region', { name: 'Data & Storage' })).toHaveFocus()
+      expect(screen.queryByRole('button', { name: /Use system directory|Use This Folder and Restart/ })).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Migrate Existing Data…' }))
+      const dialog = await screen.findByRole('dialog', { name: 'Migrate data and restart?' })
+      expect(prepare).toHaveBeenCalledWith(targetDir)
+      expect(dialog).toContainElement(document.activeElement as HTMLElement)
+      expect(within(dialog).getByText(targetDir)).toBeVisible()
+      expect(start).not.toHaveBeenCalled()
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Migrate and Restart' }))
+      await screen.findByRole('dialog', { name: 'Data migration in progress' })
+      expect(start).toHaveBeenCalledWith('migration-fixture')
+      expect(useSettingsStore.getState().setAppMode).not.toHaveBeenCalled()
+    } finally {
+      openPath.mockRestore()
+      open.mockRestore()
+      prepare.mockRestore()
+      start.mockRestore()
     }
-    render(<Settings />)
-    fireEvent.click(screen.getByText('General'))
-    await screen.findByRole('dialog', { name: 'Data migration in progress' })
-    // The child's status render precedes its effect that reports the busy state
-    // to General settings; observe the completed parent update as well.
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Use system directory/ })).toBeDisabled()
-      expect(screen.getByLabelText('Custom data directory')).toBeDisabled()
-      expect(screen.getByRole('button', { name: 'Choose Folder' })).toBeDisabled()
-      expect(screen.getByRole('button', { name: 'Use This Folder and Restart' })).toBeDisabled()
-    })
-    expect(useSettingsStore.getState().setAppMode).not.toHaveBeenCalled()
   })
 
-  it('lets desktop users choose a custom data directory and relaunch immediately', async () => {
-    render(<Settings />)
-
-    fireEvent.click(screen.getByText('General'))
-    fireEvent.click(screen.getByRole('button', { name: 'Choose Folder' }))
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('Custom data directory')).toHaveValue('/Users/test/cc-haha-data')
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Use This Folder and Restart' }))
-    expect(screen.getByText('Switch data storage location?')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Save and Restart' }))
-
-    await waitFor(() => {
-      expect(useSettingsStore.getState().setAppMode).toHaveBeenCalledWith('portable', '/Users/test/cc-haha-data')
-      expect(tauriCoreMock.invoke).toHaveBeenCalledWith('prepare_for_app_mode_restart')
-      expect(tauriProcessMock.relaunch).toHaveBeenCalledTimes(1)
-    })
-  })
-
-  it('switches back to ~/.claude without deleting custom data', async () => {
-    useSettingsStore.setState({
-      appMode: {
-        mode: 'portable',
-        portableDir: '/Users/test/cc-haha-data',
-        activeConfigDir: '/Users/test/cc-haha-data',
-        configDirSource: 'portable',
-      },
-    })
-
-    render(<Settings />)
-
-    fireEvent.click(screen.getByText('General'))
-    fireEvent.click(screen.getByRole('button', { name: /Use system directory/ }))
-
-    expect(screen.getByText(/Data in the custom directory is not deleted/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Save and Restart' }))
-
-    await waitFor(() => {
-      expect(useSettingsStore.getState().setAppMode).toHaveBeenCalledWith('default', null)
-      expect(tauriCoreMock.invoke).toHaveBeenCalledWith('prepare_for_app_mode_restart')
-      expect(tauriProcessMock.relaunch).toHaveBeenCalledTimes(1)
-    })
-  })
-
-  it('requires an explicit custom directory and exposes no third default-custom choice', async () => {
-    render(<Settings />)
-
-    fireEvent.click(screen.getByText('General'))
-    const input = screen.getByLabelText('Custom data directory')
-
-    fireEvent.change(input, { target: { value: '' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Use This Folder and Restart' }))
-    expect(screen.getByText('Choose or enter a custom data directory first.')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /default.*data folder/i })).not.toBeInTheDocument()
-
-    fireEvent.change(input, { target: { value: '/Users/test/custom-data' } })
-    expect(input).toHaveValue('/Users/test/custom-data')
-    expect(screen.queryByText('Choose or enter a custom data directory first.')).not.toBeInTheDocument()
-  })
-
-  it('shows folder picker failures as an inline storage error', async () => {
-    tauriDialogMock.open.mockRejectedValueOnce(new Error('dialog unavailable'))
-
-    render(<Settings />)
-
-    fireEvent.click(screen.getByText('General'))
-    fireEvent.click(screen.getByRole('button', { name: 'Choose Folder' }))
-
-    expect(await screen.findByText('Could not open the folder picker. Paste the folder path manually.')).toBeInTheDocument()
-  })
-
-  it('treats external CLAUDE_CONFIG_DIR as the controlling data source', async () => {
-    useSettingsStore.setState({
-      appMode: {
-        mode: 'portable',
-        portableDir: '/env/claude-data',
-        activeConfigDir: '/env/claude-data',
-        configDirSource: 'environment',
-      },
-    })
-
-    render(<Settings />)
-
-    fireEvent.click(screen.getByText('General'))
-    expect(screen.getByText(/The current directory is controlled by the CLAUDE_CONFIG_DIR environment variable/)).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: /Use system directory/ }))
-    expect(screen.getByText(/Remove it from the launch environment before switching back/)).toBeInTheDocument()
-
-    fireEvent.change(screen.getByLabelText('Custom data directory'), { target: { value: '/other/data' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Use This Folder and Restart' }))
-    expect(screen.queryByText('Switch data storage location?')).not.toBeInTheDocument()
-    expect(screen.getByText(/Remove it from the launch environment before switching back/)).toBeInTheDocument()
-  })
-
-  it('keeps mode switch confirmation cancelable before restart starts', async () => {
-    render(<Settings />)
-
-    fireEvent.click(screen.getByText('General'))
-    fireEvent.change(screen.getByLabelText('Custom data directory'), { target: { value: '/Users/test/custom-data' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Use This Folder and Restart' }))
-    expect(screen.getByText('Switch data storage location?')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-
-    await waitFor(() => {
-      expect(screen.queryByText('Switch data storage location?')).not.toBeInTheDocument()
-    })
-    expect(useSettingsStore.getState().setAppMode).not.toHaveBeenCalled()
-  })
-
-  it('shows restart preparation failures without relaunching', async () => {
-    tauriCoreMock.invoke.mockRejectedValueOnce(new Error('restart preparation failed'))
-
-    render(<Settings />)
-
-    fireEvent.click(screen.getByText('General'))
-    fireEvent.change(screen.getByLabelText('Custom data directory'), { target: { value: '/Users/test/custom-data' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Use This Folder and Restart' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save and Restart' }))
-
-    expect(await screen.findByText('restart preparation failed')).toBeInTheDocument()
-    expect(tauriProcessMock.relaunch).not.toHaveBeenCalled()
+  it('keeps externally controlled directories read-only for migration in Data & Storage', async () => {
+    useSettingsStore.setState({ appMode: { mode: 'portable', portableDir: '/fixture/external', activeConfigDir: '/fixture/external', configDirSource: 'environment' } })
+    useUIStore.setState({ activeSettingsTab: 'data' })
+    await act(async () => { render(<Settings />) })
+    expect(screen.getByText('/fixture/external')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Migrate Existing Data…' })).toBeDisabled()
+    expect(screen.getByText(/Remove storage overrides such as CLAUDE_CONFIG_DIR/)).toBeVisible()
   })
 
   it('shows the saved restart-required state inside the storage section', () => {

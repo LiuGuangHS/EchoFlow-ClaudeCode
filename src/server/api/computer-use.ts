@@ -2,7 +2,7 @@
  * Computer Use API — native runtime status and feature-wide authorization.
  */
 
-import { homedir } from 'os'
+import { getEchoFlowConfigDir } from '../../utils/echoFlowConfigRoot.js'
 import { join } from 'path'
 import { diagnosticsService } from '../services/diagnosticsService.js'
 import { normalizeIconSize, readAppIconPng } from '../services/macAppIcon.js'
@@ -23,7 +23,7 @@ import {
   resolveLaunchableCuHelperBinary,
 } from '../../utils/computerUse/cuHelperBridge.js'
 import type { CuHelperUnavailableReason } from '../../utils/computerUse/cuHelperInstall.js'
-const claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+const claudeHome = getEchoFlowConfigDir()
 const runtimeStateRoot = join(claudeHome, '.runtime')
 const venvRoot = join(runtimeStateRoot, 'venv')
 const MIN_PYTHON_MAJOR = 3

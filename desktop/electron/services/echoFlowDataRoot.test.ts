@@ -2,17 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import path from 'node:path'
 import { existsSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
-import * as dataRoot from './echoFlowDataRoot'
+import * as dataRoot from './legacyStorageMigration'
 import { getDefaultEchoFlowConfigDir } from '../../../src/utils/echoFlowConfigRoot'
 import { PRODUCT_IDENTITY } from '../../src/lib/productIdentity.generated'
 import { createSandboxedTestEnvironment } from '../../../scripts/pr/test-environment'
 import { determineStartupPortableDir } from './appMode'
 import { DataMigration } from './dataMigration'
-import {
-  applyDefaultEchoFlowDataRoot,
-  defaultEchoFlowDataRoot,
-  ECHOFLOW_DEFAULT_CONFIG_ENV,
-} from './echoFlowDataRoot'
+import { defaultEchoFlowDataRoot } from './legacyStorageMigration'
 
 const roots: string[] = []
 function fixture() {
@@ -327,30 +323,25 @@ describe('Electron EchoFlow data root', () => {
     expect(f.app.setPath).not.toHaveBeenCalled()
   })
 
-  it('wires root selection before the single-instance lock and startup migration', () => {
+  it('wires cold migration before locks, IPC and Chromium profile creation', () => {
     const desktop = existsSync(path.resolve('electron/main.ts')) ? process.cwd() : path.resolve('desktop')
     const source = readFileSync(path.join(desktop, 'electron/main.ts'), 'utf8')
-    const select = source.indexOf('configureEchoFlowUserData(app)')
-    expect(select).toBeGreaterThan(-1)
-    expect(select).toBeLessThan(source.indexOf('if (!acquireSingleInstanceLock'))
-    expect(select).toBeLessThan(source.indexOf('await getDataMigration().recover()'))
-    const earlyRecovery = source.slice(select, source.indexOf('let mainWindow'))
-    expect(earlyRecovery).toContain('startupProfileError = error instanceof Error ? error : new Error(String(error))')
-    expect(earlyRecovery).toMatch(/setStorageWritesFrozen\(true\)[\s\S]*cleanupProfileRecovery = prepareProfileRecovery\(app\)[\s\S]*catch[\s\S]*process\.exit\(1\)/)
-    expect(earlyRecovery).not.toContain('dialog.')
-
-    const guardedStartup = source.slice(source.indexOf('if (!startupProfileError)'), source.indexOf('app.whenReady().then'))
-    expect(guardedStartup).toMatch(/^if \(!startupProfileError\) \{[\s\S]*if \(!acquireSingleInstanceLock/)
-    for (const operation of ["app.setAsDefaultProtocolClient('echoflowcode'", "app.on('open-url'", 'extractDeepLinkFromArgs(process.argv)', 'registerIpcHandlers()']) {
-      expect(guardedStartup).toContain(operation)
+    expect(source.startsWith("import './storageBootstrap'")).toBe(true)
+    expect(source).not.toContain('configureEchoFlowUserData(app)')
+    expect(source).not.toContain('prepareProfileRecovery(app)')
+    expect(source).not.toContain('await getDataMigration().recover()')
+    const bootstrap = readFileSync(path.join(desktop, 'electron/storageBootstrap.ts'), 'utf8')
+    const barrier = bootstrap.indexOf('Atomics.wait(')
+    expect(barrier).toBeGreaterThan(0)
+    for (const operation of ["app.setPath('userData', root)", "app.setPath('sessionData', root)", 'bindStorageRoot(binding)']) {
+      expect(bootstrap.indexOf(operation)).toBeGreaterThan(barrier)
     }
-
-    const ready = source.slice(source.indexOf('app.whenReady().then'))
-    const recovery = ready.slice(0, ready.indexOf('applyWindowsAppUserModelId(app)'))
-    expect(recovery).toMatch(/if \(startupProfileError\) \{[\s\S]*dialog\.showErrorBox[\s\S]*cleanupProfileRecovery\?\.\(\)[\s\S]*app\.exit\(1\)[\s\S]*return/)
-    expect(recovery).not.toContain('recoverProfileConflict')
-    expect(recovery).not.toContain('getDataMigration()')
-    expect(recovery).not.toContain('createMainWindow()')
+    expect(bootstrap).toContain('dialog.showErrorBox(')
+    expect(bootstrap).toContain('process.exit(1)')
+    expect(bootstrap).not.toContain('BrowserWindow')
+    const manifest = JSON.parse(readFileSync(path.join(desktop, 'package.json'), 'utf8'))
+    expect(manifest.scripts['build:electron']).toContain('--outfile ./electron-dist/storage-bootstrap.cjs')
+    expect(manifest.build.files).toContain('electron-dist/**')
   })
 
   it('reuses the shared default root without mutating environment overrides', () => {
@@ -365,8 +356,6 @@ describe('Electron EchoFlow data root', () => {
     for (const platform of ['win32', 'linux', 'darwin'] as const) {
       expect(defaultEchoFlowDataRoot(env, platform, homeDir)).toBe(getDefaultEchoFlowConfigDir({ env, platform, homeDir }))
     }
-    expect(applyDefaultEchoFlowDataRoot(env)).toBe(defaultEchoFlowDataRoot(env))
-    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
-    expect(env[ECHOFLOW_DEFAULT_CONFIG_ENV]).toBeUndefined()
+    expect(env).toEqual({ LOCALAPPDATA: path.join(homeDir, 'AppData', 'Local') })
   })
 })

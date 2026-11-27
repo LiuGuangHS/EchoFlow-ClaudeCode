@@ -61,17 +61,52 @@ describe('background session turn admission', () => {
       .find(message => message.type === 'message_complete')).not.toHaveProperty('scheduledTask')
   })
 
-  it('cancels an acknowledged scheduled queue before consumption without stopping another turn', async () => {
-    fixture()
+  it('uses a matching consumed receipt to attribute a scheduled result within another input batch', async () => {
+    const callbacks = fixture()
+    const emit = (message: object) => { for (const cb of [...callbacks]) cb(message) }
+    spyOn(conversationService, 'requestControl').mockResolvedValue({ status: 'queued' })
+    const sessionId = 'scheduled-in-batch'
+    const scheduledTask = { taskId: 'task', runId: 'run', scheduledFor: '2026-10-26T01:00:00Z', taskName: 'Check' }
+    await submitScheduledTaskTurn(sessionId, 'Check', { serverHost: '127.0.0.1', serverPort: 1234, messageId: 'occurrence', scheduledTask })
+
+    emit({ type: 'system', subtype: 'input_turn_start', message_uuids: ['earlier'] })
+    emit({ type: 'user', isReplay: true, uuid: 'earlier-guide', message: { role: 'user', content: 'Guide the earlier turn' } })
+    const earlier = { type: 'result', is_error: false }
+    emit(earlier)
+    expect(getSessionTurnState(sessionId)).toBe('running')
+    expect(translateCliMessage(earlier, sessionId).find(message => message.type === 'message_complete')).not.toHaveProperty('scheduledTask')
+
+    // The CLI can consume an inbox prompt at tool time without a new start frame for its UUID.
+    emit({ type: 'system', subtype: 'input_turn_start', message_uuids: ['background'] })
+    emit({ type: 'system', subtype: 'session_message_receipt', status: 'consumed', duplicate: false, message_id: 'occurrence', source_uuid: sessionMessageUuid('occurrence') })
+    emit({ type: 'user', isReplay: true, uuid: 'guide', message: { role: 'user', content: 'Also check tests' } })
+    const result = { type: 'result', is_error: false }
+    emit(result)
+    expect(getSessionTurnState(sessionId)).toBe('idle')
+    expect(translateCliMessage(result, sessionId).find(message => message.type === 'message_complete')).toMatchObject({ scheduledTask })
+  })
+
+  it('cancels an acknowledged scheduled queue before consumption without attributing the interrupted result', async () => {
+    const callbacks = fixture()
+    const emit = (message: object) => { for (const cb of [...callbacks]) cb(message) }
     spyOn(conversationService, 'requestControl').mockResolvedValue({ status: 'queued' })
     const interrupt = spyOn(conversationService, 'sendInterrupt').mockReturnValue(true)
     spyOn(conversationService, 'stopSession').mockImplementation(() => {})
+    const sessionId = 'cancel-scheduled'
     const scheduledTask = { taskId: 'task', runId: 'run', scheduledFor: '2026-10-26T01:00:00Z', taskName: 'Check' }
-    await submitScheduledTaskTurn('cancel-scheduled', 'Check', { serverHost: '127.0.0.1', serverPort: 1234, messageId: 'queued-occurrence', scheduledTask })
-    stopScheduledTaskTurn('cancel-scheduled', 'older-occurrence')
+    await submitScheduledTaskTurn(sessionId, 'Check', { serverHost: '127.0.0.1', serverPort: 1234, messageId: 'queued-occurrence', scheduledTask })
+    emit({ type: 'user', isReplay: true, uuid: 'earlier-guide', message: { role: 'user', content: 'Guide the earlier turn' } })
+    stopScheduledTaskTurn(sessionId, 'older-occurrence')
     expect(interrupt).not.toHaveBeenCalled()
-    stopScheduledTaskTurn('cancel-scheduled', 'queued-occurrence')
+    stopScheduledTaskTurn(sessionId, 'queued-occurrence')
     expect(interrupt).toHaveBeenCalledTimes(1)
+    const result = { type: 'result', is_error: true, result: 'Interrupted' }
+    const before = translateCliMessage(result, sessionId)
+    emit(result)
+    expect(getSessionTurnState(sessionId)).toBe('idle')
+    for (const messages of [before, translateCliMessage(result, sessionId)]) {
+      expect(messages.find(message => message.type === 'message_complete')).not.toHaveProperty('scheduledTask')
+    }
   })
 
   it('uses the shared control turn without any renderer and observes completion', async () => {

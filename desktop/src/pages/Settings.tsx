@@ -1,6 +1,6 @@
 import { H5Settings } from './settings/H5Settings'
 import { getDesktopHost } from '@/lib/desktopHost'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   BookOpen,
   Bot,
@@ -113,6 +113,8 @@ export function DesktopSettings() {
   const setActiveTab = useUIStore((s) => s.setActiveSettingsTab)
   const pendingSettingsTab = useUIStore((s) => s.pendingSettingsTab)
   const contentRef = useRef<HTMLDivElement>(null)
+  const loginPaneHost = useRef<HTMLDivElement>(null)
+  const [loginActive, setLoginActive] = useState(false)
   const t = useTranslation()
 
   useEffect(() => {
@@ -159,28 +161,35 @@ export function DesktopSettings() {
             700px cap left explorer-style panes (memory, skills) cramped in the
             middle of an empty page. One width for every pane, so switching
             panes never moves the header. */}
-        <div ref={contentRef} className="flex-1 min-w-0 overflow-y-auto [scrollbar-gutter:stable]">
-          <div data-testid="settings-page-frame" className="mx-auto w-full max-w-[1120px] px-10 pt-9 pb-[72px]">
-            {activeTab === 'providers' && <ProviderSettings />}
-            {activeTab === 'runtime' && <RuntimeSettings />}
-            {activeTab === 'activity' && <ActivitySettings />}
-            {activeTab === 'general' && <GeneralSettings />}
-            {activeTab === 'network' && <NetworkSettings />}
-            {activeTab === 'data' && <DataSettings />}
-            {activeTab === 'voice' && <VoiceInputSettings />}
-            {activeTab === 'h5Access' && <H5AccessSettings />}
-            {activeTab === 'adapters' && <AdapterSettings />}
-            {activeTab === 'terminal' && <TerminalSettings showPreferences />}
-            {activeTab === 'mcp' && <McpSettings />}
-            {activeTab === 'agents' && <AgentManager />}
-            {activeTab === 'skills' && <SkillSettings />}
-            {activeTab === 'memory' && <MemorySettings />}
-            {activeTab === 'plugins' && <PluginSettings />}
-            {activeTab === 'pets' && <PetSettings />}
-            {activeTab === 'computerUse' && <ComputerUseSettings />}
-            {activeTab === 'trace' && <TraceList />}
-            {activeTab === 'diagnostics' && <DiagnosticsSettings />}
-            {activeTab === 'about' && <AboutSettings />}
+        <div ref={loginPaneHost} className="relative min-w-0 flex-1">
+          <div
+            ref={contentRef}
+            aria-hidden={activeTab === 'providers' && loginActive ? true : undefined}
+            {...(activeTab === 'providers' && loginActive ? { inert: '' } : {})}
+            className="absolute inset-0 overflow-y-auto [scrollbar-gutter:stable]"
+          >
+            <div data-testid="settings-page-frame" className="mx-auto w-full max-w-[1120px] px-10 pt-9 pb-[72px]">
+              {activeTab === 'providers' && <ProviderSettings loginPaneHost={loginPaneHost} onLoginActive={setLoginActive} />}
+              {activeTab === 'runtime' && <RuntimeSettings />}
+              {activeTab === 'activity' && <ActivitySettings />}
+              {activeTab === 'general' && <GeneralSettings />}
+              {activeTab === 'network' && <NetworkSettings />}
+              {activeTab === 'data' && <DataSettings />}
+              {activeTab === 'voice' && <VoiceInputSettings />}
+              {activeTab === 'h5Access' && <H5AccessSettings />}
+              {activeTab === 'adapters' && <AdapterSettings />}
+              {activeTab === 'terminal' && <TerminalSettings showPreferences />}
+              {activeTab === 'mcp' && <McpSettings />}
+              {activeTab === 'agents' && <AgentManager />}
+              {activeTab === 'skills' && <SkillSettings />}
+              {activeTab === 'memory' && <MemorySettings />}
+              {activeTab === 'plugins' && <PluginSettings />}
+              {activeTab === 'pets' && <PetSettings />}
+              {activeTab === 'computerUse' && <ComputerUseSettings />}
+              {activeTab === 'trace' && <TraceList />}
+              {activeTab === 'diagnostics' && <DiagnosticsSettings />}
+              {activeTab === 'about' && <AboutSettings />}
+            </div>
           </div>
         </div>
       </div>

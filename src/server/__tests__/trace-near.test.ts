@@ -17,6 +17,7 @@ import {
 } from '../services/traceCaptureService.js'
 import { TRACE_WINDOW_RECORD_LIMIT } from '../../services/api/traceCapture.js'
 import type { TraceCallsNear } from '../services/trajectoryTypes.js'
+import { ECHOFLOW_INTERNAL_DIR } from '../../utils/echoFlowConfigRoot.js'
 
 let tmpDir: string
 const saved: Record<string, string | undefined> = {}
@@ -105,7 +106,7 @@ describe('GET /api/sessions/:id/trace/near', () => {
 
   test('reaches calls beyond the indexed overview window and hydrates them through the locator', async () => {
     const sessionId = 'near-large'
-    const tracePath = path.join(tmpDir, 'cc-haha', 'traces', `${sessionId}.jsonl`)
+    const tracePath = path.join(tmpDir, ECHOFLOW_INTERNAL_DIR, 'traces', `${sessionId}.jsonl`)
     await fs.mkdir(path.dirname(tracePath), { recursive: true })
     const total = TRACE_WINDOW_RECORD_LIMIT + 500
     const base = Date.UTC(2026, 9, 4, 0, 0, 0)

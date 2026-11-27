@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { ImChatRuntime, type ChatPort, type ResponseStream } from '../chat-runtime.js'
+import { currentReplyAnchor, ImChatRuntime, type ChatPort, type ResponseStream } from '../chat-runtime.js'
 import { loadConfig } from '../config.js'
 import { MessageDedup } from '../message-dedup.js'
 import { SessionStore } from '../session-store.js'
@@ -33,6 +33,12 @@ class FakeBridge {
   sent: SentMessage[] = []
   sentLeaseIds: Array<string | undefined> = []
   permissionResponses: Array<{ requestId: string; allowed: boolean; rule?: string }> = []
+  syncRequests: string[] = []
+  requestSyncState(chatId: string): boolean {
+    this.syncRequests.push(chatId)
+    return true
+  }
+
   stopped: string[] = []
   resets: string[] = []
   sendResult = true
@@ -185,7 +191,7 @@ function writeAdapterConfig(config: Record<string, unknown>): void {
   fs.writeFileSync(path.join(tmpDir, 'adapters.json'), JSON.stringify(config, null, 2))
 }
 
-function createRuntime(overrides: { workDir?: string } = {}) {
+function createRuntime(overrides: { workDir?: string; deferredFlush?: boolean } = {}) {
   const { port, notices, responses, busy, images } = createPort()
   const bridge = new FakeBridge()
   const httpClient = new FakeHttpClient()
@@ -202,8 +208,8 @@ function createRuntime(overrides: { workDir?: string } = {}) {
     defaultWorkDir: overrides.workDir ?? tmpDir,
     dedup,
     // Flush immediately so a test does not have to wait on a timer.
-    flushIntervalMs: 1,
-    flushCharThreshold: 1,
+    flushIntervalMs: overrides.deferredFlush ? 60_000 : 1,
+    flushCharThreshold: overrides.deferredFlush ? 1_000 : 1,
   })
   return { runtime, port, notices, responses, busy, images, bridge, httpClient, sessionStore, dedup }
 }
@@ -240,6 +246,123 @@ afterEach(() => {
   if (originalConfigDir !== undefined) process.env.CLAUDE_CONFIG_DIR = originalConfigDir
   else delete process.env.CLAUDE_CONFIG_DIR
   fs.rmSync(tmpDir, { recursive: true, force: true })
+})
+
+describe('reply routing', () => {
+  async function bufferedReply() {
+    const { runtime, port } = createRuntime({ deferredFlush: true })
+    const delivered: Array<[string | undefined, string]> = []
+    port.createResponse = () => {
+      const anchor = currentReplyAnchor()
+      return { async append(text) { delivered.push([anchor, text]) }, async finish() {} }
+    }
+    const frame = (msg: ServerMessage) => runtime.handleServerMessage(CHAT_ID, msg)
+    await frame({ type: 'input_committed', messageUuid: 'A', replyAnchor: 'thread-A' })
+    await frame({ type: 'input_turn_start', messageUuids: ['A'] })
+    await frame({ type: 'content_delta', text: 'before' })
+    return { frame, delivered }
+  }
+
+  it('does not reuse an active reply receipt after reconnect and completion', async () => {
+    const { delivered, frame } = await bufferedReply()
+    await frame({ type: 'connected', sessionId: 'reconnected' })
+    await frame({ type: 'input_committed', messageUuid: 'A', replyAnchor: 'thread-A' })
+    await frame({ type: 'input_turn_snapshot', messageUuids: ['A'] })
+    await frame({ type: 'message_complete' })
+    await frame({ type: 'user_message_replay', messageUuid: 'A', content: 'late replay' })
+    await frame({ type: 'content_delta', text: 'later' })
+    await frame({ type: 'message_complete' })
+    expect(delivered).toEqual([['thread-A', 'before'], [undefined, 'later']])
+  })
+
+  for (const snapshotOwner of ['A', 'desktop', 'unknown', 'legacy']) {
+    it(`reconciles buffered output on an active snapshot owned by ${snapshotOwner}`, async () => {
+      const { delivered, frame } = await bufferedReply()
+      await frame({ type: 'connected', sessionId: 'reconnected' })
+      if (snapshotOwner !== 'legacy') {
+        await frame({ type: 'input_turn_snapshot', messageUuids: snapshotOwner === 'unknown' ? [] : [snapshotOwner] })
+      }
+      await frame({ type: 'permission_requests_snapshot', turnActive: true, toolRequestIds: [] })
+      await frame({ type: 'content_delta', text: 'after' })
+      await frame({ type: 'message_complete' })
+      expect(delivered).toEqual(snapshotOwner === 'A'
+        ? [['thread-A', 'beforeafter']]
+        : [['thread-A', 'before'], [undefined, 'after']])
+    })
+  }
+  for (const replay of ['B', 'desktop', undefined]) {
+    it(`hands off buffered tool-time output on replay of ${replay}`, async () => {
+      const { delivered, frame } = await bufferedReply()
+      await frame({ type: 'content_start', blockType: 'tool_use', toolName: 'Read' })
+      if (replay === 'B') await frame({ type: 'input_committed', messageUuid: 'B', replyAnchor: 'thread-B' })
+      await frame({ type: 'user_message_replay', messageUuid: replay, content: 'next' })
+      await frame({ type: 'content_delta', text: 'after' })
+      await frame({ type: 'message_complete' })
+      // A duplicate replay after completion cannot revive a consumed receipt.
+      await frame({ type: 'user_message_replay', messageUuid: replay, content: 'next' })
+      await frame({ type: 'content_delta', text: 'later' })
+      await frame({ type: 'message_complete' })
+      expect(delivered).toEqual([['thread-A', 'before'], [replay === 'B' ? 'thread-B' : undefined, 'after'], [undefined, 'later']])
+    })
+  }
+  for (const scenario of ['startup rejection', 'attachment rewrite', 'missed completion', 'next turn before flush', 'batched completion', 'legacy replay without identity']) {
+    it(scenario, async () => {
+      const { runtime, port, bridge } = createRuntime({ deferredFlush: scenario === 'next turn before flush' })
+      const delivered: Array<string | undefined> = []
+      port.sendNotice = async () => { delivered.push(currentReplyAnchor()) }
+      port.createResponse = () => {
+        const anchor = currentReplyAnchor()
+        return { async append() { delivered.push(anchor) }, async finish() {} }
+      }
+      const frame = (msg: ServerMessage) => runtime.handleServerMessage(CHAT_ID, msg)
+      const send = (anchor: string) => runtime.handleInbound({ chatId: CHAT_ID, userId: USER_ID,
+        displayName: 'Tester', text: 'same', dedupKey: anchor, replyAnchor: anchor,
+        attachments: anchor === 'B' ? [{ type: 'file', path: '/fixture/file' }] : [],
+      })
+      const commit = (anchor: string) => frame({ type: 'input_committed', messageUuid: anchor + '-uuid', replyAnchor: anchor })
+      const start = (...anchors: string[]) => frame({ type: 'input_turn_start', messageUuids: anchors.map(a => a + '-uuid') })
+      const delta = () => frame({ type: 'content_delta', text: 'answer' })
+      const complete = () => frame({ type: 'message_complete' })
+      await send('A')
+      if (scenario === 'missed completion' || scenario === 'next turn before flush') {
+        await commit('A')
+        await start('A')
+        await delta()
+        if (scenario === 'missed completion') await frame({ type: 'permission_requests_snapshot', turnActive: false, toolRequestIds: [] })
+      }
+      await send('B')
+      expect(bridge.sent).toHaveLength(2)
+      if (scenario === 'startup rejection') {
+        await frame({ type: 'error', code: 'CLI_START_FAILED', message: 'startup failed', replyAnchor: 'B' })
+        await frame({ type: 'status', state: 'idle' })
+        expect(delivered).toEqual(['B'])
+      } else if (scenario === 'legacy replay without identity') {
+        await frame({ type: 'user_message_replay', content: 'same' })
+        await delta()
+        await complete()
+        expect(delivered).toEqual([undefined])
+      } else if (scenario === 'batched completion') {
+        await commit('A')
+        await commit('B')
+        await start('A', 'B')
+        await frame({ type: 'user_message_replay', messageUuid: 'A-uuid', content: 'same' })
+        await frame({ type: 'user_message_replay', messageUuid: 'B-uuid', content: 'same' })
+        await delta()
+        await complete()
+        await start('desktop')
+        await delta()
+        await complete()
+        expect(delivered).toEqual(['B', undefined])
+      } else {
+        await commit('B')
+        if (scenario === 'next turn before flush') await start('B')
+        await frame({ type: 'user_message_replay', messageUuid: 'B-uuid', content: 'same @"/fixture/file"' })
+        await delta()
+        await complete()
+        expect(delivered).toEqual(scenario === 'attachment rewrite' ? ['B'] : ['A', 'B'])
+      }
+    })
+  }
 })
 
 describe('ImChatRuntime authorization', () => {
@@ -556,6 +679,65 @@ describe('ImChatRuntime server stream', () => {
     expect(bridge.permissionResponses).toEqual([{ requestId: 'req-1', allowed: true, rule: undefined }])
   })
 
+  it('retains a sent decision until owner resolution and never reports it as approved', async () => {
+    const { runtime, bridge, notices } = createRuntime()
+    await inbound(runtime, 'run something')
+    await runtime.handleServerMessage(CHAT_ID, { type: 'permission_request', requestId: 'req-1', toolName: 'Bash', input: {} })
+    await inbound(runtime, '1')
+    expect(runtime.getRuntimeState(CHAT_ID).pendingPermissionCount).toBe(1)
+    expect(notices.at(-1)).toContain('等待')
+    await inbound(runtime, '1')
+    expect(bridge.permissionResponses).toHaveLength(1)
+    await runtime.handleServerMessage(CHAT_ID, { type: 'error', code: 'RUNTIME_CONFIG_INVALID', message: 'invalid', requestId: 'req-1', permissionType: 'tool', approvalOutcome: 'rejected' })
+    await inbound(runtime, '1')
+    expect(bridge.permissionResponses).toHaveLength(2)
+    await runtime.handleServerMessage(CHAT_ID, { type: 'permission_resolved', requestId: 'req-1', permissionType: 'tool' })
+    expect(runtime.getRuntimeState(CHAT_ID).pendingPermissionCount).toBe(0)
+  })
+
+  it('keeps an indeterminate send locked and synchronizes only its existing owner', async () => {
+    const { runtime, bridge, notices } = createRuntime()
+    await inbound(runtime, 'run something')
+    await runtime.handleServerMessage(CHAT_ID, { type: 'permission_request', requestId: 'req-1', toolName: 'Bash', input: {} })
+    const send = spyOn(bridge, 'sendPermissionResponse').mockImplementation(() => { throw new Error('transport may have accepted') })
+    try {
+      await inbound(runtime, '1')
+      expect(notices.at(-1)).toContain('等待')
+      expect(bridge.syncRequests).toEqual([CHAT_ID])
+      await inbound(runtime, '1')
+      expect(send).toHaveBeenCalledTimes(1)
+      await runtime.handleServerMessage(CHAT_ID, { type: 'error', code: 'APPROVAL_UNCERTAIN', message: 'uncertain', requestId: 'req-1', permissionType: 'tool', approvalOutcome: 'uncertain' })
+      expect(bridge.syncRequests).toEqual([CHAT_ID, CHAT_ID])
+      await runtime.handleServerMessage(CHAT_ID, { type: 'permission_resolved', requestId: 'req-1', permissionType: 'computer_use' })
+      await runtime.handleServerMessage(CHAT_ID, { type: 'permission_requests_snapshot', turnActive: false })
+      await runtime.handleServerMessage(CHAT_ID, { type: 'permission_requests_snapshot', toolRequestIds: [null], turnActive: false })
+      await inbound(runtime, '1')
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(runtime.getRuntimeState(CHAT_ID).pendingPermissionCount).toBe(1)
+      runtime.clearTransientChatState(CHAT_ID)
+      await runtime.handleServerMessage(CHAT_ID, { type: 'permission_request', requestId: 'req-1', toolName: 'Bash', input: {} })
+      await inbound(runtime, '1')
+      expect(send).toHaveBeenCalledTimes(2)
+    } finally { send.mockRestore() }
+  })
+
+  it.each(['permission_resolved', 'permission_requests_snapshot'])('ends the waiting notice once on authoritative %s, not on transport send', async (type) => {
+    const { runtime, notices } = createRuntime()
+    await runtime.handleServerMessage(CHAT_ID, { type: 'permission_request', requestId: 'settled', toolName: 'Bash', input: {} })
+    await inbound(runtime, '/deny settled')
+    expect(notices.at(-1)).toContain('等待')
+    const resolved = type === 'permission_resolved'
+      ? { type, requestId: 'settled', permissionType: 'tool', allowed: false }
+      : { type, toolRequestIds: [], turnActive: false }
+    await runtime.handleServerMessage(CHAT_ID, resolved)
+    expect(notices.at(-1)).toContain('不再等待')
+    expect(notices.at(-1)).toContain('settled')
+    const count = notices.length
+    await runtime.handleServerMessage(CHAT_ID, resolved)
+    expect(notices).toHaveLength(count)
+    expect(runtime.getRuntimeState(CHAT_ID).pendingPermissionCount).toBe(0)
+  })
+
   it('records a permanent allow separately from a one-shot allow', async () => {
     const { runtime, bridge } = createRuntime()
 
@@ -715,7 +897,7 @@ describe('ImChatRuntime abandoning a live turn', () => {
 
 describe('ImChatRuntime attachment authorization', () => {
   // Downloading before the pairing gate lets a stranger make the adapter fetch
-  // bytes and write them under ~/.claude/im-downloads — and on Slack that
+  // bytes and write them under <data-root>/im-downloads — and on Slack that
   // fetch carries the bot token.
   it('does not download attachments for an unpaired sender', async () => {
     writeAdapterConfig({ wecom: { pairedUsers: [], allowedUsers: [] } })

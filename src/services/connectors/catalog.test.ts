@@ -53,7 +53,7 @@ test('all 55 services and tool packages have unique plugin identities and packag
   expect(new Set(ALL_CONNECTORS.map(item => item.pluginId)).size).toBe(55)
   for (const def of ALL_CONNECTORS) {
     expect(getConnectorDefinition(def.id)).toEqual(def)
-    expect(def.pluginId).toBe(`office-${def.id}@haha-connectors`)
+    expect(def.pluginId).toBe(`office-${def.id}@echoflow-connectors`)
     const icon = readFileSync(new URL(`../../../desktop/public/connectors/${def.id}.svg`, import.meta.url), 'utf8')
     expect(icon).toContain('<svg')
     expect(icon).not.toMatch(/<script|\bonload\s*=|\bonerror\s*=/i)

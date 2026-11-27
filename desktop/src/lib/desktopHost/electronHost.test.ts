@@ -5,6 +5,21 @@ import { createElectronHost } from './electronHost'
 import { PUBLIC_ACCESS_CONSENT_VERSION, type WorkspaceBrowserMenuOptions } from './types'
 
 describe('electron desktop host', () => {
+  it('waits for one or both EchoFlow login endpoints over validated IPC', async () => {
+    const invoke = vi.fn().mockResolvedValue(true)
+    const host = createElectronHost({ invoke, subscribe: vi.fn() })
+    const channel = ELECTRON_IPC_CHANNELS.echoFlowWhenRestored
+    await expect(host.echoFlow.whenAccountRestored()).resolves.toBe(true)
+    await expect(host.echoFlow.whenAccountRestored('main')).resolves.toBe(true)
+    await expect(host.echoFlow.whenAccountRestored('dedicated')).resolves.toBe(true)
+    await expect(host.echoFlow.whenAccountRestored('other' as never)).rejects.toThrow('Invalid Electron IPC payload')
+    expect(invoke.mock.calls).toEqual([
+      [channel, undefined],
+      [channel, { endpoint: 'main' }],
+      [channel, { endpoint: 'dedicated' }],
+    ])
+  })
+
   it('restores config import take, acknowledgement and pending notifications over validated IPC', async () => {
     const pending = { invalid: true }
     const invoke = vi.fn().mockResolvedValue(pending)
@@ -73,11 +88,17 @@ describe('electron desktop host', () => {
     const subscribe = vi.fn().mockResolvedValue(unlisten)
     const host = createElectronHost({ invoke, subscribe })
     await host.appMode.migration.prepare('D:\\cc-haha-data')
+    await host.appMode.migration.prepareOpenAiOauth()
+    await host.appMode.migration.prepareImAdoption()
+    await host.appMode.migration.prepareWhatsAppAdoption()
     await host.appMode.migration.start('migration-1')
     await host.appMode.migration.status()
     await host.appMode.migration.cancel('migration-1')
     expect(invoke.mock.calls).toEqual([
       [ELECTRON_IPC_CHANNELS.migrationPrepare, { targetDir: 'D:\\cc-haha-data' }],
+      [ELECTRON_IPC_CHANNELS.migrationOpenAiOauth, undefined],
+      [ELECTRON_IPC_CHANNELS.migrationImAdoption, undefined],
+      [ELECTRON_IPC_CHANNELS.migrationWhatsAppAdoption, undefined],
       [ELECTRON_IPC_CHANNELS.migrationStart, { id: 'migration-1' }],
       [ELECTRON_IPC_CHANNELS.migrationStatus, undefined],
       [ELECTRON_IPC_CHANNELS.migrationCancel, { id: 'migration-1' }],
@@ -87,7 +108,7 @@ describe('electron desktop host', () => {
     expect(subscribe).toHaveBeenCalledWith(ELECTRON_EVENT_CHANNELS.migrationProgress, handler)
     await expect(host.appMode.migration.start('')).rejects.toThrow('Invalid Electron IPC payload')
     await expect(host.appMode.migration.prepare('bad\u0000path')).rejects.toThrow('Invalid Electron IPC payload')
-    expect(invoke).toHaveBeenCalledTimes(4)
+    expect(invoke).toHaveBeenCalledTimes(7)
   })
 
   it('routes public access through validated local IPC without exposing management in browsers', async () => {

@@ -44,6 +44,7 @@ describe('site network bridge', () => {
     expect(init.method).toBe('GET')
     // The sign-in window's own network identity is the point of the bridge.
     expect(init.credentials).toBe('include')
+    expect(init.redirect).toBe('error')
   })
 
   it('refuses a call without the shared token and never reaches the gateway', async () => {

@@ -1,6 +1,8 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
+import { buildEchoFlowOwnershipMarker, getDefaultEchoFlowConfigDir, resolveStorageBinding } from '../../../src/utils/echoFlowConfigRoot'
+import { initializeDesktopStorage } from './desktopStorageStartup'
 import { describe, expect, it, vi } from 'vitest'
 import {
   clampWindowStateToVisibleWorkArea,
@@ -27,11 +29,11 @@ const fakeApp = (home: string, userData = path.join(home, 'user-data')) => ({
 })
 
 describe('Electron window service', () => {
-  it('stores system-mode window state under ~/.claude', () => {
+  it('stores default window state in the platform product root', () => {
     const tmp = mkdtempSync(path.join(tmpdir(), 'electron-window-state-system-'))
     try {
       const app = fakeApp(tmp)
-      expect(windowStatePath(app as never, {})).toBe(path.join(tmp, '.claude', 'window-state.json'))
+      expect(windowStatePath(app as never, {})).toBe(path.join(getDefaultEchoFlowConfigDir({ env: {}, homeDir: tmp }), 'window-state.json'))
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }
@@ -47,7 +49,7 @@ describe('Electron window service', () => {
 
       const statePath = windowStatePath(app as never, { CLAUDE_CONFIG_DIR: tmp })
       expect(JSON.parse(readFileSync(statePath, 'utf-8'))).toEqual(state)
-      expect(app.getPath).not.toHaveBeenCalled()
+      expect(app.getPath).not.toHaveBeenCalledWith('userData')
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }
@@ -108,7 +110,7 @@ describe('Electron window service', () => {
     }
   })
 
-  it('reads the old Electron userData window state as a forward-migration fallback', () => {
+  it('reads old Electron window state only after a cold shared-transaction import', async () => {
     const tmp = mkdtempSync(path.join(tmpdir(), 'electron-window-state-legacy-'))
     try {
       const userData = path.join(tmp, 'user-data')
@@ -116,14 +118,42 @@ describe('Electron window service', () => {
       const state = { x: 50, y: 60, width: 1280, height: 820, maximized: true }
       mkdirSync(userData, { recursive: true })
       writeFileSync(path.join(userData, 'window-state.json'), JSON.stringify(state))
-
-      expect(readWindowState(
-        app as never,
-        [{ bounds: { x: 0, y: 0, width: 1440, height: 900 }, workArea: { x: 0, y: 0, width: 1440, height: 860 } }],
-        {},
-        'win32',
-      )).toEqual(state)
+      writeFileSync(path.join(userData, 'app.json'), JSON.stringify(buildEchoFlowOwnershipMarker()))
+      const displays = [{ bounds: { x: 0, y: 0, width: 1440, height: 900 }, workArea: { x: 0, y: 0, width: 1440, height: 860 } }]
+      expect(readWindowState(app as never, displays, {}, 'win32')).toBeNull()
+      const lease = await initializeDesktopStorage({
+        binding: resolveStorageBinding({ env: {}, homeDir: tmp }),
+        sources: [{ directory: userData, markerRoot: userData }], issues: [],
+      }, { assertQuiescent: async () => {}, platform: 'linux' }, async () => {})
+      try {
+        expect(readWindowState(app as never, displays, {}, 'win32')).toEqual(state)
+        expect(readFileSync(windowStatePath(app as never, {}), 'utf8')).toBe(JSON.stringify(state))
+      } finally { await lease.release() }
     } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['primary', 'override', 'broken'] as const)('does not fall back to legacy window state for %s', scenario => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'electron-window-state-priority-'))
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const userData = path.join(tmp, 'user-data')
+      const app = fakeApp(tmp, userData)
+      const legacy = { x: 50, y: 60, width: 1280, height: 820, maximized: true }
+      const primary = { ...legacy, x: 100, maximized: false }
+      mkdirSync(userData)
+      writeFileSync(path.join(userData, 'window-state.json'), JSON.stringify(legacy))
+      const env = scenario === 'override' ? { CLAUDE_CONFIG_DIR: path.join(tmp, 'custom') } : {}
+      if (scenario !== 'override') {
+        const target = windowStatePath(app as never, env)
+        mkdirSync(path.dirname(target), { recursive: true })
+        writeFileSync(target, scenario === 'broken' ? '{broken' : JSON.stringify(primary))
+      }
+      expect(readWindowState(app as never, [], env, 'win32')).toEqual(scenario === 'primary' ? primary : null)
+      expect(JSON.parse(readFileSync(path.join(userData, 'window-state.json'), 'utf8'))).toEqual(legacy)
+    } finally {
+      consoleError.mockRestore()
       rmSync(tmp, { recursive: true, force: true })
     }
   })

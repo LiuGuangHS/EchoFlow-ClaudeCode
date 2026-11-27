@@ -35,25 +35,20 @@ const workspaceBrowserServiceSource = mainSource.slice(
 
 describe('Electron preview security boundary', () => {
   it('blocks unsafe startup without offering alternate profile selection', () => {
-    const setup = mainSource.slice(mainSource.indexOf('// Resolve the profile'), mainSource.indexOf('let mainWindow:'))
-    expect(setup).toContain('startupProfileError = error')
-    expect(setup).toContain('setStorageWritesFrozen(true)')
-    expect(setup).toContain('cleanupProfileRecovery = prepareProfileRecovery(app)')
-    expect(setup).toContain('process.exit(1)')
-    expect(setup).not.toContain('dialog.showErrorBox')
-    const registrations = mainSource.slice(mainSource.indexOf('if (!startupProfileError)'), mainSource.indexOf('app.whenReady().then'))
-    expect(registrations).toContain('acquireSingleInstanceLock(')
-    expect(registrations).toContain('registerIpcHandlers()')
-    expect(registrations).toContain("app.on('open-url'")
-    const ready = mainSource.slice(mainSource.indexOf('app.whenReady().then(async () => {'))
-    expect(ready).toMatch(/async \(\) => \{\s+if \(startupProfileError\)/)
-    const failure = ready.slice(0, ready.indexOf('applyWindowsAppUserModelId(app)'))
+    expect(mainSource.startsWith("import './storageBootstrap'")).toBe(true)
+    const bootstrap = readFileSync(path.join(desktopRoot, 'electron/storageBootstrap.ts'), 'utf8')
+    const failure = bootstrap.slice(bootstrap.indexOf('} catch (error) {'))
     expect(failure).toContain('dialog.showErrorBox(')
-    expect(failure).toContain('cleanupProfileRecovery?.()')
     expect(failure).toContain('app.exit(1)')
+    expect(failure).toContain('process.exit(1)')
     expect(failure).not.toContain('showMessageBox')
     expect(failure).not.toContain('relaunch')
-    expect(ready).toMatch(/app\.exit\(1\)[\s\S]*?return\s+\}/)
+    expect(bootstrap).not.toContain('BrowserWindow')
+    expect(bootstrap).not.toContain('prepareProfileRecovery')
+    expect(bootstrap).not.toContain('tmpdir')
+    const ready = mainSource.slice(mainSource.indexOf('app.whenReady().then(async () => {'))
+    expect(ready).not.toContain('getDataMigration().recover()')
+    expect(ready).not.toContain('failValidation()')
   })
   it('wires native navigation through the main-frame-only queue and current tray state', () => {
     const navigationHandler = mainSource.slice(
@@ -116,7 +111,7 @@ describe('Electron preview security boundary', () => {
     // A shared *persistent* partition is deliberate — one browsing profile for
     // the user — but it must never be the renderer's own session, which is
     // where the local token is injected.
-    expect(workspaceBrowserServiceSource).toContain('WORKSPACE_BROWSER_PARTITION')
+    expect(workspaceBrowserServiceSource).toContain("resolveWorkspaceBrowserPartition(app.getPath('sessionData'))")
     expect(workspaceBrowserServiceSource).not.toContain('defaultSession')
     expect(workspaceBrowserServiceSource).toContain('configurePreviewSessionPermissions')
   })
@@ -128,7 +123,7 @@ describe('Electron preview security boundary', () => {
     expect(applyWorkspaceBrowserAttachPolicy(preferences, {
       partition: WORKSPACE_BROWSER_PARTITION,
       src: WORKSPACE_BROWSER_INITIAL_SRC,
-    }, { preload: '/preview-preload.cjs' })).toBe(true)
+    }, { preload: '/preview-preload.cjs', session: {} })).toBe(true)
     expect(preferences).toMatchObject({ sandbox: true, contextIsolation: true, nodeIntegration: false })
     expect(mainWindowSource).toContain('installWorkspaceBrowserGuestPolicy(mainWindow.webContents')
   })
@@ -174,7 +169,7 @@ describe('Electron preview security boundary', () => {
     // A shared *persistent* partition is deliberate — one browsing profile for
     // the user — but it must never be the renderer's own session, which is
     // where the local token is injected.
-    expect(workspaceBrowserServiceSource).toContain('WORKSPACE_BROWSER_PARTITION')
+    expect(workspaceBrowserServiceSource).toContain("resolveWorkspaceBrowserPartition(app.getPath('sessionData'))")
     expect(workspaceBrowserServiceSource).not.toContain('defaultSession')
     expect(workspaceBrowserServiceSource).toContain('configurePreviewSessionPermissions')
   })
@@ -186,7 +181,7 @@ describe('Electron preview security boundary', () => {
     expect(applyWorkspaceBrowserAttachPolicy(preferences, {
       partition: WORKSPACE_BROWSER_PARTITION,
       src: WORKSPACE_BROWSER_INITIAL_SRC,
-    }, { preload: '/preview-preload.cjs' })).toBe(true)
+    }, { preload: '/preview-preload.cjs', session: {} })).toBe(true)
     expect(preferences).toMatchObject({ sandbox: true, contextIsolation: true, nodeIntegration: false })
     expect(mainWindowSource).toContain('installWorkspaceBrowserGuestPolicy(mainWindow.webContents')
   })

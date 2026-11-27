@@ -28,10 +28,13 @@ function releaseAfterPinned(minors: number): string {
 describe('OpenAI Codex model catalog', () => {
   let tmpDir: string
   let originalTokenFile: string | undefined
+  let originalConfigDir: string | undefined
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openai-model-catalog-'))
     originalTokenFile = process.env.OPENAI_CODEX_OAUTH_FILE
+    originalConfigDir = process.env.CLAUDE_CONFIG_DIR
+    process.env.CLAUDE_CONFIG_DIR = tmpDir
     process.env.OPENAI_CODEX_OAUTH_FILE = path.join(tmpDir, 'openai-oauth.json')
     await fs.writeFile(
       process.env.OPENAI_CODEX_OAUTH_FILE,
@@ -50,6 +53,8 @@ describe('OpenAI Codex model catalog', () => {
   afterEach(async () => {
     if (originalTokenFile === undefined) delete process.env.OPENAI_CODEX_OAUTH_FILE
     else process.env.OPENAI_CODEX_OAUTH_FILE = originalTokenFile
+    if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
     clearOpenAIOAuthTokenCache()
     clearOpenAICodexModelCatalogCache()
     await fs.rm(tmpDir, { recursive: true, force: true })

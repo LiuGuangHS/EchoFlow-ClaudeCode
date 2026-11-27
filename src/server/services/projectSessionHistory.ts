@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { classifySessionArchives, type SessionArchiveSnapshot } from '../../utils/sessionArchiveStore.js'
 import { ApiError } from '../middleware/errorHandler.js'
 import type { IndexedSessionRow } from './localIndex/sessionIndex.js'
 import type { SessionListItem } from './sessionService.js'
@@ -37,7 +38,7 @@ export class ProjectSessionHistory {
     mutation: () => string
     load: () => Promise<ProjectHistoryRow[]>
     hydrate: (row: ProjectHistoryRow, archived: boolean) => Promise<SessionListItem | null>
-    archiveIds: () => ReadonlySet<string>
+    archiveSnapshot: () => SessionArchiveSnapshot
   }) {}
 
   async list(options: ProjectHistoryOptions): Promise<ProjectHistoryPage> {
@@ -74,9 +75,9 @@ export class ProjectSessionHistory {
       const catalog = await this.loadCatalog()
       if (scope !== this.source.scope()) throw this.expired()
       const seen = new Set<string>()
-      const archiveIds = this.source.archiveIds()
+      const archiveStates = classifySessionArchives(this.source.archiveSnapshot(), catalog)
       const rows = catalog.filter((row) => {
-        if (row.logicalProjectRoot !== projectRoot || seen.has(row.id) || archiveIds.has(row.id) !== Boolean(options.archived)) return false
+        if (row.logicalProjectRoot !== projectRoot || seen.has(row.id) || archiveStates.get(row.id) !== Boolean(options.archived)) return false
         seen.add(row.id)
         if (beforeTime === null) return true
         const time = Date.parse(row.modifiedAt)
@@ -92,16 +93,19 @@ export class ProjectSessionHistory {
     // position but not a rendered row, so sparse pages still make progress.
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const mutation = this.source.mutation()
-      const archiveIds = this.source.archiveIds()
+      const archives = this.source.archiveSnapshot()
+      const legacyRevision = archives.migrationComplete ? null : this.source.revision()
+      const catalog = await this.loadCatalog()
+      const archiveStates = classifySessionArchives(archives, catalog)
       const sessions: SessionListItem[] = []
       let nextOffset = offset
       while (nextOffset < snapshot.rows.length && sessions.length < limit && nextOffset - offset < limit * 2) {
         const row = snapshot.rows[nextOffset++]!
-        if (archiveIds.has(row.id) !== snapshot.archived) continue
+        if (archiveStates.get(row.id) !== snapshot.archived) continue
         const session = await this.source.hydrate(row, snapshot.archived)
         if (session) sessions.push(session)
       }
-      if (mutation !== this.source.mutation()) continue
+      if (mutation !== this.source.mutation() || (legacyRevision !== null && legacyRevision !== this.source.revision())) continue
       if (scope !== this.source.scope()) throw this.expired()
       snapshot.expiresAt = this.source.now() + SNAPSHOT_TTL_MS
       this.snapshots.delete(snapshotId)
@@ -127,12 +131,16 @@ export class ProjectSessionHistory {
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const mutation = this.source.mutation()
+      const archives = this.source.archiveSnapshot()
+      const legacyRevision = archives.migrationComplete ? null : this.source.revision()
       const catalog = await this.loadCatalog()
       if (scope !== this.source.scope()) throw this.expired()
-      const archiveIds = this.source.archiveIds()
+      const archiveStates = classifySessionArchives(archives, catalog)
 
       const grouped = new Map<string, { total: number; archivedTotal: number; rows: ProjectHistoryRow[]; seen: Set<string> }>()
       for (const row of catalog) {
+        const archived = archiveStates.get(row.id)
+        if (archived == null) continue
         let project = grouped.get(row.logicalProjectRoot)
         if (!project) {
           project = { total: 0, archivedTotal: 0, rows: [], seen: new Set() }
@@ -140,7 +148,7 @@ export class ProjectSessionHistory {
         }
         if (project.seen.has(row.id)) continue
         project.seen.add(row.id)
-        if (archiveIds.has(row.id)) {
+        if (archived) {
           project.archivedTotal += 1
           continue
         }
@@ -162,7 +170,7 @@ export class ProjectSessionHistory {
           if (hydrated >= limit) break
         }
       }
-      if (mutation !== this.source.mutation()) continue
+      if (mutation !== this.source.mutation() || (legacyRevision !== null && legacyRevision !== this.source.revision())) continue
       if (scope !== this.source.scope()) throw this.expired()
 
       sessions.sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt) || a.id.localeCompare(b.id))
@@ -178,6 +186,17 @@ export class ProjectSessionHistory {
       }
     }
     throw new ApiError(409, 'Project history changed during loading; retry', 'PROJECT_HISTORY_CHANGED')
+  }
+
+  /** Sidebar consumes the catalog already loaded for its project previews. */
+  listArchivedSessionIds(): string[] | null {
+    if (!this.catalog || this.catalog.key !== this.source.revision()) return null
+    const snapshot = this.source.archiveSnapshot()
+    const ids = new Set(snapshot.ids)
+    for (const [id, archived] of classifySessionArchives(snapshot, this.catalog.rows)) {
+      if (archived) ids.add(id)
+    }
+    return [...ids]
   }
 
   private async loadCatalog(): Promise<ProjectHistoryRow[]> {

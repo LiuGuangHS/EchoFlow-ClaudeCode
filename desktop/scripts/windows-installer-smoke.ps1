@@ -55,7 +55,7 @@ function Remove-SmokeFixture {
 
 function New-SmokeResults {
   $results = [ordered]@{}
-  foreach ($name in @('native-helper-regressions', 'packaged-smoke', 'packaged-profile-no-clr', 'elevated-identity-no-clr', 'cleanup')) {
+  foreach ($name in @('native-helper-regressions', 'packaged-smoke', 'legacy-profile-startup', 'packaged-profile-no-clr', 'elevated-refusal-no-clr', 'cleanup')) {
     $results[$name] = [ordered]@{ status = 'unexercised'; reason = 'Not reached.'; evidence = 'No completed assertion.' }
   }
   return $results
@@ -356,14 +356,13 @@ function Invoke-InstalledApplicationSmoke {
     [Parameter(Mandatory = $true)][string]$FilePath,
     [Parameter(Mandatory = $true)][string]$InstallDirectory,
     [Parameter(Mandatory = $true)][string]$IsolatedUserProfile,
-    [string]$ExpectedPortableDir = '',
     [int]$TimeoutSeconds = 60
   )
 
-  $configDir = if ($ExpectedPortableDir) { $ExpectedPortableDir } else { Join-Path $IsolatedUserProfile '.claude' }
+  $configDir = Join-Path $localAppData $productIdentity.name
   $serverStateFile = Join-Path $configDir 'desktop-server-state.json'
   $windowLog = Join-Path $testRoot 'electron-window-smoke.jsonl'
-  $hostDiagnostics = Join-Path $configDir 'cc-haha\diagnostics\electron-host.log'
+  $hostDiagnostics = Join-Path (Join-Path $configDir $productIdentity.configDir) 'diagnostics\electron-host.log'
   $smokeEnvironmentNames = @(
     'CLAUDE_CONFIG_DIR',
     'CC_HAHA_ELECTRON_WINDOW_SMOKE_LOG',
@@ -380,12 +379,7 @@ function Invoke-InstalledApplicationSmoke {
   $script:launchNumber += 1
   $application = $null
   try {
-    New-Item -ItemType Directory -Path $configDir -Force | Out-Null
-    if ($ExpectedPortableDir) {
-      Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue
-    } else {
-      $env:CLAUDE_CONFIG_DIR = $configDir
-    }
+    Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue
     # Each launch must supply its own readiness evidence, not a previous launch's files.
     foreach ($stale in @($windowLog, $serverStateFile)) {
       if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Force }
@@ -459,8 +453,7 @@ function Invoke-InstalledApplicationSmoke {
               '-InstallDir', $InstallDirectory,
               '-ProcessName', 'EchoFlow Code.exe',
               '-Action', 'KillForce',
-              '-InstallerPid', [string]$PID,
-              '-InstallerParentPid', '0'
+              '-InstallerPid', [string]$PID
             )
         } finally {
           if (-not $application.WaitForExit(30000)) {
@@ -490,6 +483,26 @@ function Invoke-InstalledApplicationSmoke {
 }
 
 function Invoke-LegacyRecoveryDiagnostic {
+  $packagedBridge = Join-Path $installDir 'resources\installer-recovery\installer-storage-recovery-x86_64-pc-windows-msvc.exe'
+  if (-not (Test-Path -LiteralPath $packagedBridge -PathType Leaf)) {
+    throw 'Packaged installer storage recovery runtime is missing'
+  }
+  $recoveryBridge = Join-Path $testRoot 'installer-storage-recovery.exe'
+  Copy-Item -LiteralPath $packagedBridge -Destination $recoveryBridge
+  $source = Join-Path $installDir 'CLAUDE_CONFIG_DIR'
+  $settings = Join-Path $source 'settings.json'
+  $ownership = Join-Path $source 'app.json'
+  $target = Join-Path $localAppData $productIdentity.name
+  $location = Join-Path $userProfile '.echoflow-storage\active-root.sqlite'
+  if (Test-Path -LiteralPath $target) { throw 'The recovery diagnostic requires an absent destination.' }
+  New-Item -ItemType Directory -Path $source | Out-Null
+  [IO.File]::WriteAllText($settings, '{"installerRecoveryFixture":true}')
+  [IO.File]::WriteAllText($ownership, (@{ owner = $productIdentity.name; appId = $productIdentity.appId; schemaVersion = 1 } | ConvertTo-Json -Compress))
+  $protectedFiles = @($settings, $ownership, $appExe, $uninstaller)
+  $hasLocation = Test-Path -LiteralPath $location
+  if ($hasLocation) { $protectedFiles += $location }
+  $originalHashes = @{}
+  foreach ($file in $protectedFiles) { $originalHashes[$file] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash }
   $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
   $arguments = @(
     '-NoLogo',
@@ -504,31 +517,43 @@ function Invoke-LegacyRecoveryDiagnostic {
     '-CandidateInstallDir',
     $installDir,
     '-UserDataDir',
-    (Join-Path $appData 'EchoFlow Code'),
+    (Join-Path $appData $productIdentity.name),
     '-LocalUserDataDir',
-    (Join-Path $localAppData 'EchoFlow Code'),
+    (Join-Path $localAppData $productIdentity.name),
     '-DesktopPackageName',
     $productIdentity.slug,
     '-LegacyDesktopPackageName',
     $productIdentity.legacyDesktopPackageName,
-    '-RecoveryRoot',
-    (Join-Path $userProfile 'EchoFlow Code Data\Recovered'),
+    '-RecoveryBridge',
+    $recoveryBridge,
     '-ProcessName',
     'EchoFlow Code.exe',
     '-InstallerIdentitySafety',
     'trusted-user'
   )
 
-  Write-SmokeDiagnostic ('Direct legacy recovery diagnostic starting...')
+  Write-SmokeDiagnostic ('Packaged legacy recovery refusal diagnostic starting...')
   $output = @(& $windowsPowerShell @arguments 2>&1)
   $exitCode = $LASTEXITCODE
   foreach ($line in $output) {
     Write-SmokeDiagnostic ([string]$line)
   }
-  if ($exitCode -ne 0) {
-    throw "Direct legacy recovery diagnostic failed with exit code $exitCode."
+  $expectedStop = 'Shared installer storage recovery blocked (exit 20): Installer storage recovery stopped: Storage migration blocked: Windows native'
+  if ($exitCode -ne 20 -or ($output -join ' ') -notlike "*$expectedStop*") {
+    throw "Packaged legacy recovery did not report a Windows native inventory refusal (helper exit $exitCode)."
   }
-  Write-SmokeDiagnostic ('Direct legacy recovery diagnostic completed successfully.')
+  foreach ($file in $protectedFiles) {
+    if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $originalHashes[$file]) {
+      throw "Packaged legacy recovery changed a protected fixture file before refusing: $file"
+    }
+  }
+  if (@(Get-ChildItem -LiteralPath $source -Force).Count -ne 2 -or (Test-Path -LiteralPath $target) -or
+      (!$hasLocation -and (Test-Path -LiteralPath $location))) {
+    throw 'Packaged legacy recovery created source, destination, or startup receipt state before refusing.'
+  }
+  Write-SmokeDiagnostic ('Packaged installer recovery refused at the Windows native inventory gate and preserved the install-contained source. Installed files, destination and startup receipt retained their original state.')
+  Remove-Item -LiteralPath $settings, $ownership -Force
+  Remove-Item -LiteralPath $source
 }
 
 function Invoke-NoClrProfileSmoke {
@@ -558,15 +583,15 @@ function Invoke-NoClrProfileSmoke {
     $utf8 = New-Object Text.UTF8Encoding($false)
     $elevated = Test-IsProcessElevated
     if ($elevated) {
-      $results['packaged-profile-no-clr'] = [ordered]@{ status = 'unexercised'; reason = 'Elevated runner refuses at identity gate before profile-specific branches.'; evidence = 'Native NSIS fixtures are function-level evidence, not packaged trusted-user validation.' }
-      $script:activeCheck = 'elevated-identity-no-clr'
+      $results['packaged-profile-no-clr'] = [ordered]@{ status = 'unexercised'; reason = 'Elevated runner cannot qualify the profile-specific branches.'; evidence = 'Native NSIS fixtures are function-level evidence, not packaged trusted-user validation.' }
+      $script:activeCheck = 'elevated-refusal-no-clr'
     } else {
-      $results['elevated-identity-no-clr'] = [ordered]@{ status = 'unexercised'; reason = 'Runner is not elevated.'; evidence = 'This run exercises packaged trusted-user profile branches instead.' }
+      $results['elevated-refusal-no-clr'] = [ordered]@{ status = 'unexercised'; reason = 'Runner is not elevated.'; evidence = 'This run exercises packaged trusted-user profile branches instead.' }
       $script:activeCheck = 'packaged-profile-no-clr'
     }
     $completedCases = 0
     if ($elevated) {
-      Write-SmokeDiagnostic ('UNEXERCISED: packaged profile-specific success and refusal branches on this elevated runner. These cases verify identity-only refusal; native NSIS fixtures are separate function-level evidence, not packaged trusted-user validation.')
+      Write-SmokeDiagnostic ('UNEXERCISED: packaged profile-specific success and refusal branches on this elevated runner. These cases verify installer refusal and preservation of the fixture files; native NSIS fixtures are separate function-level evidence, not packaged trusted-user validation.')
     }
     foreach ($kind in @('Local', 'Roaming')) {
       foreach ($scenario in @('default-absent-other', 'default-empty-other', 'default-implicit', 'default-implicit-empty-other', 'dual-root', 'other-root-content', 'portable-mode', 'bad-mode', 'journal', 'legacy-profile', 'package-profile')) {
@@ -612,7 +637,7 @@ function Invoke-NoClrProfileSmoke {
         Write-SmokeDiagnostic ("No-CLR profile fixture: $kind-only $scenario")
         $env:COMPLUS_Version = 'v0.0.0-test-invalid-clr'
         if (Test-IsProcessElevated) {
-          Invoke-ProcessExpectFailure -FilePath $installer -Stage 'Elevated identity-only refusal without CLR' -ExpectedExitCode 20 -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
+          Invoke-ProcessExpectFailure -FilePath $installer -Stage 'Elevated installer refusal without CLR' -ExpectedExitCode 20 -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
         } elseif ($scenario -like 'default-*') {
           Invoke-CheckedProcess -FilePath $installer -Stage 'Trusted-user default-mode reinstall without CLR' -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
         } else {
@@ -657,6 +682,28 @@ try {
   # what the no-CLR stages would misattribute to themselves.
   Write-InstallerFallbackProcessDiagnostic -Context 'Runner baseline before fresh install'
 
+  Invoke-CheckedProcess -FilePath $installer -Stage 'Fresh install' -Arguments @('/S', '/currentuser', "/D=$installDir")
+  if (-not (Test-Path -LiteralPath $appExe -PathType Leaf)) {
+    throw "Fresh install did not create the application executable: $appExe"
+  }
+  Invoke-InstalledApplicationSmoke `
+    -FilePath $appExe `
+    -InstallDirectory $installDir `
+    -IsolatedUserProfile $userProfile
+  $freshStorage = Join-Path $localAppData $productIdentity.name
+  $freshSentinel = Join-Path $freshStorage 'fresh-profile-sentinel.txt'
+  [IO.File]::WriteAllText($freshSentinel, 'fresh-profile-must-survive')
+  Invoke-InstalledApplicationSmoke `
+    -FilePath $appExe `
+    -InstallDirectory $installDir `
+    -IsolatedUserProfile $userProfile
+  if ([IO.File]::ReadAllText($freshSentinel) -cne 'fresh-profile-must-survive') {
+    throw 'The fresh install changed its default profile sentinel on second launch.'
+  }
+  Write-SmokeDiagnostic ('Fresh default profile retained its sentinel on second launch.')
+  Move-Item -LiteralPath $freshStorage -Destination (Join-Path $testRoot 'fresh-storage')
+  Invoke-LegacyRecoveryDiagnostic
+
   $legacyProfile = Join-Path $appData $productIdentity.legacyDesktopPackageName
   $legacyPortable = Join-Path $userProfile 'legacy portable data'
   New-Item -ItemType Directory -Path $legacyProfile, $legacyPortable -Force | Out-Null
@@ -666,38 +713,22 @@ try {
   $legacySentinelFile = Join-Path $legacyPortable 'profile-sentinel.txt'
   [IO.File]::WriteAllText($legacySentinelFile, 'legacy-profile-must-survive')
 
-  Invoke-CheckedProcess -FilePath $installer -Stage 'Fresh install' -Arguments @('/S', '/currentuser', "/D=$installDir")
-  if (-not (Test-Path -LiteralPath $appExe -PathType Leaf)) {
-    throw "Fresh install did not create the application executable: $appExe"
+  Invoke-CheckedProcess -FilePath $installer -Stage 'Legacy-package profile reinstall' -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
+  if ((Get-FileHash -LiteralPath $legacyModeFile -Algorithm SHA256).Hash -ne $legacyModeHash -or
+      [IO.File]::ReadAllText($legacySentinelFile) -ne 'legacy-profile-must-survive') {
+    throw 'Legacy-package profile reinstall changed its persisted pointer or sentinel.'
   }
-  Invoke-InstalledApplicationSmoke `
-    -FilePath $appExe `
-    -InstallDirectory $installDir `
-    -IsolatedUserProfile $userProfile
-  foreach ($launch in @('startup', 'relaunch')) {
-    if ($launch -eq 'relaunch') {
-      Invoke-CheckedProcess -FilePath $installer -Stage 'Legacy-package profile reinstall' -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
-    }
-    Invoke-InstalledApplicationSmoke `
-      -FilePath $appExe `
-      -InstallDirectory $installDir `
-      -IsolatedUserProfile $userProfile `
-      -ExpectedPortableDir $legacyPortable
-    if ((Get-FileHash -LiteralPath $legacyModeFile -Algorithm SHA256).Hash -ne $legacyModeHash -or
-        [IO.File]::ReadAllText($legacySentinelFile) -ne 'legacy-profile-must-survive') {
-      throw "Legacy-package profile $launch changed its persisted pointer or sentinel."
-    }
-    foreach ($profileRoot in @($appData, $localAppData)) {
-      foreach ($name in @($productIdentity.name, $productIdentity.slug, $productIdentity.legacyDesktopPackageName)) {
-        $candidate = Join-Path $profileRoot $name
-        if ($candidate -ne $legacyProfile -and (Test-Path -LiteralPath $candidate)) {
-          $state = @(Get-ChildItem -LiteralPath $candidate -Force | Where-Object { $_.Name -cnotin @('Cache', 'Code Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'ShaderCache', 'GrShaderCache', 'Crashpad', 'logs') })
-          if ($state.Count -gt 0) { throw "Legacy-package profile $launch created competing state: $candidate" }
-        }
+  foreach ($profileRoot in @($appData, $localAppData)) {
+    foreach ($name in @($productIdentity.name, $productIdentity.slug, $productIdentity.legacyDesktopPackageName)) {
+      $candidate = Join-Path $profileRoot $name
+      if ($candidate -ne $legacyProfile -and (Test-Path -LiteralPath $candidate)) {
+        $state = @(Get-ChildItem -LiteralPath $candidate -Force | Where-Object { $_.Name -cnotin @('Cache', 'Code Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'ShaderCache', 'GrShaderCache', 'Crashpad', 'logs') })
+        if ($state.Count -gt 0) { throw "Legacy-package profile reinstall created competing state: $candidate" }
       }
     }
-    Write-SmokeDiagnostic ("Legacy-package profile $launch passed: persisted portable selection served /health and /; sentinel and profile aliases preserved.")
   }
+  $results['legacy-profile-startup'] = [ordered]@{ status = 'unexercised'; reason = 'Windows native per-PID inventory is not qualified for legacy migration. The unmarked portable fixture also lacks ownership evidence.'; evidence = 'Packaged reinstall preserved the pointer and sentinel.' }
+  Write-SmokeDiagnostic ('UNEXERCISED: legacy-package profile startup and relaunch require portable-root ownership and qualified Windows native inventory. Packaged reinstall preserved the pointer and sentinel.')
 
   $processProbeSource = Join-Path $env:SystemRoot 'System32\ping.exe'
   $siblingDir = "$installDir Tools"
@@ -717,21 +748,19 @@ try {
   $installProcess = Start-Process -FilePath $installProbe -ArgumentList @('-t', '127.0.0.1') -PassThru
   Start-Sleep -Milliseconds 500
   Invoke-ProcessHelperExpectExit `
-    -Stage 'Install-directory parent process detection' `
+    -Stage 'Install-directory process detection' `
     -ExpectedExitCode 0 `
     -Arguments @(
       '-InstallDir', $installDir,
       '-ProcessName', 'EchoFlow Code.exe',
       '-Action', 'Find',
-      '-InstallerPid', [string]$PID,
-      '-InstallerParentPid', [string]$installProcess.Id
+      '-InstallerPid', [string]$PID
     )
   Invoke-CheckedProcess -FilePath $installer -Stage 'Install-directory process reinstall' -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
   if (-not $installProcess.HasExited) {
     throw 'Install-directory process was not terminated before reinstall.'
   }
 
-  Invoke-LegacyRecoveryDiagnostic
   Stop-Process -Id $siblingProcess.Id -Force
   $siblingProcess.WaitForExit()
   $siblingProcess.Dispose()
@@ -769,7 +798,7 @@ try {
     throw 'Portable reinstall without CLR modified legacy data instead of failing closed.'
   }
 
-  $results['packaged-smoke'] = [ordered]@{ status = 'passed'; reason = 'All reached packaged smoke assertions completed.'; evidence = 'Unicode-path launch, loopback readiness, profile preservation and process/refusal checks; profile-specific no-CLR coverage is reported separately.' }
+  $results['packaged-smoke'] = [ordered]@{ status = 'passed'; reason = 'All reached packaged smoke assertions completed.'; evidence = 'Two default-profile Unicode-path launches with fresh loopback readiness, sentinel preservation, and process/refusal checks. Profile-specific no-CLR coverage is reported separately.' }
   Write-SmokeDiagnostic ('Windows installer smoke execution passed; consult result.json for passed/failed/unexercised coverage.')
 } catch {
   $failure = [string]$_.Exception.Message

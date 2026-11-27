@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { ELECTRON_EVENT_CHANNELS } from '../ipc/channels'
+import { resolveStorageBinding } from '../../../src/utils/echoFlowConfigRoot'
 
 const TERMINAL_CONFIG_FILE = 'terminal-config.json'
 const MIN_TERMINAL_COLS = 20
@@ -152,24 +153,16 @@ function sendTerminalEvent(
 const preparedNodePtyDirs = new Set<string>()
 
 export function terminalConfigPath(app: TerminalAppLike | undefined, env: NodeJS.ProcessEnv = process.env): string | null {
-  const portableDir = env.CLAUDE_CONFIG_DIR?.trim()
-  if (portableDir) {
-    return path.join(portableDir, TERMINAL_CONFIG_FILE)
-  }
-  if (!app) return null
-  return path.join(app.getPath('home'), '.claude', TERMINAL_CONFIG_FILE)
+  if (!app && !env.CLAUDE_CONFIG_DIR) return null
+  return path.join(resolveStorageBinding({ env, homeDir: app?.getPath('home') }).root, TERMINAL_CONFIG_FILE)
 }
 
 export function claudeConfigDir(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string | null {
-  const portableDir = env.CLAUDE_CONFIG_DIR?.trim()
-  if (portableDir) return portableDir
-  const home = platform === 'win32'
-    ? env.USERPROFILE || os.homedir()
-    : env.HOME || os.homedir()
-  return home ? path.join(home, '.claude') : null
+  const homeDir = platform === 'win32' ? env.USERPROFILE || os.homedir() : env.HOME || os.homedir()
+  return resolveStorageBinding({ env, platform, homeDir }).root
 }
 
 export function desktopTerminalSettingsPath(
@@ -327,24 +320,15 @@ export function readDesktopTerminalConfig(
 function loadTerminalConfig(app: TerminalAppLike | undefined, env: NodeJS.ProcessEnv): TerminalConfig {
   const configPath = terminalConfigPath(app, env)
   if (!configPath) return {}
-  const candidates = [configPath]
-  if (app && !env.CLAUDE_CONFIG_DIR) {
-    candidates.push(path.join(app.getPath('userData'), TERMINAL_CONFIG_FILE))
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as unknown
+    if (!isRecord(parsed)) return {}
+    const config: TerminalConfig = { ...parsed }
+    if (typeof config.bash_path !== 'string' && config.bash_path !== null) delete config.bash_path
+    return config
+  } catch {
+    return {}
   }
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8')) as unknown
-      if (!isRecord(parsed)) continue
-      const config: TerminalConfig = { ...parsed }
-      if (typeof config.bash_path !== 'string' && config.bash_path !== null) {
-        delete config.bash_path
-      }
-      return config
-    } catch {
-      // Try the old Electron userData location before using defaults.
-    }
-  }
-  return {}
 }
 
 function saveTerminalConfig(app: TerminalAppLike | undefined, env: NodeJS.ProcessEnv, config: TerminalConfig) {

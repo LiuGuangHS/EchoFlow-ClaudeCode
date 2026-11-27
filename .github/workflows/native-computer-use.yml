@@ -23,6 +23,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: native-computer-use-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   native:
     strategy:
@@ -40,6 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -51,5 +56,23 @@ jobs:
         run: cargo +stable fetch --locked --manifest-path native/agent-desktop/Cargo.toml --target ${{ matrix.target }}
       - name: Compile the platform adapter, CLI and test targets offline
         run: cargo +stable check --locked --offline --manifest-path native/agent-desktop/Cargo.toml -p agent-desktop -p ${{ matrix.adapter }} --all-targets --target ${{ matrix.target }}
+      # Skip the Linux repeat only when PR Quality owns the same Rust suite.
+      - name: Resolve Linux test owner
+        id: scope
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [[ -n "$PR_HEAD" ]]; then
+            git diff --name-only -z "$PR_BASE...$PR_HEAD" > "$RUNNER_TEMP/native-paths"
+          elif git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            git diff --name-only -z "$BEFORE" HEAD > "$RUNNER_TEMP/native-paths"
+          else
+            git diff --name-only -z HEAD^ HEAD > "$RUNNER_TEMP/native-paths"
+          fi
+          bun run scripts/pr/change-policy.ts --files0 "$RUNNER_TEMP/native-paths" --plan-only
       - name: Run deterministic core, cursor and CLI tests in an isolated home
+        if: steps.scope.outputs.desktop_native_checks != 'true'
         run: bun run check:agent-desktop

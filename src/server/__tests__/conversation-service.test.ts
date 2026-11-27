@@ -224,7 +224,7 @@ describe('ConversationService', () => {
     expect(env.ANTHROPIC_BASE_URL).toBe('https://example.invalid/anthropic')
     expect(env.ANTHROPIC_MODEL).toBe('test-model')
     expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
-    expect(env.CLAUDE_CODE_DIAGNOSTICS_FILE).toBe(path.join(tmpDir, 'cc-haha', 'diagnostics', 'cli-diagnostics.jsonl'))
+    expect(env.CLAUDE_CODE_DIAGNOSTICS_FILE).toBe(path.join(getEchoFlowInternalDir(tmpDir), 'diagnostics', 'cli-diagnostics.jsonl'))
     expect(env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE).toBe(
       `${path.join(tmpDir, 'projects', 'D--workspace-code-myself-code-cc-haha', 'memory')}${path.sep}`,
     )
@@ -240,9 +240,9 @@ describe('ConversationService', () => {
     const unrelatedDir = path.join(tmpDir, 'unrelated-cli-diagnostics')
     const unrelatedDiagnosticsDir = path.join(unrelatedDir, 'diagnostics')
     await fs.mkdir(unrelatedDiagnosticsDir, { recursive: true, mode: 0o755 })
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-    await fs.rm(path.join(tmpDir, 'cc-haha'), { recursive: true, force: true })
-    await fs.symlink(unrelatedDir, path.join(tmpDir, 'cc-haha'), 'dir')
+    await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+    await fs.rm(getEchoFlowInternalDir(tmpDir), { recursive: true, force: true })
+    await fs.symlink(unrelatedDir, getEchoFlowInternalDir(tmpDir), 'dir')
 
     const service = new ConversationService() as any
     const env = (await service.buildChildEnv('/tmp')) as Record<string, string>
@@ -1391,7 +1391,7 @@ describe('ConversationService', () => {
 
     expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBe('1')
     expect(env.OPENAI_CODEX_OAUTH_FILE).toBe(
-      path.join(tmpDir, 'cc-haha', 'openai-oauth.json'),
+      path.join(getEchoFlowInternalDir(tmpDir), 'openai-oauth.json'),
     )
     expect(env.ANTHROPIC_MODEL).toBe('gpt-6-sol')
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-6-sol')
@@ -1487,7 +1487,7 @@ describe('ConversationService', () => {
     })) as Record<string, string>
 
     expect(env.CC_HAHA_GROK_OAUTH_PROVIDER).toBe('1')
-    expect(env.GROK_OAUTH_FILE).toBe(path.join(tmpDir, 'cc-haha', 'grok-oauth.json'))
+    expect(env.GROK_OAUTH_FILE).toBe(path.join(getEchoFlowInternalDir(tmpDir), 'grok-oauth.json'))
     expect(env.ANTHROPIC_MODEL).toBe('grok-4.5')
     expect(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
@@ -1540,7 +1540,7 @@ describe('ConversationService', () => {
     })) as Record<string, string>
 
     expect(env.CC_HAHA_DEEPSEEK_OAUTH_PROVIDER).toBe('1')
-    expect(env.DEEPSEEK_OAUTH_FILE).toBe(path.join(tmpDir, 'cc-haha', 'deepseek-oauth.json'))
+    expect(env.DEEPSEEK_OAUTH_FILE).toBe(path.join(getEchoFlowInternalDir(tmpDir), 'deepseek-oauth.json'))
     expect(env.ANTHROPIC_BASE_URL).toBe('https://api.deepseek.com/anthropic')
     expect(env.ANTHROPIC_MODEL).toBe('deepseek-v4-flash')
     expect(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')

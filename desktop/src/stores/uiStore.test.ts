@@ -42,8 +42,10 @@ function stubMatchMedia(prefersDark: boolean) {
   })
   return {
     emit: (matches: boolean) => {
+      prefersDark = matches
       for (const listener of listeners) listener({ matches })
     },
+    listenerCount: () => listeners.size,
   }
 }
 
@@ -68,6 +70,19 @@ describe('uiStore legacy sidebar width startup', () => {
     runDesktopPersistenceMigrations()
     expect(useUIStore.getState().sidebarWidth).toBe(368)
     expect(localStorage.getItem('cc-haha-sidebar-width')).toBe('368')
+    expect(localStorage.getItem('echoflow-code-sidebar-width')).toBe('368')
+  })
+
+  it('does not revive an eagerly imported width on reimport while the global schema remains old', async () => {
+    localStorage.setItem('cc-haha.persistence.schemaVersion', '8')
+    localStorage.setItem('echoflow-code-sidebar-width', '368')
+    const first = await import('./uiStore')
+    expect(first.useUIStore.getState().sidebarWidth).toBe(368)
+    localStorage.removeItem('cc-haha-sidebar-width')
+    vi.resetModules()
+    const second = await import('./uiStore')
+    expect(second.useUIStore.getState().sidebarWidth).toBe(280)
+    expect(localStorage.getItem('cc-haha-sidebar-width')).toBeNull()
     expect(localStorage.getItem('echoflow-code-sidebar-width')).toBe('368')
   })
 
@@ -142,7 +157,7 @@ describe('uiStore theme handling', () => {
 
     // Pick palettes by hand: while following the system the OS chooses the
     // ground, so a manual pick lands in a preference instead of on screen.
-    useUIStore.setState({ followSystemTheme: false })
+    useUIStore.getState().setFollowSystemTheme(false)
     useUIStore.getState().setTheme('ink-blue')
     expect(document.documentElement.getAttribute('data-theme')).toBe('ink-blue')
     expect(document.documentElement.style.colorScheme).toBe('dark')
@@ -158,7 +173,7 @@ describe('uiStore theme handling', () => {
   // theme-color reads as a mismatched band above the header on every switch.
   it('repaints the browser chrome for every palette', async () => {
     const { useUIStore } = await import('./uiStore')
-    useUIStore.setState({ followSystemTheme: false })
+    useUIStore.getState().setFollowSystemTheme(false)
 
     for (const [theme, background] of Object.entries(THEME_BACKGROUNDS)) {
       useUIStore.getState().setTheme(theme as keyof typeof THEME_BACKGROUNDS)
@@ -170,7 +185,7 @@ describe('uiStore theme handling', () => {
     document.querySelector('meta[name="theme-color"]')?.remove()
 
     const { useUIStore } = await import('./uiStore')
-    useUIStore.setState({ followSystemTheme: false })
+    useUIStore.getState().setFollowSystemTheme(false)
     useUIStore.getState().setTheme('dark')
 
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
@@ -464,6 +479,192 @@ describe('uiStore following the system appearance', () => {
 
     expect(useUIStore.getState().theme).toBe('white')
     teardownTheme()
+  })
+})
+
+describe('uiStore versioned theme lifecycle', () => {
+  const recordKey = 'echoflow-code-theme-preferences'
+  const keys = [recordKey, THEME_STORAGE_KEY, LIGHT_THEME_STORAGE_KEY, DARK_THEME_STORAGE_KEY, FOLLOW_SYSTEM_THEME_STORAGE_KEY]
+  let teardown: (() => void) | undefined
+  const record = (overrides = {}) => ({ version: 1, theme: 'celadon', lightTheme: 'celadon', darkTheme: 'ink-blue', followSystem: false, mirrorSync: { baseline: ['paper', 'paper', 'dark', '0'], pending: false }, ...overrides })
+  function seed() {
+    ;['paper', 'paper', 'dark', '0'].forEach((value, i) => localStorage.setItem(keys[i + 1]!, value))
+  }
+  beforeEach(() => { vi.resetModules(); localStorage.clear(); installThemeColorMeta() })
+  afterEach(() => { teardown?.(); teardown = undefined; vi.restoreAllMocks() })
+  async function owner() {
+    const ui = await import('./uiStore')
+    teardown = ui.teardownTheme
+    return ui
+  }
+
+  it.each([false, true])('preserves future bytes throughout the lifecycle (inserted after eager hydration=%s)', async (afterEager) => {
+    const media = stubMatchMedia(false)
+    seed()
+    const future = '{ "version": 8, "opaque": [1,2] }'
+    if (!afterEager) localStorage.setItem(recordKey, future)
+    const ui = await owner()
+    localStorage.setItem(recordKey, future)
+    const before = keys.map(key => localStorage.getItem(key))
+    const migrations = await import('../lib/persistenceMigrations')
+    expect(migrations.runDesktopPersistenceMigrations().unsupportedKeys).toContain(recordKey)
+    ui.initializeTheme()
+    ui.useUIStore.getState().setTheme('ink-blue')
+    ui.useUIStore.getState().setTheme('celadon', false)
+    ui.useUIStore.getState().setFollowSystemTheme(true)
+    ui.useUIStore.getState().setFollowSystemTheme(false)
+    ui.useUIStore.getState().toggleTheme()
+    media.emit(true)
+    for (const key of [...keys, null]) window.dispatchEvent(new StorageEvent('storage', { key }))
+    expect(ui.useUIStore.getState().themePersistence).toEqual({ status: 'blocked', reason: 'unsupported-record' })
+    expect(keys.map(key => localStorage.getItem(key))).toEqual(before)
+    ui.teardownTheme()
+    vi.resetModules()
+    const recreated = await owner()
+    recreated.initializeTheme()
+    expect(keys.map(key => localStorage.getItem(key))).toEqual(before)
+  })
+
+  it('re-reads newer supported authority between eager hydration and initialize', async () => {
+    stubMatchMedia(true)
+    seed()
+    const ui = await owner()
+    expect(ui.useUIStore.getState().theme).toBe('paper')
+    localStorage.setItem(recordKey, JSON.stringify(record()))
+    ui.initializeTheme()
+    expect(ui.useUIStore.getState()).toMatchObject({ theme: 'celadon', lightTheme: 'celadon', darkTheme: 'ink-blue', followSystemTheme: false, themePersistence: { status: 'saved' } })
+    expect(document.documentElement.dataset.theme).toBe('celadon')
+  })
+
+  it('reports initial failure rather than applying an uncommitted requested palette', async () => {
+    seed()
+    const ui = await owner()
+    const write = Storage.prototype.setItem
+    const calls: string[] = []
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      calls.push(key)
+      if (key === recordKey) throw new Error('quota fixture')
+      write.call(this, key, value)
+    })
+    ui.useUIStore.getState().setTheme('ink-blue', false)
+    expect(calls).toEqual([recordKey])
+    expect(ui.useUIStore.getState()).toMatchObject({ theme: 'paper', themePersistence: { status: 'failed', stage: 'record', key: recordKey } })
+  })
+
+  it.each([0, 1, 2, 3, 4])('exposes unfinished mirror/completion stage %s and recovers after recreation', async (stage) => {
+    stubMatchMedia(false)
+    const ui = await owner()
+    const write = Storage.prototype.setItem
+    let records = 0
+    const failedKey = stage === 4 ? recordKey : keys[stage + 1]!
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (key === recordKey) records++
+      if ((stage < 4 && key === failedKey) || (stage === 4 && key === recordKey && records === 2)) throw new Error('fixture interruption')
+      write.call(this, key, value)
+    })
+    ui.useUIStore.getState().setTheme('celadon', false)
+    expect(ui.useUIStore.getState()).toMatchObject({ theme: 'celadon', themePersistence: { status: 'pending', stage: stage === 4 ? 'completion' : 'mirror', key: failedKey } })
+    expect(JSON.parse(localStorage.getItem(recordKey)!).mirrorSync.pending).toBe(true)
+    vi.restoreAllMocks()
+    ui.teardownTheme()
+    vi.resetModules()
+    const recreated = await owner()
+    expect(recreated.useUIStore.getState().themePersistence?.status).toBe('pending')
+    recreated.initializeTheme()
+    expect(recreated.useUIStore.getState()).toMatchObject({ theme: 'celadon', themePersistence: { status: 'saved' } })
+    expect(JSON.parse(localStorage.getItem(recordKey)!).mirrorSync).toEqual({ baseline: ['celadon', 'celadon', 'dark', '0'], pending: false })
+  })
+
+  it.each([recordKey, THEME_STORAGE_KEY, LIGHT_THEME_STORAGE_KEY, DARK_THEME_STORAGE_KEY, FOLLOW_SYSTEM_THEME_STORAGE_KEY])('hydrates from one snapshot and blocks persistence on a failed read of %s', async (failedKey) => {
+    stubMatchMedia(false)
+    seed()
+    localStorage.setItem(recordKey, JSON.stringify(record()))
+    const before = keys.map(key => localStorage.getItem(key))
+    const read = Storage.prototype.getItem
+    const reads: string[] = []
+    const reader = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key) {
+      if (keys.includes(key)) reads.push(key)
+      if (key === failedKey) throw new Error('fixture incomplete snapshot')
+      return read.call(this, key)
+    })
+    const ui = await owner()
+    expect(reads.sort()).toEqual([...keys].sort())
+    expect(ui.useUIStore.getState()).toMatchObject({ theme: failedKey === recordKey ? 'paper' : 'celadon', themePersistence: { status: 'blocked' } })
+    const writes = vi.spyOn(Storage.prototype, 'setItem')
+    ui.initializeTheme()
+    ui.useUIStore.getState().setTheme('ink-blue', false)
+    expect(writes.mock.calls.filter(([key]) => keys.includes(key))).toEqual([])
+    reader.mockRestore()
+    expect(keys.map(key => localStorage.getItem(key))).toEqual(before)
+  })
+
+  it('keeps a pending target immutable through recovery when the OS has changed', async () => {
+    stubMatchMedia(true)
+    seed()
+    localStorage.setItem(recordKey, JSON.stringify(record({ theme: 'paper', lightTheme: 'paper', darkTheme: 'dark', followSystem: true, mirrorSync: { baseline: ['paper', 'paper', 'dark', '0'], pending: true } })))
+    const ui = await owner()
+    const write = Storage.prototype.setItem
+    const records: Array<{ theme: string; mirrorSync: { pending: boolean } }> = []
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (key === recordKey) records.push(JSON.parse(value))
+      write.call(this, key, value)
+    })
+    ui.initializeTheme()
+    expect(records[0]).toMatchObject({ theme: 'paper', mirrorSync: { pending: false } })
+    expect(ui.useUIStore.getState().theme).toBe('dark')
+    expect(JSON.parse(localStorage.getItem(recordKey)!).theme).toBe('dark')
+  })
+
+  it('uses fresh authority for stale-window manual decisions and freezes the displayed palette', async () => {
+    stubMatchMedia(true)
+    seed()
+    const ui = await owner()
+    localStorage.setItem(recordKey, JSON.stringify(record({ theme: 'ink-blue', followSystem: true })))
+    ui.useUIStore.getState().setFollowSystemTheme(false)
+    expect(ui.useUIStore.getState()).toMatchObject({ theme: 'ink-blue', followSystemTheme: false, lightTheme: 'celadon', darkTheme: 'ink-blue' })
+    expect(JSON.parse(localStorage.getItem(recordKey)!).theme).toBe('ink-blue')
+    // Another window turned following back on; this store must not turn it off.
+    const next = JSON.parse(localStorage.getItem(recordKey)!)
+    localStorage.setItem(recordKey, JSON.stringify({ ...next, followSystem: true }))
+    ui.useUIStore.getState().setTheme('paper')
+    expect(ui.useUIStore.getState()).toMatchObject({ theme: 'ink-blue', followSystemTheme: true, lightTheme: 'paper' })
+  })
+
+  it('refreshes every preference on same-palette OS events and keeps storage events read-only', async () => {
+    const media = stubMatchMedia(false)
+    const ui = await owner()
+    ui.initializeTheme()
+    const current = JSON.parse(localStorage.getItem(recordKey)!)
+    localStorage.setItem(recordKey, JSON.stringify({ ...current, darkTheme: 'ink-blue' }))
+    media.emit(false)
+    expect(ui.useUIStore.getState()).toMatchObject({ theme: 'white', darkTheme: 'ink-blue' })
+    const write = vi.spyOn(Storage.prototype, 'setItem')
+    for (const key of [...keys, null]) window.dispatchEvent(new StorageEvent('storage', { key }))
+    expect(write).not.toHaveBeenCalled()
+    localStorage.clear()
+    write.mockClear()
+    window.dispatchEvent(new StorageEvent('storage', { key: null }))
+    expect(ui.useUIStore.getState()).toMatchObject({ theme: 'white', followSystemTheme: true, darkTheme: 'dark' })
+    expect(write).not.toHaveBeenCalled()
+  })
+
+  it('repeated initialization removes both previous listeners and teardown removes all', async () => {
+    const media = stubMatchMedia(false)
+    const add = vi.spyOn(window, 'addEventListener')
+    const remove = vi.spyOn(window, 'removeEventListener')
+    const ui = await owner()
+    ui.initializeTheme()
+    ui.initializeTheme()
+    expect(media.listenerCount()).toBe(1)
+    const listeners = add.mock.calls.filter(([type]) => type === 'storage').map(([, fn]) => fn)
+    expect(listeners).toHaveLength(2)
+    expect(remove).toHaveBeenCalledWith('storage', listeners[0])
+    ui.teardownTheme()
+    expect(remove).toHaveBeenCalledWith('storage', listeners[1])
+    expect(media.listenerCount()).toBe(0)
+    localStorage.setItem(THEME_STORAGE_KEY, 'paper')
+    window.dispatchEvent(new StorageEvent('storage', { key: THEME_STORAGE_KEY }))
+    expect(ui.useUIStore.getState().theme).toBe('white')
   })
 })
 

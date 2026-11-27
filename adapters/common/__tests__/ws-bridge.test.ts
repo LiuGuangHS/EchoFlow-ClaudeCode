@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { WsBridge } from '../ws-bridge.js'
+import { syncImPermissionState } from '../permission-sync.js'
 import { restoreSelectedSession } from '../session-selection.js'
 import { restoreStoredSessionBinding } from '../session-recovery.js'
 import { enqueueInboundPowerActivity } from '../inbound-power-activity.js'
@@ -177,6 +178,97 @@ describe('WsBridge: handler serialization', () => {
     return connections[0]!
   }
 
+  it('keeps the reply owner header across reconnects and separates chats sharing a session', async () => {
+    const owners: Array<string | string[] | undefined> = []
+    server.on('connection', (_ws, request) => { owners.push(request.headers['x-echoflow-reply-owner']) })
+    const bridge = new WsBridge(serverUrl, 'test', 'fixture-token')
+    try {
+      bridge.connectSession('chat-a', 'shared-session')
+      expect(await bridge.waitForOpen('chat-a')).toBe(true)
+      connections[0]!.terminate()
+      expect(await waitFor(() => owners.length === 2, 2_000)).toBe(true)
+      bridge.connectSession('chat-b', 'shared-session')
+      expect(await bridge.waitForOpen('chat-b')).toBe(true)
+      expect(typeof owners[0]).toBe('string')
+      expect(owners[1]).toBe(owners[0])
+      expect(typeof owners[2]).toBe('string')
+      expect(owners[2]).not.toBe(owners[0])
+    } finally { bridge.destroy() }
+  })
+
+  it('keeps bridge and helper pending projections aligned through partial snapshots and sends', async () => {
+    let now = 0
+    const bridge = new WsBridge(serverUrl, 'test', 'fixture-token', { now: () => now, idleReleaseMs: 10 })
+    const pending = new Map<string, Set<string>>()
+    const runtime = { state: 'permission_pending' as const, pendingPermissionCount: 0 }
+    const received: string[] = []
+    try {
+      bridge.connectSession('approval', 'approval-session')
+      bridge.onServerMessage('approval', msg => {
+        received.push(msg.type)
+        if (msg.type === 'permission_request') pending.set('approval', new Set([msg.requestId]))
+        syncImPermissionState('approval', msg, runtime, pending)
+      })
+      expect(await bridge.waitForOpen('approval')).toBe(true)
+      const socket = await waitForServerConnection()
+      for (const message of [
+        { type: 'permission_request', requestId: 'r', toolName: 'Read', input: {} },
+        { type: 'computer_use_permission_request', requestId: 'cu', request: {} },
+        { type: 'permission_requests_snapshot', computerUseRequestIds: [], turnActive: false },
+        { type: 'permission_requests_snapshot', toolRequestIds: [1], turnActive: false },
+      ]) socket.send(JSON.stringify(message))
+      expect(await waitFor(() => received.length >= 3)).toBe(true)
+      expect([...pending.get('approval')!]).toEqual(['r'])
+      now = 20
+      expect(bridge.releaseIdleSessions()).toEqual([])
+      expect(bridge.sendPermissionResponse('approval', 'r', true)).toBe(true)
+      now = 40
+      expect(bridge.releaseIdleSessions()).toEqual([])
+      socket.send(JSON.stringify({ type: 'permission_requests_snapshot', toolRequestIds: [], computerUseRequestIds: [], turnActive: false }))
+      expect(await waitFor(() => !pending.has('approval'))).toBe(true)
+      now = 60
+      expect(bridge.releaseIdleSessions()).toEqual(['approval'])
+    } finally { bridge.destroy() }
+  })
+
+  it('requests state only from the bound owner without resending a permission decision', async () => {
+    const bridge = new WsBridge(serverUrl, 'test', 'fixture-token')
+    try {
+      expect(bridge.requestSyncState('missing')).toBe(false)
+      bridge.connectSession('approval', 'original-owner')
+      expect(await bridge.waitForOpen('approval')).toBe(true)
+      const socket = await waitForServerConnection()
+      const messages: unknown[] = []
+      socket.on('message', raw => messages.push(JSON.parse(raw.toString())))
+      expect(bridge.requestSyncState('approval')).toBe(true)
+      expect(await waitFor(() => messages.length === 1)).toBe(true)
+      expect(messages).toEqual([{ type: 'sync_state' }])
+      expect(bridge.getSessionId('approval')).toBe('original-owner')
+      expect(connections).toHaveLength(1)
+    } finally { bridge.destroy() }
+  })
+
+  it('drops malformed reply routing frames before they can change the output target', async () => {
+    const bridge = new WsBridge(serverUrl, 'test', 'fixture-token')
+    const received: string[] = []
+    try {
+      bridge.connectSession('chat', 'session')
+      bridge.onServerMessage('chat', msg => { received.push(msg.type) })
+      expect(await bridge.waitForOpen('chat')).toBe(true)
+      const socket = await waitForServerConnection()
+      for (const msg of [
+        { type: 'input_committed', messageUuid: 'one', replyAnchor: {} },
+        { type: 'input_turn_start', messageUuids: 'one' },
+        { type: 'input_turn_snapshot', messageUuids: [3] },
+        { type: 'user_message_replay', messageUuid: [], content: 'next' },
+        { type: 'error', code: 'CLI_START_FAILED', message: 'failed', replyAnchor: [] },
+        { type: 'status', state: 'idle' },
+      ]) socket.send(JSON.stringify(msg))
+      expect(await waitFor(() => received.includes('status'))).toBe(true)
+      expect(received).toEqual(['status'])
+    } finally { bridge.destroy() }
+  })
+
   it('transfers only an acquired inbound power lease with the exact user message', async () => {
     const bridge = new WsBridge(serverUrl, 'test', 'fixture-token')
     try {
@@ -185,12 +277,14 @@ describe('WsBridge: handler serialization', () => {
       const socket = await waitForServerConnection()
       const messages: unknown[] = []
       socket.on('message', raw => messages.push(JSON.parse(raw.toString())))
-      expect(bridge.sendUserMessage('lease-chat', 'protected', undefined, 'adapter:message')).toBe(true)
+      expect(bridge.sendUserMessage('lease-chat', 'protected', undefined, 'adapter:message', 'opaque-id')).toBe(true)
       expect(bridge.sendUserMessage('lease-chat', 'legacy')).toBe(true)
-      expect(await waitFor(() => messages.length === 2)).toBe(true)
+      expect(bridge.sendUserMessage('lease-chat', 'main chat', undefined, undefined, null)).toBe(true)
+      expect(await waitFor(() => messages.length === 3)).toBe(true)
       expect(messages).toEqual([
-        { type: 'user_message', content: 'protected', powerActivityLeaseId: 'adapter:message' },
+        { type: 'user_message', content: 'protected', powerActivityLeaseId: 'adapter:message', replyAnchor: 'opaque-id' },
         { type: 'user_message', content: 'legacy' },
+        { type: 'user_message', content: 'main chat', replyAnchor: null },
       ])
     } finally {
       bridge.destroy()
@@ -263,9 +357,9 @@ describe('WsBridge: handler serialization', () => {
     // Blast three messages back-to-back. msg1 is slow, msg2/msg3 are fast.
     // With serialization: start:1, end:1, start:2, end:2, start:3, end:3
     // Without serialization: start:1, start:2, start:3, end:2, end:3, end:1
-    serverWs.send(JSON.stringify({ tag: '1', delay: 40 }))
-    serverWs.send(JSON.stringify({ tag: '2', delay: 5 }))
-    serverWs.send(JSON.stringify({ tag: '3', delay: 5 }))
+    serverWs.send(JSON.stringify({ type: 'content_delta', text: '1', tag: '1', delay: 40 }))
+    serverWs.send(JSON.stringify({ type: 'content_delta', text: '2', tag: '2', delay: 5 }))
+    serverWs.send(JSON.stringify({ type: 'content_delta', text: '3', tag: '3', delay: 5 }))
 
     // Wait long enough for all three handlers to run serially
     await new Promise((r) => setTimeout(r, 200))
@@ -295,8 +389,8 @@ describe('WsBridge: handler serialization', () => {
     await bridge.waitForOpen('chat-err')
     const serverWs = await waitForServerConnection()
 
-    serverWs.send(JSON.stringify({ throw: true }))
-    serverWs.send(JSON.stringify({ tag: 'after' }))
+    serverWs.send(JSON.stringify({ type: 'content_delta', text: 'throw', throw: true }))
+    serverWs.send(JSON.stringify({ type: 'content_delta', text: 'after', tag: 'after' }))
 
     await new Promise((r) => setTimeout(r, 80))
 
@@ -376,7 +470,7 @@ describe('WsBridge: handler serialization', () => {
           if (received === 2) resolve()
         })
       })
-      oldServerSocket.send(JSON.stringify({ type: 'permission_request', tag: 'old-permission' }))
+      oldServerSocket.send(JSON.stringify({ type: 'permission_request', requestId: 'old-request', toolName: 'Read', input: {}, tag: 'old-permission' }))
       oldServerSocket.send(JSON.stringify({ type: 'status', tag: 'old-status' }))
       await queued
       const oldChain = (bridge as any).handlerChains.get('chat-queued') as Promise<void>
@@ -402,7 +496,7 @@ describe('WsBridge: handler serialization', () => {
   it('delivers immediate connection state after history restoration replaces its buffering handler', async () => {
     server.once('connection', (socket) => {
       socket.send(JSON.stringify({ type: 'status', state: 'permission_pending' }))
-      socket.send(JSON.stringify({ type: 'permission_request', requestId: 'selected-permission' }))
+      socket.send(JSON.stringify({ type: 'permission_request', requestId: 'selected-permission', toolName: 'Read', input: {} }))
     })
     const bridge = new WsBridge(serverUrl, 'test', '')
     const events: string[] = []
@@ -443,8 +537,8 @@ describe('WsBridge: handler serialization', () => {
     expect(await bridge.waitForOpen('chat-resume')).toBe(true)
     const newServerWs = connections[1]!
 
-    oldServerWs.send(JSON.stringify({ tag: 'stale-old' }))
-    newServerWs.send(JSON.stringify({ tag: 'fresh-new' }))
+    oldServerWs.send(JSON.stringify({ type: 'content_delta', text: 'old', tag: 'stale-old' }))
+    newServerWs.send(JSON.stringify({ type: 'content_delta', text: 'new', tag: 'fresh-new' }))
 
     await new Promise((resolve) => setTimeout(resolve, 80))
 
@@ -546,6 +640,30 @@ describe('WsBridge: idle release', () => {
     expect(connections).toHaveLength(2)
   })
 
+  it('keeps a missing approval category and same-id Computer Use request through bridge and helper', async () => {
+    const runtime = { state: 'permission_pending' as const, pendingPermissionCount: 1 }
+    const pending = new Map([['partial', new Set(['same'])]])
+    const chat = await openChat('partial', 'partial-session')
+    bridge.onServerMessage('partial', msg => { syncImPermissionState('partial', msg, runtime, pending) })
+    const socket = connections[connections.length - 1]!
+    const send = async (message: object) => {
+      socket.send(JSON.stringify(message))
+      await new Promise(resolve => setTimeout(resolve, 25))
+    }
+    await send({ type: 'permission_request', requestId: 'same', toolName: 'Bash', input: {} })
+    await send({ type: 'computer_use_permission_request', requestId: 'same', request: {} })
+    await send({ type: 'permission_requests_snapshot', toolRequestIds: [], turnActive: false })
+    expect(pending.has('partial')).toBe(false)
+    now = 10 * IDLE_MS
+    expect(bridge.releaseIdleSessions()).toEqual([])
+    await send({ type: 'permission_resolved', permissionType: 'tool', requestId: 'same' })
+    now += IDLE_MS
+    expect(bridge.releaseIdleSessions()).toEqual([])
+    await send({ type: 'permission_requests_snapshot', computerUseRequestIds: [], turnActive: false })
+    now += IDLE_MS
+    expect(bridge.releaseIdleSessions()).toEqual(['partial'])
+  })
+
   it('keeps a chat whose CLI still works on background tasks', async () => {
     const chat = await openChat('chat-background', 'sess-background')
     await chat.say(cliRun('running'), { type: 'message_complete' })
@@ -569,6 +687,9 @@ describe('WsBridge: idle release', () => {
 
     expect(bridge.sendPermissionResponse('chat-approval', 'req-1', true)).toBe(true)
     await chat.say({ type: 'message_complete' })
+    now += IDLE_MS
+    expect(bridge.releaseIdleSessions()).toEqual([])
+    await chat.say({ type: 'permission_resolved', requestId: 'req-1', permissionType: 'tool' })
     now += IDLE_MS
     expect(bridge.releaseIdleSessions()).toEqual(['chat-approval'])
   })
