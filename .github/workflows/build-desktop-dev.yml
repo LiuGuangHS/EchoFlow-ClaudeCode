@@ -167,6 +167,7 @@ jobs:
         run: bash ./scripts/rebuild-node-pty-linux.sh
 
       - name: Build Electron app
+        id: package
         working-directory: desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
@@ -200,6 +201,11 @@ jobs:
           retention-days: 14
           # Earlier build failures may prevent the smoke from starting.
           if-no-files-found: ignore
+
+      - name: Verify Windows installer helper regressions
+        if: ${{ !cancelled() && inputs.windows_upgrade && steps.package.outcome == 'success' }}
+        timeout-minutes: 5
+        run: bun test ./scripts/pr/windows-installer-process-check.test.ts ./scripts/pr/windows-installer-recovery.test.ts
 
       - name: Verify packaged app structure
         run: bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron ${{ matrix.smoke_platform == 'linux' && '--max-linux-glibc 2.28' || '' }}

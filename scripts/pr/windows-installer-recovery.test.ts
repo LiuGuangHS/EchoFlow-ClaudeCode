@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { execFile, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -12,8 +13,16 @@ import { parse } from 'yaml'
 
 test('Windows upgrade acceptance uses official baseline bytes and uploads only diagnostics', () => {
   const workflow = parse(readFileSync('.github/workflows/build-desktop-dev.yml', 'utf8'))
-  const steps = workflow.jobs.build.steps as { name: string; run?: string; uses?: string; if?: string; with?: { path: string } }[]
+  const steps = workflow.jobs.build.steps as { name: string; id?: string; run?: string; uses?: string; if?: string; with?: { path: string } }[]
   const smoke = steps.find(step => step.name === 'Verify Windows installer execution')!
+  const native = steps.find(step => step.name === 'Verify Windows installer helper regressions')!
+  const packaging = steps.find(step => step.name === 'Build Electron app')!
+  expect(steps.indexOf(native)).toBeGreaterThan(steps.indexOf(smoke))
+  expect(native.if).toContain('!cancelled()')
+  expect(native.if).toContain('inputs.windows_upgrade')
+  expect(native.if).toContain(`steps.${packaging.id}.outcome == 'success'`)
+  expect(native.run).toContain('./scripts/pr/windows-installer-process-check.test.ts ./scripts/pr/windows-installer-recovery.test.ts')
+  expect(native).not.toHaveProperty('continue-on-error')
   expect(workflow.on.workflow_dispatch.inputs.windows_upgrade).toMatchObject({ type: 'boolean', default: false })
   expect(smoke.run).toContain('/releases/download/v0.7.7/EchoFlow-Code-0.7.7-win-x64.exe')
   expect(smoke.run).toMatch(/Get-FileHash[\s\S]*throw[\s\S]*\$arguments\.BaselineInstaller = \$baseline/)
@@ -696,7 +705,7 @@ SectionEnd
         expect(existsSync(path.join(portable, 'desktop-server-state.json'))).toBe(false)
       }
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     }
   })
 

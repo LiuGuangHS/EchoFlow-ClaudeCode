@@ -104,19 +104,22 @@ $transcriptStarted = $false
 try {
   Start-Transcript -LiteralPath (Join-Path $evidenceDir 'transcript.log') -Force | Out-Null
   $transcriptStarted = $true
-# The package step has populated electron-builder's NSIS cache. Exercise the
-# actual helper writer and uninstall result handling before touching install state.
-Push-Location (Join-Path $PSScriptRoot '..\..')
-try {
-  & bun test ./scripts/pr/windows-installer-process-check.test.ts ./scripts/pr/windows-installer-recovery.test.ts
-  if ($LASTEXITCODE -ne 0) {
-    throw 'Native installer helper write or recovery regression failed.'
+if ($BaselineInstaller) {
+  # The upgrade workflow runs the native helper fixtures in a separate step.
+  $results.Remove('native-helper-regressions')
+} else {
+  # The package step populated electron-builder's NSIS cache.
+  Push-Location (Join-Path $PSScriptRoot '..\..')
+  try {
+    & bun test ./scripts/pr/windows-installer-process-check.test.ts ./scripts/pr/windows-installer-recovery.test.ts
+    if ($LASTEXITCODE -ne 0) {
+      throw 'Native installer helper write or recovery regression failed.'
+    }
+  } finally {
+    Pop-Location
   }
-} finally {
-  Pop-Location
+  $results['native-helper-regressions'] = [ordered]@{ status = 'passed'; reason = 'Targeted native helper tests completed.'; evidence = 'Function-level fixtures only; see diagnostics.log and transcript.log.' }
 }
-
-$results['native-helper-regressions'] = [ordered]@{ status = 'passed'; reason = 'Targeted native helper tests completed.'; evidence = 'Function-level fixtures only; see diagnostics.log and transcript.log.' }
 $activeCheck = 'packaged-smoke'
 $results['packaged-smoke'].reason = 'Packaged assertions have not all completed (not reached or interrupted).'
 
