@@ -7,6 +7,23 @@ import { discoverDesktopStorage, initializeDesktopStorage } from '../../desktop/
 import { assertWindowsMigrationInventory } from '../../src/server/migrationInventoryWindows'
 import { buildEchoFlowOwnershipMarker } from '../../src/utils/echoFlowConfigRoot'
 import { createSandboxedTestEnvironment } from './test-environment'
+import { parse } from 'yaml'
+
+test('Windows upgrade acceptance uses official baseline bytes and uploads only diagnostics', () => {
+  const workflow = parse(readFileSync('.github/workflows/build-desktop-dev.yml', 'utf8'))
+  const steps = workflow.jobs.build.steps as { name: string; run?: string; uses?: string; if?: string; with?: { path: string } }[]
+  const smoke = steps.find(step => step.name === 'Verify Windows installer execution')!
+  expect(workflow.on.workflow_dispatch.inputs.windows_upgrade).toMatchObject({ type: 'boolean', default: false })
+  expect(smoke.run).toContain('/releases/download/v0.7.7/EchoFlow-Code-0.7.7-win-x64.exe')
+  expect(smoke.run).toMatch(/Get-FileHash[\s\S]*throw[\s\S]*\$arguments\.BaselineInstaller = \$baseline/)
+  for (const step of steps.filter(step => step.uses?.startsWith('actions/upload-artifact'))) {
+    if (step.name === 'Upload Windows installer diagnostics') {
+      expect(step.with?.path).toBe('desktop/build-artifacts/electron/windows-installer-smoke-x64/')
+    } else {
+      expect(step.if).toBe('inputs.windows_upgrade != true')
+    }
+  }
+})
 
 describe('Windows installer recovery prerequisites', () => {
   test('checks both package aliases before taking the branded-profile fast path', () => {

@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][string]$ArtifactsDir,
-  [ValidateSet('x64')][string]$Arch = 'x64'
+  [ValidateSet('x64')][string]$Arch = 'x64',
+  [string]$BaselineInstaller = ''
 )
 
 Set-StrictMode -Version Latest
@@ -676,6 +677,48 @@ try {
   $env:USERPROFILE = $userProfile
   Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue
   Remove-Item Env:CC_HAHA_APP_PORTABLE_DIR -ErrorAction SilentlyContinue
+
+  if ($BaselineInstaller) {
+    $activeCheck = 'version-upgrade'
+    foreach ($check in @('packaged-smoke', 'legacy-profile-startup', 'packaged-profile-no-clr', 'elevated-refusal-no-clr')) {
+      $results.Remove($check)
+    }
+    $results[$activeCheck] = [ordered]@{ status = 'unexercised'; reason = 'Upgrade assertions are in progress.'; evidence = 'See diagnostics.log.' }
+    Write-SmokeDiagnostic "Candidate commit: $env:GITHUB_SHA; elevated: $(Test-IsProcessElevated)"
+    Write-SmokeDiagnostic "Baseline SHA-256: $((Get-FileHash -LiteralPath $BaselineInstaller -Algorithm SHA256).Hash)"
+    Write-SmokeDiagnostic "Candidate SHA-256: $((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash)"
+
+    Invoke-CheckedProcess -FilePath $BaselineInstaller -Stage 'Install official v0.7.7' -Arguments @('/S', '/currentuser', "/D=$installDir")
+    if ([Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion -ne '0.7.7') {
+      throw 'Installed baseline application version is not 0.7.7.'
+    }
+    Invoke-InstalledApplicationSmoke -FilePath $appExe -InstallDirectory $installDir -IsolatedUserProfile $userProfile
+
+    # The default 0.7.7 sidecar uses the user's shared .claude directory.
+    $legacyRoot = Join-Path $userProfile '.claude'
+    $legacyProject = Join-Path $legacyRoot 'projects\upgrade-fixture'
+    New-Item -ItemType Directory -Path $legacyProject -Force | Out-Null
+    $legacySettings = Join-Path $legacyRoot 'settings.json'
+    $legacyTranscript = Join-Path $legacyProject '77000000-0000-4000-8000-000000000078.jsonl'
+    [IO.File]::WriteAllText($legacySettings, '{"env":{"ECHOFLOW_UPGRADE_FIXTURE":"keep"}}')
+    [IO.File]::WriteAllText($legacyTranscript, '{"type":"user","message":{"role":"user","content":"Windows upgrade fixture"}}' + "`n")
+    $files = @($legacySettings, $legacyTranscript)
+    $before = @($files | Get-FileHash -Algorithm SHA256 | ForEach-Object Hash)
+
+    Invoke-CheckedProcess -FilePath $installer -Stage 'Upgrade to v0.7.8' -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
+    if ([Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion -ne '0.7.8') {
+      throw 'In-place upgrade did not install application version 0.7.8.'
+    }
+    foreach ($phase in @('first launch', 'relaunch')) {
+      Invoke-InstalledApplicationSmoke -FilePath $appExe -InstallDirectory $installDir -IsolatedUserProfile $userProfile
+      $after = @($files | Get-FileHash -Algorithm SHA256 | ForEach-Object Hash)
+      if ($after.Count -ne $before.Count -or (Compare-Object $before $after -SyncWindow 0)) {
+        throw "Upgrade changed the shared settings or transcript during $phase."
+      }
+    }
+    $results[$activeCheck] = [ordered]@{ status = 'passed'; reason = 'Official 0.7.7 installed and upgraded in place to 0.7.8.'; evidence = 'Both versions launched, 0.7.8 relaunched, and shared settings and transcript hashes matched.' }
+    return
+  }
 
   # Baseline before anything here starts a process. Whatever this prints was put
   # there by earlier steps of the job or by the runner image, and it is exactly

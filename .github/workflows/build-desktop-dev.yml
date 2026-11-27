@@ -16,6 +16,11 @@ on:
           - windows-arm64
           - linux-x64
           - linux-arm64
+      windows_upgrade:
+        description: 'Validate the v0.7.7 to v0.7.8 Windows x64 upgrade and upload diagnostics only'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -34,6 +39,10 @@ jobs:
         run: |
           ALL='[{"platform":"macos-latest","target_triple":"aarch64-apple-darwin","builder_args":"--mac dmg zip --arm64","label":"macOS-ARM64","artifact_name":"macos-arm64","smoke_platform":"macos","arch":"arm64"},{"platform":"macos-latest","target_triple":"x86_64-apple-darwin","builder_args":"--mac dmg zip --x64","label":"macOS-x64","artifact_name":"macos-x64","smoke_platform":"macos","arch":"x64"},{"platform":"windows-latest","target_triple":"x86_64-pc-windows-msvc","builder_args":"--win nsis --x64","label":"Windows-x64","artifact_name":"windows-x64","smoke_platform":"windows","arch":"x64"},{"platform":"windows-latest","target_triple":"aarch64-pc-windows-msvc","builder_args":"--win nsis --arm64","label":"Windows-ARM64","artifact_name":"windows-arm64","smoke_platform":"windows","arch":"arm64"},{"platform":"ubuntu-22.04","target_triple":"x86_64-unknown-linux-gnu","builder_args":"--linux AppImage deb --x64","label":"Linux-x64","artifact_name":"linux-x64","smoke_platform":"linux","arch":"x64"},{"platform":"ubuntu-22.04-arm","target_triple":"aarch64-unknown-linux-gnu","builder_args":"--linux AppImage deb --arm64","label":"Linux-ARM64","artifact_name":"linux-arm64","smoke_platform":"linux","arch":"arm64"}]'
           SELECTED="${{ inputs.platforms }}"
+          if [ "${{ inputs.windows_upgrade }}" = 'true' ] && [ "$SELECTED" != 'windows-x64' ]; then
+            echo '::error::Windows upgrade acceptance requires windows-x64.'
+            exit 1
+          fi
           if [ "$SELECTED" = "all" ]; then
             MATRIX=$(echo "$ALL" | jq -c '{include: .}')
           else
@@ -66,6 +75,10 @@ jobs:
         shell: bash
         run: |
           VERSION=$(node -p "require('./desktop/package.json').version")
+          if [ "${{ inputs.windows_upgrade }}" = 'true' ] && [ "$VERSION" != '0.7.8' ]; then
+            echo '::error::Windows upgrade acceptance requires a 0.7.8 candidate.'
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install Linux dependencies
@@ -163,7 +176,20 @@ jobs:
         if: matrix.smoke_platform == 'windows' && matrix.arch == 'x64'
         timeout-minutes: 10
         working-directory: desktop
-        run: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/windows-installer-smoke.ps1 -ArtifactsDir ./build-artifacts/electron -Arch x64
+        env:
+          WINDOWS_UPGRADE: ${{ inputs.windows_upgrade }}
+        shell: powershell
+        run: |
+          $arguments = @{ ArtifactsDir = './build-artifacts/electron'; Arch = 'x64' }
+          if ($env:WINDOWS_UPGRADE -eq 'true') {
+            $baseline = Join-Path $env:RUNNER_TEMP 'EchoFlow-Code-0.7.7-win-x64.exe'
+            Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.7.7/EchoFlow-Code-0.7.7-win-x64.exe' -OutFile $baseline
+            if ((Get-FileHash -LiteralPath $baseline -Algorithm SHA256).Hash -ine '554731ec32a94ebb6220176b328135d15f4b089f70c73336e3e4dab262753634') {
+              throw 'Official v0.7.7 Windows installer SHA-256 does not match.'
+            }
+            $arguments.BaselineInstaller = $baseline
+          }
+          & ./scripts/windows-installer-smoke.ps1 @arguments
 
       - name: Upload Windows installer diagnostics
         if: always() && matrix.smoke_platform == 'windows' && matrix.arch == 'x64'
@@ -179,6 +205,7 @@ jobs:
         run: bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron ${{ matrix.smoke_platform == 'linux' && '--max-linux-glibc 2.28' || '' }}
 
       - name: Collect artifacts
+        if: inputs.windows_upgrade != true
         id: collect
         shell: bash
         run: |
@@ -196,6 +223,7 @@ jobs:
           ls -lh "$STAGING/" 2>/dev/null || true
 
       - name: Upload artifacts
+        if: inputs.windows_upgrade != true
         uses: actions/upload-artifact@v6
         with:
           name: EchoFlow-Code-v${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}
