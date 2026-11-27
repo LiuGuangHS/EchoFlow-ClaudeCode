@@ -10,11 +10,12 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: pr-triage-${{ github.event.pull_request.number }}
+  group: pr-triage-${{ github.event.pull_request.number }}-${{ (!github.event.label || contains(fromJSON('["allow-cli-core-change","allow-missing-tests","allow-coverage-baseline-change"]'), github.event.label.name)) && 'triage' || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   triage:
+    if: ${{ !github.event.label || contains(fromJSON('["allow-cli-core-change","allow-missing-tests","allow-coverage-baseline-change"]'), github.event.label.name) }}
     name: label-and-summarize
     runs-on: ubuntu-latest
     steps:

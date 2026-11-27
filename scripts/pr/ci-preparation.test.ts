@@ -134,7 +134,7 @@ describe('quality CI dependency preparation', () => {
       const index = steps.findIndex(step => step.run === `bun run ${command}`)
       expect(index, command).toBeGreaterThan(ready)
       expect(steps[index].id, command).toBeTruthy()
-      expect(steps[index].if, command).toBe("${{ !cancelled() && steps.dependencies.outcome == 'success' }}")
+      expect(steps[index].if, command).toContain("!cancelled() && steps.dependencies.outcome == 'success'")
       expect(steps[index]['continue-on-error'], command).toBeUndefined()
     }
     const scripts = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).scripts
@@ -173,6 +173,13 @@ describe('quality CI dependency preparation', () => {
       group: 'native-computer-use-${{ github.event.pull_request.number || github.sha }}',
       'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
     })
-    expect(native.concurrency?.['cancel-in-progress']).toBe(workflow('pr-quality').concurrency?.['cancel-in-progress'])
+    const steps = native.jobs.native.steps
+    const owner = steps.find(step => step.id === 'scope')
+    expect(owner?.if).toBe("runner.os == 'Linux' && github.event_name != 'workflow_dispatch'")
+    expect(owner?.run).toContain('scripts/pr/change-policy.ts --files0')
+    const compile = steps.find(step => step.run?.includes('--all-targets'))
+    expect(compile?.run).toContain('${{ matrix.target }}')
+    expect(compile?.if).toBeUndefined()
+    expect(steps.find(step => step.run === 'bun run check:agent-desktop')?.if).toBe("steps.scope.outputs.desktop_native_checks != 'true'")
   })
 })

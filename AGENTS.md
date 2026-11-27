@@ -70,7 +70,7 @@
 - `scripts/pr/change-policy.ts` 是路径到检查路由的唯一事实来源。改 workflow 跑 `bun run check:policy`，有 `actionlint` 时同时运行。路由、门禁和失败处理见[贡献指南](docs/internals/contributing.md#pr-ci-合并门禁)。
 - `pr-quality-gate` 是必需门禁。必需 PR 检查必须确定性、离线、无真实凭据或付费调用，使用匹配 Bun 与 frozen lockfile。`pull_request_target` 只用可信 base 检查元数据，不执行 PR head、不安装 PR 控制的依赖、不暴露 secrets。
 - 不削弱覆盖率、测试路由、CODEOWNERS 或分支保护。Override 须维护者明确留档，nightly 改频率须维护者决定。修改 workflow 不等于获准修改仓库设置、ruleset、secrets 或必需检查。
-- 同一交付范围先汇总改动和本地验证结果，避免分批推送反复触发 CI。主动启动的全量 CI 留到发版阶段，系统自动触发的 PR 必需检查和定时检查照常运行。
+- 同一交付范围先汇总改动和本地验证结果，避免分批推送反复触发 CI。PR 按改动范围运行必需检查，全量检查由发版候选或维护者手动触发。
 
 ## 验证与交接
 

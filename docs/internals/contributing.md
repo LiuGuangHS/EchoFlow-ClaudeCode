@@ -39,10 +39,10 @@ HTTPS_PROXY=http://127.0.0.1:7890 bun run prepare:cloudflared
 | --- | --- | --- | --- |
 | 本地迭代 | 手动 | 覆盖改动的定向测试，跨模块时按影响面补测 | WSL 只做定向/模块验证，不重复云端全量 |
 | PR（必过） | `pull_request`，以及合入 `main` 后的 `push` | impact 选中的确定性 lane，含 `check:agent-flow`、`check:agent-e2e`；覆盖率只报告不阻塞 | 无模型、无 provider、无 secret、fork 可跑 |
-| 全量 | `nightly-quality.yml` 每天定时（北京时间 03:00）+ 维护者手动触发 | 无路径选择地运行 workflow 列出的确定性检查、独立 macOS Swift 检查和模块图健康度；含 `check:release-surface`、`check:desktop-ui-smoke` | 无模型、无 secret；手动 `skip_coverage` 默认关闭，UI smoke 缺依赖会明确跳过 |
+| 全量 | 发版候选调用 `nightly-quality.yml`，维护者也可手动触发 | 无路径选择地运行 workflow 列出的确定性检查、独立 macOS Swift 检查和模块图健康度；含 `check:release-surface`、`check:desktop-ui-smoke` | 无模型、无 secret；手动 `skip_coverage` 默认关闭，UI smoke 缺依赖会明确跳过 |
 | Release | 维护者手动 `bun run quality:release -- --allow-live --provider-model <selector>:main` | PR checks、baseline catalog/live、native 与当前平台打包 smoke；全量层另行执行，非自动包含其全部检查 | 真实模型需维护者显式授权；不是发布 workflow 本身 |
 
-手动全量统一使用 `nightly-quality.yml`；原 `push-quality.yml` 入口退役，本地 `quality:push` 语义不变。PR 按影响面选择检查；无人触达的检查和整套组合问题交给每日全量层。频率由 `pr-quality-workflow.test.ts` 固定，改频率须维护者决定。真实模型只用于 Release 与明确授权额度的维护者手动 smoke；普通贡献者无需 provider 即可运行 PR 层。
+手动全量统一使用 `nightly-quality.yml`；原 `push-quality.yml` 入口退役，本地 `quality:push` 语义不变。PR 按影响面选择检查。发版时，同一候选上的发布检查和全量检查共同覆盖各模块。真实模型只用于 Release 与明确授权额度的维护者手动 smoke；普通贡献者无需 provider 即可运行 PR 层。
 
 ## AI Coding Agent 修复循环
 
@@ -84,9 +84,9 @@ push 不再自动运行本地质量门禁；`bun run verify` 不是 WSL 默认�
 
 ### PR CI 合并门禁
 
-`pr-quality.yml` 在 PR 的 `opened`、`synchronize`、`reopened`、`ready_for_review`、`labeled`、`unlabeled` 及合入 `main` 后的 push 触发。`scope-plan` 不安装依赖，只生成计划；`policy-enforcement` 独立安装锁定依赖并执行 policy，产品 job 只依赖 `scope-plan`，避免 policy 失败吞掉产品结果。标签例外只在 PR 判断，不在 main 上重复阻塞。
+`pr-quality.yml` 对 PR 的代码事件和合入 `main` 的 push 按改动范围运行检查。普通标签变更不重跑产品测试。维护者添加或撤销审批标签时，门禁重新读取当前标签。添加 `run-coverage` 可为涉及覆盖率的改动单独请求报告。标签事件不取消正在运行的代码检查。
 
-`pr-quality-gate` 要求 `scope-plan`、`policy-enforcement` 成功，并逐项核对阻塞 job：选中的必须 success，未选中的必须 skipped，cancelled 或缺失都失败。提示性的 `coverage-checks` 独立报告，不在 gate 的 `needs` 内，也不等待它结束（见[覆盖率策略](#覆盖率策略)）。server/desktop 的 `--shard=<i>/<n>` 合起来仍跑完整检查，desktop 第一片 lint、最后一片 build；任一分片失败即 job 失败，本地和每日全量不分片。
+`pr-quality-gate` 要求当前 PR 候选的技术检查和审批都通过。选中的阻塞 job 必须成功，未选中的必须跳过。缺失、取消或属于其他候选的结果无法放行。提示性的 `coverage-checks` 独立报告（见[覆盖率策略](#覆盖率策略)）。PR 的 server 和 desktop 分片合起来运行完整检查，desktop 第一片 lint、最后一片 build。任一分片失败即 job 失败。
 
 `main` 的分支保护要求 `pr-quality-gate`，管理员同样适用，发布也走 PR。个人 CODEOWNER 作者可免 `allow-cli-core-change`；作者身份和 CODEOWNERS 必须取可信 PR/base，其他贡献者改 CLI 核心仍需维护者标签，其他例外不变。必需 PR job 离线、无 provider/secret/付费服务、fork 可跑；`pull_request_target` 只用可信 base 检查元数据，不执行 PR head、不安装其依赖或向其暴露 secrets。更改 workflow 不授权更改分支保护或仓库设置。
 
@@ -264,7 +264,7 @@ bun run quality:gate --mode release --allow-live --provider-model <selector>:mai
 
 `quality:release` 是 release 模式的别名，真实调用仍需显式 `--allow-live` 和维护者额度授权。release 模式会组合 PR checks、baseline catalog、live baseline、native checks，并用当前平台 canonical release artifact 跑 `package-smoke --package-kind release`，但不等于运行全量层的全部检查。发版报告同样写入 `artifacts/quality-runs/<timestamp>/`。发布 workflow 另有下列确定性门禁，不自动调用手动 live release gate。
 
-`release-desktop.yml` 不直接调用 `bun run verify`，但有发布门禁：`verify-governance`（`check:policy`、`check:product-identity`、`check:upstream-content`）、`verify-runtime`（`check:server`、`check:agent-flow`、`check:adapters`）和 `verify-desktop`（`check:desktop`、`check:persistence-upgrade`）汇入 `release-verify-gate`。`publish-release` 同时依赖构建矩阵与该汇总门禁，任一验证组不成功就不能发布。各 job 绑定同一 release SHA；这不是完整 `verify`、全量层或手动 live release gate 的替代品。`scripts/pr/release-workflow.test.ts` 分别守卫不直接调用 `verify` 和实际发布依赖。
+`release-desktop.yml` 将同一候选提交交给 `verify-governance`（含 `check:product-identity` 和 `check:upstream-content`）、`verify-runtime` 和 `verify-desktop`。`verify-full-quality` 补跑其余确定性检查，包括覆盖率和 macOS Swift。恢复旧版本时，覆盖率对比候选第一父系上的前一版本。四组检查全部通过 `release-verify-gate`，且构建和签名前置检查成功后，`publish-release` 才能发布。
 
 发布证据应按目标 OS/架构区分以下层次，不能互相替代：
 

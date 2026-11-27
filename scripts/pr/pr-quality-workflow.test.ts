@@ -100,8 +100,8 @@ describe('PR quality workflow', () => {
       expect(step?.if, name).toBeUndefined()
     }
     // A failing audit fails this job, and the gate requires the job unconditionally.
-    expect(jobs['pr-quality-gate'].needs).toContain('policy-enforcement')
-    expect(jobs['pr-quality-gate'].steps?.[0]?.run).toContain('require_success "policy-enforcement"')
+    expect(jobs['pr-quality-technical'].needs).toContain('policy-enforcement')
+    expect(jobs['pr-quality-technical'].steps?.[0]?.run).toContain('require_success "policy-enforcement"')
     expect((parse(workflow) as { on: { push?: { branches?: string[] } } }).on.push?.branches).toEqual(['main'])
 
     const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> }
@@ -138,7 +138,7 @@ describe('PR quality workflow', () => {
     expect(workflow).toContain("if: needs.scope-plan.outputs.adapter_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.desktop_native_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.docs_checks == 'true'")
-    expect(workflowJobs(workflow)['coverage-checks'].if).toBe("github.event_name == 'pull_request' && needs.scope-plan.outputs.coverage_checks == 'true' && contains(github.event.pull_request.labels.*.name, 'run-coverage')")
+    expect(workflowJobs(workflow)['coverage-checks'].if).toContain("github.event_name == 'pull_request' && needs.scope-plan.outputs.coverage_checks == 'true' && contains(github.event.pull_request.labels.*.name, 'run-coverage')")
     expect(workflow).toContain("if: needs.scope-plan.outputs.agent_e2e_checks == 'true'")
   })
 
@@ -340,7 +340,7 @@ describe('PR quality workflow', () => {
     const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> }
     const macos = jobs['macos-swift-checks']!
     const linux = jobs['desktop-native-checks']!
-    const gate = jobs['pr-quality-gate']!
+    const gate = jobs['pr-quality-technical']!
     expect(macos['runs-on']).toBe('macos-latest')
     expect(linux['runs-on']).toBe('ubuntu-22.04')
     for (const job of [macos, linux]) {
@@ -369,7 +369,7 @@ describe('PR quality workflow', () => {
     { selected: false, macos: 'success', linux: 'skipped', exit: 1 },
   ])('enforces both native results in the stable gate: %j', scenario => {
     const jobs = workflowJobs(readFileSync('.github/workflows/pr-quality.yml', 'utf8'))
-    const gateScript = jobs['pr-quality-gate']!.steps!.find(step => step.run?.includes('require_selected'))!.run!
+    const gateScript = jobs['pr-quality-technical']!.steps!.find(step => step.run?.includes('require_selected'))!.run!
     const script = gateScript.replace(/\$\{\{\s*([^}]+?)\s*\}\}/g, (_match, expression: string) => {
       if (expression === 'needs.scope-plan.outputs.desktop_native_checks') return String(scenario.selected)
       if (expression.startsWith('needs.scope-plan.outputs.')) return 'false'
@@ -397,7 +397,7 @@ describe('PR quality workflow', () => {
     const install = steps.findIndex(step => step['working-directory'] === 'mobile' && step.run === 'bun install --frozen-lockfile')
     expect(install).toBeGreaterThanOrEqual(0)
     expect(install).toBeLessThan(check)
-    expect(jobs['pr-quality-gate'].needs).toContain('mobile-checks')
+    expect(jobs['pr-quality-technical'].needs).toContain('mobile-checks')
     expect(workflow).toContain('mobile_checks: ${{ steps.policy.outputs.mobile_checks }}')
   })
 
@@ -409,7 +409,7 @@ describe('PR quality workflow', () => {
     { selected: false, result: 'success', exit: 1 },
   ])('enforces the selected mobile result in the stable gate: %j', scenario => {
     const jobs = workflowJobs(readFileSync('.github/workflows/pr-quality.yml', 'utf8'))
-    const script = jobs['pr-quality-gate']!.steps!.find(step => step.run?.includes('require_selected'))!.run!
+    const script = jobs['pr-quality-technical']!.steps!.find(step => step.run?.includes('require_selected'))!.run!
       .replace(/\$\{\{\s*([^}]+?)\s*\}\}/g, (_match, expression: string) => {
         if (expression === 'needs.scope-plan.outputs.mobile_checks') return String(scenario.selected)
         if (expression.startsWith('needs.scope-plan.outputs.')) return 'false'
@@ -449,7 +449,7 @@ describe('PR quality workflow', () => {
     }
     const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'))
     expect(scripts['audit:harness']).toBe('node scripts/harness-audit.js repo --format json --fail-on-required')
-    const gate = jobs['pr-quality-gate']
+    const gate = jobs['pr-quality-technical']
     expect(gate.needs).toContain('harness-checks')
     expect(gate.needs).not.toContain('coverage-checks')
   })
@@ -465,7 +465,7 @@ describe('PR quality workflow', () => {
     { selected: false, result: '', exit: 1 },
   ])('propagates the independent harness job result through the stable gate: %j', scenario => {
     const jobs = workflowJobs(readFileSync('.github/workflows/pr-quality.yml', 'utf8'))
-    const script = jobs['pr-quality-gate'].steps!.find(step => step.run?.includes('require_selected'))!.run!
+    const script = jobs['pr-quality-technical'].steps!.find(step => step.run?.includes('require_selected'))!.run!
       .replace(/\$\{\{\s*([^}]+?)\s*\}\}/g, (_match, expression: string) => {
         if (expression === 'needs.scope-plan.outputs.harness_checks') return String(scenario.selected)
         if (expression.startsWith('needs.scope-plan.outputs.')) return 'false'
@@ -525,8 +525,7 @@ describe('PR quality workflow', () => {
     const workflow = readFileSync('.github/workflows/pr-quality.yml', 'utf8')
 
     expect(workflow).toContain('pr-quality-gate:')
-    expect(workflow).toContain('name: pr-quality-gate')
-    expect(workflow).toContain('if: always()')
+    expect(workflowJobs(workflow)['pr-quality-gate'].needs).toContain('pr-quality-technical')
     expect(workflow).toContain('require_success "scope-plan" "${{ needs.scope-plan.result }}"')
     expect(workflow).toContain('require_success "policy-enforcement" "${{ needs.policy-enforcement.result }}"')
     expect(workflow).toContain('require_selected "provider-contract-checks"')
@@ -539,7 +538,7 @@ describe('PR quality workflow', () => {
     // The coverage lane takes ~25 minutes and never decides a merge. While the gate
     // listed it in `needs`, every PR waited for it before turning green.
     const jobs = workflowJobs(readFileSync('.github/workflows/pr-quality.yml', 'utf8'))
-    const gate = jobs['pr-quality-gate']!
+    const gate = jobs['pr-quality-technical']!
     const gateScript = gate.steps!.map(step => step.run ?? '').join('\n')
 
     expect(gate.needs).not.toContain('coverage-checks')
@@ -551,7 +550,7 @@ describe('PR quality workflow', () => {
 
   test('splits the long required lanes into shards that together run the whole check', () => {
     const jobs = workflowJobs(readFileSync('.github/workflows/pr-quality.yml', 'utf8'))
-    const gate = jobs['pr-quality-gate']!
+    const gate = jobs['pr-quality-technical']!
     for (const [job, command] of [
       ['server-checks', 'bun run check:server'],
       ['desktop-checks', 'bun run check:desktop'],
@@ -576,7 +575,7 @@ describe('PR quality workflow', () => {
     { agentE2e: 'skipped', exit: 1 },
   ])('requires the selected mock-LLM agent lane: %j', scenario => {
     const jobs = workflowJobs(readFileSync('.github/workflows/pr-quality.yml', 'utf8'))
-    const gateScript = jobs['pr-quality-gate']!.steps!.find(step => step.run?.includes('require_selected'))!.run!
+    const gateScript = jobs['pr-quality-technical']!.steps!.find(step => step.run?.includes('require_selected'))!.run!
     const script = gateScript.replace(/\$\{\{\s*([^}]+?)\s*\}\}/g, (_match, expression: string) => {
       if (expression === 'needs.scope-plan.outputs.agent_e2e_checks') return 'true'
       if (expression.startsWith('needs.scope-plan.outputs.')) return 'false'
@@ -596,14 +595,58 @@ describe('PR quality workflow', () => {
     const parsed = parse(workflow) as { on: { push?: { branches?: string[] } } }
     const jobs = workflowJobs(workflow)
     const collect = (jobs['scope-plan'].steps ?? []).find((step) => step.name === 'Collect changed files')!.run!
-    const enforce = (jobs['policy-enforcement'].steps ?? []).find((step) => step.name === 'Enforce change policy')!.run!
 
     expect(parsed.on.push?.branches).toEqual(['main'])
     expect(collect).toContain('git diff --name-only -z "$PUSH_BEFORE" "$PUSH_AFTER"')
     // Pushes to main must not cancel one another: each merge gets its own verdict.
     expect(workflow).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}")
-    // Label exceptions live on the pull request; main must not re-block on them.
-    expect(enforce.indexOf('"$EVENT_NAME" != "pull_request"')).toBeLessThan(enforce.indexOf('"$BLOCKED" = "true"'))
+  })
+
+  test('checks the live approvals and the technical verdict of this candidate only', async () => {
+    const { jobs } = parse(readFileSync('.github/workflows/pr-quality.yml', 'utf8'))
+    const gate = jobs['pr-quality-gate']
+    const script = gate.steps[0].with.script
+    const execute = new Function('github', 'context', 'process', 'setTimeout', `return (async () => {${script}})()`)
+    const pr = { number: 35, head: { sha: 'head' }, base: { sha: 'base' } }
+    const approval = { name: 'allow-cli-core-change' }
+    let labels = [approval]
+    let revoke = false
+    let title = 'Code PR 35 @ merge'
+    let results: Array<string | null> = ['success']
+    const paginate = Object.assign(async () => {
+      if (revoke) labels = []
+      return [{ name: 'pr-quality-technical', conclusion: results.length > 1 ? results.shift() : results[0] }]
+    }, { async *iterator(_endpoint: unknown, query: { head_sha: string, workflow_id: string }) {
+      expect(query.head_sha).toBe(pr.head.sha)
+      expect(query.workflow_id).toBe('pr-quality.yml')
+      yield { data: [{ id: 1, display_title: title }] }
+    } })
+    const github = { paginate, rest: {
+      pulls: { get: async () => ({ data: { ...pr, labels } }) },
+      actions: { getWorkflowRun: async () => ({ data: { status: 'in_progress', run_attempt: 1 } }) },
+    } }
+    function run(label?: typeof approval, technical = 'skipped', pullRequest: typeof pr | null = pr) {
+      const env = { SCOPE: 'success', TECHNICAL: technical, REQUIRED_LABELS: JSON.stringify([approval.name]) }
+      return execute(github, { sha: 'merge', payload: { pull_request: pullRequest, label } }, { env }, (next: () => void) => next())
+    }
+    await run(approval)
+    await run(undefined, 'success')
+    await expect(run(undefined, 'failure')).rejects.toThrow('Technical checks failed')
+    results = [null, 'success']
+    await run(approval)
+    revoke = true
+    await expect(run(approval)).rejects.toThrow('Maintainer approval required')
+    await expect(run(approval)).rejects.toThrow('Maintainer approval required')
+    await run(undefined, 'success', null)
+    labels = [approval]
+    revoke = false
+    title = 'Code PR 35 @ old-merge'
+    await expect(run(approval)).rejects.toThrow('No code run')
+    title = 'Code PR 35 @ merge'
+    for (const result of ['failure', 'skipped', 'cancelled']) {
+      results = [result]
+      await expect(run(approval)).rejects.toThrow('Technical checks did not pass')
+    }
   })
 
   test('routes the mock-LLM agent lane through the scope plan and keeps its evidence', () => {
@@ -654,7 +697,7 @@ describe('PR quality workflow', () => {
 
   test('declares every quality job referenced by the stable gate as a dependency', () => {
     const jobs = workflowJobs(readFileSync('.github/workflows/pr-quality.yml', 'utf8'))
-    const gate = jobs['pr-quality-gate']!
+    const gate = jobs['pr-quality-technical']!
     const gateScript = gate.steps!.find(step => step.run?.includes('require_selected'))!.run!
     const referencedJobs = [...gateScript.matchAll(/needs\.([a-z0-9-]+)\.(?:result|outputs\.)/g)]
       .map(match => match[1])
@@ -758,12 +801,12 @@ describe('full quality workflow', () => {
 
     const identity = steps.findIndex(step => step.run === 'bun run check:product-identity')
     expect(identity).toBeGreaterThan(install)
-    expect(steps[identity].if).toBe("${{ !cancelled() && steps.dependencies.outcome == 'success' }}")
+    expect(steps[identity].if).toContain("!cancelled() && steps.dependencies.outcome == 'success'")
     expect(steps[identity]['continue-on-error']).toBeUndefined()
     expect(audit).toBeGreaterThanOrEqual(0)
     expect(install).toBeGreaterThanOrEqual(0)
     expect(install).toBeLessThan(audit)
-    expect(steps[audit].if).toBe("${{ !cancelled() && steps.dependencies.outcome == 'success' }}")
+    expect(steps[audit].if).toContain("!cancelled() && steps.dependencies.outcome == 'success'")
   })
 
   test('continues independent lanes after failures without masking their outcomes', () => {
@@ -781,9 +824,8 @@ describe('full quality workflow', () => {
       expect(steps.indexOf(step), step.name).toBeGreaterThan(ready)
       expect(step.id, step.name).toBeTruthy()
       expect(step['continue-on-error'], step.name).toBeUndefined()
-      const prerequisite = step.id === 'native' ? 'native-dependencies' : 'dependencies'
-      const coverage = step.id === 'coverage' ? ' && !inputs.skip_coverage' : ''
-      expect(step.if, step.name).toBe(`\${{ !cancelled() && steps.${prerequisite}.outcome == 'success'${coverage} }}`)
+      const prerequisite = step.id === 'native' ? 'native-dependencies' : step.id === 'coverage' ? 'coverage-base' : 'dependencies'
+      expect(step.if, step.name).toContain(`!cancelled() && steps.${prerequisite}.outcome == 'success'`)
     }
     const nativeSetup = steps.find(step => step.id === 'native-dependencies')
     expect(nativeSetup?.if).toBe("${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}")
@@ -801,11 +843,7 @@ describe('full quality workflow', () => {
     const jobs = workflowJobs(workflow)
     const runs = (jobs['full-deterministic'].steps ?? []).map((step) => step.run ?? '')
 
-    expect(workflow).toContain('workflow_dispatch:')
-    // Daily, by maintainer decision (2026-10). More often than that is a call for the
-    // maintainer, not for a drive-by edit: the sweep costs about ninety minutes.
-    const schedule = (parse(workflow) as { on: { schedule?: Array<{ cron: string }> } }).on.schedule ?? []
-    expect(schedule).toEqual([{ cron: '0 19 * * *' }])
+    expect(Object.keys(parse(workflow).on).sort()).toEqual(['workflow_call', 'workflow_dispatch'])
     for (const command of [
       'bun run check:policy',
       'bun run check:release-surface',

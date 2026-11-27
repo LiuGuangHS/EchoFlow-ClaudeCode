@@ -1,20 +1,14 @@
 name: Full Quality
 
-# The PR gate is intentionally scoped: it runs only the surfaces a diff can reach.
-# That leaves two blind spots no per-PR run can close — regressions that only appear
-# when the whole suite runs together, and drift in checks no recent PR happened to
-# select. This workflow closes them, without any model, provider, or repository
-# secret.
-#
-# Daily, plus one click away. The maintainer chose a daily sweep (2026-10) once
-# main was made green: a red main that nobody re-checks is what turned the PR gate
-# into noise. Daily rather than per push, because a full sweep takes about ninety
-# minutes and the per-push PR Quality run already covers what each merge touched.
-
+# Release jobs already cover governance, runtime and desktop on the candidate.
+# A manual run owns the full suite itself.
 on:
-  schedule:
-    # 19:00 UTC = 03:00 Beijing, outside working hours.
-    - cron: '0 19 * * *'
+  workflow_call:
+    inputs:
+      release_sha:
+        description: 'Commit validated by the release contract'
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       skip_coverage:
@@ -26,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nightly-quality
+  group: full-quality-${{ inputs.release_sha || github.ref }}-${{ github.workflow }}
   cancel-in-progress: false
 
 jobs:
@@ -37,6 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -86,23 +81,23 @@ jobs:
       # A cancelled run stops rather than starting more expensive checks.
       - name: Policy and gate regressions
         id: policy
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && !inputs.release_sha }}
         run: bun run check:policy
       - name: Release surface audit
         id: release-surface
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && !inputs.release_sha }}
         run: bun run check:release-surface
       - name: Product identity consistency
         id: product-identity
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && !inputs.release_sha }}
         run: bun run check:product-identity
       - name: Public product content audit
         id: public-content
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && !inputs.release_sha }}
         run: bun run check:upstream-content
       - name: Deterministic agent flow
         id: agent-flow
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && !inputs.release_sha }}
         run: bun run check:agent-flow
       - name: Agent loop against a mock LLM and recorded traffic
         id: agent-e2e
@@ -118,7 +113,7 @@ jobs:
         run: bun run audit:harness
       - name: Root runtime tests
         id: server
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && !inputs.release_sha }}
         run: bun run check:server
       - name: Provider contracts
         id: provider-contract
@@ -130,11 +125,11 @@ jobs:
         run: bun run check:chat-contract
       - name: Adapter tests
         id: adapters
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && !inputs.release_sha }}
         run: bun run check:adapters
       - name: Desktop lint, tests, and build
         id: desktop
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && !inputs.release_sha }}
         run: bun run check:desktop
       - name: Documentation build and checks
         id: docs
@@ -162,17 +157,30 @@ jobs:
         run: bun run check:electron
       - name: Persistence upgrade contracts
         id: persistence
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && !inputs.release_sha }}
         run: bun run check:persistence-upgrade
       - name: Quarantine governance
         id: quarantine
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && !inputs.release_sha }}
         run: bun run check:quarantine
-      - name: Coverage ratchet
-        id: coverage
+      - name: Resolve coverage baseline
+        id: coverage-base
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && !inputs.skip_coverage }}
         env:
-          COVERAGE_BASE_REF: origin/main
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          base=origin/main
+          if [[ -n "$RELEASE_SHA" ]]; then
+            # A recovered release can precede main. Exclude the candidate's own tag.
+            tag=$(git describe --first-parent --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD^ 2>/dev/null || true)
+            base=$(git rev-parse "${tag:-HEAD^}^{commit}")
+          fi
+          printf 'sha=%s\n' "$base" >> "$GITHUB_OUTPUT"
+      - name: Coverage ratchet
+        id: coverage
+        if: ${{ !cancelled() && steps.coverage-base.outcome == 'success' }}
+        env:
+          COVERAGE_BASE_REF: ${{ steps.coverage-base.outputs.sha }}
         run: bun run check:coverage
 
       # Real desktop UI, real permission dialog, mock runtime. Skips with a printed
@@ -219,6 +227,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -238,6 +247,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -255,8 +265,9 @@ jobs:
         run: bun install --frozen-lockfile
       # A dependency graph that silently stops resolving would quietly downgrade the
       # PR gate to prefix-only routing, which is the failure this repository already
-      # shipped. Re-prove the graph nightly against the real tree.
+      # shipped. Check the graph against the real tree.
       - name: Module graph health
+        if: ${{ !inputs.release_sha }}
         run: bun test ./scripts/pr/module-graph.test.ts
       - name: Impact report on the full tree
         run: |

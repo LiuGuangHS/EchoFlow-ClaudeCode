@@ -68,6 +68,8 @@ concurrency:
 
 jobs:
   release-contract:
+    outputs:
+      release_sha: ${{ steps.checkout.outputs.commit }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -102,6 +104,7 @@ jobs:
           fi
 
       - name: Checkout
+        id: checkout
         uses: actions/checkout@v5
         with:
           persist-credentials: false
@@ -346,6 +349,14 @@ jobs:
       - name: Adapter tests
         run: bun run check:adapters
 
+      - name: Upload agent flow report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-agent-flow
+          path: artifacts/agent-flow/
+          retention-days: 14
+
   verify-desktop:
     needs:
       - release-contract
@@ -386,12 +397,21 @@ jobs:
       - name: Persistence upgrade contracts
         run: bun run check:persistence-upgrade
 
+  verify-full-quality:
+    needs: release-contract
+    permissions:
+      contents: read
+    uses: ./.github/workflows/nightly-quality.yml
+    with:
+      release_sha: ${{ needs.release-contract.outputs.release_sha }}
+
   release-verify-gate:
     name: release-verify-gate
     needs:
       - verify-governance
       - verify-runtime
       - verify-desktop
+      - verify-full-quality
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -402,7 +422,8 @@ jobs:
           for entry in \
             "verify-governance:${{ needs.verify-governance.result }}" \
             "verify-runtime:${{ needs.verify-runtime.result }}" \
-            "verify-desktop:${{ needs.verify-desktop.result }}"; do
+            "verify-desktop:${{ needs.verify-desktop.result }}" \
+            "verify-full-quality:${{ needs.verify-full-quality.result }}"; do
             lane="${entry%%:*}"
             result="${entry#*:}"
             if [ "$result" != "success" ]; then

@@ -180,6 +180,7 @@ describe('evaluateChangePolicy', () => {
     expect(result.cliCoreOverride).toBeNull()
     const labelled = evaluateChangePolicy(['src/utils/context.ts'], ['allow-cli-core-change', 'allow-missing-tests'])
     expect(labelled.cliCoreOverride).toBe('label')
+    expect(labelled.requiredApprovalLabels).toEqual(['allow-cli-core-change', 'allow-missing-tests'])
   })
 
   test('keeps docs-only changes on the docs lane', () => {
@@ -687,6 +688,7 @@ describe('change-policy CLI owner exemption', () => {
 
       const owner = await run('NanmiCoder')
       expect(owner).toContain('blocked=false')
+      expect(owner).toContain('required_approval_labels=[]')
       expect(owner).toContain('cli_core_override=codeowner-author')
       const outsider = await run('someone-else')
       expect(outsider).toContain('blocked=true')

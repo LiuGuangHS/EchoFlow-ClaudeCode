@@ -20,6 +20,7 @@ export type ChangePolicyResult = {
   blocked: boolean
   blockingReason: string | null
   blockingReasons: string[]
+  requiredApprovalLabels: string[]
   cliCoreFiles: string[]
   /** Why CLI core changes were allowed: the override label, or a PR authored by a CODEOWNER. */
   cliCoreOverride: 'label' | 'codeowner-author' | null
@@ -431,27 +432,26 @@ export function evaluateChangePolicy(
   // The label asks a maintainer to approve a CLI core change. A CODEOWNER (read
   // from the base branch, never from the PR) is that maintainer already.
   const author = owners.author?.trim().toLowerCase()
+  const ownerAuthor = author && owners.codeOwners?.includes(author)
   const cliCoreOverride = labels.includes(ALLOW_CLI_CORE_LABEL)
     ? 'label'
-    : author && (owners.codeOwners ?? []).includes(author)
+    : ownerAuthor
       ? 'codeowner-author'
       : null
-  const hasCliCoreOverride = cliCoreOverride !== null
   const coveragePolicyFiles = files.filter((file) => coveragePolicyExactPaths.has(file))
-  const hasCoveragePolicyOverride = labels.includes(ALLOW_COVERAGE_BASELINE_LABEL)
   const missingTests = missingTestSignals(files)
-  const hasMissingTestsOverride = labels.includes(ALLOW_MISSING_TESTS_LABEL)
-  const blockingReasons: string[] = []
-
-  if (hasCliCoreChange && !hasCliCoreOverride) {
-    blockingReasons.push(`CLI core changes require the ${ALLOW_CLI_CORE_LABEL} label and maintainer approval.`)
+  const approvals = new Map<string, string>()
+  if (hasCliCoreChange && !ownerAuthor) {
+    approvals.set(ALLOW_CLI_CORE_LABEL, `CLI core changes require the ${ALLOW_CLI_CORE_LABEL} label and maintainer approval.`)
   }
-  if (missingTests.length > 0 && !hasMissingTestsOverride) {
-    blockingReasons.push(`Production code changes require matching tests or the ${ALLOW_MISSING_TESTS_LABEL} maintainer override.`)
+  if (missingTests.length > 0) {
+    approvals.set(ALLOW_MISSING_TESTS_LABEL, `Production code changes require matching tests or the ${ALLOW_MISSING_TESTS_LABEL} maintainer override.`)
   }
-  if (coveragePolicyFiles.length > 0 && !hasCoveragePolicyOverride) {
-    blockingReasons.push(`Coverage baseline or threshold changes require the ${ALLOW_COVERAGE_BASELINE_LABEL} label and maintainer approval.`)
+  if (coveragePolicyFiles.length > 0) {
+    approvals.set(ALLOW_COVERAGE_BASELINE_LABEL, `Coverage baseline or threshold changes require the ${ALLOW_COVERAGE_BASELINE_LABEL} label and maintainer approval.`)
   }
+  const requiredApprovalLabels = [...approvals.keys()]
+  const blockingReasons = Array.from(approvals).filter(([label]) => !labels.includes(label)).map(([, reason]) => reason)
   const blocked = blockingReasons.length > 0
 
   // Surface checks run when the diff touches a surface *or* when a changed file is
@@ -513,6 +513,7 @@ export function evaluateChangePolicy(
     blocked,
     blockingReason: blockingReasons[0] ?? null,
     blockingReasons,
+    requiredApprovalLabels,
     cliCoreFiles,
     cliCoreOverride: hasCliCoreChange ? cliCoreOverride : null,
     coveragePolicyFiles,
@@ -661,6 +662,7 @@ function writeGithubOutputs(result: ChangePolicyResult) {
     areas: result.areas.join(','),
     area_labels: result.areaLabels.join(','),
     blocked: String(result.blocked),
+    required_approval_labels: JSON.stringify(result.requiredApprovalLabels),
     blocking_reasons: result.blockingReasons.join(' | '),
     cli_core_override: result.cliCoreOverride ?? '',
     desktop_checks: String(result.checks.desktop),
