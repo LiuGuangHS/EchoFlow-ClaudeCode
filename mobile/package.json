@@ -1,6 +1,6 @@
 {
   "name": "echoflow-code-mobile",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "main": "expo-router/entry",
   "dependencies": {
     "@expo/ui": "~58.0.22",
