@@ -2,7 +2,7 @@
   "name": "echoflow-code",
   "productName": "EchoFlow Code",
   "private": true,
-  "version": "0.7.7",
+  "version": "0.7.8",
   "description": "Desktop coding agent workbench for EchoFlow Code.",
   "homepage": "https://github.com/LiuGuangHS/EchoFlow-ClaudeCode",
   "author": {
@@ -79,7 +79,9 @@
         {
           "from": "src-tauri/binaries",
           "to": "installer-recovery",
-          "filter": ["installer-storage-recovery-*.exe"]
+          "filter": [
+            "installer-storage-recovery-*.exe"
+          ]
         }
       ]
     },
