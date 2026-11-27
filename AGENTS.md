@@ -75,7 +75,7 @@
 ## 验证
 
 - `src/`、`desktop/src/`、`adapters/` 的可执行生产改动需要同区域回归测试，维护者明确批准的例外除外。Bug 先复现或添加因目标缺陷失败的测试，无法复现如实说明；测试行为和受影响边界，不复制实现或改预期掩盖失败。
-- 日常本地验证优先复用覆盖当前范围、相关代码和验证环境均未变化的既有证据，只补跑受本次改动影响或缺少有效证据的检查。WSL 本地只做定向回归、`bun run check:impact` 和受影响模块验证。`bun run verify` 保留显式运行的原有语义，不作为默认动作。
+- 日常本地验证优先复用覆盖当前范围、相关代码和验证环境均未变化的既有证据，只补跑受本次改动影响或缺少有效证据的检查。WSL 本地只做定向回归、`bun run check:impact` 和受影响模块验证，全量留给 GitHub Actions。`bun run verify` 保留显式运行的原有语义，不作为默认动作。
 - PR-ready/push-ready 须区分本地模块验证完成与候选 SHA 对应的 PR Actions 门禁通过；未提交工作区不能复用旧 CI 绿灯。full validation 须注明范围和对应 Actions 证据，nightly 全量不等于 release 验收；具体证据要求见贡献指南。
 - Live model 证据仅在确定性检查之后、明确授权额度时补充；在机器上找到凭据不等于获得授权。
 - 单测不能证明用户可见布局或跨进程行为时补浏览器/桌面 smoke。临时 UI 验证与工具用途见[贡献指南](docs/internals/contributing.md#无模型的端到端-agent-门禁)。
