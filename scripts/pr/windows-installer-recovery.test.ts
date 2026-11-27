@@ -664,7 +664,23 @@ SectionEnd
   })
 
   test.each(['unmarked', 'owned'] as const)('legacy portable startup and retry preserve the original %s selection', async (ownership) => {
+    const childFixture = process.env.ECHOFLOW_TEST_LEGACY_PORTABLE_CHILD === '1'
     const root = mkdtempSync(path.join(realpathSync.native(tmpdir()), 'echoflow-legacy-portable-'))
+    if (process.platform === 'win32' && !childFixture) {
+      // Cleanup must run after Bun releases the active-root SQLite file at process exit.
+      try {
+        await promisify(execFile)(process.execPath, [
+          'test', './scripts/pr/windows-installer-recovery.test.ts',
+          '-t', `legacy portable startup and retry preserve the original ${ownership} selection`,
+        ], {
+          env: createSandboxedTestEnvironment(path.join(root, 'child-home'), { ECHOFLOW_TEST_LEGACY_PORTABLE_CHILD: '1' }),
+          timeout: 30_000, windowsHide: true,
+        })
+      } finally {
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      }
+      return
+    }
     const env = { APPDATA: path.join(root, 'Roaming'), LOCALAPPDATA: path.join(root, 'Local') }
     const identity = JSON.parse(readFileSync('product.json', 'utf8'))
     const legacy = path.join(env.APPDATA, identity.legacyDesktopPackageName)
@@ -704,15 +720,7 @@ SectionEnd
         expect(existsSync(path.join(portable, 'desktop-server-state.json'))).toBe(false)
       }
     } finally {
-      if (process.platform === 'win32') {
-        // Bun's recursive rm reports EBUSY for this fixture on the Windows runner.
-        const cleanup = `$ErrorActionPreference = 'Stop'; Remove-Item -LiteralPath '${root.replaceAll("'", "''")}' -Recurse -Force`
-        await promisify(execFile)('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cleanup, 'utf16le').toString('base64')], {
-          env: createSandboxedTestEnvironment(path.join(root, 'cleanup-home')), timeout: 30_000, windowsHide: true,
-        })
-      } else {
-        rmSync(root, { recursive: true, force: true })
-      }
+      if (!childFixture) rmSync(root, { recursive: true, force: true })
     }
   }, 40_000)
 

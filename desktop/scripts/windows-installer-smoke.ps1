@@ -712,6 +712,7 @@ try {
     [IO.File]::WriteAllText($legacyTranscript, '{"type":"user","message":{"role":"user","content":"Windows upgrade fixture"}}' + "`n")
     $files = @($legacySettings, $legacyTranscript)
     $before = @(Get-FileHash -LiteralPath $files -Algorithm SHA256 | ForEach-Object Hash)
+    $baselineExeHash = (Get-FileHash -LiteralPath $appExe -Algorithm SHA256).Hash
 
     try {
       Invoke-CheckedProcess -FilePath $installer -Stage 'Upgrade to v0.7.8' -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
@@ -731,6 +732,27 @@ try {
       $after = @(Get-FileHash -LiteralPath $files -Algorithm SHA256 -ErrorAction SilentlyContinue | ForEach-Object Hash)
       $preserved = $after.Count -eq $before.Count -and -not (Compare-Object $before $after -SyncWindow 0)
       Write-SmokeDiagnostic "After failed upgrade, both shared fixture hashes matched: $preserved"
+      $retainedBaseline = (Test-Path -LiteralPath $appExe -PathType Leaf) -and
+        ((Get-FileHash -LiteralPath $appExe -Algorithm SHA256).Hash -eq $baselineExeHash)
+      Write-SmokeDiagnostic "After failed upgrade, the baseline executable hash matched: $retainedBaseline"
+      if ($retainedBaseline) {
+        try {
+          Invoke-InstalledApplicationSmoke -FilePath $appExe -InstallDirectory $installDir -IsolatedUserProfile $userProfile -LegacyProfile
+          Write-SmokeDiagnostic 'The retained 0.7.7 application started after upgrade refusal.'
+          $bridge = Join-Path $resolvedArtifactsDir 'win-unpacked\resources\installer-recovery\installer-storage-recovery-x86_64-pc-windows-msvc.exe'
+          $identitySafety = if (Test-IsProcessElevated) { 'untrusted-elevated' } else { 'trusted-user' }
+          $arguments = @('-PerUserInstallDir', $installDir, '-CandidateInstallDir', $installDir,
+            '-UserDataDir', (Join-Path $appData $productIdentity.name), '-LocalUserDataDir', (Join-Path $localAppData $productIdentity.name),
+            '-DesktopPackageName', $productIdentity.slug, '-LegacyDesktopPackageName', $productIdentity.legacyDesktopPackageName,
+            '-RecoveryBridge', $bridge, '-InstallerIdentitySafety', $identitySafety)
+          $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $output = @(& $windowsPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $recoveryHelper @arguments)
+          Write-SmokeDiagnostic "Direct recovery helper exit: $LASTEXITCODE"
+          foreach ($line in $output) { Write-SmokeDiagnostic ([string]$line) }
+        } catch {
+          Write-SmokeDiagnostic "Post-refusal diagnostic failed: $($_.Exception.Message)"
+        }
+      }
       throw
     }
     $results[$activeCheck] = [ordered]@{ status = 'passed'; reason = 'Official 0.7.7 installed and upgraded in place to 0.7.8.'; evidence = 'Both versions launched, 0.7.8 relaunched, and shared settings and transcript hashes matched.' }
