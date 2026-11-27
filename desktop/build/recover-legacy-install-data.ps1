@@ -684,11 +684,15 @@ function Invoke-InstallerStorageRecovery {
     $ErrorActionPreference = $savedErrorAction
   }
   if ($exitCode -ne 0) { throw "Shared installer storage recovery blocked (exit $exitCode): $($output -join ' ')" }
-  try { $receipt = ($output -join [Environment]::NewLine) | ConvertFrom-Json }
+  $receiptText = $output -join [Environment]::NewLine
+  if ([string]::IsNullOrWhiteSpace($receiptText)) { throw 'Shared installer storage recovery returned no receipt' }
+  try { $receipt = $receiptText | ConvertFrom-Json }
   catch { throw 'Shared installer storage recovery returned an invalid receipt' }
-  if ($null -eq $receipt -or $receipt.version -ne 1 -or $receipt.state -cne 'ready' -or
-      -not (Test-JournalAbsoluteDirectory $receipt.root)) {
-    throw 'Shared installer storage recovery did not confirm a ready complete root'
+  if ($receipt -isnot [pscustomobject] -or $receipt.version -ne 1 -or $receipt.state -cne 'ready') {
+    throw 'Shared installer storage recovery did not confirm a ready receipt of version 1'
+  }
+  if (-not (Test-JournalAbsoluteDirectory $receipt.root)) {
+    throw 'Shared installer storage recovery returned a non-canonical root in its receipt'
   }
   foreach ($installDir in $InstallDirs) {
     if (Test-PathMayBeDeleted -InstallDir $installDir -Candidate $receipt.root) {

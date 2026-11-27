@@ -591,6 +591,23 @@ const compiledSidecarSmokeStarts = Number.isInteger(configuredCompiledSidecarSta
   ? configuredCompiledSidecarStarts
   : 2
 
+it.skipIf(!compiledSidecarSmokeEnabled || process.platform !== 'win32')('emits a ready receipt for a default installer upgrade without a legacy source', async () => {
+  const bridge = path.resolve(import.meta.dirname, '../src-tauri/binaries', `installer-storage-recovery-${resolveHostTriple()}.exe`)
+  const fixture = await mkdtemp(joinPath(tmpdir(), 'echoflow-compiled-recovery-smoke-'))
+  try {
+    const env = createSandboxedTestEnvironment(joinPath(fixture, 'profile'))
+    const root = joinPath(env.LOCALAPPDATA, 'EchoFlow Code')
+    const { stdout, stderr } = await promisify(execFile)(bridge, [
+      '--profile', root, '--install-dir', joinPath(fixture, 'old install'),
+    ], { env, windowsHide: true, timeout: 20_000 })
+    expect(stderr).toBe('')
+    expect(stdout.trim(), 'Compiled installer recovery returned no receipt').not.toBe('')
+    expect(JSON.parse(stdout)).toEqual({ version: 1, state: 'ready', root })
+  } finally {
+    await rm(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  }
+}, 25_000)
+
 describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar CLI mode', () => {
   it('reports its version but refuses business commands on unowned storage through both launcher routes', async () => {
     const repoRoot = path.resolve(import.meta.dirname, '../..')

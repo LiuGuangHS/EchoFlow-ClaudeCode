@@ -84,7 +84,7 @@ describe('Windows installer recovery prerequisites', () => {
     expect(recovery).toContain('-ProtectedInstallDirs $protectedRoots')
     expect(helper).toContain('Unselected profile migration history references an application install directory')
     const bridge = helper.slice(helper.indexOf('function Invoke-InstallerStorageRecovery {'), helper.indexOf('function Resolve-UserDataDirectory {'))
-    expect(bridge).toMatch(/did not confirm a ready complete root'\s*}\s*foreach \(\$installDir in \$InstallDirs\) \{\s*if \(Test-PathMayBeDeleted -InstallDir \$installDir -Candidate \$receipt\.root\)/)
+    expect(bridge).toMatch(/Test-JournalAbsoluteDirectory \$receipt\.root[\s\S]*?foreach \(\$installDir in \$InstallDirs\) \{\s*if \(Test-PathMayBeDeleted -InstallDir \$installDir -Candidate \$receipt\.root\)/)
   })
 
   test('keeps terminal, pending, invalid and read-only journal fixtures in Windows SelfTest', () => {
