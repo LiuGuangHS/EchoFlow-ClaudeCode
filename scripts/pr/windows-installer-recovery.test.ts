@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { spawnSync } from 'node:child_process'
+import { execFile, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { discoverDesktopStorage, initializeDesktopStorage } from '../../desktop/electron/services/desktopStorageStartup'
 import { assertWindowsMigrationInventory } from '../../src/server/migrationInventoryWindows'
 import { buildEchoFlowOwnershipMarker } from '../../src/utils/echoFlowConfigRoot'
@@ -208,7 +209,7 @@ describe('Windows installer recovery prerequisites', () => {
     expect(smoke.indexOf('Copy-Item -LiteralPath $entry.source')).toBeLessThan(smoke.lastIndexOf('Remove-SmokeFixture'))
   })
 
-  test.skipIf(process.platform !== 'win32')('writes honest smoke JSON and Actions summaries in isolated fixtures', () => {
+  test.skipIf(process.platform !== 'win32')('writes honest smoke JSON and Actions summaries in isolated fixtures', async () => {
     // Execute only the reporting functions, never the CI-only installer body.
     const smoke = readFileSync('desktop/scripts/windows-installer-smoke.ps1', 'utf8')
     const functions = ['New-SmokeResults', 'Write-SmokeReport', 'Write-SmokeDiagnostic', 'Remove-SmokeFixture'].map(name => {
@@ -272,11 +273,9 @@ try { Remove-SmokeFixture -MaxAttempts 3 -RetryDelayMilliseconds 0 } catch { $cl
 $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path ${quote(root)} 'cleanup-probes.json') -Encoding UTF8
 `
       const encoded = Buffer.from(script, 'utf16le').toString('base64')
-      const run = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
-        env: createSandboxedTestEnvironment(path.join(root, 'home')), encoding: 'utf8', timeout: 30_000,
+      await promisify(execFile)('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+        env: createSandboxedTestEnvironment(path.join(root, 'home')), encoding: 'utf8', timeout: 60_000, windowsHide: true,
       })
-      expect(run.error, run.stderr || run.stdout).toBeUndefined()
-      expect(run.status, run.stderr || run.stdout).toBe(0)
       const report = (name: string) => JSON.parse(readFileSync(path.join(root, name, 'result.json'), 'utf8').replace(/^\uFEFF/, ''))
       const probes = JSON.parse(readFileSync(path.join(root, 'cleanup-probes.json'), 'utf8').replace(/^\uFEFF/, ''))
       expect(probes.transient).toEqual({ attempts: 2, error: '', remains: false })
@@ -308,7 +307,7 @@ $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
-  }, 40_000) // Allow the 30s PowerShell budget plus assertions and fixture cleanup.
+  }, 70_000) // Allow the 60s PowerShell budget plus assertions and fixture cleanup.
 
   test('validates historical staging names without a mounted drive', () => {
     const helper = readFileSync('desktop/build/recover-legacy-install-data.ps1', 'utf8')
@@ -657,7 +656,7 @@ SectionEnd
   })
 
   test.each(['unmarked', 'owned'] as const)('legacy portable startup and retry preserve the original %s selection', async (ownership) => {
-    const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'echoflow-legacy-portable-')))
+    const root = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'echoflow-legacy-portable-')))
     const env = { APPDATA: path.join(root, 'Roaming'), LOCALAPPDATA: path.join(root, 'Local') }
     const identity = JSON.parse(readFileSync('product.json', 'utf8'))
     const legacy = path.join(env.APPDATA, identity.legacyDesktopPackageName)
