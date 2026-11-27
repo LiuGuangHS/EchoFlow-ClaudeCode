@@ -29,6 +29,43 @@ describe('Windows installer storage recovery wiring', () => {
     expect(helper).not.toContain('app-mode.pre-recovery.')
   })
 
+  test.skipIf(process.platform !== 'win32' && !process.env.CC_HAHA_TEST_MAKENSIS)('compiles the packaged bridge for each installer architecture', () => {
+    const compiler = process.env.CC_HAHA_TEST_MAKENSIS ?? path.join(
+      process.env.LOCALAPPDATA ?? '', 'electron-builder', 'Cache', 'nsis',
+      'nsis-3.0.4.1-nsis-3.0.4.1', 'Bin', 'makensis.exe',
+    )
+    const installer = readFileSync('desktop/build/installer.nsh', 'utf8')
+    const extraction = installer.match(/^  !ifndef ECHOFLOW_INSTALLER_RECOVERY_BINARY\r?\n[\s\S]*?^  File \/oname=\$PLUGINSDIR\\installer-storage-recovery\.exe[^\r\n]*/m)?.[0]
+    if (!extraction) throw new Error('Missing installer recovery bridge extraction')
+
+    const root = mkdtempSync(path.join(tmpdir(), 'echoflow-nsis-bridge-'))
+    try {
+      const env = createSandboxedTestEnvironment(path.join(root, 'home'), process.env.NSISDIR ? { NSISDIR: process.env.NSISDIR } : {})
+      const cases = [
+        ['x64', ['APP_64'], 'installer-storage-recovery-x86_64-pc-windows-msvc.exe'],
+        ['arm64', ['APP_ARM64'], 'installer-storage-recovery-aarch64-pc-windows-msvc.exe'],
+        ['combined', ['APP_64', 'APP_ARM64'], 'installer-storage-recovery-x86_64-pc-windows-msvc.exe'],
+        ['default', [], 'installer-storage-recovery-x86_64-pc-windows-msvc.exe'],
+        ['override', ['APP_ARM64', 'ECHOFLOW_INSTALLER_RECOVERY_BINARY=override.exe'], 'override.exe'],
+      ] as const
+      for (const [name, defines, payload] of cases) {
+        const cwd = path.join(root, name)
+        mkdirSync(path.join(cwd, 'build'), { recursive: true })
+        const binaries = path.join(cwd, 'src-tauri', 'binaries')
+        mkdirSync(binaries, { recursive: true })
+        // Only the expected payload exists, so choosing the wrong bridge fails compilation.
+        writeFileSync(path.join(name === 'override' ? cwd : binaries, payload), name)
+        writeFileSync(path.join(cwd, 'probe.nsi'), `OutFile "probe.exe"\n!define BUILD_RESOURCES_DIR "build"\nSection\n  InitPluginsDir\n${extraction}\nSectionEnd\n`)
+        const compile = spawnSync(compiler, ['-WX', '-V2', ...defines.map(define => `-D${define}`), 'probe.nsi'], { cwd, env, encoding: 'utf8', timeout: 3_000 })
+        expect(compile.error, name).toBeUndefined()
+        expect(compile.status, `${name}: ${compile.stdout}${compile.stderr}`).toBe(0)
+        expect(existsSync(path.join(cwd, 'probe.exe')), name).toBe(true)
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
   test('packages the recovery runtime only for Windows and checks it in packaged smoke', () => {
     const build = readFileSync('desktop/scripts/build-sidecars.ts', 'utf8')
     expect(build).toMatch(/if \(bunTarget\.startsWith\('bun-windows-'\)\) \{\s+await compileExecutable\(\{\s+entrypoint: path\.join\(desktopRoot, 'sidecars\/installerStorageRecovery\.ts'\)/)

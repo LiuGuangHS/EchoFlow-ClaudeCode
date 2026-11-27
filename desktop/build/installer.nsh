@@ -405,11 +405,14 @@ Function CcHahaRecoverLegacy
   File /oname=$PLUGINSDIR\recover-legacy-install-data.ps1 "${BUILD_RESOURCES_DIR}\recover-legacy-install-data.ps1"
   ; Extract from this package, never the old installation the uninstaller may delete.
   !ifndef ECHOFLOW_INSTALLER_RECOVERY_BINARY
-    !if defined(APP_ARM64) && !defined(APP_64)
-      !define ECHOFLOW_INSTALLER_RECOVERY_BINARY "${BUILD_RESOURCES_DIR}\..\src-tauri\binaries\installer-storage-recovery-aarch64-pc-windows-msvc.exe"
-    !else
-      !define ECHOFLOW_INSTALLER_RECOVERY_BINARY "${BUILD_RESOURCES_DIR}\..\src-tauri\binaries\installer-storage-recovery-x86_64-pc-windows-msvc.exe"
+    !ifdef APP_ARM64
+      !ifndef APP_64
+        !define ECHOFLOW_INSTALLER_RECOVERY_BINARY "${BUILD_RESOURCES_DIR}\..\src-tauri\binaries\installer-storage-recovery-aarch64-pc-windows-msvc.exe"
+      !endif
     !endif
+  !endif
+  !ifndef ECHOFLOW_INSTALLER_RECOVERY_BINARY
+    !define ECHOFLOW_INSTALLER_RECOVERY_BINARY "${BUILD_RESOURCES_DIR}\..\src-tauri\binaries\installer-storage-recovery-x86_64-pc-windows-msvc.exe"
   !endif
   File /oname=$PLUGINSDIR\installer-storage-recovery.exe "${ECHOFLOW_INSTALLER_RECOVERY_BINARY}"
 
