@@ -357,13 +357,16 @@ function Invoke-InstalledApplicationSmoke {
     [Parameter(Mandatory = $true)][string]$FilePath,
     [Parameter(Mandatory = $true)][string]$InstallDirectory,
     [Parameter(Mandatory = $true)][string]$IsolatedUserProfile,
+    [switch]$LegacyProfile,
     [int]$TimeoutSeconds = 60
   )
 
-  $configDir = Join-Path $localAppData $productIdentity.name
+  # 0.7.7 writes server readiness in the shared Claude profile.
+  $configDir = if ($LegacyProfile) { Join-Path $IsolatedUserProfile '.claude' } else { Join-Path $localAppData $productIdentity.name }
+  $diagnosticNamespace = if ($LegacyProfile) { 'cc-haha' } else { $productIdentity.configDir }
   $serverStateFile = Join-Path $configDir 'desktop-server-state.json'
   $windowLog = Join-Path $testRoot 'electron-window-smoke.jsonl'
-  $hostDiagnostics = Join-Path (Join-Path $configDir $productIdentity.configDir) 'diagnostics\electron-host.log'
+  $hostDiagnostics = Join-Path (Join-Path $configDir $diagnosticNamespace) 'diagnostics\electron-host.log'
   $smokeEnvironmentNames = @(
     'CLAUDE_CONFIG_DIR',
     'CC_HAHA_ELECTRON_WINDOW_SMOKE_LOG',
@@ -692,7 +695,7 @@ try {
     if ([Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion -ne '0.7.7') {
       throw 'Installed baseline application version is not 0.7.7.'
     }
-    Invoke-InstalledApplicationSmoke -FilePath $appExe -InstallDirectory $installDir -IsolatedUserProfile $userProfile
+    Invoke-InstalledApplicationSmoke -FilePath $appExe -InstallDirectory $installDir -IsolatedUserProfile $userProfile -LegacyProfile
 
     # The default 0.7.7 sidecar uses the user's shared .claude directory.
     $legacyRoot = Join-Path $userProfile '.claude'

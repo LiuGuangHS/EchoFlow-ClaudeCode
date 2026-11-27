@@ -627,7 +627,7 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar CLI mode', () =>
         expect(readFileSync(sentinel, 'utf8')).toBe('{}')
       }
     } finally {
-      await rm(fixture, { recursive: true, force: true })
+      await rm(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     }
   }, 65_000)
 })
@@ -660,9 +660,15 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar local-index smok
       'db',
       'index-v1.sqlite',
     )
+    const writers = joinPath(configDir, 'echoflow-code', 'migrations', 'writers')
     let activeProcess: SidecarProcess | undefined
 
     const startAndVerify = async (): Promise<void> => {
+      // Forced Windows shutdown can leave receipts behind even when the PID gets reused.
+      const previousReceipts = new Set(await readdir(writers).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error
+        return []
+      }))
       const port = await reserveLocalPort('127.0.0.1')
       const serverProcess = activeProcess = startCompiledSidecar({
         executable,
@@ -681,10 +687,11 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar local-index smok
           onAuthProbe: proof => authenticationProofs.push(proof),
         })
         expect((await stat(databasePath)).isFile()).toBe(true)
-        const writers = joinPath(configDir, 'echoflow-code', 'migrations', 'writers')
-        const receipts = await readdir(writers)
-        const owned = receipts.map(name => JSON.parse(readFileSync(joinPath(writers, name), 'utf8'))).filter(receipt => receipt.pid === activeProcess!.child.pid)
-        expect(owned).toHaveLength(1)
+        const added = (await readdir(writers)).filter(name => !previousReceipts.has(name))
+        expect(added, `Writer receipts added by launch PID ${serverProcess.child.pid}`).toHaveLength(1)
+        expect(JSON.parse(readFileSync(joinPath(writers, added[0]!), 'utf8'))).toMatchObject({
+          pid: serverProcess.child.pid,
+        })
         expect(await stat(joinPath(configDir, 'cc-haha')).then(() => true, () => false)).toBe(false)
       } finally {
         await terminateCompiledSidecar(serverProcess)
