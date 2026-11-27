@@ -37,7 +37,7 @@ HTTPS_PROXY=http://127.0.0.1:7890 bun run prepare:cloudflared
 
 | 层级 | 触发 | 运行内容 | 约束 |
 | --- | --- | --- | --- |
-| 本地迭代 | 手动 | 最窄的相关测试；`bun run check:impact` 选中的模块检查 | WSL 只做定向/模块验证，不重复云端全量 |
+| 本地迭代 | 手动 | 覆盖改动的定向测试，跨模块时按影响面补测 | WSL 只做定向/模块验证，不重复云端全量 |
 | PR（必过） | `pull_request`，以及合入 `main` 后的 `push` | impact 选中的确定性 lane，含 `check:agent-flow`、`check:agent-e2e`；覆盖率只报告不阻塞 | 无模型、无 provider、无 secret、fork 可跑 |
 | 全量 | `nightly-quality.yml` 每天定时（北京时间 03:00）+ 维护者手动触发 | 无路径选择地运行 workflow 列出的确定性检查、独立 macOS Swift 检查和模块图健康度；含 `check:release-surface`、`check:desktop-ui-smoke` | 无模型、无 secret；手动 `skip_coverage` 默认关闭，UI smoke 缺依赖会明确跳过 |
 | Release | 维护者手动 `bun run quality:release -- --allow-live --provider-model <selector>:main` | PR checks、baseline catalog/live、native 与当前平台打包 smoke；全量层另行执行，非自动包含其全部检查 | 真实模型需维护者显式授权；不是发布 workflow 本身 |
@@ -52,7 +52,7 @@ HTTPS_PROXY=http://127.0.0.1:7890 bun run prepare:cloudflared
 
 1. 核对已有明确授权是否覆盖将要进行的分支、提交、推送、PR 或合并操作；同范围不重复确认，未覆盖的操作先取得授权。获授权时使用 `fix/session-reconnect` 等普通产品分支。
 2. 声明变更面（`desktop`、`mobile`、`server`、`adapter`、`native`、`docs`、`provider/runtime`、`agent-loop` 或 `release`），按[功能质量契约](#功能质量契约)补回归并完成最小修复。
-3. WSL 本地先做定向回归，再按[影响面检查](#普通-pr-的影响面检查)运行受影响模块；全量留给 GitHub Actions，不在本地重复，也不默认手动触发云端全量。需要 live 或发布证据时，再满足[Baseline](#真实模型-baseline)或[Release](#release-门禁)的专用前提。
+3. WSL 本地运行覆盖改动的定向测试。还有跨模块行为需要验证时，再按[影响面检查](#普通-pr-的影响面检查)选取相应检查。需要 live 或发布证据时，再满足[Baseline](#真实模型-baseline)或[Release](#release-门禁)的专用前提。
 4. 按[证据与失败诊断](#证据与失败诊断)记录候选、命令、summary、报告路径和缺口；用 [PR 模板](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/.github/pull_request_template.md)交付用户影响、变更文件、所补测试、coverage/E2E/live 报告或 blocker、剩余风险，再执行已获授权的提交、推送和 PR 操作。
 5. 收集候选对应的 PR Actions 结果。PR-ready/push-ready 须区分「本地模块验证完成，可提交/推送供 CI 验证」与「候选 PR Actions 门禁已通过」；前者不证明可合并，也不授予操作权限。
 
@@ -113,7 +113,7 @@ push 不再自动运行本地质量门禁；`bun run verify` 不是 WSL 默认�
 
 生成物/构建产物不计产品覆盖率，维护区域逐步达到 75-80%+，新增/变更可执行生产行满足 `coverage-thresholds.json` 的 changed-line 门槛。baseline 在 `scripts/quality-gate/coverage-baseline.json`；CI 优先比较 base branch baseline，不允许下降超出窗口。修改 baseline/threshold 必须有维护者 `allow-coverage-baseline-change` 和原因，不为过门禁降标准；历史低覆盖是技术债，新 PR 至少要让触达区域更好。
 
-本地 `bun run verify` 的所选 coverage lane 是阻塞项，失败即本地验证失败；托管 PR 的 `coverage-checks` 则是提示项，不阻塞合并。它仍执行源码覆盖率统计、baseline ratchet、75-80%+ 目标差距报告及 changed-line coverage，提示性不等于可忽略失败。采集边界和诊断见[证据与失败诊断](#证据与失败诊断)。
+本地 `bun run verify` 的所选 coverage lane 是阻塞项，失败即本地验证失败；需要 PR 变更行报告时，添加 `run-coverage` 标签即可为涉及覆盖率的改动运行 `coverage-checks`。普通 PR 默认跳过此提示项。它仍执行源码覆盖率统计、baseline ratchet、75-80%+ 目标差距报告及 changed-line coverage，提示性不等于可忽略失败。采集边界和诊断见[证据与失败诊断](#证据与失败诊断)。
 
 #### 覆盖率参考
 

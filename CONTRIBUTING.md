@@ -3,7 +3,7 @@
 ## 从改动到交付
 
 1. 阅读[根 AGENTS.md](AGENTS.md)及领域链接，按根 `package.json#packageManager` 准备 Bun 和所需依赖。
-2. 补最小行为回归并完成改动；WSL 本地运行定向测试，再用 `bun run check:impact` 选择模块检查，全量留给 GitHub Actions。
+2. 补能验证改动的最小回归，在本地运行。涉及多个模块时，可用 `bun run check:impact` 选择补充检查。
 3. 按[详细贡献指南](docs/internals/contributing.md#ai-coding-agent-修复循环) / [English](docs/en/internals/contributing.md#ai-coding-agent-fix-loop)记录证据、缺口和风险，再用 [PR 模板](.github/pull_request_template.md)交付；本地通过不等于候选 Actions 门禁通过。
 
 安装、测试设计、显式本地 gate、报告诊断及发布步骤只在详细指南维护；[Issue 路由](.agents/workflows/issue-router.md)处理问题分流。

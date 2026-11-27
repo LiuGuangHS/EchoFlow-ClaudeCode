@@ -37,7 +37,7 @@ Do not commit local artifacts such as `artifacts/quality-runs/`, `node_modules/`
 
 | Tier | Trigger | What runs | Constraint |
 | --- | --- | --- | --- |
-| Local | manual | The narrowest relevant tests and module checks selected by `bun run check:impact` | WSL runs focused/module validation only, not a duplicate of the cloud full sweep |
+| Local | manual | Focused tests covering the change, with additional checks for cross-module behavior | WSL runs focused/module validation only, not a duplicate of the cloud full sweep |
 | PR (required) | `pull_request`, and `push` to `main` after a merge | The deterministic lanes the impact report selects, including `check:agent-flow` and `check:agent-e2e`; coverage is reported, not blocking | no model, no provider, no secret, runs on an untrusted fork |
 | Full sweep | `nightly-quality.yml`, daily (19:00 UTC) plus maintainer-triggered | The workflow's configured deterministic checks without path selection, separate macOS Swift checks, and module-graph health; includes `check:release-surface` and `check:desktop-ui-smoke` | no model, no secret; manual `skip_coverage` defaults off, and UI smoke explicitly skips missing dependencies |
 | Release | maintainer-run `bun run quality:release -- --allow-live --provider-model <selector>:main` | PR checks, baseline catalog/live, native and current-platform packaging smoke; the full sweep runs separately, not all of its checks are automatically included | live models require explicit maintainer authorization; this is not the publication workflow |
@@ -52,7 +52,7 @@ Follow the [root rules](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/m
 
 1. Check that existing explicit authorization covers each intended branch, commit, push, PR, or merge operation. Do not ask again within the same scope; obtain authorization for uncovered operations. When authorized, use a normal product branch such as `fix/session-reconnect`.
 2. Name the surface (`desktop`, `mobile`, `server`, `adapter`, `native`, `docs`, `provider/runtime`, `agent-loop`, or `release`), add regressions under the [Feature Quality Contract](#feature-quality-contract), and make the smallest fix.
-3. On WSL, run focused regressions followed by affected module checks from the [impact report](#path-aware-pr-checks). Leave full sweeps to GitHub Actions without repeating them locally or manually triggering cloud sweeps by default. If live or release evidence is needed, meet the dedicated [Baseline](#live-model-baseline) or [Release](#release-gate) prerequisites.
+3. On WSL, run the tests that cover the change. Use the [impact report](#path-aware-pr-checks) to select additional checks when the change crosses module boundaries. If live or release evidence is needed, meet the dedicated [Baseline](#live-model-baseline) or [Release](#release-gate) prerequisites.
 4. Record the candidate, commands, summaries, report paths, and gaps under [Evidence and Failure Diagnosis](#evidence-and-failure-diagnosis). Use the [PR template](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/.github/pull_request_template.md) for user impact, changed files, tests added, coverage/E2E/live reports or blockers, and remaining risks; then perform authorized commit, push, and PR operations.
 5. Collect the candidate's PR Actions results. Qualify PR-ready/push-ready as “local module validation complete, ready to commit/push for CI” or “the candidate's PR Actions gate passed.” The former proves neither merge readiness nor authorization.
 
@@ -113,7 +113,7 @@ For defects, use **RED → GREEN → refactor**: reproduce through a real entry 
 
 Exclude generated/build output from product coverage; maintained areas should move toward 75-80%+, and new/changed executable production lines must meet `coverage-thresholds.json` changed-line thresholds. The baseline is `scripts/quality-gate/coverage-baseline.json`; CI compares against the base branch baseline when available and disallows drops beyond the window. Baseline/threshold changes require a maintainer's `allow-coverage-baseline-change` and a reason, never lowering standards merely to pass. Legacy low coverage is debt; new PRs must leave touched areas better than they found them.
 
-In local `bun run verify`, selected coverage is blocking and failures fail verification; hosted PR `coverage-checks` is advisory and does not block merging. It still measures source coverage, applies the baseline ratchet, reports 75-80%+ target gaps, and checks changed-line coverage. Advisory does not mean failures can be ignored. See [Evidence and Failure Diagnosis](#evidence-and-failure-diagnosis) for collection limits and diagnosis.
+In local `bun run verify`, selected coverage is blocking and failures fail verification; add the `run-coverage` label to request an advisory `coverage-checks` report for a PR with coverage-relevant changes. Ordinary PRs skip this job by default. It still measures source coverage, applies the baseline ratchet, reports 75-80%+ target gaps, and checks changed-line coverage. Advisory does not mean failures can be ignored. See [Evidence and Failure Diagnosis](#evidence-and-failure-diagnosis) for collection limits and diagnosis.
 
 #### Coverage References
 

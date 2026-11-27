@@ -138,7 +138,7 @@ describe('PR quality workflow', () => {
     expect(workflow).toContain("if: needs.scope-plan.outputs.adapter_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.desktop_native_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.docs_checks == 'true'")
-    expect(workflow).toContain("if: github.event_name == 'pull_request' && needs.scope-plan.outputs.coverage_checks == 'true'")
+    expect(workflowJobs(workflow)['coverage-checks'].if).toBe("github.event_name == 'pull_request' && needs.scope-plan.outputs.coverage_checks == 'true' && contains(github.event.pull_request.labels.*.name, 'run-coverage')")
     expect(workflow).toContain("if: needs.scope-plan.outputs.agent_e2e_checks == 'true'")
   })
 

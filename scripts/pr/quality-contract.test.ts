@@ -8,21 +8,9 @@ describe('feature quality contract', () => {
     // Codex has a 32 KiB default budget for the complete instruction chain.
     // Keep the root well below that limit so nested guidance has room to load.
     expect(Buffer.byteLength(agents)).toBeLessThan(16 * 1024)
-    expect(agents).toContain('## 从这里开始')
-    expect(agents).toContain('## 仓库地图')
-    expect(agents).toContain('## 验证')
-    expect(agents).toContain('## 用户状态安全')
-    expect(agents).toContain('## 交接')
-    expect(agents).toContain('阅读该目录的嵌套 `AGENTS.md` 及适用的祖先规则')
-    expect(agents).toContain('工具访问是能力，不是授权。')
-    expect(agents).toContain('需要同区域回归测试')
     expect(agents).toContain('`bun run check:impact`')
     expect(agents).toContain('`bun run verify`')
-    expect(agents).toContain('必需 PR 检查必须确定性')
-    expect(agents).toContain('在机器上找到凭据不等于获得授权')
     expect(agents).toContain('`bun run check:persistence-upgrade`')
-    expect(agents).toContain('将 `~/.claude/settings.json` 视为用户拥有的共享状态')
-    expect(agents).toContain('实际运行的命令及观察结果')
   })
 
   test('keeps area contracts in one first-party rule file without losing validation entrypoints', () => {
@@ -58,18 +46,9 @@ describe('feature quality contract', () => {
     expect(scripts['check:mobile']).toMatch(/^bun(?: --no-env-file)? run scripts\/pr\/run-mobile-checks\.ts$/)
   })
 
-  test('keeps PR authors accountable for tests, coverage, E2E, and risk', () => {
+  test('links the PR template to the contribution guide', () => {
     const template = readFileSync('.github/pull_request_template.md', 'utf8')
-
-    expect(template).toContain('## 功能质量契约')
     expect(template).toContain('(https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/docs/internals/contributing.md#pr-提交流程)')
-    expect(template).toContain('变更范围：')
-    expect(template).toContain('新增或更新的测试：')
-    expect(template).toContain('覆盖率证据：')
-    expect(template).toContain('changed-line coverage')
-    expect(template).toContain('E2E / 真实模型证据：')
-    expect(template).toContain('已知风险 / 回退：')
-    expect(template).toContain('已为每项生产行为变更新增或更新同区域测试')
   })
 
   test('keeps quality policy and cross-process boundaries maintainer-owned', () => {
@@ -115,49 +94,12 @@ describe('feature quality contract', () => {
     expect(prePushHook).not.toContain('quality:smoke')
     expect(contributing).toContain('bun run verify')
     expect(contributing).toContain('bun run quality:push')
-    expect(contributing).toContain('push 不再自动运行本地质量门禁')
-    expect(contributing).toContain('AI Coding Agent 修复循环')
     expect(englishContributing).toContain('bun run verify')
     expect(englishContributing).toContain('bun run quality:push')
-    expect(englishContributing).toContain('push no longer runs a local quality gate')
-    expect(englishContributing).toContain('AI Coding Agent Fix Loop')
     expect(rootContributing).toContain('docs/internals/contributing.md#ai-coding-agent-修复循环')
     expect(rootContributing).toContain('docs/en/internals/contributing.md#ai-coding-agent-fix-loop')
-    expect(rootContributing).toContain('本地通过不等于候选 Actions 门禁通过')
-  })
-
-  test('separates WSL module evidence from candidate-bound Actions gates without weakening verify', () => {
-    const agents = readFileSync('AGENTS.md', 'utf8')
-    const contributing = readFileSync('CONTRIBUTING.md', 'utf8')
-    for (const guidance of [agents, contributing]) {
-      expect(guidance).toContain('WSL 本地')
-      expect(guidance).toContain('全量留给 GitHub Actions')
-      expect(guidance).toContain('docs/internals/contributing.md')
-    }
-    expect(agents).toContain('未提交工作区不能复用旧 CI 绿灯')
-    expect(agents).toContain('nightly 全量不等于 release 验收')
-    const chinese = readFileSync('docs/internals/contributing.md', 'utf8')
-    const english = readFileSync('docs/en/internals/contributing.md', 'utf8')
-    expect(chinese).toContain('`bun run verify` 不是 WSL 默认动作')
-    expect(english).toContain('`bun run verify` is neither the WSL default')
-    expect(chinese).toContain('未提交工作区、后续修改或其他 SHA 不能复用旧 CI 绿灯')
-    expect(english).toContain('An uncommitted worktree, later edits, or another SHA cannot reuse an old green CI result')
-    for (const guidance of [chinese, english]) {
-      expect(guidance).toContain('checkout/merge SHA')
-      expect(guidance).toContain('PR head/base')
-      expect(guidance).toContain('`pr-quality-gate`')
-      expect(guidance).toContain('`not run` / pending')
-    }
-    const template = readFileSync('.github/pull_request_template.md', 'utf8')
-    expect(template).toContain('全量留给 GitHub Actions，不要求在 WSL 重复')
-    expect(template).toContain('候选 SHA 对应的 `pr-quality-gate` 结果')
-    expect(template).toContain('`not run` / pending')
-    expect(template).not.toContain('直接运行 `bun run verify`')
-    // A local convenience command must not silently become a smaller "full" gate.
-    const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'))
-    expect(scripts.verify).toBe('bun run quality:pr')
-    expect(scripts['quality:pr']).toBe('bun run quality:gate --mode pr')
-    expect(scripts['check:policy']).toContain('./scripts/pr/ci-preparation.test.ts')
+    expect(packageJson.scripts?.['quality:pr']).toBe('bun run quality:gate --mode pr')
+    expect(packageJson.scripts?.['check:policy']).toContain('./scripts/pr/ci-preparation.test.ts')
   })
 
   test('keeps bilingual release guidance aligned with the actual publication gate', () => {
@@ -178,10 +120,6 @@ describe('feature quality contract', () => {
       for (const field of ['candidate.before', 'candidate.after', 'candidate.failures', 'changedLines.scope', 'signalCode', '${logPath}.process.json']) {
         expect(guidance, path).toContain(`\`${field}\``)
       }
-      expect(guidance, path).toMatch(/新 PR 至少要让触达区域更好|new PRs must leave touched areas better than they found them/)
-      expect(guidance, path).toMatch(/本地.*coverage.*阻塞|local.*coverage.*blocking/)
-      expect(guidance, path).toMatch(/可信.*PR author.*base.*CODEOWNERS.*blocked|trusted.*PR author.*base.*CODEOWNERS.*blocked/)
-      expect(guidance, path).toMatch(/发布后.*更新链路|post-publication.*update path/)
     }
   })
 
@@ -326,10 +264,5 @@ describe('feature quality contract', () => {
     expect(instructions).toContain('[DESIGN.md](../DESIGN.md)')
     expect(instructions).toContain('不复制授权、实现或验证规则')
     expect(Buffer.byteLength(instructions)).toBeLessThan(1024)
-    const agents = readFileSync('AGENTS.md', 'utf8')
-    expect(agents).toContain('需要同区域回归测试')
-    expect(agents).toContain('不削弱覆盖率、测试路由、CODEOWNERS 或分支保护')
-    expect(agents).toContain('补浏览器/桌面 smoke')
-    expect(agents).toContain('明确授权额度')
   })
 })

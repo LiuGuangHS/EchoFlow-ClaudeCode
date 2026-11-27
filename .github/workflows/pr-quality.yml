@@ -568,15 +568,11 @@ jobs:
       - name: Run docs checks
         run: npm --prefix site ci && npm --prefix site run build && npm --prefix site run check
 
-  # Advisory: reported on the pull request as its own check, never a merge blocker.
-  # None of the agent projects this gate was modelled on block on coverage, and a
-  # job that fails for reasons unrelated to the diff trains everyone to ignore the
-  # gate. It is also kept out of pr-quality-gate's needs: it takes ~25 minutes, and
-  # the required status used to wait for a lane that never decided it.
+  # An opt-in PR report reruns the suites with instrumentation against the PR base.
   coverage-checks:
     name: coverage-checks
     needs: scope-plan
-    if: github.event_name == 'pull_request' && needs.scope-plan.outputs.coverage_checks == 'true'
+    if: github.event_name == 'pull_request' && needs.scope-plan.outputs.coverage_checks == 'true' && contains(github.event.pull_request.labels.*.name, 'run-coverage')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

@@ -72,17 +72,10 @@
 - 不削弱覆盖率、测试路由、CODEOWNERS 或分支保护。Override 须维护者明确留档，nightly 改频率须维护者决定。修改 workflow 不等于获准修改仓库设置、ruleset、secrets 或必需检查。
 - 同一交付范围先汇总改动和本地验证结果，避免分批推送反复触发 CI。主动启动的全量 CI 留到发版阶段，系统自动触发的 PR 必需检查和定时检查照常运行。
 
-## 验证
+## 验证与交接
 
 - `src/`、`desktop/src/`、`adapters/` 的可执行生产改动需要同区域回归测试，维护者明确批准的例外除外。Bug 先复现或添加因目标缺陷失败的测试，无法复现如实说明；测试行为和受影响边界，不复制实现或改预期掩盖失败。
-- 日常本地验证优先复用覆盖当前范围、相关代码和验证环境均未变化的既有证据，只补跑受本次改动影响或缺少有效证据的检查。WSL 本地只做定向回归、`bun run check:impact` 和受影响模块验证，全量留给 GitHub Actions。`bun run verify` 保留显式运行的原有语义，不作为默认动作。
-- PR-ready/push-ready 须区分本地模块验证完成与候选 SHA 对应的 PR Actions 门禁通过；未提交工作区不能复用旧 CI 绿灯。full validation 须注明范围和对应 Actions 证据，nightly 全量不等于 release 验收；具体证据要求见贡献指南。
-- Live model 证据仅在确定性检查之后、明确授权额度时补充；在机器上找到凭据不等于获得授权。
-- 单测不能证明用户可见布局或跨进程行为时补浏览器/桌面 smoke。临时 UI 验证与工具用途见[贡献指南](docs/internals/contributing.md#无模型的端到端-agent-门禁)。
-- 缺依赖先按授权完成准备并验证。需要新增权限或无法解决时明确阻塞。已有失败用能复现问题或验证修复的检查定向验证。无关既有失败须调查并报告，不擅自扩展产品改动。命令细节、证据格式和发布门禁见[贡献指南](docs/internals/contributing.md)。
-
-## 交接
-
-- 有代码/文档改动时，交付前检查 `git diff --check`、最终 `git diff` 和 `git status --short`。只读分析报告发现与证据，不套构建交接清单。
-- 最终说明改了什么、验证结果和真实缺口。跨会话交接逐项列出任务、责任人、产物（含路径）、当前状态及待办或阻塞。附实际运行的命令及观察结果或报告位置，标明复用的证据，区分 `passed`、`failed`、`skipped`、`blocked`、`not run`，不混淆 build、mock、live 或过时证据。
-- 进度更新只说新增发现、下一步或阻塞，不重复最终矩阵。以当前用户目标核对是否完成；不把尚可处理的环境问题或一个阶段完成当成整个任务结束。
+- 日常运行覆盖改动的定向测试，可用 `bun run check:impact` 确认受影响模块。相关代码和环境未变时复用已有结果。WSL 的全量验证交给 GitHub Actions，`bun run verify` 供显式运行。
+- 定向测试无法覆盖布局或跨进程行为时，补浏览器或桌面 smoke。Live model 检查须先通过确定性检查并取得额度授权。
+- 交付前检查 `git diff --check`、`git diff` 和 `git status --short`，说明改动、实际验证结果和剩余缺口。跨会话交接注明待办由谁接手。
+- PR 门禁结果对应当前候选 SHA，发布另按[贡献指南](docs/internals/contributing.md)验收。
