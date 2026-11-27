@@ -7,12 +7,16 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Existing draft release tag to recover (vX.Y.Z); run from main only'
+        description: 'Existing release tag (vX.Y.Z); run from main only'
         required: true
         type: string
       release_sha:
         description: 'Full commit SHA already referenced by the release tag'
         required: true
+        type: string
+      staged_artifact_id:
+        description: 'Approved checksum receipt artifact ID to publish; leave blank to rebuild the draft'
+        required: false
         type: string
 
 permissions:
@@ -23,6 +27,10 @@ jobs:
   release-please:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    concurrency:
+      group: desktop-release-mutation
+      cancel-in-progress: false
+      queue: max
     outputs:
       release_created: ${{ steps.release.outputs['desktop--release_created'] }}
       release_sha: ${{ steps.release.outputs['desktop--sha'] }}
@@ -65,6 +73,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag || needs.release-please.outputs.tag_name }}
           EVENT_NAME: ${{ github.event_name }}
           WORKFLOW_REF: ${{ github.ref }}
+          STAGED_ARTIFACT_ID: ${{ inputs.staged_artifact_id }}
           GH_TOKEN: ${{ github.token }}
         run: |
           if [[ "$WORKFLOW_REF" != refs/heads/main || ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
@@ -77,8 +86,8 @@ jobs:
             exit 1
           fi
           git merge-base --is-ancestor "$release_sha" refs/remotes/origin/main
-          if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            # Recovery uses the corrected main workflow but never moves the release tag.
+          if [[ "$EVENT_NAME" == workflow_dispatch && -z "$STAGED_ARTIFACT_ID" ]]; then
+            # Rebuilding requires a draft. Promotion verifies its receipt's release by ID.
             gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --slurp |
               jq -e '[.[][] | select(.tag_name == env.RELEASE_TAG)] | length == 1 and (.[0] | .draft == true and (.id | type == "number" and . > 0 and floor == .))' >/dev/null
           fi
@@ -87,12 +96,10 @@ jobs:
 
   publish-release:
     needs: resolve-release
-    if: always() && needs.resolve-release.result == 'success'
+    if: always() && needs.resolve-release.result == 'success' && !inputs.staged_artifact_id
     permissions:
       actions: read
       contents: write
-      pages: write
-      id-token: write
     uses: ./.github/workflows/release-desktop.yml
     with:
       official_release: true
@@ -101,3 +108,156 @@ jobs:
       release_sha: ${{ needs.resolve-release.outputs.release_sha }}
       draft: false
     secrets: inherit
+
+  promote-release:
+    needs: resolve-release
+    if: ${{ !cancelled() && needs.resolve-release.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.staged_artifact_id != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: write
+    concurrency:
+      group: desktop-release-mutation
+      cancel-in-progress: false
+      queue: max
+    outputs:
+      release_tag: ${{ steps.promote.outputs.release_tag }}
+    steps:
+      - name: Verify approved staging receipt and publish by ID
+        id: promote
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGED_ARTIFACT_ID: ${{ inputs.staged_artifact_id }}
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$STAGED_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          api="repos/${GITHUB_REPOSITORY}"
+          artifact_path="${api}/actions/artifacts/${STAGED_ARTIFACT_ID}"
+          artifact=$(gh api "$artifact_path")
+          run_id=$(jq -er --argjson id "$STAGED_ARTIFACT_ID" --argjson repo "$GITHUB_REPOSITORY_ID" '
+            select(.id == $id and .expired == false) | .workflow_run |
+            select(.repository_id == $repo and .head_repository_id == $repo and .head_branch == "main") |
+            .id | select(type == "number" and . > 0 and floor == .)' <<< "$artifact")
+          workflow_sha=$(jq -er '.workflow_run.head_sha | select(test("^[0-9a-f]{40}$"))' <<< "$artifact")
+          run=$(gh api "${api}/actions/runs/${run_id}")
+          attempt=$(jq -er --argjson id "$run_id" --argjson repo "$GITHUB_REPOSITORY_ID" --arg sha "$workflow_sha" '
+            select(.id == $id and .repository.id == $repo and .head_repository.id == $repo and .head_branch == "main" and .head_sha == $sha) |
+            select(.path == ".github/workflows/release-please.yml" and (.event == "push" or .event == "workflow_dispatch")) |
+            select(.status == "completed" and .conclusion == "success") |
+            .run_attempt | select(type == "number" and . > 0 and floor == .)' <<< "$run")
+          digest=$(jq -er --arg name "desktop-release-receipt-${attempt}" '
+            select(.name == $name) | .digest | select(test("^sha256:[0-9a-f]{64}$"))' <<< "$artifact")
+
+          temp=$(mktemp -d)
+          trap 'rm -rf "$temp"' EXIT
+          archive="$temp/receipt.zip"
+          gh api "${artifact_path}/zip" > "$archive"
+          printf '%s  %s\n' "${digest#sha256:}" "$archive" | sha256sum --check --status
+          receipt=$(unzip -p "$archive" desktop-release-receipt.json | jq -ces 'select(length == 1) | .[0]')
+          release_id=$(jq -er --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$workflow_sha" '
+            select(.run_id == $id and .run_attempt == $attempt and .workflow_sha == $head and .tag == env.RELEASE_TAG and .release_sha == env.RELEASE_SHA) |
+            .release_id | select(type == "number" and . > 0 and floor == .)' <<< "$receipt")
+          expected=$(jq -ce '.assets | select(type == "array" and length > 0 and all(.[];
+            (.name | type == "string" and length > 0) and (.digest | test("^sha256:[0-9a-f]{64}$")) and .state == "uploaded"))' <<< "$receipt")
+          jq -ce '.metadata | select((.name | type == "string" and length > 0) and (.body | type == "string" and length > 0) and .prerelease == false)' \
+            <<< "$receipt" > "$temp/metadata.json"
+          release_path="${api}/releases/${release_id}"
+          release_draft_state() {
+            jq -er --argjson id "$release_id" --slurpfile metadata "$temp/metadata.json" '
+              select(.id == $id and .tag_name == env.RELEASE_TAG and (.draft | type == "boolean")) |
+              select({name, body, prerelease} == $metadata[0]) | .draft | tostring'
+          }
+
+          # Re-resolve the remote tag, including annotated tags, inside the mutation lock.
+          target=$(gh api "${api}/git/ref/tags/${RELEASE_TAG}" | jq -ce '.object')
+          for depth in {1..10}; do
+            [ "$(jq -r '.type' <<< "$target")" = tag ] || break
+            tag_sha=$(jq -er '.sha | select(test("^[0-9a-f]{40}$"))' <<< "$target")
+            target=$(gh api "${api}/git/tags/${tag_sha}" | jq -ce '.object')
+          done
+          jq -e '.type == "commit" and .sha == env.RELEASE_SHA' <<< "$target" >/dev/null
+          actual=$(gh api "${release_path}/assets?per_page=100" --paginate --slurp |
+            jq -ce '[.[][] | {name, digest, state}] | sort_by(.name)')
+          if [ "$actual" != "$expected" ]; then
+            echo '::error::Release assets changed after staging. A matching receipt is required for promotion.'
+            exit 1
+          fi
+          draft=$(gh api "$release_path" | release_draft_state) || {
+            echo '::error::Release identity or metadata does not match the staging receipt.'
+            exit 1
+          }
+          if [ "$draft" = true ]; then
+            # GitHub defaults newly published releases to latest, even for an older version.
+            make_latest=true
+            if latest=$(gh api "${api}/releases/latest" 2> "$temp/latest-error"); then
+              latest_tag=$(jq -er 'select(.draft == false and .prerelease == false and (.id | type == "number" and . > 0 and floor == .)) |
+                .tag_name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<< "$latest")
+              if [ "$latest_tag" = "$RELEASE_TAG" ] || [ "$(printf '%s\n' "$RELEASE_TAG" "$latest_tag" | LC_ALL=C sort -V | tail -n 1)" = "$latest_tag" ]; then
+                make_latest=false
+              fi
+            elif ! grep -q ' (HTTP 404)$' "$temp/latest-error"; then
+              cat "$temp/latest-error" >&2
+              exit 1
+            fi
+            published=$(gh api --method PATCH "$release_path" -F draft=false -f "make_latest=${make_latest}" | release_draft_state)
+            [ "$published" = false ]
+          fi
+          printf 'release_tag=%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+  site-release-sync:
+    needs: promote-release
+    if: ${{ !cancelled() && needs.promote-release.result == 'success' }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/deploy-docs.yml
+    secrets: inherit
+
+  release-mobile:
+    needs: promote-release
+    if: ${{ !cancelled() && needs.promote-release.result == 'success' && vars.MOBILE_RELEASE_ENABLED == 'true' }}
+    uses: ./.github/workflows/release-mobile.yml
+    with:
+      release_tag: ${{ needs.promote-release.outputs.release_tag }}
+    secrets:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+  delivery-summary:
+    needs: [promote-release, site-release-sync, release-mobile]
+    if: always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.staged_artifact_id != ''
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Summarize delivery outcomes
+        env:
+          DESKTOP_RESULT: ${{ needs.promote-release.result }}
+          SITE_RESULT: ${{ needs.site-release-sync.result }}
+          MOBILE_RESULT: ${{ needs.release-mobile.result }}
+          MOBILE_ENABLED: ${{ vars.MOBILE_RELEASE_ENABLED }}
+          RECEIPT_ID: ${{ inputs.staged_artifact_id }}
+          MOBILE_PLATFORM: ${{ vars.MOBILE_RELEASE_PLATFORM || 'all' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf '## Delivery outcomes\n\n'
+            printf 'Mobile enabled: %s; requested platforms: %s; requested promotion receipt: %s\n\n' "${MOBILE_ENABLED:-unset}" "$MOBILE_PLATFORM" "$RECEIPT_ID"
+            printf '| Stage | Result |\n| --- | --- |\n'
+            printf '| Desktop publication job | %s |\n' "$DESKTOP_RESULT"
+            printf '| Site release sync | %s |\n' "$SITE_RESULT"
+            for platform in android ios; do
+              case "$MOBILE_PLATFORM" in
+                all|"$platform") result="$MOBILE_RESULT (aggregate reusable workflow result)" ;;
+                android|ios) result='skipped (not selected)' ;;
+                *) result='unknown (invalid platform selection)' ;;
+              esac
+              printf '| %s pipeline | %s |\n' "$platform" "$result"
+            done
+            printf '\nAggregate mobile pipeline result is not proof of APK delivery or TestFlight availability. Per-platform results and delivery records must be checked in Release Mobile.\n'
+            printf 'A skipped mobile run establishes no new delivery or availability; check mobile enablement, platform selection and upstream publication results.\n'
+          } >> "$GITHUB_STEP_SUMMARY"

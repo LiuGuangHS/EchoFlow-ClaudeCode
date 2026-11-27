@@ -264,7 +264,7 @@ bun run quality:gate --mode release --allow-live --provider-model <selector>:mai
 
 `quality:release` 是 release 模式的别名，真实调用仍需显式 `--allow-live` 和维护者额度授权。release 模式会组合 PR checks、baseline catalog、live baseline、native checks，并用当前平台 canonical release artifact 跑 `package-smoke --package-kind release`，但不等于运行全量层的全部检查。发版报告同样写入 `artifacts/quality-runs/<timestamp>/`。发布 workflow 另有下列确定性门禁，不自动调用手动 live release gate。
 
-`release-desktop.yml` 将同一候选提交交给 `verify-governance`（含 `check:product-identity` 和 `check:upstream-content`）、`verify-runtime` 和 `verify-desktop`。`verify-full-quality` 补跑其余确定性检查，包括覆盖率和 macOS Swift。恢复旧版本时，覆盖率对比候选第一父系上的前一版本。四组检查全部通过 `release-verify-gate`，且构建和签名前置检查成功后，`publish-release` 才能发布。
+`release-desktop.yml` 将同一候选提交交给 `verify-governance`（含 `check:product-identity` 和 `check:upstream-content`）、`verify-runtime` 和 `verify-desktop`。`verify-full-quality` 补跑其余确定性检查，包括覆盖率和 macOS Swift。恢复旧版本时，覆盖率对比候选第一父系上的前一版本。四组检查全部通过 `release-verify-gate`，且构建和签名前置检查成功后，`publish-release` 才会暂存正式桌面草稿并生成校验回执。
 
 发布证据应按目标 OS/架构区分以下层次，不能互相替代：
 
@@ -280,7 +280,7 @@ bun run quality:gate --mode release --allow-live --provider-model <selector>:mai
 
 发布前用待发布的同一产物完成适用的原生启动、安装、旧版升级/数据保留及签名/公证验证；不要求尚未发布的候选已经出现在正式更新源中。正式发布后再验证旧版经线上 metadata、下载、安装和重启的真实更新链路（见下文），这项发布后证据不能倒写成发布前已经通过。
 
-当前 release workflow 不是按目标汇总全部原生运行、安装和升级证据的总门禁；文档要求不代表已新增此自动化，也不改变发布策略或授权。release 模式下 live lane 不允许静默跳过。缺少 provider、真实模型额度或外部账号时，门禁会失败，并要求在发版记录里明确 blocker。
+正式发布前的暂停由工作流执行。维护者在放行前按目标核对原生运行、安装和升级证据。release 模式下 live lane 不允许静默跳过。缺少 provider、真实模型额度或外部账号时，门禁会失败，并要求在发版记录里明确 blocker。
 
 ## 发版与自动更新
 
@@ -347,11 +347,14 @@ bun run check:policy
 
 ### 发版步骤
 
-`main` 受分支保护：`pr-quality-gate` 必须通过，管理员也不例外。正式发布只由可信的 `Release Please` 工作流授权：它验证 tag 和 commit 后，以 `official_release: true` 调用 `Release Desktop`。不要把直接推送 tag 当作正式发布流程。
+`main` 受分支保护：`pr-quality-gate` 必须通过，管理员也不例外。正式发布只由可信的 `Release Please` 工作流授权。它验证 tag 和 commit 后，以 `official_release: true` 调用 `Release Desktop` 暂存草稿。不要把直接推送 tag 当作正式发布流程。
 
 1. 按当前 Release Please 配置准备版本变更，并通过 PR 合入 `main`。如使用 `bun run scripts/release.ts <version>` 辅助更新版本，需先准备对应的 release notes；脚本会创建版本更新分支并提示如何提交 PR。
-2. `Release Please` 在 `main` 更新后生成/验证正式 release tag，并调用 `Release Desktop` 构建与发布。需要确认实际运行的是 `.github/workflows/release-please.yml` 发起的 official release，而不是仅由 tag push 触发的构建。
-3. `bun run scripts/release.ts --tag <version>` 只会在本地创建 tag，不会发布正式版本；即使推送该 tag，也不会替代 Release Please 的官方发布授权。只有 Release Please 发起的发布在发布前失败时，才按维护者流程重跑并保留授权边界。Release 一旦发布，任何运行都会在 preflight 被拒绝，避免覆盖用户正在下载的安装包。
+2. `Release Please` 在 `main` 更新后生成或验证正式 release tag，调用 `Release Desktop` 运行门禁、构建、签名（按选定模式）并上传完整草稿。成功的正式暂存运行在摘要中提供 checksum 回执和 artifact ID。回执记录 release ID、tag、候选 SHA 以及所有资产名称和 SHA-256；此时草稿仍不可公开下载。
+3. 下载草稿资产并用回执校验 SHA-256，按目标记录[发布前证据](#release-门禁)。证据齐全且获授权后，在 Actions 选择 `Release Please`，从 `main` 手动运行，填入回执对应的 `release_tag`、`release_sha`、`staged_artifact_id`。工作流校验成功暂存运行的来源、tag 指向、草稿 ID 和远端资产完整性，只放行这批资产，无需重建。站点同步和启用的移动发布在桌面公开后启动。
+4. 暂存失败、回执已过期或草稿资产需要重建时，获授权后从 `main` 手动运行 `Release Please`，提供原 `release_tag`、`release_sha` 并留空 `staged_artifact_id`。如暂存报告有多余资产，先核对并按授权清理草稿；新回执生成后重新校验证据。`bun run scripts/release.ts --tag <version>` 只会在本地创建 tag，不会发布正式版本。已发布版本禁止覆盖；独立 `Release Desktop` 手动草稿不生成正式回执。
+
+如果公开请求的响应丢失，用同一个回执重跑放行。工作流核对已公开版本的身份、说明和资产后继续交付。若桌面已公开且后续交付失败，只重跑失败的交付 job，或分别运行 `Deploy React Site`（默认跟随最新稳定版）和 `Release Mobile`（提供原 tag 与目标平台）。重跑移动交付前，先核对已有 APK 和交付记录。
 
 ### 验证一条真实更新链路
 

@@ -4,7 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { createHash } from 'node:crypto'
 import { buildEchoFlowOwnershipMarker, resolveStorageBinding } from '../utils/echoFlowConfigRoot'
-import { executeStorageMigration, recoverStorageMigration, completeStorageMigration, acquireStorageWriter, prepareStorageMigration, selectStartupStorage, storageLocationFile, type StorageMigrationHooks } from './storageMigration'
+import { executeStorageMigration, recoverStorageMigration, completeStorageMigration, acquireStorageWriter, prepareStorageMigration, readStorageMigrationStatus, selectStartupStorage, storageLocationFile, type StorageMigrationHooks } from './storageMigration'
 import { upgradePersistentStorageValue } from '../server/services/persistentStorageMigrations'
 import { createSandboxedTestEnvironment } from '../../scripts/pr/test-environment'
 
@@ -671,9 +671,10 @@ describe('single-root storage transaction', () => {
     expect(await fs.exists(original)).toBe(false)
   })
 
-  for (const boundary of ['source-copy', 'partial-copy', 'source-backup', 'backup-unlink', 'target-before', 'link', 'publication-unlink', 'replace', 'relocations', 'cleanup'] as const) {
+  for (const boundary of ['source-copy', 'partial-copy', 'source-backup', 'backup-unlink', 'target-before', 'link', 'publication-unlink', 'replace', 'relocations', 'cleanup', 'cleanup-target-missing', 'cleanup-target-replaced'] as const) {
     test(`cold restart after a process exits at ${boundary} rolls forward without losing or replaying data`, async () => {
       const f = await fixture()
+      const duringCleanup = boundary.startsWith('cleanup')
       const withSettings = boundary !== 'relocations'
       const withHistory = withSettings && boundary !== 'replace'
       await f.owned('current', withSettings ? { 'echoflow-code/settings.json': '{"target":true}' } : {})
@@ -692,6 +693,7 @@ describe('single-root storage transaction', () => {
         const root = ${JSON.stringify(f.binding.root)}
         const projectFile = path.join('projects', 'a.jsonl')
         const boundary = ${JSON.stringify(boundary)}
+        const duringCleanup = ${duringCleanup}
         let backupScratch
         for (const method of ['copyFile', 'link', 'rename', 'unlink', 'rm']) {
           const original = nativeFs[method]
@@ -711,7 +713,7 @@ describe('single-root storage transaction', () => {
                 (boundary === 'publication-unlink' && method === 'unlink' && String(args[0]).endsWith(path.sep + projectFile) && String(args[0]).split(path.sep).includes('staged')) ||
                 (boundary === 'replace' && method === 'rename' && output === root + '/echoflow-code/settings.json') ||
                 (boundary === 'relocations' && method === 'rename' && output === root + '/echoflow-code/storage-relocations.json') ||
-                (boundary === 'cleanup' && method === 'unlink' && String(args[0]) === ${JSON.stringify(path.join(a.directory, 'projects/a.jsonl'))})) process.exit(42)
+                (duringCleanup && method === 'unlink' && String(args[0]) === ${JSON.stringify(path.join(a.directory, 'projects/a.jsonl'))})) process.exit(42)
             return result
           }
         }
@@ -720,7 +722,7 @@ describe('single-root storage transaction', () => {
         const binding = ${JSON.stringify(f.binding)}
         const hooks = { assertQuiescent: async () => {}, platform: 'linux' }
         const result = await executeStorageMigration({ binding, sources: [${JSON.stringify(a)}], hooks })
-        if (boundary === 'cleanup') console.error(await completeStorageMigration(binding, result.id, hooks))
+        if (duringCleanup) console.error(await completeStorageMigration(binding, result.id, hooks))
         console.error(result)
         process.exit(1)
       `
@@ -780,8 +782,30 @@ describe('single-root storage transaction', () => {
         `], { env: createSandboxedTestEnvironment(path.join(f.home, 'recovery')), stdout: 'ignore', stderr: 'pipe' })
         expect(await recovery.exited, await new Response(recovery.stderr).text()).toBe(0)
       }
+      if (boundary === 'cleanup-target-missing' || boundary === 'cleanup-target-replaced') {
+        const pending = await readStorageMigrationStatus(f.binding)
+        expect(pending?.state).toBe('cleanup-pending')
+        expect(await fs.exists(path.join(a.directory, 'projects/a.jsonl'))).toBe(false)
+        const target = path.join(f.binding.root, 'projects/a.jsonl')
+        const backup = path.join(f.binding.internalDir, 'migrations', pending!.id!, 'sources/0/projects/a.jsonl')
+        const saved = path.join(f.home, 'saved-transcript')
+        await fs.rename(target, saved)
+        if (boundary === 'cleanup-target-replaced') await fs.writeFile(target, 'replacement transcript')
+
+        const stopped = await recoverStorageMigration(f.binding, f.hooks)
+        expect(stopped.state, stopped.issues.join('\n')).toBe('cleanup-pending')
+        expect(await fs.readFile(backup, 'utf8')).toBe('one transcript')
+        await expect(acquireStorageWriter(f.binding)).rejects.toThrow('cleanup-pending')
+        if (boundary === 'cleanup-target-replaced') {
+          expect(await fs.readFile(target, 'utf8')).toBe('replacement transcript')
+          await fs.unlink(target)
+        } else {
+          expect(await fs.exists(target)).toBe(false)
+        }
+        await fs.rename(saved, target)
+      }
       const recovered = await recoverStorageMigration(f.binding, f.hooks)
-      expect(recovered.state, recovered.issues.join('\n')).toBe(boundary === 'cleanup' ? 'ready' : 'validation-required')
+      expect(recovered.state, recovered.issues.join('\n')).toBe(duringCleanup ? 'ready' : 'validation-required')
       if (recovered.state === 'validation-required') expect((await completeStorageMigration(f.binding, recovered.id!, f.hooks)).state).toBe('ready')
       expect(await fs.readFile(path.join(f.binding.root, 'projects/a.jsonl'), 'utf8')).toBe('one transcript')
       if (withSettings) expect(JSON.parse(await fs.readFile(path.join(f.binding.internalDir, 'settings.json'), 'utf8'))).toEqual({ target: true, source: true })
