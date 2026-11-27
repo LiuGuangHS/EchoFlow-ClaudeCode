@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
 import { execFile, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -705,9 +704,17 @@ SectionEnd
         expect(existsSync(path.join(portable, 'desktop-server-state.json'))).toBe(false)
       }
     } finally {
-      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      if (process.platform === 'win32') {
+        // Bun's recursive rm reports EBUSY for this fixture on the Windows runner.
+        const cleanup = `$ErrorActionPreference = 'Stop'; Remove-Item -LiteralPath '${root.replaceAll("'", "''")}' -Recurse -Force`
+        await promisify(execFile)('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cleanup, 'utf16le').toString('base64')], {
+          env: createSandboxedTestEnvironment(path.join(root, 'cleanup-home')), timeout: 30_000, windowsHide: true,
+        })
+      } else {
+        rmSync(root, { recursive: true, force: true })
+      }
     }
-  })
+  }, 40_000)
 
   test('keeps no-CLR default and portable upgrade cases in Windows smoke', () => {
     const installerSmoke = readFileSync(

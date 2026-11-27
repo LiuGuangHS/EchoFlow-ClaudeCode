@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][string]$ArtifactsDir,
   [ValidateSet('x64')][string]$Arch = 'x64',
@@ -711,7 +711,7 @@ try {
     [IO.File]::WriteAllText($legacySettings, '{"env":{"ECHOFLOW_UPGRADE_FIXTURE":"keep"}}')
     [IO.File]::WriteAllText($legacyTranscript, '{"type":"user","message":{"role":"user","content":"Windows upgrade fixture"}}' + "`n")
     $files = @($legacySettings, $legacyTranscript)
-    $before = @($files | Get-FileHash -Algorithm SHA256 | ForEach-Object Hash)
+    $before = @(Get-FileHash -LiteralPath $files -Algorithm SHA256 | ForEach-Object Hash)
 
     try {
       Invoke-CheckedProcess -FilePath $installer -Stage 'Upgrade to v0.7.8' -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
@@ -722,13 +722,13 @@ try {
       }
       foreach ($phase in @('first launch', 'relaunch')) {
         Invoke-InstalledApplicationSmoke -FilePath $appExe -InstallDirectory $installDir -IsolatedUserProfile $userProfile
-        $after = @($files | Get-FileHash -Algorithm SHA256 | ForEach-Object Hash)
+        $after = @(Get-FileHash -LiteralPath $files -Algorithm SHA256 | ForEach-Object Hash)
         if ($after.Count -ne $before.Count -or (Compare-Object $before $after -SyncWindow 0)) {
           throw "Upgrade changed the shared settings or transcript during $phase."
         }
       }
     } catch {
-      $after = @($files | Get-FileHash -Algorithm SHA256 -ErrorAction SilentlyContinue | ForEach-Object Hash)
+      $after = @(Get-FileHash -LiteralPath $files -Algorithm SHA256 -ErrorAction SilentlyContinue | ForEach-Object Hash)
       $preserved = $after.Count -eq $before.Count -and -not (Compare-Object $before $after -SyncWindow 0)
       Write-SmokeDiagnostic "After failed upgrade, both shared fixture hashes matched: $preserved"
       throw
