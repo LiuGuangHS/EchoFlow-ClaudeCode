@@ -194,7 +194,7 @@ test('the fixed bounded PowerShell transport sends shell metacharacters and root
     const bootstrap = Buffer.from(args.at(-1)!, 'base64').toString('utf16le')
     const compressed = /FromBase64String\('([^']+)'\)/.exec(bootstrap)![1]!
     const script = gunzipSync(Buffer.from(compressed, 'base64')).toString('utf8')
-    expect(script).toContain('[Console]::In.ReadToEnd()')
+    expect(script).toContain('[Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false, $true)')
     expect(script).not.toContain('sentinel-root')
     expect(bootstrap).not.toContain('sentinel-root')
     queueMicrotask(() => callback(null, JSON.stringify(fixture()), ''))
@@ -205,6 +205,14 @@ test('the fixed bounded PowerShell transport sends shell metacharacters and root
   expect(JSON.parse(input)).toEqual(selected)
   expect(result.pid).toBe(inspectorPid)
 })
+
+const nativeWindowsX64 = process.arch === 'x64' && !process.env.PROCESSOR_ARCHITEW6432 && Boolean(Bun.which('powershell.exe'))
+test.skipIf(!nativeWindowsX64)('native transport preserves non-ASCII root paths on redirected stdin', async () => {
+  // The invalid path returns a root receipt before any process inspection.
+  const root = 'C:\\?\\迁移-😀-é'
+  const { stdout } = await createWindowsInventoryRunner()(JSON.stringify({ ...request, roots: [root] }))
+  expect(JSON.parse(stdout).roots?.[0]).toMatchObject({ requested: root, complete: false })
+}, 35_000)
 
 test('native transport errors never expose execFile command arguments, paths, or exception messages', async () => {
   for (const failure of ['ENOENT', 'timeout', 'maxBuffer']) {

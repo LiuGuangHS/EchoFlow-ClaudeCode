@@ -65,6 +65,7 @@ permissions:
 concurrency:
   group: release-desktop-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   release-contract:
@@ -1160,15 +1161,18 @@ jobs:
           if-no-files-found: error
 
   publish-release:
+    name: Stage desktop release draft
     if: inputs.official_release == true || (github.event_name == 'workflow_dispatch' && inputs.draft == true && inputs.publish_draft_release == true)
     needs:
       - build
       - release-verify-gate
       - signing-preflight
     runs-on: ubuntu-latest
-    outputs:
-      release_tag: v${{ steps.version.outputs.value }}
-
+    # Shared by Release Please draft creation, draft asset uploads and promotion.
+    concurrency:
+      group: desktop-release-mutation
+      cancel-in-progress: false
+      queue: max
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -1192,9 +1196,7 @@ jobs:
             exit 1
           fi
 
-      # Re-check right before uploading: another run for the same version on a
-      # different ref (outside this run's concurrency group) may have published
-      # while this one was building.
+      # A different run may have published while this run was building.
       - name: Refuse to overwrite an existing published release
         shell: bash
         env:
@@ -1222,9 +1224,7 @@ jobs:
             fi
             exit 0
           fi
-          release_id=$(jq -r '.id' <<<"$release_json")
-          is_draft=$(jq -r '.draft' <<<"$release_json")
-          if [[ ! "$release_id" =~ ^[1-9][0-9]*$ ]] || [ "$is_draft" != "true" ]; then
+          if ! release_id=$(jq -er 'select(.draft == true) | .id | select(type == "number" and . > 0 and floor == .)' <<<"$release_json"); then
             echo "::error::Release identity is invalid or the release is already public."
             exit 1
           fi
@@ -1346,17 +1346,19 @@ jobs:
           RELEASE_NAME: EchoFlow Code v${{ steps.version.outputs.value }}
           RELEASE_BODY: ${{ steps.release_notes.outputs.body }}
           MACOS_SIGNED: ${{ needs.signing-preflight.outputs.macos_signed }}
+          OFFICIAL_RELEASE: ${{ inputs.official_release }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
-          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")
-          current_id=$(jq -r '.id' <<<"$release_json")
-          current_tag=$(jq -r '.tag_name' <<<"$release_json")
-          is_draft=$(jq -r '.draft' <<<"$release_json")
-          if [ "$current_id" != "$RELEASE_ID" ] || [ "$current_tag" != "$RELEASE_TAG" ] || [ "$is_draft" != "true" ]; then
+          release_path="repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
+          draft_filter='select(.id == $id and .tag_name == env.RELEASE_TAG and .draft == true)'
+          if ! gh api "$release_path" | jq -e --argjson id "$RELEASE_ID" "$draft_filter" >/dev/null; then
             echo "::error::Verified release identity or draft state changed before upload."
             exit 1
           fi
-          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
-            -f "tag_name=${RELEASE_TAG}" -f "name=${RELEASE_NAME}" -f "body=${RELEASE_BODY}" -F draft=true -F prerelease=false >/dev/null
+          metadata=$(gh api --method PATCH "$release_path" \
+            -f "tag_name=${RELEASE_TAG}" -f "name=${RELEASE_NAME}" -f "body=${RELEASE_BODY}" -F draft=true -F prerelease=false |
+            jq -ce --argjson id "$RELEASE_ID" "$draft_filter"' |
+              select(.name == env.RELEASE_NAME and .body == env.RELEASE_BODY and .prerelease == false) | {name, body, prerelease}')
           # A previous signed draft may have left an updater channel behind.
           if [ "$MACOS_SIGNED" = "false" ]; then
             assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")
@@ -1376,8 +1378,14 @@ jobs:
             artifacts/release-assets/*.blockmap
             artifacts/update-metadata-standard/*.yml
           )
+          manifest=$(mktemp)
           for file in "${files[@]}"; do
             asset_name=$(basename "$file")
+            if [ "$OFFICIAL_RELEASE" = 'true' ]; then
+              digest=$(sha256sum "$file")
+              jq -cn --arg name "$asset_name" --arg digest "sha256:${digest%% *}" \
+                '{name: $name, digest: $digest, state: "uploaded"}' >> "$manifest"
+            fi
             assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")
             asset_id=$(jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' <<<"$assets")
             if [ -n "$asset_id" ]; then
@@ -1387,6 +1395,21 @@ jobs:
               -H 'Content-Type: application/octet-stream' --input "$file" \
               "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${asset_name}" >/dev/null
           done
+          if [ "$OFFICIAL_RELEASE" = 'true' ]; then
+            expected=$(jq -cs 'sort_by(.name) | select(length > 0)' "$manifest")
+            actual=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100" --paginate --slurp |
+              jq -ce '[.[][] | {name, digest, state}] | sort_by(.name)')
+            if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+              echo '::error::Draft assets do not match the local release files and SHA-256 digests.'
+              exit 1
+            fi
+            jq -n --arg tag "$RELEASE_TAG" --arg release_sha "$RELEASE_SHA" --arg workflow_sha "$GITHUB_SHA" \
+              --argjson release_id "$RELEASE_ID" --argjson run_id "$GITHUB_RUN_ID" --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+              --argjson assets "$expected" --argjson metadata "$metadata" \
+              '{tag: $tag, release_sha: $release_sha, workflow_sha: $workflow_sha,
+                release_id: $release_id, run_id: $run_id, run_attempt: $run_attempt, assets: $assets, metadata: $metadata}' \
+              > "$RUNNER_TEMP/desktop-release-receipt.json"
+          fi
 
       - name: Publish complete GitHub release
         if: steps.release.outputs.release_id == ''
@@ -1408,94 +1431,30 @@ jobs:
             artifacts/release-assets/**/*.blockmap
             artifacts/update-metadata-standard/*.yml
 
-      - name: Publish GitHub release after complete upload
+      - name: Upload official draft checksum receipt
+        if: inputs.official_release == true
+        id: receipt
+        uses: actions/upload-artifact@v6
+        with:
+          name: desktop-release-receipt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/desktop-release-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Report staged draft for review
         if: inputs.official_release == true
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ steps.release.outputs.release_id }}
-          RELEASE_TAG: v${{ steps.version.outputs.value }}
+          RECEIPT_ID: ${{ steps.receipt.outputs.artifact-id }}
+          RECEIPT_URL: ${{ steps.receipt.outputs.artifact-url }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
-          if [ -z "$RELEASE_ID" ]; then
-            echo "::error::Trusted release publication requires a verified release ID."
-            exit 1
-          fi
-          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")
-          current_id=$(jq -r '.id' <<<"$release_json")
-          current_tag=$(jq -r '.tag_name' <<<"$release_json")
-          is_draft=$(jq -r '.draft' <<<"$release_json")
-          if [ "$current_id" != "$RELEASE_ID" ] || [ "$current_tag" != "$RELEASE_TAG" ] || [ "$is_draft" != "true" ]; then
-            echo "::error::Verified release identity or draft state changed before publication."
-            exit 1
-          fi
-          undrafted_id=$(gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
-            -f "tag_name=${RELEASE_TAG}" -F draft=false --jq 'select(.draft == false) | .id')
-          if [ "$undrafted_id" != "$RELEASE_ID" ]; then
-            echo "::error::The verified release ID was not undrafted."
-            exit 1
-          fi
+          printf '## Desktop draft staged\n\n- Tag: `%s`\n- Release SHA: `%s`\n- [Checksum receipt](%s) artifact ID: `%s`\n\nReview evidence for these exact bytes before dispatching Release Please from main with this artifact ID.\n' \
+            "$RELEASE_TAG" "$RELEASE_SHA" "$RECEIPT_URL" "$RECEIPT_ID" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Keep workflow-dispatch release as draft
         if: github.event_name == 'workflow_dispatch' && inputs.draft == true
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release view "v${{ steps.version.outputs.value }}" --json isDraft --jq 'if .isDraft then "release remains draft" else error("workflow-dispatch release was published unexpectedly") end' --repo "${{ github.repository }}"
-
-  site-release-sync:
-    needs: publish-release
-    if: inputs.official_release == true
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    uses: ./.github/workflows/deploy-docs.yml
-    with:
-      release_tag: ${{ needs.publish-release.outputs.release_tag }}
-    secrets: inherit
-
-  release-mobile:
-    needs: publish-release
-    if: vars.MOBILE_RELEASE_ENABLED == 'true' && inputs.official_release == true
-    uses: ./.github/workflows/release-mobile.yml
-    with:
-      release_tag: ${{ needs.publish-release.outputs.release_tag }}
-    secrets:
-      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-
-  delivery-summary:
-    needs: [publish-release, site-release-sync, release-mobile]
-    if: always()
-    runs-on: ubuntu-latest
-    permissions: {}
-    steps:
-      - name: Summarize delivery outcomes
-        env:
-          DESKTOP_RESULT: ${{ needs.publish-release.result }}
-          SITE_RESULT: ${{ needs.site-release-sync.result }}
-          MOBILE_RESULT: ${{ needs.release-mobile.result }}
-          MOBILE_ENABLED: ${{ vars.MOBILE_RELEASE_ENABLED }}
-          MOBILE_PLATFORM: ${{ vars.MOBILE_RELEASE_PLATFORM || 'all' }}
-          OFFICIAL_RELEASE: ${{ inputs.official_release == true }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          {
-            printf '## Delivery outcomes\n\n'
-            printf 'Mobile enabled: %s; requested platforms: %s; official release: %s\n\n' "${MOBILE_ENABLED:-unset}" "$MOBILE_PLATFORM" "$OFFICIAL_RELEASE"
-            printf '| Stage | Result |\n| --- | --- |\n'
-            printf '| Desktop publication job | %s |\n' "$DESKTOP_RESULT"
-            printf '| Site release sync | %s |\n' "$SITE_RESULT"
-            for platform in android ios; do
-              case "$MOBILE_PLATFORM" in
-                all|"$platform") result="$MOBILE_RESULT (aggregate reusable workflow result)" ;;
-                android|ios) result='skipped (not selected)' ;;
-                *) result='unknown (invalid platform selection)' ;;
-              esac
-              printf '| %s pipeline | %s |\n' "$platform" "$result"
-            done
-            printf '\nAggregate mobile pipeline result is not proof of APK delivery or TestFlight availability. Per-platform results and delivery records must be checked in Release Mobile.\n'
-            printf 'A skipped mobile run establishes no new delivery or availability; check mobile enablement, platform selection and upstream publication results.\n'
-            if [ "$OFFICIAL_RELEASE" != 'true' ]; then
-              printf '\nPublic desktop publication is not confirmed for a non-official run; inspect its draft/artifact outcome.\n'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"

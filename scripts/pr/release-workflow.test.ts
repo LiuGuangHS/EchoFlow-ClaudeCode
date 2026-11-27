@@ -104,6 +104,7 @@ describe('release desktop workflow', () => {
     const release = parse(readReleaseWorkflow())
     expect(release.concurrency).toEqual({
       group: 'release-desktop-${{ github.ref }}',
+      queue: 'max',
       'cancel-in-progress': false,
     })
     expect(release.on.push.tags).toEqual(['v*.*.*'])
@@ -115,21 +116,21 @@ describe('release desktop workflow', () => {
   })
 
   test('delivery summary always reports publication, site sync and native pipeline outcomes without claiming delivery', () => {
-    const workflow = parse(readReleaseWorkflow())
+    const workflow = parse(readFileSync('.github/workflows/release-please.yml', 'utf8'))
     const job = workflow.jobs['delivery-summary']
     expect(job).toBeDefined()
-    expect(job.if).toBe('always()')
-    expect(job.needs).toEqual(['publish-release', 'site-release-sync', 'release-mobile'])
+    expect(job.if).toMatch(/^always\(\).*inputs\.staged_artifact_id/)
+    expect(job.needs).toEqual(['promote-release', 'site-release-sync', 'release-mobile'])
     expect(job.permissions).toEqual({})
     expect(job.steps).toHaveLength(1)
     const step = job.steps[0]
     expect(step.env).toMatchObject({
-      DESKTOP_RESULT: '${{ needs.publish-release.result }}',
+      DESKTOP_RESULT: '${{ needs.promote-release.result }}',
       SITE_RESULT: '${{ needs.site-release-sync.result }}',
       MOBILE_RESULT: '${{ needs.release-mobile.result }}',
       MOBILE_ENABLED: '${{ vars.MOBILE_RELEASE_ENABLED }}',
       MOBILE_PLATFORM: "${{ vars.MOBILE_RELEASE_PLATFORM || 'all' }}",
-      OFFICIAL_RELEASE: '${{ inputs.official_release == true }}',
+      RECEIPT_ID: '${{ inputs.staged_artifact_id }}',
     })
     expect(step.run).not.toContain('${{')
     const root = mkdtempSync(join(tmpdir(), 'delivery-summary-'))
@@ -140,7 +141,7 @@ describe('release desktop workflow', () => {
         const run = Bun.spawnSync(['bash', '-euo', 'pipefail', '-c', step.run], {
           env: { PATH: process.env.PATH, HOME: root, XDG_CONFIG_HOME: root, CLAUDE_CONFIG_DIR: root,
             GITHUB_STEP_SUMMARY: summary, DESKTOP_RESULT: result, SITE_RESULT: result,
-            MOBILE_RESULT: result, MOBILE_ENABLED: official, MOBILE_PLATFORM: platform, OFFICIAL_RELEASE: official },
+            MOBILE_RESULT: result, MOBILE_ENABLED: official, MOBILE_PLATFORM: platform, RECEIPT_ID: '456' },
         })
         expect(run.exitCode, run.stderr.toString()).toBe(0)
         const text = readFileSync(summary, 'utf8')
@@ -149,10 +150,9 @@ describe('release desktop workflow', () => {
         for (const native of ['android', 'ios']) {
           expect(text).toContain(`| ${native} pipeline | ${platform === 'all' || platform === native ? result : 'skipped (not selected)'}`)
         }
-        expect(text).toContain(`Mobile enabled: ${official}; requested platforms: ${platform}; official release: ${official}`)
+        expect(text).toContain(`Mobile enabled: ${official}; requested platforms: ${platform}; requested promotion receipt: 456`)
         expect(text).toContain('Aggregate mobile pipeline result is not proof of APK delivery or TestFlight availability')
         expect(text).toContain('Per-platform results and delivery records must be checked in Release Mobile')
-        if (official === 'false') expect(text).toContain('Public desktop publication is not confirmed for a non-official run')
       }
     } finally {
       rmSync(root, { recursive: true, force: true })
@@ -931,7 +931,7 @@ describe('release desktop workflow', () => {
     }
   })
 
-  test('draft lookup, upload and undraft keep one verified release identity and fail closed', () => {
+  test('draft lookup and staging bind the existing release ID to verified remote bytes', () => {
     const steps = parse(readReleaseWorkflow()).jobs['publish-release'].steps
     const script = (name: string) => steps.find((step: { name: string }) => step.name === name).run as string
     const directory = mkdtempSync(join(tmpdir(), 'release-identity-'))
@@ -941,14 +941,15 @@ describe('release desktop workflow', () => {
 set -euo pipefail
 printf '%s\\n' "$*" >> "$FAKE_GH_LOG"
 if [[ "$*" == *"--method PATCH"* ]]; then
-  if [[ "$*" == *"draft=false"* ]]; then printf '%s\\n' "$FAKE_UNDRAFT_ID"; else printf '{}'; fi
+  printf '%s\\n' "$FAKE_STAGED_RELEASE"
 elif [[ "$*" == *"--method POST"* ]]; then
   [[ "$*" == *"https://uploads.github.com/repos/fixture/release/releases/42/assets?name="* ]] || exit 88
   printf '{}'
 elif [[ "$*" == *"--method DELETE"* ]]; then
   printf '{}'
 elif [[ "$*" == *"/releases/42/assets?"* ]]; then
-  printf '[{"id":99,"name":"EchoFlow-Code-1.2.3-win-x64.exe"},{"id":100,"name":"latest-mac.yml"}]'
+  if [[ "$*" == *"--paginate --slurp" ]]; then printf '%s\\n' "$FAKE_UPLOADED_ASSETS"
+  else printf '[{"id":99,"name":"EchoFlow-Code-1.2.3-win-x64.exe"},{"id":100,"name":"latest-mac.yml"}]'; fi
 elif [[ "$*" == *"/releases/42"* ]]; then
   printf '%s\\n' "$FAKE_RELEASE"
 elif [[ "$*" == *"/releases?"* ]]; then
@@ -964,11 +965,21 @@ fi
 `)
     chmodSync(join(fakeBin, 'gh'), 0o755)
     const release = { id: 42, tag_name: 'v1.2.3', draft: true }
+    const metadata = { name: 'EchoFlow Code v1.2.3', body: 'Fixture release\n\nSecond paragraph.\n', prerelease: false }
     const log = join(directory, 'gh.log')
     const output = join(directory, 'output')
+    const receiptPath = join(directory, 'desktop-release-receipt.json')
+    const releaseSha = '1'.repeat(40)
+    const workflowSha = '2'.repeat(40)
+    const assets = [
+      ['EchoFlow-Code-1.2.3-win-x64.exe', 'fixture installer'],
+      ['EchoFlow-Code-1.2.3-win-x64.exe.blockmap', 'fixture blockmap'],
+      ['latest.yml', 'fixture metadata'],
+    ].map(([name, contents]) => ({ name, digest: `sha256:${new Bun.CryptoHasher('sha256').update(contents).digest('hex')}`, state: 'uploaded' }))
     const run = (name: string, overrides: Record<string, string> = {}) => {
       writeFileSync(log, '')
       writeFileSync(output, '')
+      rmSync(receiptPath, { force: true })
       const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', script(name)], {
         cwd: directory,
         env: {
@@ -979,14 +990,16 @@ fi
           GITHUB_REPOSITORY: 'fixture/release',
           RELEASE_ID: '42',
           RELEASE_TAG: 'v1.2.3',
-          RELEASE_NAME: 'EchoFlow Code v1.2.3',
-          RELEASE_BODY: 'Fixture release',
+          RELEASE_NAME: metadata.name,
+          RELEASE_BODY: metadata.body,
+          FAKE_STAGED_RELEASE: JSON.stringify({ ...release, ...metadata }),
           OFFICIAL_RELEASE: 'true',
           MACOS_SIGNED: 'false',
           FAKE_RELEASE: JSON.stringify(release),
           FAKE_RELEASE_PAGES: JSON.stringify([[], [release]]),
           FAKE_LOOKUP_FAILURE: 'false',
-          FAKE_UNDRAFT_ID: '42',
+          RELEASE_SHA: releaseSha, GITHUB_SHA: workflowSha, GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '2',
+          FAKE_UPLOADED_ASSETS: JSON.stringify([[assets[2]], [assets[1], assets[0]]]),
           FAKE_GH_LOG: log,
           ...overrides,
         },
@@ -1018,7 +1031,17 @@ fi
       writeFileSync(join(metadataDir, 'latest.yml'), 'fixture metadata')
       const upload = 'Publish existing GitHub release by ID'
       const uploaded = run(upload)
-      expect(uploaded.code).toBe(0)
+      expect(uploaded.code, uploaded.stderr).toBe(0)
+      expect(JSON.parse(readFileSync(receiptPath, 'utf8'))).toEqual({
+        tag: 'v1.2.3', release_sha: releaseSha, workflow_sha: workflowSha,
+        run_id: 123, run_attempt: 2, release_id: 42, metadata, assets,
+      })
+      for (const fields of [{ name: null }, { body: 'Unexpected body' }, { prerelease: 'false' }, { draft: false }]) {
+        const result = run(upload, { FAKE_STAGED_RELEASE: JSON.stringify({ ...release, ...metadata, ...fields }) })
+        expect(result.code, JSON.stringify(fields)).not.toBe(0)
+        expect(result.log).not.toContain('--method POST')
+        expect(() => readFileSync(receiptPath)).toThrow()
+      }
       expect(uploaded.log).toContain('-f tag_name=v1.2.3')
       expect(uploaded.log).toContain('-F draft=true')
       expect(uploaded.log).toContain('--method DELETE repos/fixture/release/releases/assets/99')
@@ -1030,17 +1053,20 @@ fi
       expect(uploaded.log).not.toContain('draft=false')
       expect(uploaded.log.indexOf('--method DELETE')).toBeLessThan(uploaded.log.indexOf('--method POST'))
 
-      const undraft = 'Publish GitHub release after complete upload'
-      for (const name of [upload, undraft]) {
-        for (const stale of [{ ...release, draft: false }, { ...release, id: 43 }, { ...release, tag_name: 'v9.9.9' }]) {
-          const rejected = run(name, { FAKE_RELEASE: JSON.stringify(stale) })
-          expect(rejected.code, `${name}: ${JSON.stringify(stale)}`).not.toBe(0)
-          expect(rejected.log).not.toContain('--method')
-        }
+      for (const stale of [{ ...release, draft: false }, { ...release, id: 43 }, { ...release, tag_name: 'v9.9.9' }]) {
+        const rejected = run(upload, { FAKE_RELEASE: JSON.stringify(stale) })
+        expect(rejected.code, JSON.stringify(stale)).not.toBe(0)
+        expect(rejected.log).not.toContain('--method')
       }
-      expect(run(undraft).code).toBe(0)
-      expect(run(undraft, { FAKE_UNDRAFT_ID: '43' }).code).not.toBe(0)
-      expect(run(undraft, { RELEASE_ID: '' }).code).not.toBe(0)
+      for (const changed of [
+        assets.slice(0, 2), [...assets, { ...assets[0], name: 'unexpected.exe' }],
+        [{ ...assets[0], digest: `sha256:${'f'.repeat(64)}` }, ...assets.slice(1)],
+      ]) {
+        expect(run(upload, { FAKE_UPLOADED_ASSETS: JSON.stringify([changed]) }).code).not.toBe(0)
+        expect(() => readFileSync(receiptPath)).toThrow()
+      }
+      expect(run(upload, { OFFICIAL_RELEASE: 'false' }).code).toBe(0)
+      expect(() => readFileSync(receiptPath)).toThrow()
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
@@ -1074,20 +1100,12 @@ fi
     expect(publishJob).toContain('artifacts/release-assets/*.blockmap')
     expect(publishJob).not.toContain('install-macos-unsigned.sh')
     expect(publishJob).toContain('draft: true')
-    expect(publishJob).toContain('Publish GitHub release after complete upload')
-    const undraft = extractStep(publishJob ?? '', 'Publish GitHub release after complete upload')
-    expect(undraft).toContain('if: inputs.official_release == true')
-    expect(undraft).toContain('RELEASE_ID: ${{ steps.release.outputs.release_id }}')
-    expect(undraft).toContain('"repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"')
-    expect(undraft).toContain('-f "tag_name=${RELEASE_TAG}"')
-    expect(undraft).toContain('-F draft=false')
     expect(publishJob).not.toContain('gh release edit')
     expect(publishJob).toContain('Keep workflow-dispatch release as draft')
     expect(publishJob).toContain("if: github.event_name == 'workflow_dispatch' && inputs.draft == true")
     expect(publishJob).toContain('release remains draft')
     expect(publishJob).toContain('fail_on_unmatched_files: true')
     expect(publishJob).toContain('Load release notes')
-    expect(publishJob.indexOf('Publish complete GitHub release')).toBeLessThan(publishJob.indexOf('Publish GitHub release after complete upload'))
     expect(workflow.indexOf('publish-release:')).toBeGreaterThan(workflow.indexOf('build:'))
   })
 
@@ -1234,16 +1252,18 @@ fi
     expect(contract).toContain('EXPECTED_SHA: ${{ inputs.release_sha || github.sha }}')
   })
 
-  test('release workflow keeps updater-visible releases draft until every asset is uploaded', () => {
-    const workflow = readReleaseWorkflow()
-    const publishJob = extractJob(workflow, 'publish-release')
-
-    expect(publishJob).toContain('draft: true')
-    expect(publishJob).toContain('fail_on_unmatched_files: true')
-    expect(publishJob).toContain('Publish GitHub release after complete upload')
-    expect(publishJob).toContain('-F draft=false')
-    expect(publishJob.indexOf('Publish complete GitHub release')).toBeLessThan(publishJob.indexOf('Publish GitHub release after complete upload'))
-    expect(publishJob.indexOf('Validate standard update metadata set')).toBeLessThan(publishJob.indexOf('Publish complete GitHub release'))
+  test('only successful official staging uploads a receipt after validating updater metadata', () => {
+    const steps = parse(readReleaseWorkflow()).jobs['publish-release'].steps
+    const index = (name: string) => steps.findIndex((step: { name: string }) => step.name === name)
+    const upload = index('Publish existing GitHub release by ID')
+    const receipt = index('Upload official draft checksum receipt')
+    expect(index('Validate standard update metadata set')).toBeLessThan(upload)
+    expect(receipt).toBeGreaterThan(upload)
+    expect(steps[receipt]).toMatchObject({
+      if: 'inputs.official_release == true',
+      uses: 'actions/upload-artifact@v6',
+      with: { name: 'desktop-release-receipt-${{ github.run_attempt }}', 'if-no-files-found': 'error' },
+    })
   })
 
   test('release asset names come from the packaging config and match every validated asset list', () => {

@@ -141,7 +141,8 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 try {
-  $inputText = [Console]::In.ReadToEnd()
+  $reader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false, $true), $false)
+  try { $inputText = $reader.ReadToEnd() } finally { $reader.Dispose() }
   if ($inputText.Length -gt 1048576) { throw 'input-limit' }
   $request = ConvertFrom-Json -InputObject $inputText
   if ($request.version -ne 1) { throw 'protocol' }
