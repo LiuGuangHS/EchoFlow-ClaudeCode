@@ -695,8 +695,10 @@ try {
     Write-SmokeDiagnostic "Candidate SHA-256: $((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash)"
 
     Invoke-CheckedProcess -FilePath $BaselineInstaller -Stage 'Install official v0.7.7' -Arguments @('/S', '/currentuser', "/D=$installDir")
-    if ([Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion -ne '0.7.7') {
-      throw 'Installed baseline application version is not 0.7.7.'
+    $baselineVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).FileVersion
+    Write-SmokeDiagnostic "Installed baseline file version: $baselineVersion"
+    if ($baselineVersion -ne '0.7.7') {
+      throw "Expected baseline file version 0.7.7, found '$baselineVersion'."
     }
     Invoke-InstalledApplicationSmoke -FilePath $appExe -InstallDirectory $installDir -IsolatedUserProfile $userProfile -LegacyProfile
 
@@ -711,16 +713,25 @@ try {
     $files = @($legacySettings, $legacyTranscript)
     $before = @($files | Get-FileHash -Algorithm SHA256 | ForEach-Object Hash)
 
-    Invoke-CheckedProcess -FilePath $installer -Stage 'Upgrade to v0.7.8' -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
-    if ([Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion -ne '0.7.8') {
-      throw 'In-place upgrade did not install application version 0.7.8.'
-    }
-    foreach ($phase in @('first launch', 'relaunch')) {
-      Invoke-InstalledApplicationSmoke -FilePath $appExe -InstallDirectory $installDir -IsolatedUserProfile $userProfile
-      $after = @($files | Get-FileHash -Algorithm SHA256 | ForEach-Object Hash)
-      if ($after.Count -ne $before.Count -or (Compare-Object $before $after -SyncWindow 0)) {
-        throw "Upgrade changed the shared settings or transcript during $phase."
+    try {
+      Invoke-CheckedProcess -FilePath $installer -Stage 'Upgrade to v0.7.8' -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
+      $candidateVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).FileVersion
+      Write-SmokeDiagnostic "Installed candidate file version: $candidateVersion"
+      if ($candidateVersion -ne '0.7.8') {
+        throw "Expected candidate file version 0.7.8, found '$candidateVersion'."
       }
+      foreach ($phase in @('first launch', 'relaunch')) {
+        Invoke-InstalledApplicationSmoke -FilePath $appExe -InstallDirectory $installDir -IsolatedUserProfile $userProfile
+        $after = @($files | Get-FileHash -Algorithm SHA256 | ForEach-Object Hash)
+        if ($after.Count -ne $before.Count -or (Compare-Object $before $after -SyncWindow 0)) {
+          throw "Upgrade changed the shared settings or transcript during $phase."
+        }
+      }
+    } catch {
+      $after = @($files | Get-FileHash -Algorithm SHA256 -ErrorAction SilentlyContinue | ForEach-Object Hash)
+      $preserved = $after.Count -eq $before.Count -and -not (Compare-Object $before $after -SyncWindow 0)
+      Write-SmokeDiagnostic "After failed upgrade, both shared fixture hashes matched: $preserved"
+      throw
     }
     $results[$activeCheck] = [ordered]@{ status = 'passed'; reason = 'Official 0.7.7 installed and upgraded in place to 0.7.8.'; evidence = 'Both versions launched, 0.7.8 relaunched, and shared settings and transcript hashes matched.' }
     return

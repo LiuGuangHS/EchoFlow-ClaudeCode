@@ -665,7 +665,7 @@ SectionEnd
   })
 
   test.each(['unmarked', 'owned'] as const)('legacy portable startup and retry preserve the original %s selection', async (ownership) => {
-    const root = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'echoflow-legacy-portable-')))
+    const root = mkdtempSync(path.join(realpathSync.native(tmpdir()), 'echoflow-legacy-portable-'))
     const env = { APPDATA: path.join(root, 'Roaming'), LOCALAPPDATA: path.join(root, 'Local') }
     const identity = JSON.parse(readFileSync('product.json', 'utf8'))
     const legacy = path.join(env.APPDATA, identity.legacyDesktopPackageName)
