@@ -72,7 +72,7 @@ await compileExecutable({
 
 if (bunTarget.startsWith('bun-windows-')) {
   await compileExecutable({
-    entrypoint: path.join(desktopRoot, 'sidecars/installerStorageRecovery.ts'),
+    entrypoint: path.join(desktopRoot, 'sidecars/installerStorageRecoveryMain.ts'),
     outfileBase: path.join(binariesDir, `installer-storage-recovery-${targetTriple}`),
     productName: 'EchoFlow Code Installer Storage Recovery',
     bunTarget,

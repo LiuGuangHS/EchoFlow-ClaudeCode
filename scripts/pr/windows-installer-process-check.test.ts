@@ -68,7 +68,7 @@ describe('Windows installer storage recovery wiring', () => {
 
   test('packages the recovery runtime only for Windows and checks it in packaged smoke', () => {
     const build = readFileSync('desktop/scripts/build-sidecars.ts', 'utf8')
-    expect(build).toMatch(/if \(bunTarget\.startsWith\('bun-windows-'\)\) \{\s+await compileExecutable\(\{\s+entrypoint: path\.join\(desktopRoot, 'sidecars\/installerStorageRecovery\.ts'\)/)
+    expect(build).toMatch(/if \(bunTarget\.startsWith\('bun-windows-'\)\) \{\s+await compileExecutable\(\{\s+entrypoint: path\.join\(desktopRoot, 'sidecars\/installerStorageRecoveryMain\.ts'\)/)
     const config = JSON.parse(readFileSync('desktop/package.json', 'utf8'))
     expect(config.build.files).toContain('!src-tauri/binaries/installer-storage-recovery-*')
     expect(config.build.win.extraResources).toContainEqual({ from: 'src-tauri/binaries', to: 'installer-recovery', filter: ['installer-storage-recovery-*.exe'] })
