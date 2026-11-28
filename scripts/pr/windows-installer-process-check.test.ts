@@ -98,7 +98,7 @@ describe('Windows installer process matching', () => {
     // Expand the actual hook's write/fallback transition, rather than copying it.
     const writeHook = installer.slice(installer.indexOf('\n', writeStart) + 1, writeEnd)
     const root = mkdtempSync(path.join(tmpdir(), 'cc-haha-nsis-write-'))
-    const env = createSandboxedTestEnvironment(path.join(root, 'home'))
+    const env = createSandboxedTestEnvironment(path.join(root, 'home'), { ECHOFLOW_WINDOWS_UPGRADE_TRACE: '1' })
     const cases = [
       { name: 'locked', target: 'locked', result: 0, exit: 0 },
       { name: 'locked-uninstall-failure', target: 'locked', result: 2, exit: 0 },
@@ -145,7 +145,7 @@ ${writeHook}
   ${fixture.target === 'normal' ? `CopyFiles /SILENT "$PLUGINSDIR\\check-install-processes.ps1" "${extracted}"` : ''}
   StrCpy $R0 ${fixture.result}
   ${fixture.result === 22 ? 'SetErrors' : 'ClearErrors'}
-  !insertmacro CcHahaHandleOldUninstallerResult
+  !insertmacro CcHahaHandleOldUninstallerResult "fixture"
   FileOpen $journalHandle "${journal}" a
   FileSeek $journalHandle 0 END
   FileWrite $journalHandle "continued$\n"
@@ -157,11 +157,17 @@ SectionEnd
         const compile = spawnSync(compiler, ['/V2', source], { env, encoding: 'utf8', timeout: 15_000 })
         expect(compile.error, compile.stderr || compile.stdout).toBeUndefined()
         expect(compile.status, compile.stderr || compile.stdout).toBe(0)
-        const run = spawnSync(executable, ['/S'], { env, timeout: 10_000, windowsHide: true })
+        const outcome = path.join(root, `${fixture.name}-outcome.log`)
+        const run = spawnSync(executable, ['/S'], {
+          env: { ...env, ECHOFLOW_WINDOWS_UPGRADE_TRACE_LOG: outcome }, timeout: 10_000, windowsHide: true,
+        })
         expect(run.error).toBeUndefined()
         expect(run.status, fixture.name).toBe(fixture.exit)
         const trace = readFileSync(journal, 'utf8')
         const blocked = fixture.target !== 'normal'
+        expect(readFileSync(outcome, 'utf8').trim(), fixture.name).toBe(
+          `scope=fixture result=${fixture.result} execError=${fixture.result === 22 ? 1 : 0} helperWriteBlocked=${blocked ? 1 : 0}`,
+        )
         expect(trace, fixture.name).toContain(`blocked=${blocked ? 1 : 0}; powershell=${blocked ? 1 : 0}`)
         expect(trace.includes('continued'), fixture.name).toBe(fixture.exit === 0)
         if (!blocked) {
@@ -401,10 +407,10 @@ SectionEnd
     )
 
     expect(installerHook).toMatch(
-      /!macro customUnInstallCheck\s+!insertmacro CcHahaHandleOldUninstallerResult\s+!macroend/,
+      /!macro customUnInstallCheck\s+!insertmacro CcHahaHandleOldUninstallerResult "shell-context"\s+!macroend/,
     )
     expect(installerHook).toMatch(
-      /!macro customUnInstallCheckCurrentUser\s+!insertmacro CcHahaHandleOldUninstallerResult\s+!macroend/,
+      /!macro customUnInstallCheckCurrentUser\s+!insertmacro CcHahaHandleOldUninstallerResult "current-user"\s+!macroend/,
     )
     // Overwrite in place only when this installer hit the same blocked helper
     // write, and never when the old uninstaller saw the app running (exit 22).

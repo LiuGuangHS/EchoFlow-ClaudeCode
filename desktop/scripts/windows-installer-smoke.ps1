@@ -715,7 +715,17 @@ try {
     $baselineExeHash = (Get-FileHash -LiteralPath $appExe -Algorithm SHA256).Hash
 
     try {
-      Invoke-CheckedProcess -FilePath $installer -Stage 'Upgrade to v0.7.8' -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
+      $traceLog = Join-Path $evidenceDir 'old-uninstaller.log'
+      $savedTrace = $env:ECHOFLOW_WINDOWS_UPGRADE_TRACE_LOG
+      try {
+        $env:ECHOFLOW_WINDOWS_UPGRADE_TRACE_LOG = $traceLog
+        Invoke-CheckedProcess -FilePath $installer -Stage 'Upgrade to v0.7.8' -Arguments @('--updated', '/S', '/currentuser', "/D=$installDir")
+      } finally {
+        $env:ECHOFLOW_WINDOWS_UPGRADE_TRACE_LOG = $savedTrace
+        if (Test-Path -LiteralPath $traceLog -PathType Leaf) {
+          foreach ($line in Get-Content -LiteralPath $traceLog -ErrorAction SilentlyContinue) { Write-SmokeDiagnostic $line }
+        }
+      }
       $candidateVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).FileVersion
       Write-SmokeDiagnostic "Installed candidate file version: $candidateVersion"
       if ($candidateVersion -ne '0.7.8') {

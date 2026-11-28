@@ -674,7 +674,32 @@ FunctionEnd
 ; and strand the user on the old version. Only when this installer saw the
 ; same block itself, install over the old files; exit code 22 (the old
 ; uninstaller found the app running) and every other failure stay fatal.
-!macro CcHahaHandleOldUninstallerResult
+!macro CcHahaHandleOldUninstallerResult SCOPE
+  !if "$%ECHOFLOW_WINDOWS_UPGRADE_TRACE%" == "1"
+    ; This trace is compiled into the diagnostics-only candidate.
+    Push $R1
+    Push $R2
+    Push $R3
+    StrCpy $R1 "0"
+    IfErrors 0 +2
+      StrCpy $R1 "1"
+    ReadEnvStr $R2 ECHOFLOW_WINDOWS_UPGRADE_TRACE_LOG
+    ${If} $R2 != ""
+      ClearErrors
+      FileOpen $R3 "$R2" a
+      ${IfNot} ${Errors}
+        FileSeek $R3 0 END
+        FileWrite $R3 "scope=${SCOPE} result=$R0 execError=$R1 helperWriteBlocked=$ccHahaProcessHelperWriteBlocked$\r$\n"
+        FileClose $R3
+      ${EndIf}
+    ${EndIf}
+    ClearErrors
+    StrCmp $R1 "1" 0 +2
+      SetErrors
+    Pop $R3
+    Pop $R2
+    Pop $R1
+  !endif
   ${If} $R0 != 0
   ${AndIf} $R0 != 22
   ${AndIf} $ccHahaProcessHelperWriteBlocked == "1"
@@ -691,11 +716,11 @@ FunctionEnd
 !macroend
 
 !macro customUnInstallCheck
-  !insertmacro CcHahaHandleOldUninstallerResult
+  !insertmacro CcHahaHandleOldUninstallerResult "shell-context"
 !macroend
 
 !macro customUnInstallCheckCurrentUser
-  !insertmacro CcHahaHandleOldUninstallerResult
+  !insertmacro CcHahaHandleOldUninstallerResult "current-user"
 !macroend
 
 !macro customInit

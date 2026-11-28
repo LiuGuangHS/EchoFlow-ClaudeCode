@@ -229,9 +229,14 @@ describe('Windows installer recovery prerequisites', () => {
     try {
       const quote = (value: string) => `'${value.replaceAll("'", "''")}'`
       const summary = path.join(root, 'actions-summary.md')
+      const progress = path.join(root, 'progress.txt')
       const script = `${functions}
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+function Write-FixtureProgress($Phase) {
+  [IO.File]::AppendAllText(${quote(progress)}, "$(Get-Date -Format o) $Phase" + [Environment]::NewLine)
+}
+Write-FixtureProgress 'PowerShell entered script'
 $env:GITHUB_STEP_SUMMARY = ${quote(summary)}
 foreach ($scenario in @('elevated', 'early-failure', 'cleanup-failure')) {
   $directory = Join-Path ${quote(root)} $scenario
@@ -254,6 +259,7 @@ foreach ($scenario in @('elevated', 'early-failure', 'cleanup-failure')) {
   }
   Write-SmokeReport -Results $results -Directory $directory -Failure $failure -CleanupFailure $cleanupFailure
 }
+Write-FixtureProgress 'report scenarios complete'
 # Deterministic contention: no installer, real process, or wall-clock delay.
 $evidenceDir = ${quote(root)}
 $cleanupProbes = @{}
@@ -274,16 +280,29 @@ foreach ($cleanupScenario in @('transient', 'permanent')) {
   $cleanupError = ''
   try { Remove-SmokeFixture -MaxAttempts 3 -RetryDelayMilliseconds 0 } catch { $cleanupError = $_.Exception.Message }
   $cleanupProbes[$cleanupScenario] = @{ attempts = $attempts; error = $cleanupError; remains = (Test-Path -LiteralPath $testRoot) }
+  Write-FixtureProgress "cleanup scenario complete: $cleanupScenario"
 }
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) 'not-owned-fixture'
 $attempts = 0
 try { Remove-SmokeFixture -MaxAttempts 3 -RetryDelayMilliseconds 0 } catch { $cleanupProbes['unowned'] = @{ attempts = $attempts; error = $_.Exception.Message } }
 $cleanupProbes | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path ${quote(root)} 'cleanup-probes.json') -Encoding UTF8
+Write-FixtureProgress 'fixture complete'
 `
       const encoded = Buffer.from(script, 'utf16le').toString('base64')
-      await promisify(execFile)('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+      const run = promisify(execFile)('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
         env: createSandboxedTestEnvironment(path.join(root, 'home')), encoding: 'utf8', timeout: 60_000, windowsHide: true,
       })
+      const start = Date.now()
+      const events: string[] = []
+      for (const event of ['spawn', 'exit', 'close'] as const) {
+        run.child.once(event, () => events.push(`${event} after ${Date.now() - start}ms`))
+      }
+      try {
+        await run
+      } catch (error) {
+        const phases = existsSync(progress) ? readFileSync(progress, 'utf8') : 'PowerShell did not enter the script'
+        throw new Error(`PowerShell report fixture failed (${events.join(', ') || 'no child events'})\n${phases}`, { cause: error })
+      }
       const report = (name: string) => JSON.parse(readFileSync(path.join(root, name, 'result.json'), 'utf8').replace(/^\uFEFF/, ''))
       const probes = JSON.parse(readFileSync(path.join(root, 'cleanup-probes.json'), 'utf8').replace(/^\uFEFF/, ''))
       expect(probes.transient).toEqual({ attempts: 2, error: '', remains: false })
