@@ -336,6 +336,29 @@ function Invoke-ProcessHelperCleanup {
   Write-SmokeDiagnostic ("$Stage completed with process exit code $LASTEXITCODE.")
 }
 
+function Write-UpgradeRenameDiagnostic {
+  param([Parameter(Mandatory = $true)][string]$InstallDirectory)
+
+  # Opening with DELETE access does not remove a file, but detects handles that forbid renaming it.
+  $rights = [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::ReadAttributes
+  $share = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+  $blocked = 0
+  foreach ($file in Get-ChildItem -LiteralPath $InstallDirectory -File -Recurse -Force) {
+    if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+    try {
+      $access = [IO.FileStream]::new($file.FullName, [IO.FileMode]::Open, $rights, $share, 1, [IO.FileOptions]::None)
+      $access.Dispose()
+    } catch {
+      $reason = $_.Exception.GetBaseException()
+      $relative = $file.FullName.Substring($InstallDirectory.Length + 1)
+      Write-SmokeDiagnostic "Rename access refused: $relative ($($reason.HResult): $($reason.Message))"
+      $blocked += 1
+      if ($blocked -ge 10) { break }
+    }
+  }
+  Write-SmokeDiagnostic "After failed upgrade, rename access refusals (up to 10): $blocked"
+}
+
 function Write-InstalledApplicationDiagnostics {
   param(
     [Parameter(Mandatory = $true)][string]$WindowLog,
@@ -746,6 +769,8 @@ try {
         ((Get-FileHash -LiteralPath $appExe -Algorithm SHA256).Hash -eq $baselineExeHash)
       Write-SmokeDiagnostic "After failed upgrade, the baseline executable hash matched: $retainedBaseline"
       if ($retainedBaseline) {
+        try { Write-UpgradeRenameDiagnostic -InstallDirectory $installDir }
+        catch { Write-SmokeDiagnostic "Rename diagnostic failed: $($_.Exception.Message)" }
         try {
           Invoke-InstalledApplicationSmoke -FilePath $appExe -InstallDirectory $installDir -IsolatedUserProfile $userProfile -LegacyProfile
           Write-SmokeDiagnostic 'The retained 0.7.7 application started after upgrade refusal.'
